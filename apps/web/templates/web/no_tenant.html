@@ -1,0 +1,6 @@
+{% extends "web/base.html" %}
+{% block title %}Choose a tenant{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>No tenant selected</h1><p class="sub">You are signed in without a tenant.</p></div></div>
+<div class="note">{% if user.is_superuser %}Open <a href="{% url 'admin:tenants_tenant_changelist' %}">Admin → Tenants</a> and use "Work as this tenant".{% else %}Your account isn't linked to a hospital yet. Ask your Cadence CE administrator to add you.{% endif %}</div>
+{% endblock %}

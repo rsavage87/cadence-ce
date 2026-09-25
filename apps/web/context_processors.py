@@ -1,0 +1,33 @@
+from django.urls import reverse
+from django.utils.functional import SimpleLazyObject
+
+from apps.accounts.models import Level, Module
+from apps.credentials.models import Technician
+from apps.reports.services import nav_counts
+
+# key, label, icon, url name, module that must be viewable. Later slices add PM schedule, Contracts, Recalls, Reports, Users, Settings.
+NAV = [
+    ("overview", "Overview", "dash", "web:overview", Module.REPORTS),
+    ("equipment", "Equipment", "eq", "web:equipment", Module.EQUIPMENT),
+    ("workorders", "Work orders", "wo", "web:workorders", Module.WORKORDERS),
+]
+
+
+def _shell(request):
+    user = request.user
+    counts = nav_counts()
+    items = []
+    for key, label, icon, url_name, module in NAV:
+        if user.has_level(module, Level.VIEW):
+            items.append({"key": key, "label": label, "icon": icon, "url": reverse(url_name), "count": counts.get(key), "hot": counts.get(f"{key}_hot", False)})
+    name = user.get_full_name() or user.username
+    initials = "".join(p[0] for p in name.split()[:2]).upper() or "?"
+    return {"nav": items, "user_name": name, "initials": initials, "role": user.role.name if user.role_id else ("Superuser" if user.is_superuser else ""),
+            "technicians": Technician.objects.filter(is_active=True).count()}
+
+
+def shell(request):
+    """Nav items and counts for the app shell. Lazy, so admin and portal pages that never touch `shell` run no queries."""
+    if not getattr(request, "tenant", None) or not request.user.is_authenticated:
+        return {}
+    return {"shell": SimpleLazyObject(lambda: _shell(request))}

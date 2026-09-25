@@ -1,0 +1,7 @@
+{% load web %}
+<div class="pager">
+  <span>{{ page.paginator.count }} {{ noun }}</span><span class="spacer"></span>
+  {% if page.has_previous %}{% query request.GET page=page.previous_page_number as prev %}<a class="btn sm" href="{{ list_url }}{{ prev }}" hx-get="{{ list_url }}{{ prev }}" hx-target="{{ target }}" hx-swap="outerHTML" hx-push-url="true" aria-label="Previous page">{% icon "l" %}</a>{% else %}<button class="btn sm" disabled aria-label="Previous page">{% icon "l" %}</button>{% endif %}
+  <span>Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
+  {% if page.has_next %}{% query request.GET page=page.next_page_number as next %}<a class="btn sm" href="{{ list_url }}{{ next }}" hx-get="{{ list_url }}{{ next }}" hx-target="{{ target }}" hx-swap="outerHTML" hx-push-url="true" aria-label="Next page">{% icon "r" %}</a>{% else %}<button class="btn sm" disabled aria-label="Next page">{% icon "r" %}</button>{% endif %}
+</div>

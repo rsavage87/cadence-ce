@@ -1,0 +1,20 @@
+{% extends "web/base.html" %}
+{% load web %}
+{% block title %}Equipment{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Equipment</h1><p class="sub">{{ summary.total }} devices on record · {{ summary.active }} active · {{ summary.under_contract }} under a service contract</p></div>
+</div>
+<form class="toolbar" id="eq-filters" method="get" action="{% url 'web:equipment' %}"
+      hx-get="{% url 'web:equipment' %}" hx-trigger="change, submit, input changed delay:300ms from:#eq-q" hx-target="#eq-table" hx-swap="outerHTML" hx-push-url="true">
+  <label class="field grow">{% icon "search" %}<input id="eq-q" type="search" name="q" value="{{ f.q }}" placeholder="Search tag, serial, model, department, contract" aria-label="Search equipment"></label>
+  <label class="field"><span>Category</span><select name="category" aria-label="Category"><option value="">All</option>{% for c in options.categories %}<option{% if f.category == c %} selected{% endif %}>{{ c }}</option>{% endfor %}</select></label>
+  <label class="field"><span>Status</span><select name="status" aria-label="Status"><option value="">All</option>{% for v, l in options.statuses %}<option value="{{ v }}"{% if f.status == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+  <label class="field"><span>Risk</span><select name="risk" aria-label="Risk"><option value="">All</option>{% for v, l in options.risks %}<option value="{{ v }}"{% if f.risk == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+  <label class="field"><span>Department</span><select name="dept" aria-label="Department"><option value="">All</option>{% for d in options.departments %}<option{% if f.department == d %} selected{% endif %}>{{ d }}</option>{% endfor %}</select></label>
+  <label class="field"><span>Support</span><select name="support" aria-label="Support"><option value="">All</option>{% for v, l in options.supports %}<option value="{{ v }}"{% if f.support == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+  <label class="tog"><input type="checkbox" name="overdue" value="1"{% if f.overdue %} checked{% endif %}><span class="sw"></span>Overdue PM only</label>
+  {% if f.bucket %}<input type="hidden" name="bucket" value="{{ f.bucket }}">{% query request.GET bucket=None page=None as clear %}<a class="pill active" href="{{ list_url }}{{ clear }}">{{ bucket_label }}<span class="x" aria-label="Clear">✕</span></a>{% endif %}
+</form>
+{% include "web/_equipment_table.html" %}
+{% endblock %}

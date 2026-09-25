@@ -1,0 +1,34 @@
+{% load web %}
+<div id="eq-table">
+  {# Sort lives with the table so header clicks and filter changes both keep it; form= ties these to the toolbar form. #}
+  <input type="hidden" name="sort" value="{{ f.sort }}" form="eq-filters">
+  <input type="hidden" name="dir" value="{% if f.descending %}desc{% else %}asc{% endif %}" form="eq-filters">
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr>
+        {% for key, label, cls in sort_columns %}
+        {% if f.sort == key %}{% query request.GET sort=key dir=f.descending|yesno:"asc,desc" page=None as href %}{% else %}{% query request.GET sort=key dir="asc" page=None as href %}{% endif %}
+        <th class="sort {{ cls }}"{% if f.sort == key %} aria-sort="{{ f.descending|yesno:'descending,ascending' }}"{% endif %}><a href="{{ list_url }}{{ href }}" hx-get="{{ list_url }}{{ href }}" hx-target="#eq-table" hx-swap="outerHTML" hx-push-url="true" style="color:inherit;text-decoration:none">{{ label }}{% if f.sort == key %}<span class="arr">{{ f.descending|yesno:"▼,▲" }}</span>{% endif %}</a></th>
+        {% endfor %}
+      </tr></thead>
+      <tbody>
+        {% for a in page %}
+        <tr class="row" hx-get="{% url 'web:asset' a.tag %}" hx-target="#drawer">
+          <td class="tag"><a class="tag" href="{% url 'web:asset' a.tag %}">{{ a.tag }}</a></td>
+          <td class="two">{{ a.device_model.description }}<small>{{ a.device_model.manufacturer }} {{ a.device_model.model }}</small></td>
+          <td class="two">{{ a.department }}<small>{% if a.room %}Room {{ a.room }}{% else %}&nbsp;{% endif %}</small></td>
+          <td>{% risk_chip a.device_model.risk_class %}</td>
+          <td>{% asset_status_chip a.status %}</td>
+          <td>{% pm_sticker a %}</td>
+          <td>{% if a.installed_on %}{{ a.age_years|floatformat:1 }} yr{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td>{% if a.contract %}<div class="two">{{ a.get_support_type_display }}<small{% if a.contract.is_expired %} style="color:var(--crit)"{% endif %}>{{ a.contract.reference }} · {% if a.contract.is_expired %}expired{% else %}through{% endif %} {{ a.contract.end_on|date:"M Y" }}</small></div>{% else %}<div class="two">{{ a.get_support_type_display }}<small>No contract</small></div>{% endif %}</td>
+          <td class="num">{{ a.acquisition_cost|money }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="9"><div class="empty">No devices match these filters. Clear a filter or search a different term.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% include "web/_pager.html" with noun="devices" target="#eq-table" %}
+  </div>
+</div>

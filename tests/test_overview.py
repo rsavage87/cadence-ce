@@ -1,0 +1,85 @@
+from datetime import date, timedelta
+
+from apps.contracts.models import Contract, ContractType
+from apps.equipment.models import Asset
+from apps.reports.services import attention_items, nav_counts, overview_page, work_orders_opened_by_type
+from apps.web import charts
+from apps.web.overview import fleet_strip, kpi_tiles, pm_trend_chart
+from apps.workorders.services import assign, change_status, create_service_request, create_work_order
+
+TODAY = date.today()
+
+
+def _kinds(items):
+    return [(it["rail"], it.get("asset") or it.get("wo") or it.get("contract") or it.get("recall")) for it in items]
+
+
+def test_attention_list_follows_the_mock_order(ctx, dept, vent, pump, vent_model, pump_recall, techs):
+    vent.next_pm_on = TODAY - timedelta(days=4)  # life-support PM overdue
+    vent.save()
+    expired = Contract.objects.create(reference="OLD", vendor="V", type=ContractType.OEM, start_on=TODAY - timedelta(days=400),
+                                      end_on=TODAY - timedelta(days=2))
+    expired.add_assets([pump])
+    ending = Contract.objects.create(reference="SOON", vendor="V", type=ContractType.OEM, start_on=TODAY - timedelta(days=300),
+                                     end_on=TODAY + timedelta(days=10))
+    Contract.objects.create(reference="LATER", vendor="V", type=ContractType.OEM, start_on=TODAY, end_on=TODAY + timedelta(days=60))  # outside 30 days
+    sr = create_service_request(asset=pump, department=dept, problem="Won't power on", urgency="critical")
+    crit = create_work_order(asset=vent, type="repair", priority="critical", problem="Alarm")
+    assign(crit, technician=techs["dana"])
+    waiting = create_work_order(asset=pump, type="repair", priority="normal", problem="Keypad", opened_on=TODAY - timedelta(days=9))
+    assign(waiting, technician=techs["dana"])
+    change_status(waiting, "awaiting_parts")
+    create_work_order(asset=pump, type="repair", priority="normal", problem="Waiting, but recent")
+    items = attention_items()
+    assert _kinds(items) == [("crit", vent.tag), ("warn", str(pump_recall.id)), ("warn", str(expired.id)), ("warn", str(ending.id)),
+                             ("crit", sr.work_order.number), ("crit", crit.number), ("warn", waiting.number)]
+    assert items[1]["right"] == "1 devices"  # active pumps on the recalled model
+
+
+def test_high_risk_overdue_is_capped_at_three(ctx, dept, pump_model):
+    for i in range(5):
+        Asset.objects.create(tag=f"P{i}", device_model=pump_model, department=dept, next_pm_on=TODAY - timedelta(days=i + 1))
+    assert [it["asset"] for it in attention_items()] == ["P4", "P3", "P2"]  # most overdue first
+
+
+def test_nav_counts_flag_unassigned_portal_requests(ctx, dept, vent, pump):
+    create_work_order(asset=pump, type="pm", priority="normal", problem="PM")
+    assert nav_counts() == {"equipment": 2, "workorders": 1, "workorders_hot": False}
+    create_service_request(asset=vent, department=dept, problem="Alarm", urgency="normal")
+    assert nav_counts()["workorders_hot"] is True
+
+
+def test_opened_by_type_groups_months_and_folds_minor_types(ctx, vent):
+    create_work_order(asset=vent, type="pm", priority="normal", problem="PM", opened_on=TODAY)
+    create_work_order(asset=vent, type="safety", priority="normal", problem="Safety", opened_on=TODAY)
+    create_work_order(asset=vent, type="repair", priority="normal", problem="Last month", opened_on=TODAY.replace(day=1) - timedelta(days=1))
+    data = work_orders_opened_by_type(TODAY.year, TODAY.month)
+    by_key = {s["key"]: s["values"] for s in data["series"]}
+    assert len(data["months"]) == 6 and data["months"][-1] == (TODAY.year, TODAY.month)
+    assert by_key["pm"][-1] == 1 and by_key["other"][-1] == 1 and by_key["repair"][-2:] == [1, 0]
+
+
+def test_overview_page_skips_deltas_without_history(ctx, vent):
+    data = overview_page(TODAY.year, TODAY.month)
+    assert data["prev"] is None
+    tiles = kpi_tiles(data)
+    assert len(tiles) == 8 and not any("prior month" in text for t in tiles for text, _ in t["parts"])
+    create_work_order(asset=vent, type="repair", priority="normal", problem="Old", opened_on=TODAY - timedelta(days=62))
+    assert overview_page(TODAY.year, TODAY.month)["prev"] is not None
+
+
+def test_fleet_strip_percentages_exclude_retired(ctx):
+    strip = fleet_strip({"compliant": 3, "pm_due": 1, "pm_overdue": 0, "open_recall": 0, "in_repair": 0, "out_of_service": 0, "retired": 6})
+    assert strip["active"] == 4 and strip["retired"] == 6
+    assert [round(s["pct"]) for s in strip["segments"][:2]] == [75, 25]
+
+
+def test_pm_chart_leaves_gaps_for_months_with_nothing_due():
+    series = [{"year": 2026, "month": m, "due": 0 if m == 2 else 4, "on_time": 4, "rate": 100.0} for m in range(1, 4)]
+    chart = pm_trend_chart(series, series)
+    assert chart["paths"][0]["d"].count("M") == 2  # the gap starts a new segment
+    assert chart["grid"][0]["label"] == "90%"
+
+
+def test_nice_max_rounds_up_to_readable_steps():
+    assert [charts.nice_max(v) for v in (0, 7, 13, 24, 230)] == [1, 10, 20, 25, 250]

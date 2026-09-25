@@ -1,0 +1,9 @@
+# Rules are listed explicitly so CI does not drift when ruff changes its defaults.
+line-length = 160
+extend-exclude = ["*/migrations/*", ".venv", "staticfiles"]
+
+[lint]
+select = ["E", "F", "W", "I"]
+
+[lint.isort]
+known-first-party = ["apps", "config"]

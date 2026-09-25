@@ -1,0 +1,6 @@
+<svg class="chart" viewBox="0 0 {{ c.w }} {{ c.h }}" role="img" aria-label="{{ aria }}">
+{% for g in c.grid %}<line x1="{{ c.left }}" x2="{{ c.right }}" y1="{{ g.y }}" y2="{{ g.y }}" stroke="var(--line)"/><text x="{{ c.tick_x }}" y="{{ g.text_y }}" text-anchor="end">{{ g.label }}</text>{% endfor %}
+{% for b in c.bars %}<rect x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="{{ b.color }}"><title>{{ b.title }}</title></rect>{% endfor %}
+{% for l in c.xlabels %}<text x="{{ l.x }}" y="{{ c.label_y }}" text-anchor="middle">{{ l.label }}</text>{% endfor %}
+</svg>
+<div class="clg">{% for s in c.legend %}<span><i style="background:{{ s.color }}"></i>{{ s.name }}</span>{% endfor %}</div>

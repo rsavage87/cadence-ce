@@ -1,0 +1,1 @@
+{% load web %}{% if w.vendor_service %}{{ w.vendor_name|default:"Vendor" }}{% elif w.assigned_to %}{{ w.assigned_to.name|short_name }}{% else %}<span class="chip warn">Unassigned</span>{% endif %}

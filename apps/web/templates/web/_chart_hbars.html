@@ -1,0 +1,3 @@
+<svg class="chart" viewBox="0 0 {{ c.w }} {{ c.h }}" role="img" aria-label="{{ aria }}">
+{% for r in c.rows %}<text x="{{ c.label_x }}" y="{{ r.text_y }}" text-anchor="end" style="fill:var(--ink-2)">{{ r.label }}</text><rect x="{{ c.left }}" y="{{ r.bar_y }}" width="{{ r.bar_w }}" height="{{ r.bar_h }}" rx="3" fill="{{ c.color }}"><title>{{ r.full_label }}: {{ r.value }}</title></rect><text x="{{ r.value_x }}" y="{{ r.text_y }}" style="fill:var(--ink)">{{ r.value }}</text>{% endfor %}
+</svg>

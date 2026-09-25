@@ -1,0 +1,27 @@
+{% extends "web/base.html" %}
+{% load web %}
+{% block title %}Work orders{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Work orders</h1><p class="sub">{{ open_count }} open · {{ past_due }} past due · {{ done_7d }} completed in the last 7 days</p></div>
+  <div class="actions">
+    <div class="seg-ctl" role="group" aria-label="View">
+      {% query request.GET mode=None page=None as list_q %}{% query request.GET mode="board" page=None as board_q %}
+      <a class="{% if mode == 'list' %}active{% endif %}" href="{{ list_url }}{{ list_q }}"{% if mode == 'list' %} aria-current="true"{% endif %}>List</a>
+      <a class="{% if mode == 'board' %}active{% endif %}" href="{{ list_url }}{{ board_q }}"{% if mode == 'board' %} aria-current="true"{% endif %}>Board</a>
+    </div>
+    {% if can_create %}<button class="btn primary" type="button" hx-get="{% url 'web:wo_new' %}" hx-target="#modal-card">{% icon "plus" %} New work order</button>{% endif %}
+  </div>
+</div>
+{% if unassigned_portal %}<div class="note warn" style="margin-bottom:12px">{{ unassigned_portal }} request{{ unassigned_portal|pluralize }} from the service portal {{ unassigned_portal|pluralize:"is,are" }} waiting for assignment. <a class="link" href="{{ list_url }}?assigned=unassigned&amp;q=&amp;open=1{% if mode == 'board' %}&amp;mode=board{% endif %}">Show {{ unassigned_portal|pluralize:"it,them" }}</a></div>{% endif %}
+<form class="toolbar" id="wo-filters" method="get" action="{{ list_url }}"
+      hx-get="{{ list_url }}" hx-trigger="change, submit, input changed delay:300ms from:#wo-q" hx-target="#wo-body" hx-swap="outerHTML" hx-push-url="true">
+  {% if mode == "board" %}<input type="hidden" name="mode" value="board">{% endif %}
+  <label class="field grow">{% icon "search" %}<input id="wo-q" type="search" name="q" value="{{ f.q }}" placeholder="Search work order, tag, device, problem, requester" aria-label="Search work orders"></label>
+  <label class="field"><span>Type</span><select name="type" aria-label="Type"><option value="">All</option>{% for v, l in types %}<option value="{{ v }}"{% if f.type == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+  {% if mode == "list" %}<label class="field"><span>Status</span><select name="status" aria-label="Status"><option value="">All</option>{% for v, l in statuses %}<option value="{{ v }}"{% if f.status == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>{% endif %}
+  <label class="field"><span>Assigned</span><select name="assigned" aria-label="Assigned"><option value="">All</option>{% for t in technicians %}<option value="{{ t.id }}"{% if f.assigned == t.id|stringformat:"s" %} selected{% endif %}>{{ t.name }}</option>{% endfor %}<option value="unassigned"{% if f.assigned == "unassigned" %} selected{% endif %}>Unassigned</option></select></label>
+  {% if mode == "list" %}<input type="hidden" name="open" value="0"><label class="tog"><input type="checkbox" name="open" value="1"{% if f.open_only %} checked{% endif %}><span class="sw"></span>Open only</label>{% endif %}
+</form>
+{% include "web/_wo_body.html" %}
+{% endblock %}

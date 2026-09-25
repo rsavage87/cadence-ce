@@ -1,0 +1,47 @@
+{% load web %}
+{# Re-fetches itself when a drawer action changes a work order. #}
+<div id="wo-body" hx-get="{{ list_url }}{% query request.GET %}" hx-trigger="wo-changed from:body" hx-target="this" hx-swap="outerHTML">
+{% if mode == "board" %}
+  <div class="kanban">
+    {% for col in columns %}
+    <div class="kcol">
+      <h3>{{ col.name }}<span>{{ col.count }}</span></h3>
+      {% for w in col.items %}
+      <div class="kcard" hx-get="{% url 'web:wo' w.number %}" hx-target="#drawer">
+        <div style="display:flex;justify-content:space-between;gap:6px;align-items:center"><a class="tag" href="{% url 'web:wo' w.number %}">{{ w.number }}</a>{% priority_chip w.priority %}</div>
+        <div class="t">{{ w.asset.device_model.description }}</div>
+        <div class="hint" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ w.asset.tag }} · {{ w.asset.department }} · {{ w.type|wo_type_short }}</div>
+        <div class="m"><span>{% include "web/_wo_assignee.html" %}</span><span class="{% if w.is_late and w.is_open %}down{% endif %}">{% if w.completed_on %}Done {{ w.completed_on|date:"M j" }}{% else %}Due {{ w.due_on|date:"M j" }}{% endif %}</span></div>
+      </div>
+      {% endfor %}
+      {% if col.count > col.items|length %}<div class="hint" style="padding:2px 6px 6px">showing {{ col.items|length }} of {{ col.count }}; the rest are in list view</div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Work order</th><th>Device</th><th>Type</th><th>Priority</th><th>Status</th><th>Assigned</th><th>Opened</th><th>Due</th><th>Age</th><th class="num">Cost</th></tr></thead>
+      <tbody>
+        {% for w in page %}
+        <tr class="row" hx-get="{% url 'web:wo' w.number %}" hx-target="#drawer">
+          <td class="tag"><a class="tag" href="{% url 'web:wo' w.number %}">{{ w.number }}</a>{% if w.source == "portal" %} <span class="chip acc" style="font-size:11px">Portal</span>{% endif %}</td>
+          <td class="two">{{ w.asset.device_model.description }}<small>{{ w.asset.tag }} · {{ w.asset.department }}</small></td>
+          <td>{{ w.type|wo_type_short }}</td>
+          <td>{% priority_chip w.priority %}</td>
+          <td>{% wo_status_chip w.status %}</td>
+          <td class="muted">{% include "web/_wo_assignee.html" %}</td>
+          <td class="muted">{{ w.opened_on|date:"M j" }}</td>
+          {% with late=w.due_on|days_since %}<td class="{% if w.is_open and late > 0 %}down{% else %}muted{% endif %}">{{ w.due_on|date:"M j" }}{% if w.is_open and late > 0 %} · {{ late }} d late{% endif %}</td>{% endwith %}
+          <td class="muted">{% if w.is_open %}{{ w.opened_on|days_since }} d open{% elif w.turnaround_days is not None %}{{ w.turnaround_days }} d{% else %}—{% endif %}</td>
+          <td class="num">{% if w.is_open %}{% with parts=w.parts_cost %}{% if parts %}parts {{ parts|money }}{% else %}—{% endif %}{% endwith %}{% else %}{{ w.total_cost|money }}{% endif %}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="10"><div class="empty">No work orders match these filters.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% include "web/_pager.html" with noun="work orders" target="#wo-body" %}
+  </div>
+{% endif %}
+</div>

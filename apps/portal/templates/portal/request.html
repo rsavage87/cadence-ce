@@ -1,0 +1,17 @@
+{% extends "portal/base.html" %}
+{% block body %}
+<div class="note">If a device failure is affecting a patient right now, call the Clinical Engineering hotline in addition to submitting this form.</div>
+<form method="post">{% csrf_token %}
+  {% if form.non_field_errors %}<div class="err">{{ form.non_field_errors }}</div>{% endif %}
+  {% for field in form.visible_fields %}
+    {% if field.name == "tagged_out" %}
+      <label style="display:flex;gap:8px;align-items:center;margin-top:14px">{{ field }} {{ field.label }}</label>
+    {% else %}
+      <label for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}
+    {% endif %}
+    {% if field.errors %}<div class="err">{{ field.errors|striptags }}</div>{% endif %}
+  {% endfor %}
+  <button class="btn" type="submit">Submit request</button>
+</form>
+{% if asset %}<div class="hint">Device: {{ asset.tag }} · {{ asset.device_model.description }} · {{ asset.device_model }}</div>{% endif %}
+{% endblock %}

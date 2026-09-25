@@ -1,0 +1,11 @@
+{% extends "portal/base.html" %}
+{% block heading %}Request received{% endblock %}
+{% block body %}
+<div class="ok">Your request number is {{ sr.number }}.</div>
+<p>Device: {{ sr.asset.tag }} · {{ sr.asset.device_model.description }}<br>
+Priority assigned: {{ sr.work_order.get_priority_display }}<br>
+Response target: {{ target }}<br>
+We will call: {{ sr.callback|default:"the unit" }}</p>
+<div class="hint">Clinical Engineering has been notified. If the situation changes, call the shop and give your request number.</div>
+<p><a href="{% url 'portal:request' tenant.slug %}">Submit another request</a></p>
+{% endblock %}

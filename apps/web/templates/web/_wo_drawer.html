@@ -1,0 +1,74 @@
+{% load web %}
+{% with dm=asset.device_model %}
+<div class="dr-h">
+  <div>
+    <h2>{{ wo.number }} · {{ wo.get_type_display }}</h2>
+    <div class="sub">{% if can_view_asset %}<a class="link" href="{% url 'web:asset' asset.tag %}" hx-get="{% url 'web:asset' asset.tag %}" hx-target="#drawer">{{ asset.tag }}</a>{% else %}{{ asset.tag }}{% endif %} · {{ dm.description }}, {{ dm.manufacturer }} {{ dm.model }} · {{ asset.department }}</div>
+    <div class="chips">{% priority_chip wo.priority %}{% wo_status_chip wo.status %}{% if late_days %}<span class="chip crit">{{ late_days }} d past due</span>{% endif %}{% if wo.vendor_service %}<span class="chip violet">Vendor</span>{% endif %}{% if is_portal %}<span class="chip acc">Portal request</span>{% endif %}{% if wo.tagged_out %}<span class="chip crit">Tagged out</span>{% endif %}</div>
+  </div>
+  <button class="iconbtn" type="button" data-act="close-drawer" aria-label="Close">{% icon "x" %}</button>
+</div>
+<div class="dr-b">
+  <div class="sec"><dl class="dl">
+    <div><dt>Requested by</dt><dd>{{ wo.requester|default:"—" }}</dd></div>
+    <div><dt>Assigned to</dt><dd>
+      {% if wo.vendor_service %}{{ wo.vendor_name }} <span class="chip neutral">Vendor</span>
+      {% elif wo.assigned_to %}{{ wo.assigned_to.name }}
+        {% if qual.ok and qual.expiring %}<span class="chip warn">Credential expires in {{ qual.expires_on|days_until }} d</span>
+        {% elif qual.ok %}<span class="chip ok">Credentialed, {{ qual.via }}</span>
+        {% else %}<span class="chip crit">Not credentialed for this device</span>{% endif %}
+      {% else %}<span class="chip warn">Unassigned</span>{% endif %}
+    </dd></div>
+    <div><dt>Opened</dt><dd>{{ wo.opened_on|date:"M j, Y" }}</dd></div>
+    <div><dt>Due</dt><dd class="{% if late_days %}down{% endif %}">{{ wo.due_on|date:"M j, Y" }}</dd></div>
+    <div><dt>Completed</dt><dd>{{ wo.completed_on|date:"M j, Y"|default:"—" }}</dd></div>
+    <div><dt>{% if is_open %}Open for{% else %}Turnaround{% endif %}</dt><dd>{% if is_open %}{{ open_days }} days{% elif wo.turnaround_days is not None %}{{ wo.turnaround_days }} days{% if wo.downtime_days %} · {{ wo.downtime_days }} d downtime{% endif %}{% else %}—{% endif %}</dd></div>
+    {% if is_portal %}
+    <div><dt>Callback</dt><dd>{{ wo.callback|default:"Not given" }}</dd></div>
+    <div><dt>Reported location</dt><dd>{{ wo.reported_location|default:asset.department }}{% if wo.tagged_out %} · tagged out by the unit{% endif %}</dd></div>
+    {% endif %}
+  </dl></div>
+
+  {% if can_assign %}
+  <div class="sec"><h3>Assignment <span>credentialed technicians first</span></h3>
+    <form style="display:flex;gap:8px;flex-wrap:wrap" hx-post="{% url 'web:wo_assign' wo.number %}" hx-target="#drawer">
+      <select name="assignee" class="perm" style="flex:1;min-width:220px;padding:7px 9px" aria-label="Assign to">
+        {% if unassigned %}<option value="">Choose…</option>{% endif %}
+        {% for value, label in assign_choices %}<option value="{{ value }}"{% if value == assign_current %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+      <button class="btn sm primary" type="submit">{% if unassigned %}Assign{% else %}Reassign{% endif %}</button>
+    </form>
+  </div>
+  {% elif unassigned and is_open %}
+  <div class="sec"><div class="note">Waiting for a CE manager to assign this work order.</div></div>
+  {% endif %}
+
+  <div class="sec"><h3>Problem</h3><div style="white-space:pre-line">{{ wo.problem }}</div></div>
+  {% if wo.resolution %}<div class="sec"><h3>Resolution</h3><div style="white-space:pre-line">{{ wo.resolution }}</div></div>{% endif %}
+
+  <div class="sec"><h3>Cost <span>{% if is_open %}so far{% else %}actual{% endif %}</span></h3>
+    <div class="stats">
+      <div class="stat"><div class="v">{{ labor_hours|floatformat:"-2" }} h</div><div class="l">labor · {{ wo.labor_cost|money }}</div></div>
+      <div class="stat"><div class="v">{{ wo.parts_cost|money }}</div><div class="l">parts{% with n=wo.part_lines.all|length %}{% if n %} · {{ n }} line{{ n|pluralize }}{% endif %}{% endwith %}</div></div>
+      <div class="stat"><div class="v">{{ wo.total_cost|money }}</div><div class="l">total</div></div>
+    </div>
+  </div>
+
+  <div class="sec"><h3>Timeline</h3>
+    <ul class="tl">{% for e in timeline %}<li><div>{{ e.text }}</div><div class="w">{{ e.at|date:"M j, Y g:i A" }} · {{ e.who }}</div></li>{% endfor %}</ul>
+    {% if can_note %}
+    <form style="display:flex;gap:8px;margin-top:12px" hx-post="{% url 'web:wo_note' wo.number %}" hx-target="#drawer">
+      <input name="text" maxlength="1000" required placeholder="Add a note (no patient information)" aria-label="Add a note" style="flex:1;font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line-2);border-radius:6px;padding:7px 9px;min-width:0">
+      <button class="btn sm" type="submit">Add</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% if actions %}
+<div class="dr-f">
+  {% for a in actions %}
+  <button class="btn{% if a.primary %} primary{% endif %}" type="button" hx-post="{% url 'web:wo_status' wo.number %}" hx-vals='{"to": "{{ a.to }}"}' hx-target="#drawer">{{ a.label }}</button>
+  {% endfor %}
+</div>
+{% endif %}
+{% endwith %}

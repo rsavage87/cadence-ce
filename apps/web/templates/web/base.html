@@ -1,0 +1,46 @@
+{% load static django_htmx web %}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{% block title %}Cadence CE{% endblock %} · {{ request.tenant.name }}</title>
+<script>try{var t=localStorage.getItem('cadence-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+<link rel="stylesheet" href="{% static 'web/cadence.css' %}">
+{% htmx_script %}
+<script src="{% static 'web/cadence.js' %}" defer></script>
+</head>
+<body hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+<div class="app">
+  <header class="topbar">
+    <a class="brand" href="{% url 'web:overview' %}" style="color:inherit;text-decoration:none"><span class="mark">{% icon "brand" %}</span><span>Cadence CE<small>Clinical Engineering</small></span></a>
+    <div class="facility" title="Facility">{% icon "facility" %}<span>{{ request.tenant.name }}</span></div>
+    <form class="gsearch" action="{% url 'web:search' %}" method="get" role="search">{% icon "search" %}<input id="gsearch" name="q" placeholder="Search asset tag, serial, model, or work order" aria-label="Search" autocomplete="off"><kbd>/</kbd></form>
+    <div class="spacer"></div>
+    <button class="iconbtn" type="button" data-act="theme" title="Toggle light/dark" aria-label="Toggle theme"><span class="if-light">{% icon "moon" %}</span><span class="if-dark">{% icon "sun" %}</span></button>
+    <details class="user-menu">
+      <summary class="avatar" title="{{ shell.user_name }}" aria-label="Account menu">{{ shell.initials }}</summary>
+      <div class="menu">
+        <div class="who">{{ shell.user_name }}</div>
+        <div class="role">{{ shell.role }}</div>
+        {% if user.is_staff %}<a href="{% url 'admin:index' %}">Admin</a>{% endif %}
+        <form method="post" action="{% url 'web:logout' %}">{% csrf_token %}<button type="submit">Sign out</button></form>
+      </div>
+    </details>
+  </header>
+  <div class="body">
+    <nav class="nav" id="nav" aria-label="Main">
+      {% for item in shell.nav %}
+      <a href="{{ item.url }}" class="{% if item.key == nav_active %}active{% endif %}"{% if item.key == nav_active %} aria-current="page"{% endif %}>{% icon item.icon %}<span>{{ item.label }}</span>{% if item.count is not None %}<span class="cnt{% if item.hot %} hot{% endif %}">{{ item.count }}</span>{% endif %}</a>
+      {% endfor %}
+      <div class="sep"></div>
+      <div class="foot">{{ request.tenant.name }}<br>Clinical Engineering · {{ shell.technicians }} technician{{ shell.technicians|pluralize }}</div>
+    </nav>
+    <main class="view" id="view">{% block content %}{% endblock %}</main>
+  </div>
+</div>
+<div class="scrim{% if drawer_template %} show{% endif %}" id="scrim"></div>
+<aside class="drawer{% if drawer_template %} open{% endif %}" id="drawer" aria-hidden="{% if drawer_template %}false{% else %}true{% endif %}" aria-label="Details">{% if drawer_template %}{% include drawer_template %}{% endif %}</aside>
+<div class="modal" id="modal" aria-hidden="true"><div class="modal-card" id="modal-card" role="dialog" aria-modal="true"></div></div>
+<div class="toast" id="toast" role="status"></div>
+</body>
+</html>

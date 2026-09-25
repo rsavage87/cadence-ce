@@ -1,0 +1,7 @@
+<svg class="chart" viewBox="0 0 {{ c.w }} {{ c.h }}" role="img" aria-label="{{ aria }}">
+{% for g in c.grid %}<line x1="{{ c.left }}" x2="{{ c.right }}" y1="{{ g.y }}" y2="{{ g.y }}" stroke="var(--line)"/><text x="{{ c.tick_x }}" y="{{ g.text_y }}" text-anchor="end">{{ g.label }}</text>{% endfor %}
+{% if c.target_y is not None %}<line x1="{{ c.left }}" x2="{{ c.right }}" y1="{{ c.target_y }}" y2="{{ c.target_y }}" stroke="var(--crit)" stroke-dasharray="4 4"/>{% endif %}
+{% for p in c.paths %}<path d="{{ p.d }}" fill="none" stroke="{{ p.color }}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"{% if p.dash %} stroke-dasharray="5 4"{% endif %}/>{% for dot in p.dots %}<circle cx="{{ dot.x }}" cy="{{ dot.y }}" r="2.6" fill="{{ p.color }}"><title>{{ dot.title }}</title></circle>{% endfor %}{% endfor %}
+{% for l in c.xlabels %}<text x="{{ l.x }}" y="{{ c.label_y }}" text-anchor="middle">{{ l.label }}</text>{% endfor %}
+</svg>
+<div class="clg">{% for s in c.legend %}<span><i style="background:{{ s.color }}"></i>{{ s.name }}</span>{% endfor %}{% if c.target_y is not None %}<span><i class="dash"></i>{{ c.target_label }}</span>{% endif %}</div>

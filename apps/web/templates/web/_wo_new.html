@@ -1,0 +1,27 @@
+{% load web %}
+<div class="modal-h"><h2>New work order</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+<form id="nw-form" hx-post="{% url 'web:wo_new' %}" hx-target="#modal-card">
+  {{ form.asset }}
+  <div class="form">
+    <label class="full sugg-host">Device
+      {% if asset %}
+        <input id="nw-asset" name="asset_q" autocomplete="off" value="{{ asset.tag }} · {{ asset.device_model.description }}" aria-describedby="nw-asset-hint"
+               hx-get="{% url 'web:asset_search' %}" hx-trigger="input changed delay:250ms" hx-target="#nw-sugg" hx-include="this">
+        <span class="hint" id="nw-asset-hint">{{ asset.device_model }} · {{ asset.department }}{% if asset.serial %} · SN {{ asset.serial }}{% endif %}</span>
+      {% else %}
+        <input id="nw-asset" name="asset_q" autocomplete="off" autofocus placeholder="Search by asset tag, serial, or model"
+               hx-get="{% url 'web:asset_search' %}" hx-trigger="input changed delay:250ms" hx-target="#nw-sugg" hx-include="this">
+      {% endif %}
+      <div class="sugg" id="nw-sugg"></div>
+      {% if form.asset.errors %}<span class="err">{{ form.asset.errors|striptags }}</span>{% endif %}
+    </label>
+    <label>Type{{ form.type }}</label>
+    <label>Priority{{ form.priority }}</label>
+    <label>Requested by{{ form.requester }}</label>
+    {% if form.assignee %}<label>Assign to{{ form.assignee }}</label>{% endif %}
+    <label class="full">Problem description{{ form.problem }}{% if form.problem.errors %}<span class="err">{{ form.problem.errors|striptags }}</span>{% endif %}</label>
+    <label class="full check-row">{{ form.tag_out }} Tag the device out of service</label>
+  </div>
+  {% if form.assignee %}<div class="hint" style="padding:0 16px 12px">Technicians credentialed for the selected device are listed first with a check mark.</div>{% endif %}
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Create work order</button></div>
+</form>

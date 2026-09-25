@@ -1,0 +1,29 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: cadence
+      POSTGRES_USER: cadence
+      POSTGRES_PASSWORD: cadence
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/10-app-role.sql:ro
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cadence"]
+      interval: 5s
+      retries: 10
+  web:
+    build: .
+    command: sh -c "python manage.py migrate --database=migrate && python manage.py enable_rls --database=migrate && python manage.py runserver 0.0.0.0:8000"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://cadence_app:cadence_app@db:5432/cadence
+      MIGRATE_DATABASE_URL: postgres://cadence:cadence@db:5432/cadence
+    volumes: [".:/app"]
+    ports: ["8000:8000"]
+    depends_on:
+      db:
+        condition: service_healthy
+volumes:
+  pgdata:

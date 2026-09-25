@@ -1,0 +1,91 @@
+{% extends "web/base.html" %}
+{% load web %}
+{% block title %}Fleet overview{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Fleet overview</h1>
+    <p class="sub">{{ request.tenant.name }} · {{ k.period.start|date:"F Y" }}{% if k.period.current %} (month to date){% endif %} · fleet status and attention items are as of today, {{ today|date:"M j, Y" }}</p>
+  </div>
+  <form class="actions" method="get" hx-get="{% url 'web:overview' %}" hx-trigger="change" hx-target="#view" hx-select="#view" hx-swap="outerHTML" hx-push-url="true">
+    <label class="field"><span>Month</span><select name="m" aria-label="Month">{% for n, label in months %}<option value="{{ n }}"{% if n == month %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+    <label class="field"><span>Year</span><select name="y" aria-label="Year">{% for v in years %}<option value="{{ v }}"{% if v == year %} selected{% endif %}>{{ v }}</option>{% endfor %}</select></label>
+    <noscript><button class="btn" type="submit">Show</button></noscript>
+    {% if not k.period.current %}<a class="btn" href="{% url 'web:overview' %}">This month</a>{% endif %}
+  </form>
+</div>
+
+<div class="panel">
+  <div class="panel-h"><h2>Where the fleet stands today</h2><span class="sub">Each active device counted once, most urgent state first. Select a segment to see those devices.</span></div>
+  <div class="panel-b">
+    <div class="strip">{% for s in strip.segments %}{% if s.n %}<a class="seg" href="{{ s.url }}" style="width:{{ s.pct|floatformat:2 }}%;background:{{ s.color }}" title="{{ s.label }}: {{ s.n }}" aria-label="{{ s.label }}: {{ s.n }}"></a>{% endif %}{% endfor %}</div>
+    <div class="legend">
+      {% for s in strip.segments %}<a class="it" href="{{ s.url }}" style="color:inherit;text-decoration:none"><i class="sw" style="background:{{ s.color }}"></i><b>{{ s.n }}</b><span class="lb">{{ s.label }} · {{ s.pct|floatformat:1 }}%</span></a>{% endfor %}
+      <a class="it" href="{{ strip.retired_url }}" style="color:inherit;text-decoration:none"><i class="sw" style="background:var(--line-2)"></i><b>{{ strip.retired }}</b><span class="lb">retired, awaiting disposition</span></a>
+    </div>
+  </div>
+</div>
+
+<div class="kpis">
+  {% for t in tiles %}
+  {% if t.url %}<a class="kpi" href="{{ t.url }}">{% else %}<div class="kpi static">{% endif %}
+    <div class="l">{{ t.label }}</div>
+    <div class="v">{{ t.value }}{% if t.unit %}<small>{{ t.unit }}</small>{% endif %}</div>
+    <div class="d">{% for text, css in t.parts %}{% if not forloop.first %} · {% endif %}<span class="{{ css }}">{{ text }}</span>{% endfor %}</div>
+  {% if t.url %}</a>{% else %}</div>{% endif %}
+  {% endfor %}
+</div>
+
+<div class="grid g-32">
+  <div class="panel">
+    <div class="panel-h"><h2>PM completion rate</h2><span class="sub">12 months ending {{ k.period.start|date:"M Y" }}, share of PMs due that were closed on time</span></div>
+    <div class="panel-b">{% include "web/_chart_line.html" with c=pm_chart aria="PM completion rate by month" %}</div>
+  </div>
+  <div class="panel">
+    <div class="panel-h"><h2>Needs attention</h2><span class="sub">{{ d.attention|length }} item{{ d.attention|length|pluralize }} today</span></div>
+    <div class="panel-b">
+      <div class="list">
+        {% for it in attention %}
+          {% if it.wo %}<a class="li" href="{% url 'web:wo' it.wo %}" hx-get="{% url 'web:wo' it.wo %}" hx-target="#drawer">
+          {% elif it.asset %}<a class="li" href="{% url 'web:asset' it.asset %}" hx-get="{% url 'web:asset' it.asset %}" hx-target="#drawer">
+          {% else %}<div class="li static">{% endif %}
+            <span class="rail {{ it.rail }}"></span><div class="bd"><div class="t">{{ it.title }}</div><div class="s">{{ it.sub }}</div></div><div class="r">{{ it.right }}</div>
+          {% if it.wo or it.asset %}</a>{% else %}</div>{% endif %}
+        {% empty %}<div class="empty">Nothing needs attention right now.</div>{% endfor %}
+      </div>
+      {% if attention_more %}<div class="hint" style="margin-top:8px">{{ attention_more }} more not shown</div>{% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="grid g-2 mt">
+  <div class="panel">
+    <div class="panel-h"><h2>Work orders opened by type</h2><span class="sub">6 months ending {{ k.period.start|date:"M Y" }}</span></div>
+    <div class="panel-b">{% include "web/_chart_bars.html" with c=type_chart aria="Work orders opened by type per month" %}</div>
+  </div>
+  <div class="panel">
+    <div class="panel-h"><h2>Repair spend by category</h2><span class="sub">Labor and parts, {{ k.period.start|date:"M Y" }}</span></div>
+    <div class="panel-b">{% if spend_chart %}{% include "web/_chart_hbars.html" with c=spend_chart aria="Repair spend by device category" %}{% else %}<div class="empty">No repairs closed in this month.</div>{% endif %}</div>
+  </div>
+</div>
+
+<div class="panel mt">
+  <div class="panel-h"><h2>Recent activity</h2><span class="sub">Latest work order events in {{ k.period.start|date:"M Y" }}</span></div>
+  <div class="tbl-wrap flat" style="margin-top:8px">
+    <table>
+      <thead><tr><th>When</th><th>Work order</th><th>Device</th><th>Event</th><th>By</th></tr></thead>
+      <tbody>
+        {% for w in d.recent %}
+        <tr class="row" hx-get="{% url 'web:wo' w.number %}" hx-target="#drawer">
+          <td class="muted">{{ w.event_on|date:"M j" }}</td>
+          <td class="tag"><a class="tag" href="{% url 'web:wo' w.number %}">{{ w.number }}</a></td>
+          <td class="two">{{ w.asset.device_model.description }}<small>{{ w.asset.tag }} · {{ w.asset.department }}</small></td>
+          <td style="white-space:normal;min-width:260px">{% if w.completed_on %}Completed: {{ w.resolution|default:w.problem }}{% elif w.started_on %}In progress: {{ w.problem }}{% else %}Opened: {{ w.problem }}{% endif %}</td>
+          <td class="muted">{% if w.vendor_service %}{{ w.vendor_name }}{% elif w.assigned_to %}{{ w.assigned_to.name }}{% else %}Unassigned{% endif %}</td>
+        </tr>
+        {% empty %}<tr><td colspan="5"><div class="empty">No activity in this month.</div></td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
