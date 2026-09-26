@@ -1,0 +1,5 @@
+{% for a in assets %}
+<button type="button" hx-post="{% url 'web:contract_add' c.pk %}" hx-vals='{"asset": "{{ a.tag|escapejs }}"}' hx-target="#drawer"><b style="font-weight:600">{{ a.tag }}</b> · {{ a.device_model.description }}<small>{{ a.device_model.manufacturer }} {{ a.device_model.model }} · {{ a.department }}{% if a.serial %} · SN {{ a.serial }}{% endif %}{% if a.contract %} · on {{ a.contract.reference }}{% endif %}</small></button>
+{% empty %}
+<div class="hint" style="padding:8px 10px">No devices match. Check the tag on the sticker.</div>
+{% endfor %}

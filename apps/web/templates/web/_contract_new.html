@@ -1,0 +1,8 @@
+{% load web %}
+<div class="modal-h"><h2>New service contract</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+<form id="ct-form" hx-post="{% url 'web:contract_new' %}" hx-target="#modal-card">
+  {% if asset %}<input type="hidden" name="asset" value="{{ asset.tag }}">{% endif %}
+  {% include "web/_contract_fields.html" %}
+  <div class="hint" style="padding:0 16px 12px">{% if asset %}{{ asset.tag }} · {{ asset.device_model.description }} will be added to this contract.{% else %}Add covered devices after the contract is created, one at a time or by model.{% endif %}</div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Create contract</button></div>
+</form>

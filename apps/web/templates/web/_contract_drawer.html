@@ -1,0 +1,70 @@
+{% load web contracts_tags %}
+<div class="dr-h">
+  <div>
+    <h2>{{ c.reference }} · {{ c.vendor }}</h2>
+    <div class="sub">{{ c.get_coverage_display }} · {% for label, k in models %}{{ label }}{% if not forloop.last %}, {% endif %}{% empty %}no devices yet{% endfor %}</div>
+    <div class="chips">{% contract_type_chip c %}<span class="chip {{ st.css }}">{{ st.label }}</span><span class="chip neutral">{{ n }} device{{ n|pluralize }}</span></div>
+  </div>
+  <button class="iconbtn" type="button" data-act="close-drawer" aria-label="Close">{% icon "x" %}</button>
+</div>
+<div class="dr-b">
+  {% if edit %}
+  <div class="sec"><h3>Edit contract</h3>
+    <form hx-post="{% url 'web:contract_save' c.pk %}" hx-target="#drawer">
+      {% include "web/_contract_fields.html" with inline=True %}
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
+        <a class="btn sm" href="{% url 'web:contract' c.pk %}" hx-get="{% url 'web:contract' c.pk %}" hx-target="#drawer">Cancel</a>
+        <button class="btn sm primary" type="submit">Save</button>
+      </div>
+    </form>
+  </div>
+  {% else %}
+  <div class="sec"><dl class="dl">
+    <div><dt>Vendor</dt><dd>{{ c.vendor }}</dd></div>
+    <div><dt>Type</dt><dd>{% if c.type == "oem" %}OEM service contract{% else %}Third-party service agreement{% endif %}</dd></div>
+    <div><dt>Coverage</dt><dd>{{ c.get_coverage_display }}</dd></div>
+    <div><dt>Term</dt><dd>{{ c.start_on|date:"M j, Y" }} to {{ c.end_on|date:"M j, Y" }}</dd></div>
+    <div><dt>Annual cost</dt><dd>{{ c.annual_cost|money }}</dd></div>
+    <div><dt>Per covered device</dt><dd>{% if per_device is not None %}{{ per_device|money }} per year{% else %}—{% endif %}</dd></div>
+    <div><dt>Notes</dt><dd>{{ c.notes|default:"—" }}</dd></div>
+    <div><dt>Status</dt><dd><span class="chip {{ st.css }}">{{ st.label }}</span></dd></div>
+  </dl>
+  {% if can_edit %}<div style="margin-top:10px"><a class="link" href="{% url 'web:contract' c.pk %}?edit=1" hx-get="{% url 'web:contract' c.pk %}?edit=1" hx-target="#drawer">Edit contract</a></div>{% endif %}
+  </div>
+  {% endif %}
+
+  {% if can_edit %}
+  <div class="sec"><h3>Add covered devices</h3>
+    <div class="form" style="padding:0;grid-template-columns:1fr">
+      <label class="full sugg-host">One device
+        <input id="ct-asset" name="asset_q" autocomplete="off" placeholder="Search by asset tag, serial, or model"
+               hx-get="{% url 'web:contract_devices' c.pk %}" hx-trigger="input changed delay:250ms" hx-target="#ct-sugg" hx-include="this">
+        <div class="sugg" id="ct-sugg"></div>
+      </label>
+      <label class="full">Every device of a model
+        {% if model_options %}
+        <div style="display:flex;gap:8px">
+          <select id="ct-model" name="device_model" style="flex:1;min-width:0" aria-label="Device model">{% for dm in model_options %}<option value="{{ dm.id }}">{{ dm.manufacturer }} {{ dm.model }} · {{ dm.n }} not on this contract</option>{% endfor %}</select>
+          <button class="btn sm primary" type="button" hx-post="{% url 'web:contract_add_model' c.pk %}" hx-include="#ct-model" hx-target="#drawer">Add all</button>
+        </div>
+        {% else %}<div class="hint">Every active device is already on this contract.</div>{% endif %}
+      </label>
+    </div>
+    <div class="hint" style="margin-top:6px">A device can be on one contract at a time. Adding it here moves it and sets its support type to {% if c.type == "oem" %}OEM contract{% else %}third-party{% endif %}.</div>
+  </div>
+  {% endif %}
+
+  <div class="sec"><h3>Covered devices <span>{{ n }}{% if models|length > 1 %} · {% for label, k in models %}{{ label }} ({{ k }}){% if not forloop.last %}, {% endif %}{% endfor %}{% endif %}</span></h3>
+    {% if n > 8 %}<input id="ct-filter" class="ct-filter" type="search" name="dq" value="{{ lst.q }}" placeholder="Filter by tag, model, or department" aria-label="Filter covered devices" autocomplete="off"
+           hx-get="{% url 'web:contract' c.pk %}" hx-trigger="input changed delay:300ms" hx-target="#ct-list" hx-swap="outerHTML" hx-include="this">{% endif %}
+    {% include "web/_contract_list.html" %}
+  </div>
+</div>
+{% if can_edit %}
+<div class="dr-f">
+  <button class="btn primary" type="button" hx-post="{% url 'web:contract_renew' c.pk %}" hx-target="#drawer">Renew 12 months</button>
+  {% if can_delete %}<button class="btn danger" type="button" hx-post="{% url 'web:contract_delete' c.pk %}" hx-swap="none"
+          hx-confirm="Delete {{ c.reference }}? {{ n }} covered device{{ n|pluralize }} will be set to in-house support."
+          hx-on::after-request="if(event.detail.successful)document.getElementById('scrim').click()">Delete contract</button>{% endif %}
+</div>
+{% endif %}

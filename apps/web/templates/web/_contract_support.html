@@ -1,0 +1,14 @@
+{# The mock's supportForm, swapped into the device drawer's #sp-host by the Support row's Edit link. #}
+<div class="sec"><h3>Support and contract</h3>
+  <form hx-post="{% url 'web:asset_support' asset.tag %}" hx-target="#drawer">
+    <div class="form" style="padding:0;grid-template-columns:1fr">
+      <label>Contract<select name="contract" id="sp-ct" autofocus>{% for v, l in choices %}<option value="{{ v }}"{% if v == current %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;flex-wrap:wrap">
+      <button class="btn sm" type="button" hx-get="{% url 'web:contract_new' %}?asset={{ asset.tag|urlencode }}" hx-target="#modal-card">New contract for this device</button>
+      <button class="btn sm" type="button" hx-get="{% url 'web:asset' asset.tag %}" hx-target="#drawer">Cancel</button>
+      <button class="btn sm primary" type="submit">Save</button>
+    </div>
+    <div class="hint" style="margin-top:8px">The support type follows the contract type (OEM or third-party). Terms, cost, and the full device list are managed under Contracts.</div>
+  </form>
+</div>

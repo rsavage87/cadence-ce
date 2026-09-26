@@ -1,0 +1,7 @@
+{# The mock's ctFields: shared by the new contract modal and the drawer's inline edit (inline=True drops the modal padding). #}
+<div class="form"{% if inline %} style="padding:0"{% endif %}>
+  {% if form.non_field_errors %}<div class="err full">{{ form.non_field_errors|striptags }}</div>{% endif %}
+  {% for field in form.visible_fields %}
+  <label{% if field.name == "notes" %} class="full"{% endif %}>{{ field.label }}{{ field }}{% if field.errors %}<span class="err">{{ field.errors|striptags }}</span>{% endif %}</label>
+  {% endfor %}
+</div>

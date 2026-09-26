@@ -401,7 +401,10 @@ a.tab{text-decoration:none;display:inline-block}
 .tabs.page-tabs{margin:0 0 14px;padding:0}
 
 /* ===== contracts screen (slice 5) ===== */
-/* (contracts styles go here) */
+/* The drawer's device picker has no JS toggle (cadence.js only knows #nw-sugg), so it shows whenever it has content. */
+#ct-sugg:not(:empty){display:block}
+.ct-filter{width:100%;font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line-2);border-radius:6px;padding:7px 9px;margin-bottom:8px}
+button.link{background:none;border:0;padding:0;font:inherit;font-size:12px;font-weight:400}
 
 
 
