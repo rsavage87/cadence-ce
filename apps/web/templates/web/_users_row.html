@@ -1,11 +1,11 @@
-{% load users_tags %}
+{% load web users_tags %}
 {% with u=row.u %}
 <tr id="user-{{ u.pk }}">
   <td class="two">{{ u.get_full_name|default:u.username }}<small>{{ u.email }}</small></td>
   <td>
     {% if can_manage_users %}
     <select class="perm" name="role" aria-label="Role for {{ u.get_full_name|default:u.username }}"{% if row.status == "deactivated" %} disabled{% else %}
-            hx-post="{% url 'web:user_role' u.pk %}" hx-trigger="change" hx-target="closest tr" hx-swap="outerHTML"{% endif %}>
+            hx-post="{% url 'web:user_role' u.pk %}{% query request.GET %}" hx-trigger="change" hx-target="#users-body" hx-swap="outerHTML"{% endif %}>
       {% if not u.role_id %}<option value="" selected>No role</option>{% endif %}
       {% for r in roles %}<option value="{{ r.id }}"{% if u.role_id == r.id %} selected{% endif %}>{{ r.name }}</option>{% endfor %}
     </select>
@@ -17,8 +17,8 @@
   <td>{% if row.tech %}<a class="link" href="{% url 'web:credentials' %}?technician={{ row.tech.id }}">{{ row.cred_count }} credential{{ row.cred_count|pluralize }}</a>{% if row.expiring %} <span class="chip warn">{{ row.expiring }} expiring</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
   <td class="num" style="white-space:nowrap">
     {% if can_manage_users %}
-      {% if row.status == "deactivated" %}<button class="btn sm" type="button" hx-post="{% url 'web:user_reactivate' u.pk %}" hx-target="closest tr" hx-swap="outerHTML">Reactivate</button>
-      {% elif not row.is_self and not u.is_superuser %}<button class="btn sm ghost" type="button" hx-post="{% url 'web:user_deactivate' u.pk %}" hx-target="closest tr" hx-swap="outerHTML"
+      {% if row.status == "deactivated" %}<button class="btn sm" type="button" hx-post="{% url 'web:user_reactivate' u.pk %}{% query request.GET %}" hx-target="#users-body" hx-swap="outerHTML">Reactivate</button>
+      {% elif not row.is_self and not u.is_superuser %}<button class="btn sm ghost" type="button" hx-post="{% url 'web:user_deactivate' u.pk %}{% query request.GET %}" hx-target="#users-body" hx-swap="outerHTML"
               hx-confirm="Deactivate {{ u.get_full_name|default:u.username }}? They keep their history but cannot sign in.">Deactivate</button>{% endif %}
     {% endif %}
   </td>

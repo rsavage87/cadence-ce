@@ -1,6 +1,6 @@
 {% load web contracts_tags %}
 {# Re-fetches itself when a drawer action changes a contract. #}
-<div id="ct-body" hx-get="{{ list_url }}{% query request.GET %}" hx-trigger="contracts-changed from:body" hx-target="this" hx-swap="outerHTML">
+<div id="ct-body" hx-get="{{ list_url }}{% query request.GET %}" hx-trigger="contracts-changed from:body" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap">
   <div class="tbl-wrap">
     <table>
       <thead><tr><th>Contract</th><th>Vendor</th><th>Type</th><th>Covers</th><th class="num">Devices</th><th class="num">Annual cost</th><th>Term</th><th>Status</th></tr></thead>

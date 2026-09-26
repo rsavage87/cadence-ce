@@ -276,3 +276,17 @@ def test_api_patch_cannot_reassign_around_the_assign_action(client, signed_in, w
     assert r.status_code == 400 and wo.assigned_to is None
     ok = client.patch(f"/api/v1/work-orders/{wo.id}/", {"problem": "Low tidal volume alarm, intermittent"}, content_type="application/json")
     assert ok.status_code == 200
+
+
+def test_self_swapping_wrappers_do_not_leak_outerhtml_to_their_children():
+    """A wrapper that replaces itself (hx-swap="outerHTML") must not pass that swap down to rows and buttons that
+    target #drawer or #modal-card; inherited outerHTML would replace the drawer element itself. hx-disinherit stops it."""
+    import pathlib
+    import re
+
+    bad = []
+    for path in pathlib.Path("apps/web/templates/web").glob("*.html"):
+        for m in re.finditer(r"<(\w+)[^>]*hx-target=\"this\"[^>]*hx-swap=\"outerHTML\"[^>]*>", path.read_text()):
+            if "hx-disinherit" not in m.group(0) or "hx-swap" not in m.group(0).split("hx-disinherit")[1]:
+                bad.append(f"{path.name}: {m.group(0)[:80]}")
+    assert bad == []

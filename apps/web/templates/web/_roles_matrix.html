@@ -1,6 +1,6 @@
 {% load users_tags %}
 {# Re-fetches itself after a role is added; level changes return the whole matrix. #}
-<div id="roles-matrix" class="tbl-wrap" hx-get="{% url 'web:roles' %}" hx-trigger="roles-changed from:body" hx-target="this" hx-swap="outerHTML">
+<div id="roles-matrix" class="tbl-wrap" hx-get="{% url 'web:roles' %}" hx-trigger="roles-changed from:body" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap">
   <table>
     <thead><tr><th>Role</th>{% for k, l in modules %}<th>{{ l }}</th>{% endfor %}<th class="num">Users</th></tr></thead>
     <tbody>

@@ -135,4 +135,4 @@ def query(params, **changes):
             data.pop(k, None)
         else:
             data[k] = [v]
-    return "?" + urlencode(data, doseq=True) if data else "?"
+    return "?" + urlencode(data, doseq=True) if data else ""

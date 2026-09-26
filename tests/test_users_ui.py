@@ -221,12 +221,22 @@ def test_director_changes_a_users_role(client, signed_in, make_user, role):
     r = client.post(f"/users/{kim.pk}/role/", {"role": str(role("manager").id)}, **HX)
     kim.refresh_from_db()
     assert r.status_code == 200 and kim.role.slug == "manager"
-    assert "Kim Alvarez: role set to CE manager" in r["HX-Trigger"] and "users-changed" in r["HX-Trigger"]
+    assert "Kim Alvarez: role set to CE manager" in r["HX-Trigger"]
     body = r.content.decode()
-    assert body.lstrip().startswith("<tr") and f'<option value="{role("manager").id}" selected>' in body
+    # Row actions return the whole body (so filters apply) plus the summary line out of band.
+    assert 'id="users-body"' in body and f'<option value="{role("manager").id}" selected>' in body and 'id="users-summary" hx-swap-oob="true"' in body
     bad = client.post(f"/users/{kim.pk}/role/", {"role": "not-a-uuid"}, **HX)
     kim.refresh_from_db()
-    assert bad.status_code == 200 and kim.role.slug == "manager" and "Choose a role" in bad["HX-Trigger"] and "users-changed" not in bad["HX-Trigger"]
+    assert bad.status_code == 200 and kim.role.slug == "manager" and "Choose a role" in bad["HX-Trigger"]
+
+
+def test_row_actions_keep_the_list_filters(client, signed_in, make_user):
+    signed_in("director")
+    tom = make_user("technician", username="tom@riverside.example")
+    r = client.post(f"/users/{tom.pk}/deactivate/?status=active", **HX)
+    body = r.content.decode()
+    assert r.status_code == 200 and "tom@riverside.example" not in body  # dropped out of the "Active" list at once
+    assert 'hx-get="/users/?status=active"' in body  # the body keeps re-fetching with the same filters
 
 
 def test_director_cannot_change_own_role_or_deactivate_self(client, signed_in, role):

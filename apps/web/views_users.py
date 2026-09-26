@@ -62,7 +62,7 @@ def _users_context(request) -> dict:
 def users(request):
     ctx = _users_context(request)
     if is_partial(request, "users-body"):
-        return render(request, "web/_users_body.html", ctx)
+        return render(request, "web/_users_body.html", {**ctx, "oob_summary": True})
     return render(request, "web/users.html", ctx)
 
 
@@ -70,13 +70,9 @@ def _get_user(request, pk):
     return get_object_or_404(User.objects.select_related("role"), pk=pk, tenant=request.tenant)
 
 
-def _row_response(request, user, message: str, changed: bool):
-    # Only FULL reaches the row actions, so the row always renders its controls.
-    ctx = {"can_manage_users": True, "roles": list(Role.objects.all()), "row": _rows(request, [user])[0]}
-    response = render(request, "web/_users_row.html", ctx)
-    if changed:
-        trigger_client_event(response, "users-changed", {})
-    return toast(response, message)
+def _body_response(request, message: str):
+    """Row actions return the whole body with the current filters (the POST URL carries them) plus the summary line."""
+    return toast(render(request, "web/_users_body.html", {**_users_context(request), "oob_summary": True}), message)
 
 
 @require_POST
@@ -86,9 +82,9 @@ def user_role(request, pk):
     role = Role.objects.filter(pk=parse_uuid(request.POST.get("role"))).first()
     try:
         services.set_user_role(user, role, by=request.user)
-        return _row_response(request, user, f"{user.get_full_name() or user.username}: role set to {role.name}", changed=True)
+        return _body_response(request, f"{user.get_full_name() or user.username}: role set to {role.name}")
     except ValidationError as e:
-        return _row_response(request, user, e.messages[0], changed=False)
+        return _body_response(request, e.messages[0])
 
 
 @require_POST
@@ -97,9 +93,9 @@ def user_deactivate(request, pk):
     user = _get_user(request, pk)
     try:
         services.deactivate_user(user, by=request.user)
-        return _row_response(request, user, f"{user.get_full_name() or user.username} deactivated", changed=True)
+        return _body_response(request, f"{user.get_full_name() or user.username} deactivated")
     except ValidationError as e:
-        return _row_response(request, user, e.messages[0], changed=False)
+        return _body_response(request, e.messages[0])
 
 
 @require_POST
@@ -107,7 +103,7 @@ def user_deactivate(request, pk):
 def user_reactivate(request, pk):
     user = _get_user(request, pk)
     services.reactivate_user(user, by=request.user)
-    return _row_response(request, user, f"{user.get_full_name() or user.username} reactivated", changed=True)
+    return _body_response(request, f"{user.get_full_name() or user.username} reactivated")
 
 
 def _modal_done(message: str, event: str):

@@ -1,6 +1,6 @@
 {% load web %}
 {# Re-fetches itself when a drawer action changes a work order. #}
-<div id="wo-body" hx-get="{{ list_url }}{% query request.GET %}" hx-trigger="wo-changed from:body" hx-target="this" hx-swap="outerHTML">
+<div id="wo-body" hx-get="{{ list_url }}{% query request.GET %}" hx-trigger="wo-changed from:body" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap">
 {% if mode == "board" %}
   <div class="kanban">
     {% for col in columns %}

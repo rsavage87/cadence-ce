@@ -1,6 +1,7 @@
 {% load web %}
-{# Re-fetches itself after a row action or an invite so the filters and counts catch up. #}
-<div id="users-body" hx-get="{{ list_url }}{% query request.GET %}" hx-trigger="users-changed from:body" hx-target="this" hx-swap="outerHTML">
+{# Row actions return this whole body (with the current filters) so a deactivated user drops out of an "Active" list at once;
+   an invite fires users-changed and the body re-fetches itself. Partial responses also refresh the summary line out of band. #}
+<div id="users-body" hx-get="{{ list_url }}{% query request.GET %}" hx-trigger="users-changed from:body" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap">
   <div class="tbl-wrap">
     <table>
       <thead><tr><th>User</th><th>Role</th><th>Department</th><th>Status</th><th>Last active</th><th>Credentials</th><th></th></tr></thead>
@@ -12,3 +13,4 @@
     </table>
   </div>
 </div>
+{% if oob_summary %}{% include "web/_users_summary.html" with oob=True %}{% endif %}
