@@ -151,12 +151,15 @@ def contracts_needing_attention(today: date | None = None):
 
 def nav_counts() -> dict:
     contracts = contracts_needing_attention()
+    recalls = AlertMatch.objects.filter(status=AlertMatch.Status.NEEDS_ACTION).count()
     return {
         "equipment": Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES).count(),
         "workorders": WorkOrder.objects.filter(status__in=OPEN_STATUSES).count(),
         "workorders_hot": unassigned_portal_requests().exists(),
         "contracts": contracts or None,  # no badge when nothing needs attention (matches the mock)
         "contracts_hot": bool(contracts),
+        "recalls": recalls or None,  # badge only while something needs action (matches the mock)
+        "recalls_hot": bool(recalls),
     }
 
 

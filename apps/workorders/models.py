@@ -75,6 +75,8 @@ class WorkOrder(TenantModel):
     estimated_hours = models.DecimalField(max_digits=6, decimal_places=2, default=1)
     tagged_out = models.BooleanField(default=False, help_text="Requester removed the device from use")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    alert = models.ForeignKey("recalls.Alert", on_delete=models.SET_NULL, null=True, blank=True, related_name="work_orders",
+                              help_text="The recall or hazard notice this work order responds to")
     history = HistoricalRecords()
 
     class Meta:
