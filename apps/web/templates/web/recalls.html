@@ -1,0 +1,16 @@
+{% extends "web/base.html" %}
+{% load web %}
+{% block title %}Recalls and alerts{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Recalls and alerts</h1>
+    <p class="sub">Alerts are matched to the inventory by manufacturer and model · FDA recall feed last imported {% if feed_at %}{{ feed_at|date:"M j, Y" }}{% else %}never{% endif %} · ECRI alerts need a licensed feed (not connected)</p>
+  </div>
+  <div class="actions">
+    {# The mock's "Check feeds" and "Response log" buttons only toast; the feed runs from `import_openfda` and the log is a slice 7 report. #}
+    {% if can_match %}<button class="btn" type="button" hx-post="{{ match_url }}" hx-target="#rc-body" hx-swap="outerHTML">{% icon "sync" %} Match alerts to inventory</button>{% endif %}
+  </div>
+</div>
+{% include "web/_recalls_body.html" %}
+{% endblock %}

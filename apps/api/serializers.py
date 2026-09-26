@@ -4,6 +4,7 @@ from apps.contracts.models import Contract
 from apps.credentials.models import Credential, Technician
 from apps.equipment.models import Asset, Department, DeviceModel
 from apps.recalls.models import Alert, AlertMatch
+from apps.recalls.services import progress as recall_progress
 from apps.workorders.models import LaborLine, PartLine, WorkOrder
 
 
@@ -99,10 +100,15 @@ class AlertSerializer(serializers.ModelSerializer):
 class AlertMatchSerializer(serializers.ModelSerializer):
     alert_detail = AlertSerializer(source="alert", read_only=True)
     affected_count = serializers.SerializerMethodField()
+    progress = serializers.SerializerMethodField()
 
     class Meta:
         model = AlertMatch
-        fields = ["id", "alert", "alert_detail", "device_model", "status", "disposition_note", "closed_on", "affected_count"]
+        fields = ["id", "alert", "alert_detail", "device_model", "status", "disposition_note", "closed_on", "affected_count", "progress"]
 
     def get_affected_count(self, obj):
         return obj.affected_assets().count()
+
+    def get_progress(self, obj):
+        p = recall_progress(obj)
+        return {"total": p["total"], "completed": p["completed"]}
