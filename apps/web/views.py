@@ -105,7 +105,8 @@ def _portal_url(asset) -> str:
     return f"{settings.PORTAL_BASE_URL.rstrip('/')}{reverse('portal:request', args=[asset.tenant.slug])}?{urlencode({'asset': asset.tag})}"
 
 
-def _asset_drawer_context(request, asset) -> dict:
+def asset_drawer_context(request, asset) -> dict:
+    """Also used by the contracts screen to re-render the device drawer after its support editor saves."""
     tab = request.GET.get("tab") if request.GET.get("tab") in ("overview", "wo") else "overview"
     summary = asset_service_summary(asset)
     return {"asset": asset, "tab": tab, "summary": summary, "recent": summary["work_orders"][:4], "qualified": qualified_technicians(asset),
@@ -116,7 +117,7 @@ def _asset_drawer_context(request, asset) -> dict:
 @web_view(Module.EQUIPMENT, Level.VIEW)
 def asset_detail(request, tag):
     asset = get_object_or_404(Asset.objects.select_related("device_model", "department", "contract", "tenant"), tag=tag)
-    ctx = _asset_drawer_context(request, asset)
+    ctx = asset_drawer_context(request, asset)
     if request.htmx:
         return render(request, "web/_asset_drawer.html", ctx)
     return render(request, "web/equipment.html", {**_equipment_context(request), **ctx, "drawer_template": "web/_asset_drawer.html"})

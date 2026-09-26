@@ -51,7 +51,7 @@
     const id = e.detail.target && e.detail.target.id;
     if (id === "drawer") openDrawer();
     if (id === "modal-card" && !$("#modal").classList.contains("open")) openModal();
-    if (id === "nw-sugg") e.detail.target.classList.toggle("show", e.detail.target.innerHTML.trim() !== "");
+    if (e.detail.target.classList.contains("sugg")) e.detail.target.classList.toggle("show", e.detail.target.innerHTML.trim() !== "");
   });
   document.addEventListener("htmx:responseError", (e) => {
     const s = e.detail.xhr.status;
@@ -60,6 +60,7 @@
   document.addEventListener("htmx:sendError", () => toast("Can't reach the server. Check your connection."));
   document.body.addEventListener("toast", (e) => toast(e.detail.value));
   document.body.addEventListener("modal-close", closeModal);
+  document.body.addEventListener("drawer-close", closeDrawer);
 
   document.addEventListener("click", (e) => {
     const el = e.target;

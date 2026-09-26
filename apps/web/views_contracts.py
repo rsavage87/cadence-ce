@@ -22,7 +22,7 @@ from .decorators import web_view
 from .forms import parse_uuid
 from .forms_contracts import STATUS_CHOICES, ContractForm, contract_choices, edit_contract_initial, new_contract_initial, parse_contract_filters
 from .htmx import PAGE_SIZE, is_partial, toast
-from .views import _asset_drawer_context
+from .views import asset_drawer_context
 
 DRAWER = "web/_contract_drawer.html"
 
@@ -132,8 +132,9 @@ def contract_renew(request, pk):
 def contract_delete(request, pk):
     contract = _get_contract(pk)
     n = ct.delete_contract(contract)
-    # The button swaps nothing and closes the drawer itself; only the events matter here.
-    return toast(_changed(HttpResponse("")), f"{contract.reference} deleted; {n} device{'' if n == 1 else 's'} set to in-house support")
+    # The button swaps nothing; the events close the drawer, refresh the table, and toast.
+    response = trigger_client_event(_changed(HttpResponse("")), "drawer-close", {})
+    return toast(response, f"{contract.reference} deleted; {n} device{'' if n == 1 else 's'} set to in-house support")
 
 
 @require_POST
@@ -225,5 +226,5 @@ def asset_support(request, tag):
             message = f"{asset.tag} set to in-house support"
     except ValidationError as e:
         message = e.messages[0]
-    response = render(request, "web/_asset_drawer.html", _asset_drawer_context(request, _get_asset(tag)))
+    response = render(request, "web/_asset_drawer.html", asset_drawer_context(request, _get_asset(tag)))
     return toast(_changed(response), message)

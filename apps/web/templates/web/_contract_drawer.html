@@ -64,7 +64,6 @@
 <div class="dr-f">
   <button class="btn primary" type="button" hx-post="{% url 'web:contract_renew' c.pk %}" hx-target="#drawer">Renew 12 months</button>
   {% if can_delete %}<button class="btn danger" type="button" hx-post="{% url 'web:contract_delete' c.pk %}" hx-swap="none"
-          hx-confirm="Delete {{ c.reference }}? {{ n }} covered device{{ n|pluralize }} will be set to in-house support."
-          hx-on::after-request="if(event.detail.successful)document.getElementById('scrim').click()">Delete contract</button>{% endif %}
+          hx-confirm="Delete {{ c.reference }}? {{ n }} covered device{{ n|pluralize }} will be set to in-house support.">Delete contract</button>{% endif %}
 </div>
 {% endif %}
