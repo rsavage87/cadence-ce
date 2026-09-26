@@ -3,7 +3,7 @@
 {% block title %}Service contracts{% endblock %}
 {% block content %}
 <div class="page-head">
-  <div><h1>Service contracts</h1><p class="sub">{{ s.contracts }} contract{{ s.contracts|pluralize }} · {{ s.covered }} of {{ s.active_fleet }} active device{{ s.active_fleet|pluralize }} covered · each device is on at most one contract</p></div>
+  <div><h1>Service contracts</h1>{% include "web/_contracts_summary.html" %}</div>
   <div class="actions">
     {% if can_edit %}<button class="btn primary" type="button" hx-get="{% url 'web:contract_new' %}" hx-target="#modal-card">{% icon "plus" %} New contract</button>{% endif %}
   </div>

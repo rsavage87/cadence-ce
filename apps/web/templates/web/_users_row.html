@@ -4,7 +4,7 @@
   <td class="two">{{ u.get_full_name|default:u.username }}<small>{{ u.email }}</small></td>
   <td>
     {% if can_manage_users %}
-    <select class="perm" name="role" aria-label="Role for {{ u.get_full_name|default:u.username }}"{% if row.status == "deactivated" %} disabled{% else %}
+    <select class="perm" name="role" aria-label="Role for {{ u.get_full_name|default:u.username }}"{% if row.status == "deactivated" %} disabled{% elif row.is_self %} disabled title="You cannot change your own role"{% else %}
             hx-post="{% url 'web:user_role' u.pk %}{% query request.GET %}" hx-trigger="change" hx-target="#users-body" hx-swap="outerHTML"{% endif %}>
       {% if not u.role_id %}<option value="" selected>No role</option>{% endif %}
       {% for r in roles %}<option value="{{ r.id }}"{% if u.role_id == r.id %} selected{% endif %}>{{ r.name }}</option>{% endfor %}
@@ -13,7 +13,7 @@
   </td>
   <td>{{ u.department|default:"—" }}</td>
   <td>{% user_status_chip row.status %}</td>
-  <td class="muted">{% if u.last_login %}{{ u.last_login|date:"M j, g:i A" }}{% else %}—{% endif %}</td>
+  <td class="muted">{{ u.last_login|last_active }}</td>
   <td>{% if row.tech %}<a class="link" href="{% url 'web:credentials' %}?technician={{ row.tech.id }}">{{ row.cred_count }} credential{{ row.cred_count|pluralize }}</a>{% if row.expiring %} <span class="chip warn">{{ row.expiring }} expiring</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
   <td class="num" style="white-space:nowrap">
     {% if can_manage_users %}

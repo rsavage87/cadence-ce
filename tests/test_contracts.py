@@ -5,7 +5,7 @@ from django.core.exceptions import ValidationError
 
 from apps.contracts import services as ct
 from apps.contracts.models import Contract, ContractType, Coverage
-from apps.equipment.models import Asset, AssetStatus, DeviceModel, SupportType
+from apps.equipment.models import Asset, AssetStatus, SupportType
 from apps.pm.dates import add_months
 
 TODAY = date.today()
@@ -153,7 +153,7 @@ def test_contract_status_for_each_state(ctx):
 
 
 def test_filter_contracts_by_status_type_and_text(ctx, vent, pump):
-    expired = make_contract(reference="OLD-1", vendor="Steris", start=TODAY - timedelta(days=400), end=TODAY - timedelta(days=1), type=ContractType.THIRD_PARTY)
+    make_contract(reference="OLD-1", vendor="Steris", start=TODAY - timedelta(days=400), end=TODAY - timedelta(days=1), type=ContractType.THIRD_PARTY)
     ending = make_contract(reference="SOON-1", vendor="BD", end=TODAY + timedelta(days=90), coverage=Coverage.PARTS)
     active = make_contract(reference="SC-1", vendor="Hamilton Medical", end=TODAY + timedelta(days=91))
     ct.add_asset(active, vent)
@@ -168,7 +168,6 @@ def test_filter_contracts_by_status_type_and_text(ctx, vent, pump):
     assert refs(q="steris") == ["OLD-1"] and refs(q="parts only") == ["SOON-1"] and refs(q="G5") == ["SC-1"] and refs(q="alaris") == ["SOON-1"]
     assert refs(q="nothing") == []
     assert [c.devices for c in ct.filter_contracts(ct.ContractFilters())] == [0, 1, 1]
-    assert expired.reference == "OLD-1"
 
 
 def test_contracts_summary_numbers(ctx, dept, pump_model, vent, pump):
@@ -209,4 +208,24 @@ def test_pick_devices_excludes_retired_and_already_covered(ctx, dept, pump_model
     Asset.objects.create(tag="CE-R", device_model=pump_model, department=dept, status=AssetStatus.RETIRED)
     assert [a.tag for a in ct.pick_devices(c, "CE-")] == [vent.tag]
     assert not ct.pick_devices(c, "C").exists()
-    assert DeviceModel.objects.count() == 2
+
+
+def test_create_rejects_bad_choices_missing_dates_and_unknown_fields(ctx):
+    with pytest.raises(ValidationError) as e:
+        ct.create_contract(reference="X", vendor="V", type="bogus", coverage="bogus", annual_cost=None)
+    assert {"type", "coverage"} <= set(e.value.message_dict)
+    with pytest.raises((ValidationError, TypeError)):
+        ct.create_contract(reference="X", vendor="V", start_on=TODAY, end_on=TODAY, not_a_field=1)
+    assert not Contract.objects.filter(reference="X").exists()
+
+
+def test_delete_reports_covered_devices_but_detaches_retired_ones_too(ctx, dept, pump_model, vent, pump):
+    c = make_contract()
+    ct.add_asset(c, vent)
+    ct.add_asset(c, pump)
+    pump.status = AssetStatus.RETIRED
+    pump.save()
+    assert ct.delete_contract(c) == 1  # the toast counts covered devices, as the confirm text does
+    pump.refresh_from_db()
+    vent.refresh_from_db()
+    assert pump.contract_id is None and vent.contract_id is None

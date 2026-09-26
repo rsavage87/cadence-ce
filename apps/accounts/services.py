@@ -13,12 +13,25 @@ from django.utils.text import slugify
 
 from apps.credentials.models import Technician
 
-from .models import Level, Module, Role, User
+from .models import DEFAULT_ROLES, Level, Module, Role, User
 
 # Status is derived, not stored: an invited account that has signed in is simply active.
 USER_STATUSES = [("active", "Active"), ("invited", "Invited"), ("deactivated", "Deactivated")]
 PENDING_INVITE = Q(is_invited=True, last_login__isnull=True)
 NEW_TECHNICIAN_TITLE = "BMET I"
+
+
+def count_active_users(tenant) -> int:
+    """Active accounts that have signed in at least once; invited ones are not counted, matching the mock's status chips."""
+    return User.objects.filter(tenant=tenant, is_active=True).exclude(PENDING_INVITE).count()
+
+
+_DEFAULT_ROLE_RANK = {slug: i for i, (slug, *_rest) in enumerate(DEFAULT_ROLES)}
+
+
+def role_order(roles) -> list:
+    """The mock's order: the standard roles as DEFAULT_ROLES lists them (Director first), then custom roles by name."""
+    return sorted(roles, key=lambda r: (_DEFAULT_ROLE_RANK.get(r.slug, len(_DEFAULT_ROLE_RANK)), r.name))
 
 
 def user_status(user) -> str:
@@ -72,8 +85,9 @@ def invite_user(tenant, *, email, first_name, last_name, role, department="", cr
     if not first_name or not last_name:
         raise ValidationError("First and last name are required.")
     _check_role(tenant, role)
-    if User.objects.filter(Q(username__iexact=email) | Q(email__iexact=email)).exists():
-        raise ValidationError(f"An account already exists for {email}.")
+    # Only this facility's accounts are named; an address used elsewhere must not be confirmed to another tenant.
+    if User.objects.filter(tenant=tenant).filter(Q(username__iexact=email) | Q(email__iexact=email)).exists():
+        raise ValidationError(f"{email} is already a member of this facility.")
     user = User(username=email, email=email, first_name=first_name, last_name=last_name, tenant=tenant, role=role, department=(department or "").strip()[:80],
                 is_invited=True, is_active=True)
     user.set_unusable_password()
@@ -82,7 +96,8 @@ def invite_user(tenant, *, email, first_name, last_name, role, department="", cr
         with transaction.atomic():
             user.save()
     except IntegrityError:
-        raise ValidationError(f"An account already exists for {email}.")
+        # username is unique across tenants; say only that the address cannot be used here
+        raise ValidationError("That address cannot be used for a new account here. Contact support.")
     if create_technician:
         Technician.objects.create(tenant=tenant, user=user, name=f"{first_name} {last_name}", title=NEW_TECHNICIAN_TITLE)
     return user
@@ -108,6 +123,8 @@ def deactivate_user(user, by=None) -> User:
 
 
 def reactivate_user(user, by=None) -> User:
+    if user.is_superuser:
+        raise ValidationError("Superusers are managed in Admin.")
     user.is_active = True
     user.save(update_fields=["is_active"])
     return user
@@ -120,6 +137,8 @@ def set_role_level(role, module, level, by=None) -> Role:
         raise ValidationError("Unknown permission level.")
     if role.is_system:
         raise ValidationError(f"The {role.name} role is fixed and cannot be changed.")
+    if by is not None and by.role_id == role.pk:
+        raise ValidationError("You cannot change the permissions of your own role.")
     role.set_levels({module: level})
     return role
 

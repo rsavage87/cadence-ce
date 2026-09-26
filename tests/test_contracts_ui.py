@@ -3,10 +3,10 @@ from datetime import date, timedelta
 
 import pytest
 
-from apps.accounts.models import create_default_roles
+from apps.accounts.models import Level, Role, create_default_roles
 from apps.contracts import services as ct
 from apps.contracts.models import Contract, ContractType
-from apps.equipment.models import Asset, Department, DeviceModel, SupportType
+from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, SupportType
 from apps.pm.dates import add_months
 from apps.tenants.context import tenant_context
 
@@ -323,3 +323,51 @@ def test_support_editor_marks_expired_contracts(client, signed_in, vent):
 def test_support_editor_needs_sign_in(client, db, vent):
     r = client.get(f"/contracts/assets/{vent.tag}/support/")
     assert r.status_code == 302 and r["Location"].startswith("/login/")
+
+
+def test_roles_without_contracts_access_get_403(client, signed_in, contract):
+    for slug in ("requester", "vendor"):
+        signed_in(slug)
+        assert client.get("/contracts/").status_code == 403, slug
+        assert client.get(url(contract), **HX).status_code == 403, slug
+
+
+def test_other_tenants_contract_changes_are_not_found(client, make_user, other_tenant, contract, theirs, vent):
+    client.force_login(make_user("director", tenant_=other_tenant))
+    for action, data in (("save/", {}), ("delete/", {}), ("renew/", {}), ("add/", {"asset": vent.tag}), ("remove/", {"asset": vent.tag}),
+                         ("add-model/", {"device_model": str(vent.device_model_id)})):
+        assert client.post(url(contract, action), data, **HX).status_code == 404, action
+    assert client.get(url(contract, "devices/?asset_q=CE"), **HX).status_code == 404
+    # and our director cannot pull the other tenant's device or model onto our contract
+    client.force_login(make_user("director"))
+    r = client.post(url(contract, "add/"), {"asset": "THEIRS-1"}, **HX)
+    assert r.status_code == 200 and "Choose a device" in r["HX-Trigger"]
+    foreign_model = Asset.unscoped.get(tag="THEIRS-1").device_model  # unscoped: the test reaches across tenants on purpose
+    r = client.post(url(contract, "add-model/"), {"device_model": str(foreign_model.id)}, **HX)
+    assert r.status_code == 200 and "Choose a device model" in r["HX-Trigger"]
+    assert Asset.unscoped.get(tag="THEIRS-1").contract_id == theirs.id
+
+
+def test_support_editor_needs_equipment_view_even_with_contracts_edit(client, ctx, make_user, vent):
+    from apps.accounts import services as accounts
+
+    clerk = accounts.create_role(name="Contracts clerk", copy_from=Role.objects.get(slug="analyst"))
+    accounts.set_role_level(clerk, "contracts", Level.EDIT)
+    accounts.set_role_level(clerk, "equipment", Level.NONE)
+    user = make_user("analyst", username="clerk@riverside.example")
+    user.role = clerk
+    user.save()
+    client.force_login(user)
+    assert client.get(f"/contracts/assets/{vent.tag}/support/", **HX).status_code == 403
+
+
+def test_retired_devices_are_rejected_by_the_drawer_and_the_support_editor(client, signed_in, contract, pump):
+    signed_in("manager")
+    pump.status = AssetStatus.RETIRED
+    pump.save()
+    r = client.post(url(contract, "add/"), {"asset": pump.tag}, **HX)
+    pump.refresh_from_db()
+    assert r.status_code == 200 and pump.contract_id is None and "retired" in r["HX-Trigger"]
+    r = client.post(f"/contracts/assets/{pump.tag}/support/", {"contract": str(contract.pk)}, **HX)
+    pump.refresh_from_db()
+    assert r.status_code == 200 and pump.contract_id is None and "retired" in r["HX-Trigger"]

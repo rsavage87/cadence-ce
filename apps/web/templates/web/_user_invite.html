@@ -7,9 +7,7 @@
     <label>Last name{{ form.last_name }}{% if form.last_name.errors %}<span class="err">{{ form.last_name.errors|striptags }}</span>{% endif %}</label>
     <label>Work email{{ form.email }}{% if form.email.errors %}<span class="err">{{ form.email.errors|striptags }}</span>{% endif %}</label>
     <label>Role{{ form.role }}{% if form.role.errors %}<span class="err">{{ form.role.errors|striptags }}</span>{% endif %}</label>
-    <label class="full">Department{{ form.department }}
-      <datalist id="nu-depts">{% for d in form.department_options %}<option value="{{ d }}"></option>{% endfor %}</datalist>
-    </label>
+    <label class="full">Department{{ form.department }}</label>
     <label class="full check-row">{{ form.create_technician }} Also create a technician profile so credentials and work can be assigned</label>
   </div>
   <div class="note" style="margin:0 16px 12px">No invitation email is sent yet (email delivery arrives with integrations); the account is created as Invited and an administrator sets its first password in Admin.</div>

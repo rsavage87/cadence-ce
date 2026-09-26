@@ -38,6 +38,7 @@ class RoleChoiceMixin:
         default = next((rid for rid, r in self.roles.items() if r.slug == DEFAULT_ROLE_SLUG), next(iter(self.roles), ""))
         self.fields[self.field].choices = [(rid, r.name) for rid, r in self.roles.items()]
         self.fields[self.field].initial = default
+        self.fields[self.field].error_messages["invalid_choice"] = "Choose a role."
 
     def _clean_role(self, value):
         role = self.roles.get(value)
@@ -51,13 +52,15 @@ class InviteUserForm(RoleChoiceMixin, forms.Form):
     last_name = forms.CharField(max_length=150, label="Last name")
     email = forms.EmailField(label="Work email", widget=forms.EmailInput(attrs={"placeholder": "name@hospital.org"}))
     role = forms.ChoiceField(label="Role")
-    department = forms.CharField(max_length=80, required=False, widget=forms.TextInput(attrs={"list": "nu-depts", "autocomplete": "off"}))
+    department = forms.ChoiceField(label="Department", required=False)
     create_technician = forms.BooleanField(required=False, label="Also create a technician profile so credentials and work can be assigned")
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._init_roles()
-        self.department_options = department_options()
+        # The mock's select: Clinical Engineering first, then the tenant's departments, then the standing non-clinical ones.
+        self.fields["department"].choices = [(d, d) for d in department_options()]
+        self.fields["department"].initial = STANDING_DEPARTMENTS[0][0]
 
     def clean_role(self):
         return self._clean_role(self.cleaned_data["role"])

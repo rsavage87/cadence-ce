@@ -29,7 +29,7 @@ from .htmx import is_partial, toast
 def _tabs_context(request, tab: str) -> dict:
     return {
         "nav_active": "users", "users_tab": tab,
-        "users_summary": {"active_users": User.objects.filter(tenant=request.tenant, is_active=True).count(), "roles": Role.objects.count(),
+        "users_summary": {"active_users": services.count_active_users(request.tenant), "roles": Role.objects.count(),
                           "technicians": Technician.objects.filter(is_active=True).count()},
         "can_manage_users": request.user.has_level(Module.USERS, Level.FULL),
         "can_manage_credentials": request.user.has_level(Module.USERS, Level.EDIT),
@@ -52,7 +52,7 @@ def _rows(request, users) -> list[dict]:
 
 
 def _users_context(request) -> dict:
-    roles = list(Role.objects.all())
+    roles = services.role_order(Role.objects.all())
     f = parse_user_filters(request.GET, {r.slug for r in roles})
     return {**_tabs_context(request, "users"), "list_url": reverse("web:users"), "f": f, "roles": roles, "statuses": USER_STATUSES,
             "rows": _rows(request, services.list_users(request.tenant, f))}
@@ -102,8 +102,11 @@ def user_deactivate(request, pk):
 @web_view(Module.USERS, Level.FULL)
 def user_reactivate(request, pk):
     user = _get_user(request, pk)
-    services.reactivate_user(user, by=request.user)
-    return _body_response(request, f"{user.get_full_name() or user.username} reactivated")
+    try:
+        services.reactivate_user(user, by=request.user)
+        return _body_response(request, f"{user.get_full_name() or user.username} reactivated")
+    except ValidationError as e:
+        return _body_response(request, e.messages[0])
 
 
 def _modal_done(message: str, event: str):
@@ -131,13 +134,17 @@ def user_invite(request):
 
 # --- Roles tab ------------------------------------------------------------------------------------
 
+# Column order from the mock's MODULES list (Recalls before Contracts), not the enum's declaration order.
+ROLE_MATRIX_MODULES = [Module.EQUIPMENT, Module.WORKORDERS, Module.PM, Module.RECALLS, Module.CONTRACTS, Module.REPORTS, Module.USERS, Module.SETTINGS]
+
 def _roles_context(request) -> dict:
     counts = services.role_user_counts(request.tenant)
     matrix = []
-    for role in Role.objects.prefetch_related("permissions"):
+    for role in services.role_order(Role.objects.prefetch_related("permissions")):
         levels = {p.module: p.level for p in role.permissions.all()}
-        matrix.append({"role": role, "cells": [(m, levels.get(m, Level.NONE)) for m in Module.values], "users": counts.get(role.id, 0)})
-    return {**_tabs_context(request, "roles"), "matrix": matrix, "modules": Module.choices, "levels": Level.choices}
+        matrix.append({"role": role, "cells": [(m.value, levels.get(m.value, Level.NONE)) for m in ROLE_MATRIX_MODULES], "users": counts.get(role.id, 0)})
+    return {**_tabs_context(request, "roles"), "matrix": matrix, "modules": [(m.value, m.label) for m in ROLE_MATRIX_MODULES], "levels": Level.choices,
+            "oob_summary": request.htmx is not None and bool(request.htmx)}
 
 
 @web_view(Module.USERS, Level.VIEW)

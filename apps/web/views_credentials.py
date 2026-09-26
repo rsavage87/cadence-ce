@@ -9,7 +9,8 @@ from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_POST
 from django_htmx.http import trigger_client_event
 
-from apps.accounts.models import Level, Module, Role, User
+from apps.accounts import services as account_services
+from apps.accounts.models import Level, Module, Role
 from apps.credentials import services as cred_services
 from apps.credentials.models import Credential
 from apps.credentials.services import SCOPE_SHORT, coverage_by_category
@@ -21,7 +22,7 @@ from .htmx import is_partial, toast
 
 def _users_summary(request) -> dict:
     # User is not tenant-scoped; the tenant filter is explicit.
-    return {"active_users": User.objects.filter(tenant=request.tenant, is_active=True).count(), "roles": Role.objects.count(),
+    return {"active_users": account_services.count_active_users(request.tenant), "roles": Role.objects.count(),
             "technicians": active_technicians().count()}
 
 

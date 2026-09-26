@@ -54,7 +54,8 @@ def _contracts_context(request) -> dict:
 @web_view(Module.CONTRACTS, Level.VIEW)
 def contracts(request):
     if is_partial(request, "ct-kpis"):
-        return render(request, "web/_contracts_kpis.html", {"s": ct.contracts_summary(), "list_url": reverse("web:contracts")})
+        # The page-head summary line refreshes out of band with the tiles.
+        return render(request, "web/_contracts_kpis.html", {"s": ct.contracts_summary(), "list_url": reverse("web:contracts"), "oob_summary": True})
     ctx = _contracts_context(request)
     if is_partial(request, "ct-body"):
         return render(request, "web/_contracts_body.html", ctx)
@@ -123,7 +124,10 @@ def contract_save(request, pk):
 @web_view(Module.CONTRACTS, Level.EDIT)
 def contract_renew(request, pk):
     contract = _get_contract(pk)
-    ct.renew_contract(contract, by=request.user)
+    try:
+        ct.renew_contract(contract, by=request.user)
+    except ValidationError as e:
+        return toast(_render_drawer(request, contract), e.messages[0])
     return toast(_changed(_render_drawer(request, contract)), f"{contract.reference} renewed through {ct.fmt_date(contract.end_on)}")
 
 

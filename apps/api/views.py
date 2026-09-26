@@ -147,7 +147,8 @@ class TechnicianViewSet(TenantViewSet):
 
 
 class CredentialViewSet(TenantViewSet):
-    model, module, serializer_class = Credential, "users", s.CredentialSerializer
+    # Removing a credential is part of routine credential upkeep, gated like adding one (the web tab does the same).
+    model, module, serializer_class, delete_level = Credential, "users", s.CredentialSerializer, Level.EDIT
 
 
 class AlertMatchViewSet(TenantViewSet):

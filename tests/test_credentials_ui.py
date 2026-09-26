@@ -91,7 +91,7 @@ def test_coverage_shows_vendor_contract_and_single_technician(client, signed_in,
 # --- permissions --------------------------------------------------------------------------------
 
 def test_roles_without_users_access_get_403(client, signed_in, techs):
-    for role in ("requester", "analyst", "technician"):
+    for role in ("requester", "analyst", "technician", "vendor"):
         signed_in(role)
         assert client.get(TAB).status_code == 403, role
         assert client.get(f"{TAB}new/").status_code == 403, role
@@ -218,3 +218,35 @@ def test_other_tenant_sees_only_its_own(client, make_user, techs, theirs, other_
     client.force_login(make_user("director", tenant_=other_tenant))
     body = client.get(TAB).content.decode()
     assert "Someone Else" in body and "Dana Whitfield" not in body
+
+
+# --- review follow-ups ---------------------------------------------------------------------------
+
+def test_sign_off_rule_is_reported_not_applied(client, signed_in, techs):
+    signed_in("director")
+    cred = techs["tom"].credentials.get()  # already active
+    r = client.post(f"{TAB}{cred.id}/sign-off/", **HX)
+    cred.refresh_from_db()
+    assert r.status_code == 200 and "in training" in r["HX-Trigger"] and cred.source == ""
+
+
+def test_add_credential_button_keeps_the_technician_filter(client, signed_in, techs):
+    signed_in("director")
+    page = client.get(f"{TAB}?technician={techs['dana'].id}").content.decode()
+    assert f'hx-get="/users/credentials/new/?technician={techs["dana"].id}"' in page
+
+
+def test_api_credential_delete_matches_the_tab_level(client, ctx, make_user, techs):
+    from apps.accounts import services as accounts
+    from apps.accounts.models import Level, Role
+
+    clerk = accounts.create_role(name="Credential clerk", copy_from=Role.objects.get(slug="manager"))
+    accounts.set_role_level(clerk, "users", Level.EDIT)
+    user = make_user("manager", username="clerk@riverside.example")
+    user.role = clerk
+    user.save()
+    client.force_login(user)
+    cred = techs["tom"].credentials.get()
+    assert client.delete(f"/api/v1/credentials/{cred.id}/").status_code == 204
+    client.force_login(make_user("manager"))  # users: View
+    assert client.delete(f"/api/v1/credentials/{techs['dana'].credentials.first().id}/").status_code == 403

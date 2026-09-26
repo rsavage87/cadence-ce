@@ -1,7 +1,7 @@
 from datetime import date
 
 from django.conf import settings
-from django.db import models
+from django.db import models, transaction
 from simple_history.models import HistoricalRecords
 
 from apps.core.models import TenantModel
@@ -66,13 +66,14 @@ class Contract(TenantModel):
         return self.assets.exclude(status="retired")
 
     def add_assets(self, assets):
-        """Move devices onto this contract; each device can be on only one."""
+        """Move devices onto this contract; each device can be on only one. All or nothing, so a bulk move is never half-applied."""
         n = 0
-        for asset in assets:
-            if asset.contract_id != self.id:
-                asset.contract = self
-                asset.save(update_fields=["contract", "support_type", "updated_at"])
-                n += 1
+        with transaction.atomic():
+            for asset in assets:
+                if asset.contract_id != self.id:
+                    asset.contract = self
+                    asset.save(update_fields=["contract", "support_type", "updated_at"])
+                    n += 1
         return n
 
     def remove_asset(self, asset):

@@ -5,7 +5,8 @@ service contracts, recall matching, technician credentials, a public service req
 
 This is the starter codebase generated from the interactive mock in `spec/`. It contains the data model, tenancy,
 permissions, lifecycle services, importer, PM engine, KPI math, REST API, admin, portal, and tests, plus the HTMX
-web UI for Overview, Equipment, and Work orders. The remaining screens land slice by slice (see `spec/BUILD_PLAN.md`).
+web UI for Overview, Equipment, Work orders, Contracts, and Users and access (Users, Roles, Technician credentials). The remaining
+screens (Recalls and alerts, PM schedule, Reports, Settings) land slice by slice (see `spec/BUILD_PLAN.md`).
 
 ## Run locally (Docker)
 ```
@@ -40,4 +41,4 @@ pytest
 
 ## First things to do in Claude Code
 1. `pip install -r requirements-dev.txt`, then `pytest`.
-2. Start slice 5 (`spec/BUILD_PLAN.md`): Contracts and Users and access → Credentials, as new screens in `apps/web`.
+2. Start slice 6 (`spec/BUILD_PLAN.md`): the Recalls and alerts screen in `apps/web` (the ECRI importer needs a license; openFDA already imports).

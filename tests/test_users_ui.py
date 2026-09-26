@@ -1,5 +1,5 @@
 """Users and access (slice 5): user and role services, the Users and Roles tabs, server-side permission checks, and tenant isolation."""
-from datetime import datetime
+from datetime import timedelta
 
 import pytest
 from django.core.exceptions import ValidationError
@@ -45,7 +45,7 @@ def other_roles(other_tenant):
 
 def test_invite_creates_an_invited_user_and_optional_technician(ctx, role):
     u = services.invite_user(ctx, email="  Maria.Santos@Riverside.example ", first_name="Maria", last_name="Santos", role=role("requester"),
-                             department="Central Sterile", create_technician=True)
+                             department="ICU", create_technician=True)
     assert u.username == u.email == "maria.santos@riverside.example" and u.tenant == ctx and u.is_invited and u.is_active
     assert not u.has_usable_password() and services.user_status(u) == "invited"
     assert u.technician.name == "Maria Santos" and u.technician.title == "BMET I" and u.technician.tenant == ctx
@@ -55,7 +55,7 @@ def test_invite_creates_an_invited_user_and_optional_technician(ctx, role):
 
 def test_invite_rejects_duplicate_email_and_missing_fields(ctx, role, make_user):
     make_user("requester", username="taken@riverside.example")
-    with pytest.raises(ValidationError, match="already exists"):
+    with pytest.raises(ValidationError, match="already a member"):
         services.invite_user(ctx, email="TAKEN@riverside.example", first_name="A", last_name="B", role=role("requester"))
     with pytest.raises(ValidationError, match="email"):
         services.invite_user(ctx, email="", first_name="A", last_name="B", role=role("requester"))
@@ -148,7 +148,7 @@ def test_list_users_filters_and_counts(ctx, role, make_user, other_roles):
 # --- Users tab -------------------------------------------------------------------------------------
 
 def test_roles_without_users_access_get_403(client, signed_in):
-    for slug in ("requester", "analyst", "technician"):
+    for slug in ("requester", "analyst", "technician", "vendor"):
         signed_in(slug)
         assert client.get("/users/").status_code == 403, slug
         assert client.get("/users/roles/").status_code == 403, slug
@@ -193,7 +193,7 @@ def test_users_tab_lists_roles_status_and_credentials(client, signed_in, make_us
     assert f'href="/users/credentials/?technician={techs["tom"].id}">2 credentials</a> <span class="chip warn">1 expiring</span>' in body
     assert body.count('class="perm"') == 2 and body.count(">Deactivate<") == 1  # no Deactivate on the signed-in user's own row
     assert '<span class="chip ok">Active</span>' in body and "Change a role from the dropdown" in body
-    assert f'hx-post="/users/{tom.pk}/role/"' in body and f'hx-post="/users/{kim.pk}/role/"' in body
+    assert f'hx-post="/users/{tom.pk}/role/"' in body and f'hx-post="/users/{kim.pk}/role/"' not in body  # your own role is fixed
 
 
 def test_users_filters_and_partial(client, signed_in, make_user, role):
@@ -272,17 +272,17 @@ def test_invite_user_modal_and_creation(client, signed_in, role, dept):
     body = modal.content.decode()
     assert modal.status_code == 200 and "<html" not in body and "No invitation email is sent yet" in body and "Resend" not in body
     assert f'<option value="{role("requester").id}" selected>' in body and 'name="create_technician"' in body
-    assert '<option value="Clinical Engineering">' in body and '<option value="ICU">' in body and '<option value="External vendor">' in body
+    assert '<option value="Clinical Engineering" selected>' in body and '<option value="ICU">' in body and '<option value="External vendor">' in body
     r = client.post("/users/invite/", {"first_name": "Maria", "last_name": "Santos", "email": "MSantos@riverside.example", "role": str(role("requester").id),
-                                       "department": "Central Sterile", "create_technician": "on"}, **HX)
+                                       "department": "ICU", "create_technician": "on"}, **HX)
     assert r.status_code == 200 and r.content == b""
     assert "Account created for msantos@riverside.example" in r["HX-Trigger"] and "users-changed" in r["HX-Trigger"]
     assert "modal-close" in r["HX-Trigger-After-Settle"]
     u = User.objects.get(username="msantos@riverside.example")
-    assert u.is_invited and not u.has_usable_password() and u.department == "Central Sterile" and u.technician.name == "Maria Santos"
+    assert u.is_invited and not u.has_usable_password() and u.department == "ICU" and u.technician.name == "Maria Santos"
     dup = client.post("/users/invite/", {"first_name": "Maria", "last_name": "Santos", "email": "msantos@riverside.example", "role": str(role("requester").id)},
                       **HX)
-    assert dup.status_code == 200 and "already exists" in dup.content.decode() and "HX-Trigger" not in dup
+    assert dup.status_code == 200 and "already a member" in dup.content.decode() and "HX-Trigger" not in dup
     missing = client.post("/users/invite/", {"first_name": "", "last_name": "", "email": "nope", "role": str(role("requester").id)}, **HX)
     assert missing.status_code == 200 and "required" in missing.content.decode() and User.objects.filter(email="nope").count() == 0
 
@@ -314,7 +314,7 @@ def test_matrix_shows_every_role_and_disables_director(client, signed_in, make_u
     r = client.get("/users/roles/")
     body = r.content.decode()
     assert r.status_code == 200 and 'aria-current="page">Roles and permissions' in body and "Add role" in body
-    assert [m["role"].slug for m in r.context["matrix"]] == ["manager", "requester", "director", "analyst", "technician", "vendor"]
+    assert [m["role"].slug for m in r.context["matrix"]] == ["director", "manager", "technician", "requester", "analyst", "vendor"]  # the mock's order
     assert 'aria-label="Director, equipment" disabled' in body and f'hx-post="/users/roles/{role("manager").id}/level/"' in body
     assert body.count('class="perm"') == 6 * 8
     director_row = next(m for m in r.context["matrix"] if m["role"].slug == "director")
@@ -343,11 +343,11 @@ def test_add_role_modal_and_creation(client, ctx, signed_in, role):
     body = modal.content.decode()
     assert modal.status_code == 200 and "<html" not in body and "Adjust the module levels in the matrix" in body
     assert f'<option value="{role("requester").id}" selected>' in body
-    r = client.post("/users/roles/new/", {"name": "Sterile processing lead", "copy_from": str(role("manager").id), "description": "Runs Central Sterile"}, **HX)
+    r = client.post("/users/roles/new/", {"name": "Sterile processing lead", "copy_from": str(role("manager").id), "description": "Runs ICU"}, **HX)
     assert r.status_code == 200 and 'Role \\"Sterile processing lead\\" created' in r["HX-Trigger"] and "roles-changed" in r["HX-Trigger"]
     assert "modal-close" in r["HX-Trigger-After-Settle"]
     new = Role.objects.get(slug="sterile-processing-lead")
-    assert new.level_for(Module.WORKORDERS) == Level.APPROVE and new.description == "Runs Central Sterile"
+    assert new.level_for(Module.WORKORDERS) == Level.APPROVE and new.description == "Runs ICU"
     assert "Sterile processing lead" in client.get("/users/roles/").content.decode()
     blank = client.post("/users/roles/new/", {"name": "   ", "copy_from": str(role("manager").id)}, **HX)
     assert blank.status_code == 200 and "required" in blank.content.decode() and Role.objects.count() == 7
@@ -366,8 +366,109 @@ def test_last_active_column(client, signed_in, make_user):
     signed_in("director")
     never = make_user("technician")
     seen = make_user("manager")
-    seen.last_login = timezone.make_aware(datetime(2026, 9, 22, 8, 12))
+    seen.last_login = timezone.now() - timedelta(days=1)
     seen.save(update_fields=["last_login"])
     body = client.get("/users/", **hx("users-body")).content.decode()
     assert '<td class="muted">—</td>' in body.split(f'id="user-{never.pk}"')[1].split("</tr>")[0]
-    assert '<td class="muted">Sep 22, 8:12 AM</td>' in body.split(f'id="user-{seen.pk}"')[1].split("</tr>")[0]
+    assert '<td class="muted">Yesterday</td>' in body.split(f'id="user-{seen.pk}"')[1].split("</tr>")[0]
+
+
+# --- review follow-ups ---------------------------------------------------------------------------
+
+def test_invite_does_not_reveal_accounts_at_other_tenants(ctx, role, make_user, other_roles):
+    from apps.accounts import services
+
+    make_user("requester", tenant_=other_roles, username="shared@vendor.example")  # username is global; this address lives elsewhere
+    with pytest.raises(ValidationError) as e:
+        services.invite_user(ctx, email="shared@vendor.example", first_name="S", last_name="V", role=role("requester"))
+    assert "cannot be used" in str(e.value) and "member" not in str(e.value)
+    other = make_user("requester", tenant_=other_roles, username="fse-b")
+    other.email = "fse@vendor.example"
+    other.save()
+    invited = services.invite_user(ctx, email="fse@vendor.example", first_name="F", last_name="S", role=role("requester"))
+    assert invited.tenant_id == ctx.id  # an email-only match at another tenant is not this tenant's business
+
+
+def test_invite_and_new_role_reject_another_tenants_role_at_the_view(client, signed_in, role, other_roles):
+    signed_in("director")
+    foreign = role("requester", tenant_=other_roles)
+    r = client.post("/users/invite/", {"first_name": "A", "last_name": "B", "email": "ab@riverside.example", "role": str(foreign.id),
+                                       "department": "Clinical Engineering"}, **HX)
+    assert r.status_code == 200 and "Choose a role" in r.content.decode() and "HX-Trigger" not in r
+    assert not User.objects.filter(email="ab@riverside.example").exists()
+    r = client.post("/users/roles/new/", {"name": "Copycat", "copy_from": str(role("manager", tenant_=other_roles).id)}, **HX)
+    assert r.status_code == 200 and "Choose a role" in r.content.decode()
+    assert not Role.unscoped.filter(name="Copycat").exists()  # unscoped: proves nothing was created in any tenant
+
+
+def test_superusers_are_managed_in_admin(client, ctx, signed_in, django_user_model):
+    signed_in("director")
+    root = django_user_model.objects.create_superuser("root@riverside.example", "root@riverside.example", "Test-Pass-2026-x", tenant=ctx)
+    row = client.get("/users/").content.decode().split("root@riverside.example")[1].split("</tr>")[0]
+    assert "Deactivate" not in row
+    r = client.post(f"/users/{root.pk}/deactivate/", **HX)
+    root.refresh_from_db()
+    assert r.status_code == 200 and root.is_active and "managed in Admin" in r["HX-Trigger"]
+    root.is_active = False
+    root.save()
+    r = client.post(f"/users/{root.pk}/reactivate/", **HX)
+    root.refresh_from_db()
+    assert r.status_code == 200 and not root.is_active and "managed in Admin" in r["HX-Trigger"]
+
+
+def test_matrix_rejects_unknown_module_at_the_view(client, ctx, signed_in, role):
+    signed_in("director")
+    r = client.post(f"/users/roles/{role('manager').id}/level/", {"module": "bogus", "level": "3"}, **HX)
+    assert r.status_code == 200 and "Unknown module" in r["HX-Trigger"]
+
+
+def test_users_cannot_raise_their_own_roles_levels(client, ctx, signed_in, role):
+    from apps.accounts import services
+
+    me = signed_in("director")
+    custom = services.create_role(name="Admin clerk", copy_from=role("manager"))
+    services.set_role_level(custom, "users", Level.FULL)
+    me.role = custom
+    me.save()
+    r = client.post(f"/users/roles/{custom.id}/level/", {"module": "contracts", "level": str(Level.FULL)}, **HX)
+    assert r.status_code == 200 and "your own role" in r["HX-Trigger"] and custom.level_for("contracts") == Level.EDIT
+
+
+def test_own_row_role_select_is_disabled(client, signed_in):
+    me = signed_in("director")
+    row = client.get("/users/").content.decode().split(f'id="user-{me.pk}"')[1].split("</tr>")[0]
+    assert 'name="role" aria-label="Role for Director User" disabled title="You cannot change your own role"' in row
+
+
+def test_summary_counts_only_signed_in_active_users(client, ctx, signed_in, role):
+    from apps.accounts import services
+
+    signed_in("director")
+    services.invite_user(ctx, email="new@riverside.example", first_name="N", last_name="U", role=role("requester"))
+    assert "1 active user " in client.get("/users/").content.decode()
+
+
+def test_matrix_uses_the_mocks_module_and_role_order(client, signed_in):
+    signed_in("director")
+    page = client.get("/users/roles/").content.decode()
+    assert page.index("<th>Recalls</th>") < page.index("<th>Contracts</th>")
+    positions = [page.index(f">{n}</b>") for n in ("Director", "CE manager", "Technician", "Clinical requester", "Finance and quality", "Vendor technician")]
+    assert positions == sorted(positions)
+
+
+def test_roles_tab_refreshes_the_summary_line_out_of_band(client, ctx, signed_in, role):
+    signed_in("director")
+    r = client.post(f"/users/roles/{role('manager').id}/level/", {"module": "contracts", "level": str(Level.EDIT)}, **HX)
+    assert 'id="users-summary" hx-swap-oob="true"' in r.content.decode()
+
+
+def test_last_active_wording():
+    from django.utils import timezone
+
+    from apps.web.templatetags.users_tags import last_active
+
+    now = timezone.now()
+    assert last_active(None) == "—"
+    assert last_active(now).startswith("Today, ")
+    assert last_active(now - timedelta(days=1)) == "Yesterday"
+    assert last_active(now - timedelta(days=400)).endswith(str((now - timedelta(days=400)).year))

@@ -67,7 +67,7 @@ def coverage_by_category(as_of: date | None = None) -> list[dict]:
     techs = list(Technician.objects.filter(is_active=True).prefetch_related("credentials"))
     models = list(DeviceModel.objects.values_list("category", "manufacturer", "model"))
     rows = []
-    for category in DeviceModel.objects.values_list("category", flat=True).distinct():
+    for category in sorted({c for c, _, _ in models}):  # not .distinct(): the model's default ordering would join the projection
         mfrs = {m for c, m, _ in models if c == category}
         names = {n for c, _, n in models if c == category}
         full, partial = [], []

@@ -16,6 +16,7 @@ from apps.credentials.services import (
     renew_credential,
     sign_off_credential,
 )
+from apps.equipment.models import DeviceModel
 from apps.pm.dates import add_months
 
 
@@ -154,3 +155,9 @@ def test_credential_options_group_by_scope(vent_model, pump_model):
     assert groups["Category"] == [("category|Infusion pumps", "Infusion pumps"), ("category|Ventilators", "Ventilators")]
     assert groups["Manufacturer"] == [("manufacturer|BD", "BD"), ("manufacturer|Hamilton Medical", "Hamilton Medical")]
     assert groups["Model"] == [("model|Alaris 8015 PCU", "BD Alaris 8015 PCU"), ("model|Hamilton-G5", "Hamilton Medical Hamilton-G5")]
+
+
+def test_coverage_lists_each_category_once(vent, pump, dept):
+    DeviceModel.objects.create(manufacturer="Baxter", model="Sigma Spectrum", description="Pump", category="Infusion pumps")
+    cats = [r["category"] for r in coverage_by_category()]
+    assert cats.count("Infusion pumps") == 1 and set(cats) == {"Infusion pumps", "Ventilators"}

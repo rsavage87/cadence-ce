@@ -25,9 +25,9 @@ def require_level(module: str, level: int):
 READ_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 
-def level_required_for_method(method: str, write_level: int = Level.EDIT) -> int:
+def level_required_for_method(method: str, write_level: int = Level.EDIT, delete_level: int = Level.FULL) -> int:
     if method in READ_METHODS:
         return Level.VIEW
     if method == "DELETE":
-        return Level.FULL
+        return delete_level
     return write_level

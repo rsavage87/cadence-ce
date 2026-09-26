@@ -48,19 +48,19 @@ TECHS = [
 ]
 # first, last, email, role slug, department, status (active / invited / deactivated), hours since last sign-in (None = never)
 USERS = [
-    ("Rob", "Feldman", "rfeldman@riverside.example", "manager", "Clinical Engineering", "active", 1),
-    ("Dana", "Whitfield", "dwhitfield@riverside.example", "technician", "Clinical Engineering", "active", 2),
-    ("Marcus", "Reyes", "mreyes@riverside.example", "technician", "Clinical Engineering", "active", 3),
-    ("Priya", "Natarajan", "pnatarajan@riverside.example", "technician", "Clinical Engineering", "active", 5),
-    ("Tom", "Okafor", "tokafor@riverside.example", "technician", "Clinical Engineering", "active", 26),
-    ("Lena", "Kowalski", "lkowalski@riverside.example", "technician", "Clinical Engineering", "active", 2),
-    ("Angela", "Ruiz", "aruiz@riverside.example", "requester", "ICU", "active", 30),
-    ("Devon", "Park", "dpark@riverside.example", "requester", "ED", "active", 80),
-    ("Maria", "Santos", "msantos@riverside.example", "requester", "Central Sterile", "invited", None),
-    ("Jordan", "Lee", "jlee@riverside.example", "analyst", "Finance", "active", 100),
-    ("Sam", "Whitaker", "swhitaker@riverside.example", "analyst", "Quality and Patient Safety", "active", 40),
+    ("Rob", "Feldman", "rfeldman", "manager", "Clinical Engineering", "active", 1),
+    ("Dana", "Whitfield", "dwhitfield", "technician", "Clinical Engineering", "active", 2),
+    ("Marcus", "Reyes", "mreyes", "technician", "Clinical Engineering", "active", 3),
+    ("Priya", "Natarajan", "pnatarajan", "technician", "Clinical Engineering", "active", 5),
+    ("Tom", "Okafor", "tokafor", "technician", "Clinical Engineering", "active", 26),
+    ("Lena", "Kowalski", "lkowalski", "technician", "Clinical Engineering", "active", 2),
+    ("Angela", "Ruiz", "aruiz", "requester", "ICU", "active", 30),
+    ("Devon", "Park", "dpark", "requester", "ED", "active", 80),
+    ("Maria", "Santos", "msantos", "requester", "Central Sterile", "invited", None),
+    ("Jordan", "Lee", "jlee", "analyst", "Finance", "active", 100),
+    ("Sam", "Whitaker", "swhitaker", "analyst", "Quality and Patient Safety", "active", 40),
     ("Philips", "field service", "fse-riverside@philips.example", "vendor", "External vendor", "active", 170),
-    ("Chris", "Nolan", "cnolan@riverside.example", "technician", "Clinical Engineering", "deactivated", 2700),
+    ("Chris", "Nolan", "cnolan", "technician", "Clinical Engineering", "deactivated", 2700),
 ]
 PROBLEMS = ["Battery will not hold charge", "Occlusion alarm with no occlusion", "Screen flickers intermittently", "Error code on startup",
             "Pump door latch loose", "No waveform on lead II"]
@@ -84,8 +84,10 @@ class Command(BaseCommand):
         create_default_roles(tenant)
         with tenant_context(tenant):
             director = Role.objects.get(slug="director")
-            user, _ = User.objects.get_or_create(username="kim@riverside.example",
-                                                 defaults={"email": "kim@riverside.example", "first_name": "Kim", "last_name": "Alvarez",
+            domain = f"{opts['slug']}.example"  # usernames are unique across tenants, so a second demo tenant needs its own
+            kim = f"kim@{domain}"
+            user, _ = User.objects.get_or_create(username=kim,
+                                                 defaults={"email": kim, "first_name": "Kim", "last_name": "Alvarez",
                                                            "tenant": tenant, "role": director, "is_staff": True, "department": "Clinical Engineering"})
             user.set_password("DemoPass-2026")
             user.save()
@@ -100,7 +102,8 @@ class Command(BaseCommand):
                 techs.append(t)
             # the rest of the staff: demo accounts without a password (an administrator sets one in Admin), technicians linked by name
             tech_by_name = {t.name: t for t in techs}
-            for first, last, email, slug, dept, status, hours in USERS:
+            for first, last, local, slug, dept, status, hours in USERS:
+                email = f"{local}@{domain}"
                 u = User(username=email, email=email, first_name=first, last_name=last, tenant=tenant, role=Role.objects.get(slug=slug), department=dept,
                          is_invited=status == "invited", is_active=status != "deactivated",
                          last_login=timezone.now() - timedelta(hours=hours) if hours is not None else None)
@@ -159,9 +162,10 @@ class Command(BaseCommand):
                         change_status(wo, "completed", as_of=done)
                         change_status(wo, "closed", as_of=done)
             # a recall that matches the fleet
-            alert = Alert.objects.create(source=Alert.Source.FDA, external_id="Z-2026-4408", classification="Class II", manufacturer="BD",
-                                         product="Alaris 8015 PCU infusion pump", model_terms=["Alaris 8015"], title="Keypad membrane may allow fluid ingress",
-                                         action="Inspect keypad; replace per service bulletin", published_on=today - timedelta(days=9))
+            # Alerts are global (shared by every tenant), so a second demo tenant reuses the same notice.
+            alert, _ = Alert.objects.get_or_create(source=Alert.Source.FDA, external_id="Z-2026-4408", defaults={
+                "classification": "Class II", "manufacturer": "BD", "product": "Alaris 8015 PCU infusion pump", "model_terms": ["Alaris 8015"],
+                "title": "Keypad membrane may allow fluid ingress", "action": "Inspect keypad; replace per service bulletin",
+                "published_on": today - timedelta(days=9)})
             AlertMatch.objects.create(alert=alert, device_model=DeviceModel.objects.get(model="Alaris 8015 PCU"))
-        self.stdout.write(self.style.SUCCESS(f"Seeded {tenant.name}: {len(assets)} devices, {len(techs)} technicians. "
-                                             "Sign in as kim@riverside.example / DemoPass-2026"))
+        self.stdout.write(self.style.SUCCESS(f"Seeded {tenant.name}: {len(assets)} devices, {len(techs)} technicians. Sign in as {kim} / DemoPass-2026"))

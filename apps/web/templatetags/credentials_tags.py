@@ -35,7 +35,7 @@ def coverage_chip(row):
 
 @register.simple_tag
 def credentialed_names(row):
-    """"Dana W., Tom O. (Hamilton-G5 only)": full coverage first, then partial coverage with what it is limited to."""
-    names = [short_name(t.name) for t in row["technicians"]]
-    names += [f"{short_name(t.name)} ({', '.join(values)} only)" for t, values in row["partial"]]
-    return ", ".join(names)
+    """"Dana W., Tom O. (Hamilton-G5 only)": every credentialed technician in name order, partial coverage marked inline."""
+    entries = [(t.name, short_name(t.name)) for t in row["technicians"]]
+    entries += [(t.name, f"{short_name(t.name)} ({', '.join(values)} only)") for t, values in row["partial"]]
+    return ", ".join(label for _, label in sorted(entries))

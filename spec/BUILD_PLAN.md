@@ -1,7 +1,7 @@
 # Build plan
 
 The mock (`cadence-ce-cmms-mock.html`) is the spec. Each slice below is shippable on its own and ends with green tests.
-Slices 0 to 4 are built; 5 onward are the next work.
+Slices 0 to 5 are built; 6 onward are the next work.
 
 | # | Slice | Mock screen(s) | Code | Status |
 |---|-------|----------------|------|--------|
@@ -10,8 +10,8 @@ Slices 0 to 4 are built; 5 onward are the next work.
 | 2 | Work orders + portal | Work orders list/board, WO drawer, request portal | `workorders`, `portal` | done (services, API, portal HTML) |
 | 3 | PM engine + KPIs | PM schedule, Overview KPIs | `pm`, `reports` | done (services, API, plain home page) |
 | 4 | Web UI shell (HTMX) | Nav, topbar, Overview, Equipment, Work orders | new `apps/web` | done (device drawer: Overview + Work orders tabs) |
-| 5 | Contracts UI + credentials UI | Contracts section, Users and access → Credentials | `contracts`, `credentials` + `web` | next |
-| 6 | Recalls UI + ECRI importer | Recalls and alerts | `recalls` | later (ECRI needs a license) |
+| 5 | Contracts UI + credentials UI | Contracts section, Users and access (Users, Roles, Credentials tabs) | `contracts`, `accounts`, `credentials` + `web` | done (no invitation email yet) |
+| 6 | Recalls UI + ECRI importer | Recalls and alerts | `recalls` | next (ECRI importer later; it needs a license) |
 | 7 | Reports | Reports (COSR, MTBF, replacement, spend, contract vs in-house, tech productivity) | `reports` | later |
 | 8 | Settings | Integrations, portal settings, editable policy, risk scoring | `settings` app | later |
 
@@ -25,10 +25,16 @@ Slices 0 to 4 are built; 5 onward are the next work.
 - **Cost of service ratio**: (work-order cost of the trailing 182 days × 365/182 + annual cost of active contracts) / acquisition value of active devices.
 - **Recall alerts received**: alert matches whose alert was published in the period.
 
-## Screen → view map for slice 4
+The mock's toast-only buttons (Export CSV, Device list, Label, Print, Scan tag) are deferred on every screen until an export feature exists.
+
+## Screen → view map (slices 4 and 5)
 - Overview: `reports.services.overview_kpis(year, month)` + `pm.services.pm_on_time_series` for the 12-month chart; attention list = life-support overdue PMs, alerts needing action, unassigned portal requests, expired/expiring contracts, critical open WOs, WOs awaiting parts > 7 days.
 - Equipment: `Asset.objects.select_related(...)` with the same filters as the mock's toolbar (category, status, risk, department, support, overdue-only, bucket). Fleet buckets: retired / out of service / in repair / open recall / PM overdue / PM due ≤ 30 d / compliant, each device counted once in that order.
 - Work orders: list and board; status buttons call `workorders.services.change_status`; assignment dropdown lists `credentials.services.qualified_technicians(asset)` first.
 - PM schedule: calendar from `Asset.next_pm_on`; "create work orders for this day" calls `pm.services.generate_pm_work_orders` with a one-day horizon per asset.
-- Contracts: table from `Contract.objects`, drawer with `add_assets` / `remove_asset`.
-- Users and access: `Role` matrix editing `RolePermission.level`; technician credentials CRUD; coverage table from `credentials.services.coverage_by_category`.
+- Contracts: table from `contracts.services.filter_contracts` + `contracts_summary`; the drawer calls `add_asset` / `add_model` / `remove_asset` /
+  `renew_contract` / `delete_contract` (`create_contract` / `update_contract` behind the forms); the device drawer's support editor posts to
+  `/contracts/assets/<tag>/support/`.
+- Users and access: Users tab over `accounts.services` (`invite_user`, `set_user_role`, `deactivate_user` / `reactivate_user`); Roles matrix
+  through `set_role_level` / `create_role`; Technician credentials through `credentials.services` (`add_credential`, `renew_credential`,
+  `sign_off_credential`, `remove_credential`) with the coverage table from `coverage_by_category`.

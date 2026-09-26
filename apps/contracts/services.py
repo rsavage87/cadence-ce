@@ -100,12 +100,12 @@ def renew_contract(contract: Contract, by=None, today: date | None = None) -> Co
 
 @transaction.atomic
 def delete_contract(contract: Contract) -> int:
-    """Detach every device first so their support type resets; returns how many were detached."""
+    """Detach every device first so their support type resets; returns how many covered (non-retired) devices lost coverage."""
     assets = list(contract.assets.all())
     for asset in assets:
         contract.remove_asset(asset)
     contract.delete()
-    return len(assets)
+    return sum(1 for a in assets if a.status != AssetStatus.RETIRED)
 
 
 def add_asset(contract: Contract, asset: Asset):
