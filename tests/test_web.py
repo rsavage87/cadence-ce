@@ -290,3 +290,66 @@ def test_self_swapping_wrappers_do_not_leak_outerhtml_to_their_children():
             if "hx-disinherit" not in m.group(0) or "hx-swap" not in m.group(0).split("hx-disinherit")[1]:
                 bad.append(f"{path.name}: {m.group(0)[:80]}")
     assert bad == []
+
+
+# --- recall integration points (slice 6): device drawer, work order drawer and list, nav ------------
+
+def test_device_drawer_recalls_tab_lists_the_models_alerts(client, signed_in, pump, pump_recall, vent):
+    signed_in("technician")  # recalls: View
+    r = client.get(f"/equipment/{pump.tag}/?tab=recalls", **HX)
+    body = r.content.decode()
+    assert r.status_code == 200 and r.context["tab"] == "recalls" and "Recalls (1)" in body
+    assert f'href="/recalls/?match={pump_recall.id}"' in body and "FDA Z-TEST-1 · Class II" in body and pump_recall.alert.title in body
+    assert 'class="rail warn"' in body and "Needs action" in body and "Open recall" in body
+    other = client.get(f"/equipment/{vent.tag}/?tab=recalls", **HX).content.decode()  # no alerts on this model
+    assert "No alerts on file for this model." in other and "Open recall" not in other and ">Recalls</button>" in other
+
+
+def test_device_drawer_open_recall_chip_only_while_action_is_needed(client, signed_in, pump, pump_recall):
+    signed_in("technician")
+    assert "Open recall" in client.get(f"/equipment/{pump.tag}/", **HX).content.decode()
+    pump_recall.status = "closed"
+    pump_recall.save()
+    body = client.get(f"/equipment/{pump.tag}/?tab=recalls", **HX).content.decode()
+    assert "Open recall" not in body and "Closed" in body and "Recalls (1)" in body
+
+
+def test_device_drawer_hides_recalls_from_roles_without_recalls_view(client, signed_in, pump, pump_recall):
+    signed_in("requester")  # equipment: View, recalls: None
+    r = client.get(f"/equipment/{pump.tag}/?tab=recalls", **HX)
+    body = r.content.decode()
+    assert r.status_code == 200 and r.context["tab"] == "overview"  # the tab does not exist, so ?tab=recalls falls back
+    assert "?tab=recalls" not in body and "Open recall" not in body and f"match={pump_recall.id}" not in body
+
+
+def test_recall_work_order_shows_chip_and_row(client, signed_in, pump, pump_recall):
+    signed_in("technician")
+    wo = create_work_order(asset=pump, type="recall", priority="high", problem="Inspect keypad membrane", alert=pump_recall.alert)
+    body = client.get(f"/work-orders/{wo.number}/", **HX).content.decode()
+    assert '<span class="chip violet">Recall</span>' in body and "<dt>Recall</dt>" in body
+    assert f'<a class="link" href="/recalls/?match={pump_recall.id}">FDA Z-TEST-1</a> · {pump_recall.alert.title}' in body
+    listing = client.get("/work-orders/", **hx("wo-body")).content.decode()
+    assert listing.count(">Recall</span>") == 1
+    plain = create_work_order(asset=pump, type="repair", priority="normal", problem="Not a recall")
+    assert "Recall</span>" not in client.get(f"/work-orders/{plain.number}/", **HX).content.decode()
+
+
+def test_recall_row_is_plain_text_without_recalls_view_or_a_match(client, signed_in, pump, vent, pump_recall):
+    wo = create_work_order(asset=pump, type="recall", priority="high", problem="Inspect", alert=pump_recall.alert)
+    signed_in("vendor")  # work orders: Edit, recalls: None
+    body = client.get(f"/work-orders/{wo.number}/", **HX).content.decode()
+    assert "<dt>Recall</dt>" in body and "FDA Z-TEST-1 · " in body and "/recalls/?match=" not in body
+    signed_in("director")
+    unmatched = create_work_order(asset=vent, type="recall", priority="high", problem="Alert without a match for this model", alert=pump_recall.alert)
+    body = client.get(f"/work-orders/{unmatched.number}/", **HX).content.decode()
+    assert "<dt>Recall</dt>" in body and "/recalls/?match=" not in body
+
+
+def test_nav_shows_recalls_with_the_needs_action_badge(client, signed_in, pump_recall):
+    signed_in("director")
+    r = client.get("/equipment/")
+    item = next(i for i in r.context["shell"]["nav"] if i["key"] == "recalls")
+    assert item["label"] == "Recalls and alerts" and item["url"] == "/recalls/" and item["count"] == 1 and item["hot"]
+    assert "Recalls and alerts" in r.content.decode()
+    signed_in("requester")  # recalls: None
+    assert "recalls" not in [i["key"] for i in client.get("/equipment/").context["shell"]["nav"]]

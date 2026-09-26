@@ -48,9 +48,10 @@
         {% for it in attention %}
           {% if it.wo %}<a class="li" href="{% url 'web:wo' it.wo %}" hx-get="{% url 'web:wo' it.wo %}" hx-target="#drawer">
           {% elif it.asset %}<a class="li" href="{% url 'web:asset' it.asset %}" hx-get="{% url 'web:asset' it.asset %}" hx-target="#drawer">
+          {% elif it.recall %}<a class="li" href="{% url 'web:recalls' %}?match={{ it.recall }}">
           {% else %}<div class="li static">{% endif %}
             <span class="rail {{ it.rail }}"></span><div class="bd"><div class="t">{{ it.title }}</div><div class="s">{{ it.sub }}</div></div><div class="r">{{ it.right }}</div>
-          {% if it.wo or it.asset %}</a>{% else %}</div>{% endif %}
+          {% if it.wo or it.asset or it.recall %}</a>{% else %}</div>{% endif %}
         {% empty %}<div class="empty">Nothing needs attention right now.</div>{% endfor %}
       </div>
       {% if attention_more %}<div class="hint" style="margin-top:8px">{{ attention_more }} more not shown</div>{% endif %}

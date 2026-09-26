@@ -39,7 +39,8 @@ def _parts(*parts):
     return [p if isinstance(p, tuple) else (p, "") for p in parts if p]
 
 
-def kpi_tiles(data: dict) -> list[dict]:
+def kpi_tiles(data: dict, recalls_url: str | None = None) -> list[dict]:
+    """`recalls_url` is None for users without recalls View; a tile without a url renders static."""
     k, p, t = data["k"], data["prev"], data["targets"]
     cur = k["period"]["current"]
     pv = (lambda f: f(p)) if p else (lambda f: None)
@@ -67,7 +68,7 @@ def kpi_tiles(data: dict) -> list[dict]:
          "parts": _parts(_delta(k["repair_spend"], pv(lambda p: p["repair_spend"]), False, money_k), "labor and parts")},
         {"label": "Cost of service ratio, annualized", "value": f"{k['cost_of_service']['ratio_pct']:.1f}", "unit": "%",
          "parts": _parts("trailing 6 months", f"of {money_k(k['cost_of_service']['acquisition'])} acquisition value", "benchmark 5 to 7%")},
-        {"label": "Recall alerts received", "value": str(k["alerts"]["received"]),
+        {"label": "Recall alerts received", "value": str(k["alerts"]["received"]), **({"url": recalls_url} if recalls_url else {}),
          "parts": _parts(f"{k['alerts']['open']} open today", f"{k['alerts']['needs_action']} need action",
                          f"{data['alert_devices_affected']} devices affected")},
     ]

@@ -22,6 +22,7 @@ from apps.credentials.models import Technician
 from apps.credentials.services import qualification, qualified_technicians
 from apps.equipment.models import Asset
 from apps.equipment.services import FleetBucket, asset_service_summary, filter_assets, fleet_summary, search_assets
+from apps.recalls.models import AlertMatch
 from apps.reports.services import overview_page
 from apps.workorders import permissions as wo_perms
 from apps.workorders import services as wo_services
@@ -67,9 +68,10 @@ def overview(request):
     year, month = _parse_month(request.GET, today)
     data = overview_page(year, month, today)
     first = WorkOrder.objects.aggregate(first=Min("opened_on"))["first"] or today
+    recalls_url = reverse("web:recalls") if request.user.has_level(Module.RECALLS, Level.VIEW) else None
     return render(request, "web/overview.html", {
         "nav_active": "overview", "today": today, "year": year, "month": month, "d": data, "k": data["k"],
-        "tiles": ov.kpi_tiles(data), "strip": ov.fleet_strip(data["buckets"]),
+        "tiles": ov.kpi_tiles(data, recalls_url=recalls_url), "strip": ov.fleet_strip(data["buckets"]),
         "pm_chart": ov.pm_trend_chart(data["pm_series"], data["pm_series_life_support"]),
         "type_chart": ov.opened_by_type_chart(data["opened_by_type"]), "spend_chart": ov.spend_chart(data["spend_by_category"]),
         "attention": data["attention"][:9], "attention_more": max(0, len(data["attention"]) - 9),
@@ -105,13 +107,23 @@ def _portal_url(asset) -> str:
     return f"{settings.PORTAL_BASE_URL.rstrip('/')}{reverse('portal:request', args=[asset.tenant.slug])}?{urlencode({'asset': asset.tag})}"
 
 
+def _model_recalls(device_model_id) -> list:
+    """Alert matches for one device model, newest notice first. Alert is global; the matches are the tenant's."""
+    return list(AlertMatch.objects.filter(device_model_id=device_model_id).select_related("alert").order_by("-alert__published_on", "-alert__created_at"))
+
+
 def asset_drawer_context(request, asset) -> dict:
     """Also used by the contracts screen to re-render the device drawer after its support editor saves."""
-    tab = request.GET.get("tab") if request.GET.get("tab") in ("overview", "wo") else "overview"
+    can_view_recalls = request.user.has_level(Module.RECALLS, Level.VIEW)
+    tabs = ("overview", "wo", "recalls") if can_view_recalls else ("overview", "wo")  # the Recalls tab does not exist for roles without recalls View
+    tab = request.GET.get("tab") if request.GET.get("tab") in tabs else "overview"
     summary = asset_service_summary(asset)
+    recalls = _model_recalls(asset.device_model_id) if can_view_recalls else []
     return {"asset": asset, "tab": tab, "summary": summary, "recent": summary["work_orders"][:4], "qualified": qualified_technicians(asset),
             "portal_url": _portal_url(asset), "can_create_wo": request.user.has_level(wo_perms.MODULE, wo_perms.CREATE_LEVEL),
-            "can_view_wo": request.user.has_level(Module.WORKORDERS, Level.VIEW)}
+            "can_view_wo": request.user.has_level(Module.WORKORDERS, Level.VIEW),
+            "can_view_recalls": can_view_recalls, "recalls": recalls,
+            "open_recall": any(m.status == AlertMatch.Status.NEEDS_ACTION for m in recalls)}
 
 
 @web_view(Module.EQUIPMENT, Level.VIEW)
@@ -179,6 +191,9 @@ def _wo_drawer_context(request, wo) -> dict:
     is_open = wo.status in OPEN_STATUSES
     can_assign = is_open and wo_perms.can_assign(request.user)
     current = VENDOR if wo.vendor_service else (str(wo.assigned_to_id) if wo.assigned_to_id else "")
+    # The Recalls screen is keyed by AlertMatch, so a recall work order links through the match for this alert and the device's model.
+    recall_match = (AlertMatch.objects.filter(alert_id=wo.alert_id, device_model_id=wo.asset.device_model_id).first()
+                    if wo.alert_id and request.user.has_level(Module.RECALLS, Level.VIEW) else None)
     return {
         "wo": wo, "asset": wo.asset, "is_open": is_open, "unassigned": unassigned, "actions": actions,
         "late_days": (today - wo.due_on).days if is_open and wo.due_on < today else 0,
@@ -190,11 +205,12 @@ def _wo_drawer_context(request, wo) -> dict:
         "timeline": wo_services.timeline(wo),
         "labor_hours": sum(float(line.hours) for line in wo.labor_lines.all()),
         "is_portal": wo.source == Source.PORTAL,
+        "recall_match": recall_match,
     }
 
 
 def _get_wo(number):
-    return get_object_or_404(WorkOrder.objects.select_related("asset", "asset__device_model", "asset__department", "asset__contract", "assigned_to")
+    return get_object_or_404(WorkOrder.objects.select_related("asset", "asset__device_model", "asset__department", "asset__contract", "assigned_to", "alert")
                              .prefetch_related("labor_lines", "part_lines", "assigned_to__credentials"), number=number)
 
 

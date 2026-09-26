@@ -98,3 +98,21 @@ def test_pm_chart_leaves_gaps_for_months_with_nothing_due():
 
 def test_nice_max_rounds_up_to_readable_steps():
     assert [charts.nice_max(v) for v in (0, 7, 13, 24, 230)] == [1, 10, 20, 25, 250]
+
+
+# --- recall integration points (slice 6) --------------------------------------------------------
+
+def test_recall_tile_links_only_when_given_a_url(ctx, pump_recall):
+    data = overview_page(TODAY.year, TODAY.month)
+    static = next(t for t in kpi_tiles(data) if t["label"] == "Recall alerts received")
+    assert "url" not in static and static["value"] == "1" and ("1 need action", "") in static["parts"]
+    linked = next(t for t in kpi_tiles(data, recalls_url="/recalls/") if t["label"] == "Recall alerts received")
+    assert linked["url"] == "/recalls/"
+
+
+def test_overview_links_recall_tile_and_attention_item(client, make_user, pump, pump_recall):
+    client.force_login(make_user("director"))
+    body = client.get("/").content.decode()
+    assert '<a class="kpi" href="/recalls/">' in body
+    assert f'<a class="li" href="/recalls/?match={pump_recall.id}">' in body and pump_recall.alert.title in body
+    assert f'hx-get="/recalls/?match={pump_recall.id}"' not in body  # the Recalls screen is a page, not a drawer
