@@ -1,0 +1,22 @@
+{% load credentials_tags %}
+<div class="panel" style="align-self:start">
+  <div class="panel-h"><h2>Coverage by category</h2><span class="sub">Who can be assigned today</span></div>
+  <div class="tbl-wrap flat" style="margin-top:6px">
+    <table class="mini-tbl">
+      <thead><tr><th>Category</th><th class="num">Devices</th><th>Credentialed</th><th>Status</th></tr></thead>
+      <tbody>
+        {% for r in coverage %}
+        <tr>
+          <td>{{ r.category }}</td>
+          <td class="num">{{ r.devices }}</td>
+          <td style="white-space:normal;min-width:170px">{% credentialed_names r as names %}{% if names %}{{ names }}{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td>{% coverage_chip r %}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="4"><div class="empty">No device categories in the catalog yet.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="hint" style="padding:10px 14px">Credentials match by category, manufacturer, or model. Assignment still allows overrides, but the work order shows when the technician is not credentialed for the device, and the PM planner assigns credentialed technicians first.</div>
+</div>

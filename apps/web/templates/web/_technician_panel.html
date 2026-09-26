@@ -1,0 +1,34 @@
+{% load web credentials_tags %}
+{% with t=p.tech %}
+<div class="panel cred-panel" id="tech-{{ t.id }}">
+  <div class="panel-h">
+    <h2>{{ t.name }} <span class="muted" style="font-weight:400">{% if t.title %}· {{ t.title }}{% endif %}{% if t.certification %} · {{ t.certification }}{% endif %}</span></h2>
+    <span class="sub">{{ p.active }} active credential{{ p.active|pluralize }}</span>
+  </div>
+  <div class="tbl-wrap flat" style="margin-top:6px">
+    <table class="mini-tbl">
+      <thead><tr><th>Scope</th><th>Covers</th><th>Source</th><th>Issued</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+        {% for c in p.creds %}
+        <tr>
+          <td class="muted">{{ c.scope|scope_short }}</td>
+          <td style="font-weight:500">{{ c.value }}</td>
+          <td class="muted" style="white-space:normal;min-width:160px">{{ c.source|default:"—" }}</td>
+          <td class="muted">{{ c.issued_on|date:"M Y"|default:"—" }}</td>
+          <td>{% cred_state_chip c %}</td>
+          <td class="num" style="white-space:nowrap">
+            {% if can_manage_credentials %}
+              {% if c.status == "in_training" %}<button class="btn sm ghost" type="button" hx-post="{% url 'web:credential_sign_off' c.id %}{% query request.GET %}" hx-target="#creds-body" hx-swap="outerHTML">Sign off</button>
+              {% elif c.expires_on %}<button class="btn sm ghost" type="button" hx-post="{% url 'web:credential_renew' c.id %}{% query request.GET %}" hx-target="#creds-body" hx-swap="outerHTML">Renew</button>{% endif %}
+              <button class="btn sm ghost" type="button" hx-post="{% url 'web:credential_remove' c.id %}{% query request.GET %}" hx-target="#creds-body" hx-swap="outerHTML" hx-confirm="Remove the {{ c.scope|scope_short|lower }} credential for {{ c.value }} from {{ t.name }}?">Remove</button>
+            {% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6"><div class="empty">No credentials on file.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endwith %}

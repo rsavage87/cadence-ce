@@ -416,4 +416,6 @@ button.link{background:none;border:0;padding:0;font:inherit;font-size:12px;font-
 
 
 /* ===== technician credentials tab (slice 5) ===== */
-/* (credentials styles go here) */
+.cred-panel{margin-bottom:14px}
+.cred-panel .panel-h h2{font-size:15px;font-weight:600;margin:0}
+.cred-panel .mini-tbl td .btn+.btn{margin-left:4px}
