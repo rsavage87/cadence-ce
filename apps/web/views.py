@@ -40,17 +40,7 @@ from .forms import (
     technician_choices,
     vendor_name_for,
 )
-
-PAGE_SIZE = 25
-
-
-def _is_partial(request, target: str) -> bool:
-    return bool(request.htmx) and request.htmx.target == target
-
-
-def _toast(response, message: str):
-    return trigger_client_event(response, "toast", {"value": message})
-
+from .htmx import PAGE_SIZE, is_partial, toast
 
 # --- Overview -------------------------------------------------------------------------------------
 
@@ -106,7 +96,7 @@ def _equipment_context(request) -> dict:
 @web_view(Module.EQUIPMENT, Level.VIEW)
 def equipment(request):
     ctx = _equipment_context(request)
-    if _is_partial(request, "eq-table"):
+    if is_partial(request, "eq-table"):
         return render(request, "web/_equipment_table.html", ctx)
     return render(request, "web/equipment.html", ctx)
 
@@ -164,7 +154,7 @@ def _workorders_context(request) -> dict:
 @web_view(Module.WORKORDERS, Level.VIEW)
 def workorders(request):
     ctx = _workorders_context(request)
-    if _is_partial(request, "wo-body"):
+    if is_partial(request, "wo-body"):
         return render(request, "web/_wo_body.html", ctx)
     return render(request, "web/workorders.html", ctx)
 
@@ -233,7 +223,7 @@ def wo_status(request, number):
         message = e.messages[0]
     response = _render_wo_drawer(request, wo)
     trigger_client_event(response, "wo-changed", {})
-    return _toast(response, message)
+    return toast(response, message)
 
 
 @require_POST
@@ -241,19 +231,19 @@ def wo_status(request, number):
 def wo_assign(request, number):
     wo = _get_wo(number)
     if wo.status not in OPEN_STATUSES:
-        return _toast(_render_wo_drawer(request, wo), "Only open work orders can be reassigned.")
+        return toast(_render_wo_drawer(request, wo), "Only open work orders can be reassigned.")
     choice = request.POST.get("assignee", "")
     if choice == VENDOR:
         wo_services.assign(wo, vendor_name=vendor_name_for(wo.asset), by=request.user)
     else:
         tech = Technician.objects.filter(pk=parse_uuid(choice), is_active=True).first() if parse_uuid(choice) else None
         if tech is None:
-            return _toast(_render_wo_drawer(request, wo), "Choose a technician or vendor service.")
+            return toast(_render_wo_drawer(request, wo), "Choose a technician or vendor service.")
         wo_services.assign(wo, technician=tech, by=request.user)
     note = wo.status_history.last().note
     response = _render_wo_drawer(request, wo)
     trigger_client_event(response, "wo-changed", {})
-    return _toast(response, f"{wo.number}: {note[0].lower()}{note[1:]}" if note else f"{wo.number} assigned")
+    return toast(response, f"{wo.number}: {note[0].lower()}{note[1:]}" if note else f"{wo.number} assigned")
 
 
 @require_POST
@@ -265,7 +255,7 @@ def wo_note(request, number):
         message = "Note added"
     except ValidationError as e:
         message = e.messages[0]
-    return _toast(_render_wo_drawer(request, wo), message)
+    return toast(_render_wo_drawer(request, wo), message)
 
 
 @web_view(wo_perms.MODULE, wo_perms.CREATE_LEVEL)
@@ -291,7 +281,7 @@ def wo_new(request):
             wo_services.assign(wo, technician=tech, by=request.user)
     response = retarget(_render_wo_drawer(request, wo), "#drawer")
     trigger_client_event(response, "wo-changed", {})
-    _toast(response, f"{wo.number} created")
+    toast(response, f"{wo.number} created")
     # After settle: closing the modal detaches the form that sent this request, which would cancel the swap and lose the other events.
     return trigger_client_event(response, "modal-close", {}, after="settle")
 

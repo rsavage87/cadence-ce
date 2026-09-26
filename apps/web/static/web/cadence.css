@@ -395,3 +395,20 @@ a.tag,td a.tag{color:inherit;text-decoration:none}
 @media (max-width:480px){
   .brand>span:last-child{display:none}
 }
+
+/* tabs as links (page-level tabs are real navigation) */
+a.tab{text-decoration:none;display:inline-block}
+.tabs.page-tabs{margin:0 0 14px;padding:0}
+
+/* ===== contracts screen (slice 5) ===== */
+/* (contracts styles go here) */
+
+
+
+/* ===== users and roles tabs (slice 5) ===== */
+/* (users and roles styles go here) */
+
+
+
+/* ===== technician credentials tab (slice 5) ===== */
+/* (credentials styles go here) */

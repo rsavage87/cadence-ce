@@ -44,9 +44,24 @@ def test_high_risk_overdue_is_capped_at_three(ctx, dept, pump_model):
 
 def test_nav_counts_flag_unassigned_portal_requests(ctx, dept, vent, pump):
     create_work_order(asset=pump, type="pm", priority="normal", problem="PM")
-    assert nav_counts() == {"equipment": 2, "workorders": 1, "workorders_hot": False}
+    counts = nav_counts()
+    assert (counts["equipment"], counts["workorders"], counts["workorders_hot"]) == (2, 1, False)
     create_service_request(asset=vent, department=dept, problem="Alarm", urgency="normal")
     assert nav_counts()["workorders_hot"] is True
+
+
+def test_nav_counts_contracts_badge(ctx, vent, pump):
+    assert nav_counts()["contracts"] is None  # no badge when nothing needs attention
+    ending = Contract.objects.create(reference="SOON", vendor="V", type=ContractType.OEM, start_on=TODAY - timedelta(days=300),
+                                     end_on=TODAY + timedelta(days=10))
+    expired_empty = Contract.objects.create(reference="OLD", vendor="V", type=ContractType.OEM, start_on=TODAY - timedelta(days=400),
+                                            end_on=TODAY - timedelta(days=2))
+    Contract.objects.create(reference="LATER", vendor="V", type=ContractType.OEM, start_on=TODAY, end_on=TODAY + timedelta(days=60))
+    assert nav_counts()["contracts"] == 1  # ending soon counts; an expired contract with no devices does not
+    expired_empty.add_assets([pump])
+    counts = nav_counts()
+    assert counts["contracts"] == 2 and counts["contracts_hot"] is True
+    assert ending.end_on > TODAY
 
 
 def test_opened_by_type_groups_months_and_folds_minor_types(ctx, vent):

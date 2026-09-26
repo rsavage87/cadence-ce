@@ -138,11 +138,25 @@ def attention_items(today: date | None = None) -> list[dict]:
     return items
 
 
+NAV_CONTRACT_DAYS = 30  # the nav badge counts contracts ending within 30 days, plus expired ones that still cover devices
+
+
+def contracts_needing_attention(today: date | None = None):
+    today = today or date.today()
+    covered = Count("assets", filter=~Q(assets__status=AssetStatus.RETIRED))
+    expired = Contract.objects.filter(end_on__lt=today).annotate(devices=covered).filter(devices__gt=0)
+    ending = Contract.objects.filter(end_on__gte=today, end_on__lte=today + timedelta(days=NAV_CONTRACT_DAYS))
+    return expired.count() + ending.count()
+
+
 def nav_counts() -> dict:
+    contracts = contracts_needing_attention()
     return {
         "equipment": Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES).count(),
         "workorders": WorkOrder.objects.filter(status__in=OPEN_STATUSES).count(),
         "workorders_hot": unassigned_portal_requests().exists(),
+        "contracts": contracts or None,  # no badge when nothing needs attention (matches the mock)
+        "contracts_hot": bool(contracts),
     }
 
 
