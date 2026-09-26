@@ -1,0 +1,7 @@
+{% load web %}
+{# Re-fetches itself when a drawer action changes a contract; the tiles are informational, not filters. #}
+<div class="kpis k3" id="ct-kpis" hx-get="{{ list_url }}" hx-trigger="contracts-changed from:body" hx-target="this" hx-swap="outerHTML">
+  <div class="kpi static"><div class="l">Annual contract spend</div><div class="v">{{ s.annual|money_k }}</div><div class="d">active contracts · {{ s.annual_pct|floatformat:1 }}% of acquisition value</div></div>
+  <div class="kpi static"><div class="l">Devices under contract</div><div class="v">{{ s.covered }}</div><div class="d">{{ s.covered_pct|floatformat:1 }}% of the active fleet</div></div>
+  <div class="kpi static"><div class="l">Need a renewal decision</div><div class="v">{{ s.renewals }}</div><div class="d">{{ s.expired }} expired · {{ s.ending }} ending within {{ s.warn_days }} days · {{ s.uncovered }} device{{ s.uncovered|pluralize }} no longer covered</div></div>
+</div>

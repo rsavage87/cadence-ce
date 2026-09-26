@@ -1,0 +1,19 @@
+{% load web %}
+<div id="ct-list">
+  <div class="list">
+    {% for a in lst.devices %}
+    <div class="li{% if not can_view_asset %} static{% endif %}"{% if can_view_asset %} hx-get="{% url 'web:asset' a.tag %}" hx-target="#drawer"{% endif %}>
+      <span class="rail {% if a.status == 'in_service' %}ok{% else %}warn{% endif %}"></span>
+      <div class="bd">
+        <div class="t">{% if can_view_asset %}<a class="tag" href="{% url 'web:asset' a.tag %}">{{ a.tag }}</a>{% else %}{{ a.tag }}{% endif %} · {{ a.device_model.description }}</div>
+        <div class="s">{{ a.device_model.manufacturer }} {{ a.device_model.model }} · {{ a.department }} · {{ a.acquisition_cost|money }} · {{ a.get_status_display }}</div>
+      </div>
+      {% if can_edit %}<div class="r"><button class="btn sm ghost" type="button" hx-post="{% url 'web:contract_remove' c.pk %}" hx-vals='{"asset": "{{ a.tag|escapejs }}"}' hx-target="#drawer" hx-trigger="click consume" aria-label="Remove {{ a.tag }} from {{ c.reference }}">Remove</button></div>{% endif %}
+    </div>
+    {% empty %}
+    <div class="empty">{% if lst.q %}No covered devices match the filter.{% else %}No devices on this contract yet.{% if can_edit %} Add one above.{% endif %}{% endif %}</div>
+    {% endfor %}
+  </div>
+  {% if lst.matched > lst.cap %}<div class="hint" style="margin-top:8px">Showing {{ lst.cap }} of {{ lst.matched }}. Use the filter to find a device.</div>
+  {% elif lst.q %}<div class="hint" style="margin-top:8px">{{ lst.matched }} of {{ lst.total }} device{{ lst.total|pluralize }} match.</div>{% endif %}
+</div>

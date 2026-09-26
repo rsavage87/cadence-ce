@@ -1,0 +1,26 @@
+{% load web contracts_tags %}
+{# Re-fetches itself when a drawer action changes a contract. #}
+<div id="ct-body" hx-get="{{ list_url }}{% query request.GET %}" hx-trigger="contracts-changed from:body" hx-target="this" hx-swap="outerHTML">
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Contract</th><th>Vendor</th><th>Type</th><th>Covers</th><th class="num">Devices</th><th class="num">Annual cost</th><th>Term</th><th>Status</th></tr></thead>
+      <tbody>
+        {% for c in page %}
+        <tr class="row" hx-get="{% url 'web:contract' c.pk %}" hx-target="#drawer">
+          <td class="two"><a class="tag" href="{% url 'web:contract' c.pk %}">{{ c.reference }}</a><small>{{ c.get_coverage_display }}</small></td>
+          <td>{{ c.vendor }}</td>
+          <td>{% contract_type_chip c %}</td>
+          <td style="white-space:normal;min-width:180px">{% if c.covered %}{{ c.covered|covers }}{% else %}<span class="muted">No devices yet</span>{% endif %}</td>
+          <td class="num">{{ c.devices }}</td>
+          <td class="num">{{ c.annual_cost|money_k }}</td>
+          <td class="muted">{{ c.start_on|date:"M Y" }} to {{ c.end_on|date:"M Y" }}</td>
+          <td>{% contract_status_chip c %}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="8"><div class="empty">No contracts match these filters.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% include "web/_pager.html" with noun="contracts" target="#ct-body" %}
+  </div>
+</div>

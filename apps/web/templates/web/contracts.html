@@ -1,0 +1,19 @@
+{% extends "web/base.html" %}
+{% load web %}
+{% block title %}Service contracts{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Service contracts</h1><p class="sub">{{ s.contracts }} contract{{ s.contracts|pluralize }} · {{ s.covered }} of {{ s.active_fleet }} active device{{ s.active_fleet|pluralize }} covered · each device is on at most one contract</p></div>
+  <div class="actions">
+    {% if can_edit %}<button class="btn primary" type="button" hx-get="{% url 'web:contract_new' %}" hx-target="#modal-card">{% icon "plus" %} New contract</button>{% endif %}
+  </div>
+</div>
+{% include "web/_contracts_kpis.html" %}
+<form class="toolbar" id="ct-filters" method="get" action="{{ list_url }}"
+      hx-get="{{ list_url }}" hx-trigger="change, submit, input changed delay:300ms from:#ct-q" hx-target="#ct-body" hx-swap="outerHTML" hx-push-url="true">
+  <label class="field grow">{% icon "search" %}<input id="ct-q" type="search" name="q" value="{{ f.q }}" placeholder="Search reference, vendor, model, coverage" aria-label="Search contracts"></label>
+  <label class="field"><span>Type</span><select name="type" aria-label="Type"><option value="">All</option>{% for v, l in types %}<option value="{{ v }}"{% if f.type == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+  <label class="field"><span>Status</span><select name="status" aria-label="Status"><option value="">All</option>{% for v, l in statuses %}<option value="{{ v }}"{% if f.status == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+</form>
+{% include "web/_contracts_body.html" %}
+{% endblock %}
