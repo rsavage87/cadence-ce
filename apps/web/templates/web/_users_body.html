@@ -1,0 +1,14 @@
+{% load web %}
+{# Re-fetches itself after a row action or an invite so the filters and counts catch up. #}
+<div id="users-body" hx-get="{{ list_url }}{% query request.GET %}" hx-trigger="users-changed from:body" hx-target="this" hx-swap="outerHTML">
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>User</th><th>Role</th><th>Department</th><th>Status</th><th>Last active</th><th>Credentials</th><th></th></tr></thead>
+      <tbody>
+        {% for row in rows %}{% include "web/_users_row.html" %}{% empty %}
+        <tr><td colspan="7"><div class="empty">No users match.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>

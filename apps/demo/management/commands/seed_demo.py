@@ -8,6 +8,7 @@ from datetime import date, timedelta
 
 from django.core.management.base import BaseCommand
 from django.db import transaction
+from django.utils import timezone
 
 from apps.accounts.models import Role, User, create_default_roles
 from apps.contracts.models import Contract, ContractType, Coverage
@@ -45,6 +46,22 @@ TECHS = [
     ("Lena Kowalski", "Imaging specialist", "CRES", [(Scope.CATEGORY, "Imaging"), (Scope.CATEGORY, "Sterilization"),
                                                      (Scope.MANUFACTURER, "Siemens Healthineers")]),
 ]
+# first, last, email, role slug, department, status (active / invited / deactivated), hours since last sign-in (None = never)
+USERS = [
+    ("Rob", "Feldman", "rfeldman@riverside.example", "manager", "Clinical Engineering", "active", 1),
+    ("Dana", "Whitfield", "dwhitfield@riverside.example", "technician", "Clinical Engineering", "active", 2),
+    ("Marcus", "Reyes", "mreyes@riverside.example", "technician", "Clinical Engineering", "active", 3),
+    ("Priya", "Natarajan", "pnatarajan@riverside.example", "technician", "Clinical Engineering", "active", 5),
+    ("Tom", "Okafor", "tokafor@riverside.example", "technician", "Clinical Engineering", "active", 26),
+    ("Lena", "Kowalski", "lkowalski@riverside.example", "technician", "Clinical Engineering", "active", 2),
+    ("Angela", "Ruiz", "aruiz@riverside.example", "requester", "ICU", "active", 30),
+    ("Devon", "Park", "dpark@riverside.example", "requester", "ED", "active", 80),
+    ("Maria", "Santos", "msantos@riverside.example", "requester", "Central Sterile", "invited", None),
+    ("Jordan", "Lee", "jlee@riverside.example", "analyst", "Finance", "active", 100),
+    ("Sam", "Whitaker", "swhitaker@riverside.example", "analyst", "Quality and Patient Safety", "active", 40),
+    ("Philips", "field service", "fse-riverside@philips.example", "vendor", "External vendor", "active", 170),
+    ("Chris", "Nolan", "cnolan@riverside.example", "technician", "Clinical Engineering", "deactivated", 2700),
+]
 PROBLEMS = ["Battery will not hold charge", "Occlusion alarm with no occlusion", "Screen flickers intermittently", "Error code on startup",
             "Pump door latch loose", "No waveform on lead II"]
 
@@ -69,7 +86,7 @@ class Command(BaseCommand):
             director = Role.objects.get(slug="director")
             user, _ = User.objects.get_or_create(username="kim@riverside.example",
                                                  defaults={"email": "kim@riverside.example", "first_name": "Kim", "last_name": "Alvarez",
-                                                           "tenant": tenant, "role": director, "is_staff": True})
+                                                           "tenant": tenant, "role": director, "is_staff": True, "department": "Clinical Engineering"})
             user.set_password("DemoPass-2026")
             user.save()
             depts = {d: Department.objects.create(name=d) for d in DEPTS}
@@ -81,6 +98,17 @@ class Command(BaseCommand):
                                               issued_on=today - timedelta(days=rnd.randint(200, 1500)),
                                               expires_on=today + timedelta(days=rnd.randint(20, 900)) if rnd.random() < 0.4 else None)
                 techs.append(t)
+            # the rest of the staff: demo accounts without a password (an administrator sets one in Admin), technicians linked by name
+            tech_by_name = {t.name: t for t in techs}
+            for first, last, email, slug, dept, status, hours in USERS:
+                u = User(username=email, email=email, first_name=first, last_name=last, tenant=tenant, role=Role.objects.get(slug=slug), department=dept,
+                         is_invited=status == "invited", is_active=status != "deactivated",
+                         last_login=timezone.now() - timedelta(hours=hours) if hours is not None else None)
+                u.set_unusable_password()
+                u.save()
+                if f"{first} {last}" in tech_by_name:
+                    tech_by_name[f"{first} {last}"].user = u
+                    tech_by_name[f"{first} {last}"].save(update_fields=["user", "updated_at"])
             assets = []
             tag = 10240
             for mfr, model, desc, cat, risk, pm, life, cost, n, ctype in MODELS:

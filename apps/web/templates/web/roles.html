@@ -1,0 +1,7 @@
+{% extends "web/base.html" %}
+{% block title %}Roles and permissions{% endblock %}
+{% block content %}
+{% include "web/_users_tabs.html" %}
+{% include "web/_roles_matrix.html" %}
+<div class="note" style="margin-top:12px">None hides the module. View is read-only. Request lets a user submit and follow their own requests. Edit allows creating and updating records. Approve adds sign-off actions: closing recalls, approving AEM changes, closing other people's work orders. Full adds configuration. The Director role is fixed; changes to other roles apply at the next sign-in.</div>
+{% endblock %}
