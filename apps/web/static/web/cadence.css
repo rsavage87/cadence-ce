@@ -406,7 +406,9 @@ a.tab{text-decoration:none;display:inline-block}
 
 
 /* ===== users and roles tabs (slice 5) ===== */
-/* (users and roles styles go here) */
+#users-body select.perm{min-width:150px}
+#roles-matrix select.perm{min-width:92px}
+#roles-matrix td,#users-body td{vertical-align:middle}
 
 
 

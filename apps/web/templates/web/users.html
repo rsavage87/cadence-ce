@@ -1,0 +1,14 @@
+{% extends "web/base.html" %}
+{% load web %}
+{% block title %}Users and access{% endblock %}
+{% block content %}
+{% include "web/_users_tabs.html" %}
+<form class="toolbar" id="users-filters" method="get" action="{{ list_url }}"
+      hx-get="{{ list_url }}" hx-trigger="change, submit, input changed delay:300ms from:#users-q" hx-target="#users-body" hx-swap="outerHTML" hx-push-url="true">
+  <label class="field grow">{% icon "search" %}<input id="users-q" type="search" name="q" value="{{ f.q }}" placeholder="Search name, email, department" aria-label="Search users"></label>
+  <label class="field"><span>Role</span><select name="role" aria-label="Role"><option value="">All</option>{% for r in roles %}<option value="{{ r.slug }}"{% if f.role == r.slug %} selected{% endif %}>{{ r.name }}</option>{% endfor %}</select></label>
+  <label class="field"><span>Status</span><select name="status" aria-label="Status"><option value="">All</option>{% for v, l in statuses %}<option value="{{ v }}"{% if f.status == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+</form>
+{% include "web/_users_body.html" %}
+<div class="hint" style="margin-top:8px">Change a role from the dropdown; it takes effect at the user's next sign-in. Deactivated users keep their history but cannot sign in.</div>
+{% endblock %}

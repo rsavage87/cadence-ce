@@ -1,0 +1,25 @@
+{% load users_tags %}
+{# Re-fetches itself after a role is added; level changes return the whole matrix. #}
+<div id="roles-matrix" class="tbl-wrap" hx-get="{% url 'web:roles' %}" hx-trigger="roles-changed from:body" hx-target="this" hx-swap="outerHTML">
+  <table>
+    <thead><tr><th>Role</th>{% for k, l in modules %}<th>{{ l }}</th>{% endfor %}<th class="num">Users</th></tr></thead>
+    <tbody>
+      {% for m in matrix %}
+      <tr>
+        <td class="two" style="white-space:normal;min-width:220px"><b style="font-weight:600">{{ m.role.name }}</b><small>{{ m.role.description }}</small></td>
+        {% for module, level in m.cells %}
+        <td>
+          {% if can_manage_users %}
+          <select class="perm" name="level" aria-label="{{ m.role.name }}, {{ module }}"{% if m.role.is_system %} disabled{% else %}
+                  hx-post="{% url 'web:role_level' m.role.id %}" hx-vals='{"module": "{{ module }}"}' hx-trigger="change" hx-target="#roles-matrix" hx-swap="outerHTML"{% endif %}>
+            {% for v, l in levels %}<option value="{{ v }}"{% if level == v %} selected{% endif %}>{{ l }}</option>{% endfor %}
+          </select>
+          {% else %}{{ level|level_label }}{% endif %}
+        </td>
+        {% endfor %}
+        <td class="num">{{ m.users }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
