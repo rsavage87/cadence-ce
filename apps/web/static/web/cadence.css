@@ -411,4 +411,6 @@ a.tab{text-decoration:none;display:inline-block}
 
 
 /* ===== technician credentials tab (slice 5) ===== */
-/* (credentials styles go here) */
+.cred-panel{margin-bottom:14px}
+.cred-panel .panel-h h2{font-size:15px;font-weight:600;margin:0}
+.cred-panel .mini-tbl td .btn+.btn{margin-left:4px}
