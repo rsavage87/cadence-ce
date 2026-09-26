@@ -1,0 +1,30 @@
+{% load web recalls_tags %}
+{% with m=c.match a=c.alert %}
+<div class="alert{% if a|is_class_one %} crit{% endif %}{% if c.done %} quiet{% endif %}{% if c.expanded %} exp{% endif %}" id="match-{{ m.pk }}"><div class="rail"></div><div class="in">
+  <div class="top"><span class="src">{{ a.get_source_display }}</span><span>{{ a|alert_label }}</span>{% if a.published_on %}<span>{{ a.published_on|date:"M j, Y" }}</span>{% endif %}{% if a.classification %}<span>{{ a.classification }}</span>{% endif %}</div>
+  <h3>{{ a.title }}</h3><div class="hint">{{ m.device_model }}</div>
+  <div class="meta"><span><b>{{ c.devices }}</b> device{{ c.devices|pluralize }} affected{% if c.dept_summary %} · {{ c.dept_summary }}{% endif %}</span>{% alert_status_chip m.status %}</div>
+  {% if a.action %}<div class="hint action">{{ a.action }}</div>{% endif %}
+  <div class="foot">
+    {% if c.progress %}<div class="progress"><div class="bar"><i style="width:{{ c.progress.pct|floatformat:1 }}%"></i></div><div class="hint">{{ c.progress.completed }} of {{ c.progress.total }} devices completed</div></div>{% if can_view_wo %}<a class="btn sm" href="{{ c.wo_url }}">Open work orders</a>{% endif %}{% endif %}
+    {% if c.done %}<span class="hint">{{ m.disposition_note|default:"Closed" }}</span>{% endif %}
+    {% for b in c.actions %}<button class="btn sm{% if b.primary %} primary{% endif %}{% if b.ghost %} ghost{% endif %}" type="button" hx-post="{{ b.url }}"{% if b.to %} hx-vals='{"to": "{{ b.to }}"}'{% endif %} hx-target="#rc-body" hx-swap="outerHTML"{% if b.confirm %} hx-confirm="{{ b.confirm }}"{% endif %}>{{ b.label }}</button>{% endfor %}
+    {% if c.devices %}<a class="btn sm ghost" href="{{ c.toggle_url }}" hx-get="{{ c.toggle_url }}" hx-target="#rc-body" hx-swap="outerHTML" hx-push-url="true">{% if c.expanded %}Hide{% else %}Show{% endif %} affected devices</a>{% endif %}
+  </div>
+  {% if c.expanded %}
+  <div class="more">
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>Asset tag</th><th>Location</th><th>Serial</th><th>Status</th><th>Next PM</th></tr></thead>
+      <tbody>{% for x in c.rows %}
+        <tr{% if can_view_asset %} class="row" hx-get="{% url 'web:asset' x.tag %}" hx-target="#drawer"{% endif %}>
+          <td class="tag">{% if can_view_asset %}<a class="tag" href="{% url 'web:asset' x.tag %}">{{ x.tag }}</a>{% else %}{{ x.tag }}{% endif %}</td>
+          <td>{{ x.department }}{% if x.room %}, room {{ x.room }}{% endif %}</td><td class="muted">{{ x.serial|default:"—" }}</td>
+          <td>{% asset_status_chip x.status %}</td><td>{% pm_sticker x %}</td>
+        </tr>{% endfor %}
+      </tbody>
+    </table></div>
+    {% if c.devices > c.rows|length and can_view_asset %}<div class="hint"><a class="link" href="{{ c.equipment_url }}">See all {{ c.devices }} in Equipment</a></div>{% endif %}
+  </div>
+  {% endif %}
+</div></div>
+{% endwith %}

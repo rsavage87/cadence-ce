@@ -17,6 +17,7 @@ from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, R
 from apps.pm.dates import add_months
 from apps.pm.models import PmProcedure
 from apps.recalls.models import Alert, AlertMatch
+from apps.recalls.services import set_status
 from apps.tenants.context import tenant_context
 from apps.tenants.models import Tenant
 from apps.workorders.models import LaborLine, PartLine, Priority, Source, WoType
@@ -36,6 +37,22 @@ MODELS = [
     ("Siemens Healthineers", "Cios Spin", "Mobile C-arm", "Imaging", RiskClass.HIGH, 6, 10, 275000, 2, ContractType.OEM),
 ]
 DEPTS = ["ICU", "ED", "OR", "Med/Surg 3E", "Med/Surg 4E", "NICU", "Dialysis", "Central Sterile", "Radiology", "Telemetry 5"]
+# Fictional notices (they do not describe real recalls for these products), one per disposition the Recalls screen shows.
+# FDA number, published days ago, classification, manufacturer, product, model terms, catalog model, title, action, status, closed days ago, note
+ALERTS = [
+    ("Z-2026-4408", 9, "Class II", "BD", "Alaris 8015 PCU infusion pump", ["Alaris 8015"], "Alaris 8015 PCU",
+     "Keypad membrane may allow fluid ingress", "Inspect keypad; replace per service bulletin", AlertMatch.Status.NEEDS_ACTION, None, ""),
+    ("Z-2026-4415", 11, "Class I", "Hamilton Medical", "Hamilton-G5 intensive care ventilator", ["Hamilton-G5"], "Hamilton-G5",
+     "Ventilator software may cause an unexpected transition to standby",
+     "Apply software update and verify version on each unit. Keep units in service pending update unless directed otherwise; "
+     "verify backup ventilation is available.", AlertMatch.Status.NEEDS_ACTION, None, ""),
+    ("Z-2026-3902", 36, "Class II", "Fresenius", "2008T BlueStar hemodialysis machine", ["2008T"], "2008T BlueStar",
+     "Hemodialysis machine blood pump rotor may loosen during treatment",
+     "Inspect rotor set-screw torque at next PM; replace rotor assemblies from the affected range.", AlertMatch.Status.UNDER_REVIEW, None, ""),
+    ("Z-2026-3055", 88, "Class II", "Steris", "Amsco 400 Series steam sterilizer", ["Amsco 400"], "Amsco 400",
+     "Sterilizer door gasket may fail prematurely, causing cycle aborts", "Replace gaskets from affected date codes.",
+     AlertMatch.Status.CLOSED, 40, "Gaskets replaced on all 3 sterilizers during July PM."),
+]
 TECHS = [
     ("Dana Whitfield", "Lead BMET", "CBET", [(Scope.CATEGORY, "Infusion pumps"), (Scope.CATEGORY, "Patient monitoring"), (Scope.CATEGORY, "Defibrillators"),
                                              (Scope.CATEGORY, "Beds & stretchers"), (Scope.MODEL, "Hamilton-G5")]),
@@ -161,11 +178,16 @@ class Command(BaseCommand):
                         change_status(wo, "in_progress", as_of=d)
                         change_status(wo, "completed", as_of=done)
                         change_status(wo, "closed", as_of=done)
-            # a recall that matches the fleet
+            # recalls that match the fleet, in every disposition the screen shows
             # Alerts are global (shared by every tenant), so a second demo tenant reuses the same notice.
-            alert, _ = Alert.objects.get_or_create(source=Alert.Source.FDA, external_id="Z-2026-4408", defaults={
-                "classification": "Class II", "manufacturer": "BD", "product": "Alaris 8015 PCU infusion pump", "model_terms": ["Alaris 8015"],
-                "title": "Keypad membrane may allow fluid ingress", "action": "Inspect keypad; replace per service bulletin",
-                "published_on": today - timedelta(days=9)})
-            AlertMatch.objects.create(alert=alert, device_model=DeviceModel.objects.get(model="Alaris 8015 PCU"))
+            for external_id, days_ago, cls, mfr, product, terms, model, title, action, status_, closed_days_ago, note in ALERTS:
+                alert, _ = Alert.objects.get_or_create(source=Alert.Source.FDA, external_id=external_id, defaults={
+                    "classification": cls, "manufacturer": mfr, "product": product, "model_terms": terms, "title": title, "action": action,
+                    "published_on": today - timedelta(days=days_ago)})
+                match = AlertMatch.objects.create(alert=alert, device_model=DeviceModel.objects.get(model=model))
+                if status_ == AlertMatch.Status.UNDER_REVIEW:
+                    set_status(match, AlertMatch.Status.UNDER_REVIEW)
+                elif status_ == AlertMatch.Status.CLOSED:
+                    set_status(match, AlertMatch.Status.IN_PROGRESS, today=today - timedelta(days=closed_days_ago + 7))
+                    set_status(match, AlertMatch.Status.CLOSED, note=note, today=today - timedelta(days=closed_days_ago))
         self.stdout.write(self.style.SUCCESS(f"Seeded {tenant.name}: {len(assets)} devices, {len(techs)} technicians. Sign in as {kim} / DemoPass-2026"))
