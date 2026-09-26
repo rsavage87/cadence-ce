@@ -25,7 +25,7 @@
       <tbody>
         {% for w in page %}
         <tr class="row" hx-get="{% url 'web:wo' w.number %}" hx-target="#drawer">
-          <td class="tag"><a class="tag" href="{% url 'web:wo' w.number %}">{{ w.number }}</a>{% if w.source == "portal" %} <span class="chip acc" style="font-size:11px">Portal</span>{% endif %}</td>
+          <td class="tag"><a class="tag" href="{% url 'web:wo' w.number %}">{{ w.number }}</a>{% if w.source == "portal" %} <span class="chip acc" style="font-size:11px">Portal</span>{% endif %}{% if w.alert_id %} <span class="chip violet" style="font-size:11px">Recall</span>{% endif %}</td>
           <td class="two">{{ w.asset.device_model.description }}<small>{{ w.asset.tag }} · {{ w.asset.department }}</small></td>
           <td>{{ w.type|wo_type_short }}</td>
           <td>{% priority_chip w.priority %}</td>

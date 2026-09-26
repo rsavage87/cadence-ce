@@ -1,17 +1,18 @@
-{% load web contracts_tags %}
+{% load web contracts_tags recalls_tags %}
 {% contracts_access request.user as ct %}
 {% with dm=asset.device_model %}
 <div class="dr-h">
   <div>
     <h2>{{ asset.tag }} · {{ dm.description }}</h2>
     <div class="sub">{{ dm.manufacturer }} {{ dm.model }}{% if asset.serial %} · SN {{ asset.serial }}{% endif %} · {{ asset.department }}{% if asset.room %}, room {{ asset.room }}{% endif %}</div>
-    <div class="chips">{% risk_chip dm.risk_class %}{% asset_status_chip asset.status %}{% pm_sticker asset %}{% if asset.contract %}{% if asset.contract.status == "expired" %}<span class="chip warn">Contract expired</span>{% elif asset.contract.status == "ending" %}<span class="chip warn">Contract ends {{ asset.contract.end_on|date:"M j" }}</span>{% else %}<span class="chip acc">Under contract</span>{% endif %}{% endif %}</div>
+    <div class="chips">{% risk_chip dm.risk_class %}{% asset_status_chip asset.status %}{% pm_sticker asset %}{% if asset.contract %}{% if asset.contract.status == "expired" %}<span class="chip warn">Contract expired</span>{% elif asset.contract.status == "ending" %}<span class="chip warn">Contract ends {{ asset.contract.end_on|date:"M j" }}</span>{% else %}<span class="chip acc">Under contract</span>{% endif %}{% endif %}{% if open_recall %}<span class="chip info">Open recall</span>{% endif %}</div>
   </div>
   <button class="iconbtn" type="button" data-act="close-drawer" aria-label="Close">{% icon "x" %}</button>
 </div>
 <div class="tabs" role="tablist">
   <button class="tab{% if tab == 'overview' %} active{% endif %}" role="tab" aria-selected="{% if tab == 'overview' %}true{% else %}false{% endif %}" hx-get="{% url 'web:asset' asset.tag %}?tab=overview" hx-target="#drawer">Overview</button>
   <button class="tab{% if tab == 'wo' %} active{% endif %}" role="tab" aria-selected="{% if tab == 'wo' %}true{% else %}false{% endif %}" hx-get="{% url 'web:asset' asset.tag %}?tab=wo" hx-target="#drawer">Work orders ({{ summary.work_orders|length }})</button>
+  {% if can_view_recalls %}<button class="tab{% if tab == 'recalls' %} active{% endif %}" role="tab" aria-selected="{% if tab == 'recalls' %}true{% else %}false{% endif %}" hx-get="{% url 'web:asset' asset.tag %}?tab=recalls" hx-target="#drawer">Recalls{% if recalls %} ({{ recalls|length }}){% endif %}</button>{% endif %}
 </div>
 <div class="dr-b">
 {% if tab == "overview" %}
@@ -50,6 +51,12 @@
   {% if can_view_wo %}<div class="sec"><h3>Recent work orders</h3><div class="list">
     {% for w in recent %}{% include "web/_wo_li.html" %}{% empty %}<div class="empty">No work orders in the last 6 months.</div>{% endfor %}
   </div></div>{% endif %}
+{% elif tab == "recalls" %}
+  {# The Recalls screen is a page, not a drawer, so these are plain links that expand the matching card. #}
+  <div class="sec"><div class="list">
+    {% for m in recalls %}<a class="li" href="{% url 'web:recalls' %}?match={{ m.id }}"><span class="rail {% if m.alert|is_class_one %}crit{% else %}warn{% endif %}"></span><div class="bd"><div class="t">{{ m.alert|alert_label }}{% if m.alert.classification %} · {{ m.alert.classification }}{% endif %}</div><div class="s">{{ m.alert.title }}</div></div><div class="r">{% alert_status_chip m.status %}</div></a>
+    {% empty %}<div class="empty">No alerts on file for this model.</div>{% endfor %}
+  </div></div>
 {% else %}
   <div class="sec">{% if can_view_wo %}<div class="list">
     {% for w in summary.work_orders %}{% include "web/_wo_li.html" %}{% empty %}<div class="empty">No work orders in the last 6 months.</div>{% endfor %}

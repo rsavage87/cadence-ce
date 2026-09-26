@@ -1,10 +1,10 @@
-{% load web %}
+{% load web recalls_tags %}
 {% with dm=asset.device_model %}
 <div class="dr-h">
   <div>
     <h2>{{ wo.number }} · {{ wo.get_type_display }}</h2>
     <div class="sub">{% if can_view_asset %}<a class="link" href="{% url 'web:asset' asset.tag %}" hx-get="{% url 'web:asset' asset.tag %}" hx-target="#drawer">{{ asset.tag }}</a>{% else %}{{ asset.tag }}{% endif %} · {{ dm.description }}, {{ dm.manufacturer }} {{ dm.model }} · {{ asset.department }}</div>
-    <div class="chips">{% priority_chip wo.priority %}{% wo_status_chip wo.status %}{% if late_days %}<span class="chip crit">{{ late_days }} d past due</span>{% endif %}{% if wo.vendor_service %}<span class="chip violet">Vendor</span>{% endif %}{% if is_portal %}<span class="chip acc">Portal request</span>{% endif %}{% if wo.tagged_out %}<span class="chip crit">Tagged out</span>{% endif %}</div>
+    <div class="chips">{% priority_chip wo.priority %}{% wo_status_chip wo.status %}{% if late_days %}<span class="chip crit">{{ late_days }} d past due</span>{% endif %}{% if wo.vendor_service %}<span class="chip violet">Vendor</span>{% endif %}{% if is_portal %}<span class="chip acc">Portal request</span>{% endif %}{% if wo.alert_id %}<span class="chip violet">Recall</span>{% endif %}{% if wo.tagged_out %}<span class="chip crit">Tagged out</span>{% endif %}</div>
   </div>
   <button class="iconbtn" type="button" data-act="close-drawer" aria-label="Close">{% icon "x" %}</button>
 </div>
@@ -23,6 +23,9 @@
     <div><dt>Due</dt><dd class="{% if late_days %}down{% endif %}">{{ wo.due_on|date:"M j, Y" }}</dd></div>
     <div><dt>Completed</dt><dd>{{ wo.completed_on|date:"M j, Y"|default:"—" }}</dd></div>
     <div><dt>{% if is_open %}Open for{% else %}Turnaround{% endif %}</dt><dd>{% if is_open %}{{ open_days }} days{% elif wo.turnaround_days is not None %}{{ wo.turnaround_days }} days{% if wo.downtime_days %} · {{ wo.downtime_days }} d downtime{% endif %}{% else %}—{% endif %}</dd></div>
+    {% if wo.alert_id %}
+    <div><dt>Recall</dt><dd>{% if recall_match %}<a class="link" href="{% url 'web:recalls' %}?match={{ recall_match.id }}">{{ wo.alert|alert_label }}</a>{% else %}{{ wo.alert|alert_label }}{% endif %} · {{ wo.alert.title }}</dd></div>
+    {% endif %}
     {% if is_portal %}
     <div><dt>Callback</dt><dd>{{ wo.callback|default:"Not given" }}</dd></div>
     <div><dt>Reported location</dt><dd>{{ wo.reported_location|default:asset.department }}{% if wo.tagged_out %} · tagged out by the unit{% endif %}</dd></div>
