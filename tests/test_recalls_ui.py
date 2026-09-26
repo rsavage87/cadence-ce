@@ -72,7 +72,7 @@ def test_page_renders_head_pills_and_a_needs_action_card(client, signed_in, pump
     assert r.status_code == 200
     body = r.content.decode()
     assert "Recalls and alerts" in body and "Alerts are matched to the inventory by manufacturer and model" in body
-    assert f"FDA recall feed last imported {TODAY:%b} {TODAY.day}, {TODAY.year}" in body and "ECRI alerts need a licensed feed (not connected)" in body
+    assert f"newest FDA notice imported {TODAY:%b} {TODAY.day}, {TODAY.year}" in body and "ECRI alerts need a licensed feed (not connected)" in body
     assert "Match alerts to inventory" in body and "Check feeds" not in body and "Response log" not in body
     assert "All alerts · 1" in body and "Needs action or review · 1" in body and "In progress · 0" in body and "Closed · 0" in body
     assert '<span class="src">FDA</span><span>FDA Z-TEST-1</span>' in body and "Class II" in body
@@ -98,7 +98,7 @@ def test_pills_filter_the_body_partial_and_empty_state(client, signed_in, pump_r
 def test_no_alerts_page(client, signed_in, ctx):
     signed_in("director")
     body = client.get("/recalls/").content.decode()
-    assert "FDA recall feed last imported never" in body and "No alerts in this view." in body and "All alerts · 0" in body
+    assert "newest FDA notice imported never" in body and "No alerts in this view." in body and "All alerts · 0" in body
 
 
 def test_class_one_and_closed_cards(client, signed_in, pump_recall, pumps, vent_model, vent):
@@ -137,7 +137,7 @@ def test_view_only_roles_see_no_buttons_and_cannot_post(client, signed_in, pump_
         assert client.post(status_url(pump_recall), {"to": to}, **HX).status_code == 403
     assert client.post(wo_url(pump_recall), **HX).status_code == 403
     assert client.post("/recalls/match/", **HX).status_code == 403
-    assert client.get(status_url(pump_recall)).status_code == 405 or client.get(status_url(pump_recall)).status_code == 403
+    assert client.get(status_url(pump_recall)).status_code == 405
     assert not WorkOrder.objects.exists()
 
 
@@ -158,14 +158,14 @@ def test_manager_can_review_create_work_orders_close_and_reopen(client, signed_i
     assert WorkOrder.objects.filter(alert=pump_recall.alert, assigned_to=techs["dana"]).count() == 3
 
     r = client.post(wo_url(pump_recall), **HX)
-    assert "Every affected device already has an open recall work order" in r["HX-Trigger"]
+    assert "Every affected device already has a recall work order" in r["HX-Trigger"]
 
     r = client.post(status_url(pump_recall), {"to": S.CLOSED}, **HX)
     assert r.status_code == 200 and "FDA Z-TEST-1: closed" in r["HX-Trigger"]
     body = r.content.decode()
     pump_recall.refresh_from_db()
     assert pump_recall.closed_on == TODAY and f"Closed {rc.fmt_date(TODAY)} by Manager User" in body and 'class="alert quiet"' in body
-    assert ">Reopen</button>" in body and 'hx-confirm="Reopen FDA Z-TEST-1 for review?"' in body and "Closed · 1" in body
+    assert ">Reopen</button>" in body and "hx-confirm" not in body.split(">Reopen</button>")[0][-200:] and "Closed · 1" in body
 
     r = client.post(status_url(pump_recall), {"to": S.UNDER_REVIEW}, **HX)
     assert "FDA Z-TEST-1: under review" in r["HX-Trigger"]
@@ -242,7 +242,7 @@ def test_match_query_expands_the_device_table_and_scrolls(client, signed_in, pum
     body = r.content.decode()
     assert 'class="alert exp"' in body and "Hide affected devices" in body and f'getElementById("match-{pump_recall.pk}")' in body
     assert "<th>Asset tag</th><th>Location</th><th>Serial</th><th>Status</th><th>Next PM</th>" in body
-    assert 'href="/equipment/CE-10003/"' in body and "BD123" in body and "ED, room 4" in body and "CE-10005" not in body
+    assert 'href="/equipment/CE-10003/"' in body and "BD123" in body and "<td>ED</td>" in body and "CE-10005" not in body
     assert '<span class="chip ok">In service</span>' in body and f"Due {TODAY + timedelta(days=90):%b %Y}" in body and "See all" not in body
     for i in range(8):
         Asset.objects.create(tag=f"CE-2000{i}", device_model=pump_model, department=dept)
@@ -292,7 +292,7 @@ def api(match, action=""):
 def test_api_transition_and_work_orders_mirror_the_screen(client, signed_in, pump_recall, pumps, techs):
     signed_in("manager")
     r = client.get(api(pump_recall))
-    assert r.status_code == 200 and r.json()["progress"] == {"total": 0, "completed": 0} and r.json()["affected_count"] == 3
+    assert r.status_code == 200 and r.json()["progress"] == {"total": 3, "completed": 0} and r.json()["affected_count"] == 3
     r = client.post(api(pump_recall, "transition/"), {"status": S.UNDER_REVIEW})
     assert r.status_code == 200 and r.json()["status"] == S.UNDER_REVIEW
     r = client.post(api(pump_recall, "transition/"), {"status": S.CLOSED})
@@ -336,3 +336,52 @@ def test_api_other_tenants_match_404s(client, signed_in, pump_recall, theirs):
     assert client.get(api(theirs)).status_code == 404
     assert client.post(api(theirs, "transition/"), {"status": S.UNDER_REVIEW}).status_code == 404
     assert [m["id"] for m in client.get("/api/v1/alert-matches/").json()["results"]] == [str(pump_recall.id)]
+
+
+# --- review follow-ups ---------------------------------------------------------------------------------
+
+def test_roles_without_recalls_access_get_403_from_the_api_too(client, signed_in, pump_recall, pumps):
+    for slug in ("requester", "vendor"):
+        signed_in(slug)
+        assert client.get("/api/v1/alert-matches/").status_code == 403, slug
+        assert client.get(api(pump_recall)).status_code == 403, slug
+        assert client.post(api(pump_recall, "transition/"), {"status": "under_review"}).status_code == 403, slug
+        assert client.post(api(pump_recall, "work-orders/")).status_code == 403, slug
+        assert client.patch(api(pump_recall), {"disposition_note": "x"}, content_type="application/json").status_code == 403, slug
+    client.logout()
+    assert client.get("/api/v1/alert-matches/").status_code in (401, 403)
+    assert client.post(api(pump_recall, "work-orders/")).status_code in (401, 403)
+
+
+def test_api_error_paths(client, signed_in, pump_recall, pumps, ctx, vent_model):
+    signed_in("manager")
+    r = client.post(api(pump_recall, "transition/"), {}, content_type="application/json")
+    assert r.status_code == 400 and "Required" in str(r.json())
+    r = client.post(api(pump_recall, "transition/"), {"status": "bogus"}, content_type="application/json")
+    assert r.status_code == 400
+    r = client.post(api(pump_recall, "transition/"), {"status": "closed"}, content_type="application/json")
+    assert r.status_code == 400 and "Cannot move FDA Z-TEST-1" in r.json()["detail"]
+    empty = AlertMatch.objects.create(alert=pump_recall.alert, device_model=vent_model)
+    r = client.post(api(empty, "work-orders/"))
+    assert r.status_code == 400 and "No active devices" in r.json()["detail"]
+
+
+def test_api_patch_cannot_repoint_a_match_or_set_closed_on(client, signed_in, pump_recall, ctx, vent_model):
+    signed_in("manager")
+    other = AlertMatch.objects.create(alert=pump_recall.alert, device_model=vent_model)
+    payload = {"device_model": str(vent_model.id), "closed_on": "2020-01-01", "disposition_note": "noted"}
+    r = client.patch(api(pump_recall), payload, content_type="application/json")
+    pump_recall.refresh_from_db()
+    assert r.status_code == 200 and pump_recall.device_model_id != vent_model.id and pump_recall.closed_on is None and pump_recall.disposition_note == "noted"
+    assert AlertMatch.objects.filter(device_model=vent_model).count() == 1 and other.pk != pump_recall.pk
+
+
+def test_head_button_keeps_the_pages_view_and_expanded_card(client, signed_in, pump_recall, pumps):
+    signed_in("manager")
+    r = client.post("/recalls/match/", **HX, HTTP_HX_CURRENT_URL=f"http://testserver/recalls/?view=action&match={pump_recall.pk}")
+    body = r.content.decode()
+    assert r.status_code == 200 and 'aria-current="true">Needs action or review' in body and f'id="match-{pump_recall.pk}"' in body and "alert exp" in body
+
+
+def test_recalls_needs_sign_in(client, db):
+    assert client.get("/recalls/").status_code == 302 and client.get("/recalls/")["Location"].startswith("/login/")

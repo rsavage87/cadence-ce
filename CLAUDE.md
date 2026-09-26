@@ -13,10 +13,12 @@ HTMX for the web UI (`apps/web`, via django-htmx), pytest. Tests run on SQLite a
    `Model.unscoped` is only for tenant bootstrap, cross-tenant jobs, and tests, and each use gets a comment saying why.
 2. **Never write `queryset = Model.objects.all()` at class level** (admin, DRF, forms): it is evaluated at import time
    with no tenant in context and stays empty. Resolve querysets inside the request (`get_queryset`).
-3. **Permissions are server-side.** Views use `@require_level(module, Level.X)`; API viewsets set `module` and rely on
-   `ModulePermission`. Hiding a button is not access control.
+3. **Permissions are server-side.** Web views use `@web_view(Module.X, Level.Y)` (apps/web/decorators.py, which wraps
+   `require_level` with `login_required` and the no-tenant guard); API viewsets set `module` and rely on `ModulePermission`.
+   Per-action levels live next to the services (`apps/workorders/permissions.py`, `apps/recalls/permissions.py`). Hiding a button
+   is not access control.
 4. **State changes go through services** (`apps/workorders/services.py`, `apps/pm/services.py`, `apps/contracts/services.py`,
-   `apps/accounts/services.py`, `apps/credentials/services.py`), never by setting fields in a view or calling model helpers like
+   `apps/accounts/services.py`, `apps/credentials/services.py`, `apps/recalls/services.py`), never by setting fields in a view or calling model helpers like
    `Contract.add_assets` directly. Services validate, write status history, and keep the asset in sync.
 5. **No PHI by design.** The portal never asks for patient identifiers. Don't add free-text fields that invite them.
 6. **Migrations are generated, never hand-edited**, and committed with the change. After adding a tenant-scoped model,
@@ -52,12 +54,13 @@ pytest
 - `apps/contracts` Contract with add/remove device operations and cost allocation; `services.py` for create/update/renew/delete, status, filters, KPI summary
 - `apps/workorders` WorkOrder and lines, ServiceRequest, lifecycle services
 - `apps/pm` PmProcedure, PM generation, on-time math, month helpers
-- `apps/recalls` Alert (global), AlertMatch (per tenant), matching, openFDA importer
+- `apps/recalls` Alert (global), AlertMatch (per tenant), matching, openFDA importer; `services.py` dispositions and recall work-order batches,
+  `permissions.py` (review at Edit, close/reopen at Approve). ECRI import is deferred (license).
 - `apps/credentials` Technician, Credential, qualification and coverage services, credential add/renew/sign-off/remove
 - `apps/portal` public request form (`/r/<tenant-slug>/`)
 - `apps/reports` overview KPIs, the Overview bundle (`overview_page`), attention list, nav counts
 - `apps/web` HTMX UI: one views/urls/forms module per screen (`views.py` Overview, Equipment, Work orders; `views_contracts.py`;
-  `views_users.py` Users and Roles tabs; `views_credentials.py`), templates, `charts.py` (SVG geometry), `htmx.py` helpers, shell
+  `views_users.py` Users and Roles tabs; `views_credentials.py`; `views_recalls.py`), templates, `charts.py` (SVG geometry), `htmx.py` helpers, shell
   context processor. Drawers and modals are partials swapped into `#drawer` / `#modal-card`; the same URLs render a full page
   when opened directly. List wrappers that re-fetch themselves carry `hx-disinherit="hx-swap"` (a test enforces it).
 - `apps/api` DRF viewsets under `/api/v1/`

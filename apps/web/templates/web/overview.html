@@ -42,7 +42,7 @@
     <div class="panel-b">{% include "web/_chart_line.html" with c=pm_chart aria="PM completion rate by month" %}</div>
   </div>
   <div class="panel">
-    <div class="panel-h"><h2>Needs attention</h2><span class="sub">{{ d.attention|length }} item{{ d.attention|length|pluralize }} today</span></div>
+    <div class="panel-h"><h2>Needs attention</h2><span class="sub">{{ attention_total }} item{{ attention_total|pluralize }} today</span></div>
     <div class="panel-b">
       <div class="list">
         {% for it in attention %}

@@ -69,12 +69,13 @@ def overview(request):
     data = overview_page(year, month, today)
     first = WorkOrder.objects.aggregate(first=Min("opened_on"))["first"] or today
     recalls_url = reverse("web:recalls") if request.user.has_level(Module.RECALLS, Level.VIEW) else None
+    attention = data["attention"] if recalls_url else [it for it in data["attention"] if "recall" not in it]
     return render(request, "web/overview.html", {
         "nav_active": "overview", "today": today, "year": year, "month": month, "d": data, "k": data["k"],
         "tiles": ov.kpi_tiles(data, recalls_url=recalls_url), "strip": ov.fleet_strip(data["buckets"]),
         "pm_chart": ov.pm_trend_chart(data["pm_series"], data["pm_series_life_support"]),
         "type_chart": ov.opened_by_type_chart(data["opened_by_type"]), "spend_chart": ov.spend_chart(data["spend_by_category"]),
-        "attention": data["attention"][:9], "attention_more": max(0, len(data["attention"]) - 9),
+        "attention": attention[:9], "attention_more": max(0, len(attention) - 9), "attention_total": len(attention),
         **ov.month_options(today, first.year),
     })
 

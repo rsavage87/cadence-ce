@@ -1,8 +1,8 @@
 {% load web %}
-{# Re-fetches itself when the device drawer changes a match; the screen's own POSTs answer with this body directly. #}
-<div id="rc-body" hx-get="{{ list_url }}{% query request.GET %}" hx-trigger="recalls-changed from:body" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap">
+{# Listens for recalls-changed so a change made elsewhere on the page can refresh it; the screen's own POSTs answer with this body directly. #}
+<div id="rc-body" hx-get="{{ list_url }}{% query params %}" hx-trigger="recalls-changed from:body" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap">
   <div class="pills rc-pills">
-    {% for p in pills %}<a class="pill{% if p.active %} active{% endif %}" href="{{ list_url }}{% query request.GET view=p.key match=None %}" hx-get="{{ list_url }}{% query request.GET view=p.key match=None %}" hx-target="#rc-body" hx-swap="outerHTML" hx-push-url="true"{% if p.active %} aria-current="true"{% endif %}>{{ p.label }} · {{ p.count }}</a>{% endfor %}
+    {% for p in pills %}<a class="pill{% if p.active %} active{% endif %}" href="{{ list_url }}{% query params view=p.key match=None %}" hx-get="{{ list_url }}{% query params view=p.key match=None %}" hx-target="#rc-body" hx-swap="outerHTML" hx-push-url="true"{% if p.active %} aria-current="true"{% endif %}>{{ p.label }} · {{ p.count }}</a>{% endfor %}
   </div>
   {% for c in cards %}{% include "web/_alert_card.html" %}{% empty %}<div class="empty">No alerts in this view.</div>{% endfor %}
   {% if expanded %}<script>(function(){var el=document.getElementById("match-{{ expanded }}");if(el)el.scrollIntoView({block:"nearest"});})();</script>{% endif %}

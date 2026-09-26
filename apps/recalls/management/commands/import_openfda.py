@@ -45,10 +45,12 @@ class Command(BaseCommand):
             _, created = Alert.objects.update_or_create(
                 source=Alert.Source.FDA, external_id=str(ext),
                 defaults={
-                    "classification": rec.get("root_cause_description", "")[:40],
+                    # device/recall.json carries no recall class (the enforcement feed does); the root cause stays in `raw`.
+                    "classification": "",
                     "manufacturer": rec.get("recalling_firm", "")[:160],
                     "product": rec.get("product_description", "")[:300],
-                    "model_terms": [rec.get("product_code", "")] if rec.get("product_code") else [],
+                    # FDA product codes (e.g. "FRN") are not model names; matching falls back to the product description.
+                    "model_terms": [],
                     "title": (rec.get("reason_for_recall") or rec.get("product_description") or "")[:300],
                     "action": rec.get("action", ""),
                     "published_on": _parse(rec.get("event_date_initiated")),

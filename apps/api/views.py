@@ -183,6 +183,8 @@ class AlertMatchViewSet(TenantViewSet):
     def transition(self, request, pk=None):
         match = self.get_object()
         to_status = request.data.get("status")
+        if to_status not in AlertMatch.Status.values:
+            raise DRFValidationError({"status": f"Required; one of {', '.join(AlertMatch.Status.values)}."})
         if not rc_perms.can_transition(request.user, match.status, to_status):
             raise PermissionDenied("Closing or reopening an alert needs Approve access.")
         try:
@@ -195,10 +197,10 @@ class AlertMatchViewSet(TenantViewSet):
     def work_orders(self, request, pk=None):
         match = self.get_object()
         try:
-            created = rc_services.create_recall_work_orders(match, by=request.user)
+            batch = rc_services.create_recall_work_orders(match, by=request.user)
         except ValidationError as e:
             return Response({"detail": e.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
-        return Response({"created": created, **self.get_serializer(match).data})
+        return Response({"created": batch.created, "unassigned": batch.unassigned, **self.get_serializer(match).data})
 
 
 class OverviewViewSet(viewsets.ViewSet):

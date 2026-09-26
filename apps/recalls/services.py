@@ -8,6 +8,7 @@ the recall work-order batch, and the grouped lists. Views never set these fields
 from collections import Counter
 from datetime import date, timedelta
 from decimal import Decimal
+from typing import NamedTuple
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -98,15 +99,21 @@ def set_status(match: AlertMatch, to_status: str, by=None, note: str = "", today
     return match
 
 
+class RecallBatch(NamedTuple):
+    created: int
+    unassigned: int  # of the created ones, how many found no credentialed technician
+
+
 def recall_work_orders(match: AlertMatch):
     """Work orders opened for this alert on this device model (cancelled ones no longer stand for a device)."""
     return WorkOrder.objects.filter(alert=match.alert, asset__device_model=match.device_model).exclude(status=WoStatus.CANCELLED)
 
 
 @transaction.atomic
-def create_recall_work_orders(match: AlertMatch, by=None, today: date | None = None) -> int:
-    """One high-priority recall work order per active device that has no open one for this alert yet, assigned to the
-    first credentialed technician when there is one. Moves the match to in progress. Returns how many were created."""
+def create_recall_work_orders(match: AlertMatch, by=None, today: date | None = None) -> RecallBatch:
+    """One high-priority recall work order per active device that has none for this alert yet (a completed one still
+    counts: the device was done; only a cancelled one is redone), assigned to the first credentialed technician when
+    there is one. Moves the match to in progress."""
     from apps.credentials.services import qualified_technicians
     from apps.workorders.services import assign, create_work_order
 
@@ -116,7 +123,7 @@ def create_recall_work_orders(match: AlertMatch, by=None, today: date | None = N
     assets = list(match.affected_assets().select_related("device_model", "department", "tenant").order_by("tag"))
     if not assets:
         raise ValidationError(f"No active devices match {alert_label(match.alert)}.")
-    covered = set(WorkOrder.objects.filter(alert=match.alert, asset__in=assets, status__in=OPEN_STATUSES).values_list("asset_id", flat=True))
+    covered = set(recall_work_orders(match).filter(asset__in=assets).values_list("asset_id", flat=True))
     alert = match.alert
     problem = f"{alert_label(alert)}: {alert.title}. {alert.action}".strip()
     # Qualification depends only on the device model, which every affected device shares: rank the technicians once.
@@ -134,7 +141,7 @@ def create_recall_work_orders(match: AlertMatch, by=None, today: date | None = N
         created += 1
     if match.status != S.IN_PROGRESS:
         set_status(match, S.IN_PROGRESS, by=by, today=today)
-    return created
+    return RecallBatch(created, 0 if technician is not None else created)
 
 
 def unassigned_recall_work_orders(match: AlertMatch) -> int:
@@ -142,9 +149,11 @@ def unassigned_recall_work_orders(match: AlertMatch) -> int:
 
 
 def progress(match: AlertMatch) -> dict:
-    qs = recall_work_orders(match)
-    total = qs.count()
-    completed = qs.filter(status__in=(WoStatus.COMPLETED, WoStatus.CLOSED)).count()
+    """Devices done over devices affected (the bar's "X of N devices"), so cancelled or duplicate work orders cannot skew it."""
+    assets = match.affected_assets()
+    total = assets.count()
+    completed = (recall_work_orders(match).filter(asset__in=assets, status__in=(WoStatus.COMPLETED, WoStatus.CLOSED))
+                 .values("asset_id").distinct().count())
     return {"total": total, "completed": completed, "pct": completed / total * 100 if total else 0.0}
 
 
@@ -175,5 +184,5 @@ def group_counts() -> dict:
 
 
 def feed_imported_at():
-    """When the newest alert arrived, from any source; None when nothing has been imported."""
-    return Alert.objects.aggregate(at=Max("created_at"))["at"]
+    """When the newest FDA notice arrived (the only feed connected); None when nothing has been imported."""
+    return Alert.objects.filter(source=Alert.Source.FDA).aggregate(at=Max("created_at"))["at"]

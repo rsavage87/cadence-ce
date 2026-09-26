@@ -5,9 +5,11 @@ from decimal import Decimal
 import pytest
 from django.core.exceptions import ValidationError
 
+from apps.credentials.models import Credential
 from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel
 from apps.recalls import services as rc
 from apps.recalls.models import Alert, AlertMatch
+from apps.tenants.context import tenant_context
 from apps.workorders import services as wo_services
 from apps.workorders.models import Priority, Source, WorkOrder, WoStatus, WoType
 
@@ -88,7 +90,7 @@ def test_reopening_clears_closed_on_and_keeps_the_note(pump_recall):
 
 def test_create_recall_work_orders_one_per_active_device_assigned_to_credentialed_technician(pump_recall, pumps, techs, make_user):
     by = make_user("manager")
-    assert rc.create_recall_work_orders(pump_recall, by=by) == 3
+    assert rc.create_recall_work_orders(pump_recall, by=by).created == 3
     wos = list(WorkOrder.objects.filter(alert=pump_recall.alert).order_by("asset__tag"))
     assert [w.asset.tag for w in wos] == ["CE-10002", "CE-10003", "CE-10004"]  # the retired CE-10005 is skipped
     for w in wos:
@@ -102,20 +104,20 @@ def test_create_recall_work_orders_one_per_active_device_assigned_to_credentiale
 
 
 def test_create_recall_work_orders_skips_devices_with_an_open_one_and_stays_in_progress(pump_recall, pumps, techs):
-    assert rc.create_recall_work_orders(pump_recall) == 3
-    assert rc.create_recall_work_orders(pump_recall) == 0
+    assert rc.create_recall_work_orders(pump_recall).created == 3
+    assert rc.create_recall_work_orders(pump_recall).created == 0
     assert WorkOrder.objects.filter(alert=pump_recall.alert).count() == 3
     # a device whose recall work order was cancelled gets a fresh one
     wo = WorkOrder.objects.get(alert=pump_recall.alert, asset__tag="CE-10004")
     wo_services.change_status(wo, WoStatus.CANCELLED)
-    assert rc.create_recall_work_orders(pump_recall) == 1
+    assert rc.create_recall_work_orders(pump_recall).created == 1
     assert WorkOrder.objects.filter(alert=pump_recall.alert, asset__tag="CE-10004", status=WoStatus.OPEN).count() == 1
     pump_recall.refresh_from_db()
     assert pump_recall.status == S.IN_PROGRESS
 
 
 def test_create_recall_work_orders_leaves_unassigned_without_a_credentialed_technician(pump_recall, pumps):
-    assert rc.create_recall_work_orders(pump_recall) == 3
+    assert rc.create_recall_work_orders(pump_recall).created == 3
     assert rc.unassigned_recall_work_orders(pump_recall) == 3
     assert not WorkOrder.objects.filter(alert=pump_recall.alert).exclude(assigned_to=None).exists()
 
@@ -124,7 +126,7 @@ def test_create_recall_work_orders_includes_the_action_and_starts_from_under_rev
     pump_recall.alert.action = "Inspect keypad; replace per service bulletin"
     pump_recall.alert.save()
     rc.set_status(pump_recall, S.UNDER_REVIEW)
-    assert rc.create_recall_work_orders(pump_recall) == 3
+    assert rc.create_recall_work_orders(pump_recall).created == 3
     assert WorkOrder.objects.filter(alert=pump_recall.alert).first().problem == ("FDA Z-TEST-1: Keypad membrane may allow fluid ingress. "
                                                                                   "Inspect keypad; replace per service bulletin")
     assert pump_recall.status == S.IN_PROGRESS
@@ -134,26 +136,29 @@ def test_create_recall_work_orders_rejects_no_devices_and_closed_matches(ctx, ve
     empty = AlertMatch.objects.create(alert=make_alert("Z-3", manufacturer="Hamilton Medical", terms=("Hamilton",)), device_model=vent_model)
     with pytest.raises(ValidationError, match="No active devices match FDA Z-3"):
         rc.create_recall_work_orders(empty)
-    force(pump_recall, S.CLOSED)
-    with pytest.raises(ValidationError, match="Reopen FDA Z-TEST-1 before creating work orders"):
-        rc.create_recall_work_orders(pump_recall)
+    for done in (S.CLOSED, S.NOT_AFFECTED):
+        force(pump_recall, done)
+        with pytest.raises(ValidationError, match="Reopen FDA Z-TEST-1 before creating work orders"):
+            rc.create_recall_work_orders(pump_recall)
     assert not WorkOrder.objects.exists()
+    rc.set_status(pump_recall, S.UNDER_REVIEW)  # reopened: the batch is allowed again
+    assert rc.create_recall_work_orders(pump_recall).created == 3
 
 
 def test_progress_counts_completed_and_closed_work_orders(pump_recall, pumps):
-    assert rc.progress(pump_recall) == {"total": 0, "completed": 0, "pct": 0.0}
+    assert rc.progress(pump_recall) == {"total": 3, "completed": 0, "pct": 0.0}  # devices affected, none done yet
     rc.create_recall_work_orders(pump_recall)
     a, b, c = WorkOrder.objects.filter(alert=pump_recall.alert).order_by("asset__tag")
     for w in (a, b):
         wo_services.change_status(w, WoStatus.IN_PROGRESS)
         wo_services.change_status(w, WoStatus.COMPLETED)
     wo_services.change_status(a, WoStatus.CLOSED)
-    wo_services.change_status(c, WoStatus.CANCELLED)  # cancelled ones drop out of the denominator
+    wo_services.change_status(c, WoStatus.CANCELLED)  # the bar counts devices: a cancelled work order leaves its device not done
     p = rc.progress(pump_recall)
-    assert (p["total"], p["completed"]) == (2, 2) and p["pct"] == 100.0
-    # a repair on the same device for another reason does not count
+    assert (p["total"], p["completed"]) == (3, 2) and round(p["pct"], 1) == 66.7
+    # a repair on the same device for another reason does not count, nor does a second recall work order for a done device
     wo_services.create_work_order(asset=a.asset, type=WoType.REPAIR, priority=Priority.NORMAL, problem="Door latch")
-    assert rc.progress(pump_recall)["total"] == 2
+    assert rc.progress(pump_recall) == p
 
 
 # --- summaries and lists --------------------------------------------------------------------------------
@@ -209,3 +214,43 @@ def test_feed_imported_at(db, ctx):
     assert rc.feed_imported_at() is None
     make_alert("Z-9")
     assert rc.feed_imported_at() is not None
+
+
+# --- review follow-ups ---------------------------------------------------------------------------------
+
+def test_every_move_outside_the_table_is_rejected(pump_recall):
+    for from_status in S:
+        for to_status in list(S) + ["bogus", None]:
+            if to_status in rc.ALLOWED_TRANSITIONS[from_status]:
+                continue
+            force(pump_recall, from_status)
+            with pytest.raises(ValidationError):
+                rc.set_status(pump_recall, to_status)
+            pump_recall.refresh_from_db()
+            assert pump_recall.status == from_status
+
+
+def test_completed_devices_are_not_redone_by_a_second_batch(pump_recall, pumps):
+    assert rc.create_recall_work_orders(pump_recall).created == 3
+    done = WorkOrder.objects.get(alert=pump_recall.alert, asset__tag="CE-10003")
+    wo_services.change_status(done, WoStatus.IN_PROGRESS)
+    wo_services.change_status(done, WoStatus.COMPLETED)
+    assert rc.create_recall_work_orders(pump_recall).created == 0
+    assert WorkOrder.objects.filter(alert=pump_recall.alert, asset__tag="CE-10003").count() == 1
+
+
+def test_batch_reports_how_many_found_no_technician(pump_recall, pumps, techs):
+    assert rc.create_recall_work_orders(pump_recall) == (3, 0)
+    Credential.objects.all().delete()
+    rc.set_status(pump_recall, S.UNDER_REVIEW)
+    WorkOrder.objects.get(alert=pump_recall.alert, asset__tag="CE-10004").delete()
+    assert rc.create_recall_work_orders(pump_recall) == (1, 1)
+
+
+def test_rematch_creates_nothing_for_another_tenant(ctx, pump_recall, other_tenant):
+    with tenant_context(other_tenant):
+        d = Department.objects.create(name="ICU")
+        DeviceModel.objects.create(manufacturer="BD", model="Alaris 8015 PCU", description="Pump", category="Infusion pumps")
+        Asset.objects.create(tag="THEIRS-1", device_model=DeviceModel.objects.get(model="Alaris 8015 PCU"), department=d)
+    assert rc.rematch() == 0  # this tenant already has its match
+    assert AlertMatch.unscoped.filter(tenant=other_tenant).count() == 0  # unscoped: proves the other tenant was untouched

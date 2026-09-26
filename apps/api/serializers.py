@@ -105,6 +105,8 @@ class AlertMatchSerializer(serializers.ModelSerializer):
     class Meta:
         model = AlertMatch
         fields = ["id", "alert", "alert_detail", "device_model", "status", "disposition_note", "closed_on", "affected_count", "progress"]
+        # A match's identity is fixed by matching and closed_on by set_status; over PATCH only the note (and status via the transition action) change.
+        read_only_fields = ["alert", "device_model", "closed_on"]
 
     def get_affected_count(self, obj):
         return obj.affected_assets().count()

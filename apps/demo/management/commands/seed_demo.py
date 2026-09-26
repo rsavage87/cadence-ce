@@ -17,10 +17,10 @@ from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, R
 from apps.pm.dates import add_months
 from apps.pm.models import PmProcedure
 from apps.recalls.models import Alert, AlertMatch
-from apps.recalls.services import set_status
+from apps.recalls.services import create_recall_work_orders, set_status
 from apps.tenants.context import tenant_context
 from apps.tenants.models import Tenant
-from apps.workorders.models import LaborLine, PartLine, Priority, Source, WoType
+from apps.workorders.models import LaborLine, PartLine, Priority, Source, WorkOrder, WoType
 from apps.workorders.services import change_status, create_work_order
 
 MODELS = [
@@ -41,7 +41,7 @@ DEPTS = ["ICU", "ED", "OR", "Med/Surg 3E", "Med/Surg 4E", "NICU", "Dialysis", "C
 # FDA number, published days ago, classification, manufacturer, product, model terms, catalog model, title, action, status, closed days ago, note
 ALERTS = [
     ("Z-2026-4408", 9, "Class II", "BD", "Alaris 8015 PCU infusion pump", ["Alaris 8015"], "Alaris 8015 PCU",
-     "Keypad membrane may allow fluid ingress", "Inspect keypad; replace per service bulletin", AlertMatch.Status.NEEDS_ACTION, None, ""),
+     "Keypad membrane may allow fluid ingress", "Inspect keypad; replace per service bulletin", AlertMatch.Status.IN_PROGRESS, None, ""),
     ("Z-2026-4415", 11, "Class I", "Hamilton Medical", "Hamilton-G5 intensive care ventilator", ["Hamilton-G5"], "Hamilton-G5",
      "Ventilator software may cause an unexpected transition to standby",
      "Apply software update and verify version on each unit. Keep units in service pending update unless directed otherwise; "
@@ -183,10 +183,17 @@ class Command(BaseCommand):
             for external_id, days_ago, cls, mfr, product, terms, model, title, action, status_, closed_days_ago, note in ALERTS:
                 alert, _ = Alert.objects.get_or_create(source=Alert.Source.FDA, external_id=external_id, defaults={
                     "classification": cls, "manufacturer": mfr, "product": product, "model_terms": terms, "title": title, "action": action,
-                    "published_on": today - timedelta(days=days_ago)})
+                    "published_on": today - timedelta(days=days_ago), "raw": {"demo": True}})  # demo: the screen shows a disclaimer
                 match = AlertMatch.objects.create(alert=alert, device_model=DeviceModel.objects.get(model=model))
                 if status_ == AlertMatch.Status.UNDER_REVIEW:
                     set_status(match, AlertMatch.Status.UNDER_REVIEW)
+                elif status_ == AlertMatch.Status.IN_PROGRESS:
+                    # a batch already under way: a third of the devices done, the rest open with their technician
+                    opened = today - timedelta(days=5)
+                    batch = create_recall_work_orders(match, today=opened)
+                    for wo in WorkOrder.objects.filter(alert=alert).order_by("number")[: batch.created // 3]:
+                        change_status(wo, "in_progress", as_of=opened + timedelta(days=1))
+                        change_status(wo, "completed", as_of=opened + timedelta(days=2))
                 elif status_ == AlertMatch.Status.CLOSED:
                     set_status(match, AlertMatch.Status.IN_PROGRESS, today=today - timedelta(days=closed_days_ago + 7))
                     set_status(match, AlertMatch.Status.CLOSED, note=note, today=today - timedelta(days=closed_days_ago))

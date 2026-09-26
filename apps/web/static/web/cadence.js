@@ -91,9 +91,12 @@
     if (e.key === "/" && !typing) { e.preventDefault(); $("#gsearch").focus(); }
   });
   // Rows open drawers via hx-get; the link inside is for keyboard users and cmd/ctrl-click to a new tab.
+  // Only a click-triggered container (a row or card) owns its links; a wrapper that re-fetches on an event does not.
   document.addEventListener("click", (e) => {
     const a = e.target.closest("[hx-get] a[href]");
     if (!a || a.hasAttribute("hx-get")) return;
+    const trigger = a.closest("[hx-get]").getAttribute("hx-trigger") || "click";
+    if (!/\bclick\b/.test(trigger)) return;
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) { e.stopPropagation(); return; }
     e.preventDefault();
   }, true);
