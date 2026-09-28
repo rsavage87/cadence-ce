@@ -52,6 +52,8 @@ def change_status(wo: WorkOrder, to_status: str, by=None, note: str = "", as_of=
     as_of = as_of or date.today()
     if to_status not in ALLOWED_TRANSITIONS[wo.status]:
         raise ValidationError(f"Cannot move {wo.number} from {wo.get_status_display()} to {to_status}.")
+    if to_status in (WoStatus.IN_PROGRESS, WoStatus.COMPLETED) and as_of < wo.opened_on:
+        raise ValidationError(f"{wo.number} cannot be started or completed before it was opened on {wo.opened_on:%b %-d, %Y}.")
     from_status = wo.status
     wo.status = to_status
     if to_status == WoStatus.IN_PROGRESS:

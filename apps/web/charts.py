@@ -101,7 +101,7 @@ def donut(items: list[dict], center: str = "", center_label: str = "", size: int
     arcs, acc = [], 0.0
     for it in items:
         f = it["value"] / total
-        arcs.append({"color": it["color"], "dash": f"{f * circ:.2f} {circ - f * circ:.2f}", "offset": f"{-acc * circ:.2f}",
+        arcs.append({"color": it["color"], "dash": f"{f * circ:.2f} {circ - f * circ:.2f}", "offset": f"{-acc * circ + 0.0:.2f}",  # + 0.0: no "-0.00"
                      "title": f"{it['label']}: {it['text']}"})
         acc += f
     return {"size": size, "c": c, "r": r, "arcs": arcs, "legend": items, "center": center, "center_label": center_label,

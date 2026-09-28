@@ -12,7 +12,7 @@ Slices 0 to 7 are built; 8 onward are the next work.
 | 4 | Web UI shell (HTMX) | Nav, topbar, Overview, Equipment, Work orders | new `apps/web` | done (device drawer: Overview + Work orders tabs) |
 | 5 | Contracts UI + credentials UI | Contracts section, Users and access (Users, Roles, Credentials tabs) | `contracts`, `accounts`, `credentials` + `web` | done (no invitation email yet) |
 | 6 | Recalls UI + ECRI importer | Recalls and alerts | `recalls` + `web` | done (openFDA feed; ECRI importer deferred, it needs a license) |
-| 7 | Reports | Reports (COSR, MTBF, replacement, spend, contract vs in-house, tech productivity) | `reports` | next |
+| 7 | Reports | Reports (COSR, PM compliance, MTBF, replacement, spend, contract vs in-house, technician productivity, recall log) | `reports` + `web` | done (CSV download and JSON API; PDF, Schedule, and Custom report deferred) |
 | 8 | Settings | Integrations, portal settings, editable policy, risk scoring | `settings` app | next |
 
 ## KPI definitions (from the mock's `computeKpis`)
@@ -25,7 +25,7 @@ Slices 0 to 7 are built; 8 onward are the next work.
 - **Cost of service ratio**: (work-order cost of the trailing 182 days × 365/182 + annual cost of active contracts) / acquisition value of active devices.
 - **Recall alerts received**: alert matches whose alert was published in the period.
 
-The mock's toast-only buttons (Export CSV, Device list, Label, Print, Scan tag) are deferred on every screen until an export feature exists.
+The mock's toast-only buttons (Device list, Label, Print, Scan tag, and Export CSV outside Reports) are deferred until an export feature exists; Reports downloads each report as CSV.
 
 ## Screen → view map (slices 4 to 7)
 - Overview: `reports.services.overview_kpis(year, month)` + `pm.services.pm_on_time_series` for the 12-month chart; attention list = life-support overdue PMs, alerts needing action, unassigned portal requests, expired/expiring contracts, critical open WOs, WOs awaiting parts > 7 days.

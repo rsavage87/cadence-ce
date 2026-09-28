@@ -56,23 +56,36 @@ def pm_on_time_rate(start: date, end: date, as_of: date | None = None, life_supp
     return {"due": total, "on_time": on_time, "rate": (on_time / total * 100) if total else 100.0}
 
 
-def pm_on_time_series(year: int, month: int, months: int = 12, life_support_only: bool = False) -> list[dict]:
-    """Monthly on-time rates for the `months` months ending at (year, month)."""
-    out = []
-    y, m = year, month
+def pm_on_time_series(year: int, month: int, months: int = 12, life_support_only: bool = False, today: date | None = None) -> list[dict]:
+    """Monthly on-time rates for the `months` months ending at (year, month): one query over the PM work orders due in the
+    range, bucketed by month with pm_due_queryset's rule (due inside the month and, for the current month, already due or
+    already completed). Months after `today` have no rate."""
+    today = today or date.today()
     points = []
+    y, m = year, month
     for _ in range(months):
         points.append((y, m))
         m -= 1
         if m == 0:
             y, m = y - 1, 12
-    for y, m in reversed(points):
+    points.reverse()
+    first, last = month_bounds(*points[0])[0], month_bounds(*points[-1])[1]
+    qs = WorkOrder.objects.filter(type=WoType.PM, due_on__gte=first, due_on__lte=last)
+    if life_support_only:
+        qs = qs.filter(asset__device_model__risk_class=RiskClass.LIFE_SUPPORT)
+    by_month: dict = {}
+    for due_on, completed_on in qs.values_list("due_on", "completed_on"):
+        by_month.setdefault((due_on.year, due_on.month), []).append((due_on, completed_on))
+    out = []
+    for y, m in points:
         start, end = month_bounds(y, m)
-        if start > date.today():
+        if start > today:
             out.append({"year": y, "month": m, "rate": None, "due": 0, "on_time": 0})
             continue
-        r = pm_on_time_rate(start, end, life_support_only=life_support_only)
-        out.append({"year": y, "month": m, **r})
+        as_of = min(end, today)
+        rows = [(d, c) for d, c in by_month.get((y, m), []) if d <= as_of and (d < as_of or c is not None)]
+        due, on_time = len(rows), sum(1 for d, c in rows if c is not None and c <= d)
+        out.append({"year": y, "month": m, "due": due, "on_time": on_time, "rate": (on_time / due * 100) if due else 100.0})
     return out
 
 

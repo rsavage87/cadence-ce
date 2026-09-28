@@ -10,10 +10,11 @@ import csv
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
+from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, RiskClass
+from apps.equipment.models import TAG_VALIDATOR, Asset, AssetStatus, Department, DeviceModel, RiskClass
 from apps.tenants.context import tenant_context
 from apps.tenants.models import Tenant
 
@@ -104,6 +105,12 @@ class Command(BaseCommand):
                 if not tag:
                     skipped += 1
                     continue
+                try:
+                    TAG_VALIDATOR(tag)
+                except ValidationError:
+                    self.stderr.write(f"Skipped {tag!r}: {TAG_VALIDATOR.message}")
+                    skipped += 1
+                    continue
                 dept, _ = Department.objects.get_or_create(name=get(row, "department") or "Unassigned", defaults={"tenant": tenant})
                 dm, _ = DeviceModel.objects.get_or_create(
                     manufacturer=get(row, "manufacturer") or "Unknown", model=get(row, "model") or "Unknown",
@@ -130,4 +137,5 @@ class Command(BaseCommand):
                     created += 1
             if opts["dry_run"]:
                 transaction.set_rollback(True)
-        self.stdout.write(self.style.SUCCESS(f"{'Dry run: ' if opts['dry_run'] else ''}{created} created, {updated} updated, {skipped} skipped (no tag)"))
+        summary = f"{created} created, {updated} updated, {skipped} skipped (no tag, or a tag with spaces or slashes)"
+        self.stdout.write(self.style.SUCCESS(f"{'Dry run: ' if opts['dry_run'] else ''}{summary}"))

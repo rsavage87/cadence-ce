@@ -100,6 +100,24 @@ def test_nice_max_rounds_up_to_readable_steps():
     assert [charts.nice_max(v) for v in (0, 7, 13, 24, 230)] == [1, 10, 20, 25, 250]
 
 
+def test_hbars_benchmark_marker_stays_inside_the_chart_when_every_bar_is_below_it():
+    c = charts.hbars([("A", 2.0), ("B", 0.5)], fmt=lambda v: f"{v:.1f}%", marker=6.0)
+    assert c["left"] < c["marker_x"] <= c["w"] - 66 and c["marker_title"] == "Benchmark: 6.0%"
+    assert all(r["bar_w"] < c["marker_x"] - c["left"] for r in c["rows"])
+    assert charts.hbars([("A", 2.0)], fmt=str)["marker_x"] is None
+
+
+def test_donut_arcs_cover_the_circle_in_order():
+    import math
+
+    c = charts.donut([{"label": "a", "value": 3, "color": "x", "text": "3"}, {"label": "b", "value": 1, "color": "y", "text": "1"}], center="4")
+    circ = 2 * math.pi * c["r"]
+    assert c["arcs"][0]["dash"] == f"{0.75 * circ:.2f} {0.25 * circ:.2f}" and c["arcs"][0]["offset"] == "0.00"
+    assert c["arcs"][1]["dash"] == f"{0.25 * circ:.2f} {0.75 * circ:.2f}" and c["arcs"][1]["offset"] == f"{-0.75 * circ:.2f}"
+    assert c["arcs"][1]["title"] == "b: 1" and c["center"] == "4"
+    assert charts.donut([], center="$0")["arcs"] == []  # nothing to draw, nothing divides by zero
+
+
 # --- recall integration points (slice 6) --------------------------------------------------------
 
 def test_recall_tile_links_only_when_given_a_url(ctx, pump_recall):

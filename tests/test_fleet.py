@@ -102,3 +102,16 @@ def test_service_summary_counts_completed_cost_in_trailing_six_months(ctx, vent)
     assert [w.number for w in s["work_orders"]] == [open_.number, done.number]
     assert s["repairs"] == 1 and s["cost"] == 200
     assert round(s["annualized_pct"], 3) == round(200 * 365 / 182 / 38000 * 100, 3)
+
+
+def test_asset_tags_cannot_carry_spaces_or_slashes(client, make_user, dept, vent_model):
+    """Tags live in URLs (/equipment/<tag>/); a slash would make every screen that links the device fail to render."""
+    import pytest
+    from django.core.exceptions import ValidationError
+
+    with pytest.raises(ValidationError, match="spaces or slashes"):
+        Asset(tag="CE 10/5", device_model=vent_model, department=dept).full_clean(exclude=["tenant"])
+    Asset(tag="CE-10005", device_model=vent_model, department=dept).full_clean(exclude=["tenant"])
+    client.force_login(make_user("director"))
+    r = client.post("/api/v1/assets/", {"tag": "CE/9", "device_model": vent_model.pk, "department": dept.pk}, content_type="application/json")
+    assert r.status_code == 400 and "slashes" in r.json()["tag"][0]

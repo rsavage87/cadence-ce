@@ -48,9 +48,12 @@ def test_list_links_swap_the_body_only(client, signed_in):
     signed_in("director")
     r = client.get("/reports/spend/", **BODY)
     body = r.content.decode()
-    assert body.lstrip().startswith("<div id=\"rep-body\"") and "<html" not in body and "<h2>Repair spend trend</h2>" in body
-    assert "<title>Repair spend trend · Reports · Riverside Regional</title>" in body  # htmx retitles the document from the fragment
+    assert "<html" not in body and "<h2>Repair spend trend</h2>" in body
+    # htmx retitles the document only from a <title> at the fragment's root, so it comes before #rep-body, never inside it
+    title = "<title>Repair spend trend · Reports · Riverside Regional</title>"
+    assert body.lstrip().startswith(title) and body.index("<div id=\"rep-body\"") > body.index(title) and body.count("<title>") == 1
     assert "<title>" not in client.get("/reports/spend/").content.decode().split("<body")[1]  # never inside the full page's body
+    assert '<nav class="panel rep-list" aria-label="Reports">' in body and 'role="tab' not in body
     assert r.templates[0].name == "web/_reports_body.html"
 
 

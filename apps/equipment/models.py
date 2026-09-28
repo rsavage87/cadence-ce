@@ -1,5 +1,6 @@
 from datetime import date
 
+from django.core.validators import RegexValidator
 from django.db import models
 from simple_history.models import HistoricalRecords
 
@@ -26,6 +27,10 @@ class SupportType(models.TextChoices):
     IN_HOUSE = "in_house", "In-house"
     OEM_CONTRACT = "oem_contract", "OEM contract"
     THIRD_PARTY = "third_party", "Third-party"
+
+
+# Tags appear in URLs (/equipment/<tag>/), so no whitespace or slashes; forms, the API, and the importer all check this.
+TAG_VALIDATOR = RegexValidator(r"^[^\s/]+$", "Asset tags cannot contain spaces or slashes.")
 
 
 class Department(TenantModel):
@@ -73,7 +78,7 @@ class DeviceModel(TenantModel):
 class Asset(TenantModel):
     ACTIVE_STATUSES = (AssetStatus.IN_SERVICE, AssetStatus.IN_REPAIR, AssetStatus.OUT_OF_SERVICE, AssetStatus.ON_LOAN, AssetStatus.MISSING)
 
-    tag = models.CharField(max_length=40, help_text="Control number on the CE sticker, e.g. CE-10241")
+    tag = models.CharField(max_length=40, help_text="Control number on the CE sticker, e.g. CE-10241", validators=[TAG_VALIDATOR])
     serial = models.CharField(max_length=80, blank=True)
     device_model = models.ForeignKey(DeviceModel, on_delete=models.PROTECT, related_name="assets")
     department = models.ForeignKey(Department, on_delete=models.PROTECT, related_name="assets")

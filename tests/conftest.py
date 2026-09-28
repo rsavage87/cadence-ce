@@ -84,3 +84,13 @@ def pump_recall(ctx, pump_model):
     alert = Alert.objects.create(source=Alert.Source.FDA, external_id="Z-TEST-1", classification="Class II", manufacturer="BD", product="Alaris pump",
                                  title="Keypad membrane may allow fluid ingress", published_on=date.today() - timedelta(days=3))
     return AlertMatch.objects.create(alert=alert, device_model=pump_model)
+
+
+@pytest.fixture
+def freeze_today(monkeypatch):
+    """Pin the clock the Reports views use (views_reports._today), so render tests built on fixed dates pass on any day."""
+
+    def _at(today):
+        monkeypatch.setattr("apps.web.views_reports._today", lambda: today)
+
+    return _at

@@ -20,6 +20,11 @@ from .htmx import is_partial
 from .reports import present
 
 
+def _today() -> date:
+    """The reports' clock, in one place so tests can pin it (fixture `freeze_today`)."""
+    return date.today()
+
+
 def _meta(key: str | None) -> dict:
     meta = rs.report_meta(key or rs.REPORT_KEYS[0])
     if meta is None:
@@ -30,12 +35,13 @@ def _meta(key: str | None) -> dict:
 @web_view(Module.REPORTS, Level.VIEW)
 def reports(request, key=None):
     meta = _meta(key)
-    today = date.today()
+    today = _today()
     data = rs.run_report(meta["key"], today)
-    ctx = {"nav_active": "reports", "today": today, "reports": rs.REPORTS, "report": meta, "r": data, "p": present(meta["key"], data),
+    partial = is_partial(request, "rep-body")
+    ctx = {"nav_active": "reports", "today": today, "reports": rs.REPORTS, "report": meta, "r": data, "p": present(meta["key"], data), "partial": partial,
            "can_view_asset": request.user.has_level(Module.EQUIPMENT, Level.VIEW), "can_view_wo": request.user.has_level(Module.WORKORDERS, Level.VIEW),
            "can_view_recalls": request.user.has_level(Module.RECALLS, Level.VIEW)}
-    return render(request, "web/_reports_body.html" if is_partial(request, "rep-body") else "web/reports.html", ctx)
+    return render(request, "web/_reports_body.html" if partial else "web/reports.html", ctx)
 
 
 def _cell(v):
@@ -49,7 +55,7 @@ def _cell(v):
 @web_view(Module.REPORTS, Level.VIEW)
 def report_csv(request, key):
     meta = _meta(key)
-    today = date.today()
+    today = _today()
     data = rs.run_report(meta["key"], today)
     response = HttpResponse(content_type="text/csv; charset=utf-8")
     response["Content-Disposition"] = f'attachment; filename="cadence-{meta["key"]}-{today:%Y-%m-%d}.csv"'

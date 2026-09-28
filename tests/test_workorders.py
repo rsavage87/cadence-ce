@@ -50,3 +50,17 @@ def test_portal_request_creates_unassigned_work_order(ctx, vent, dept):
     assert sr.work_order.priority == "critical" and sr.work_order.assigned_to is None and sr.work_order.source == "portal"
     vent.refresh_from_db()
     assert vent.status == AssetStatus.OUT_OF_SERVICE
+
+
+def test_work_cannot_complete_before_it_was_opened(ctx, vent):
+    from datetime import date, timedelta
+
+    import pytest
+    from django.core.exceptions import ValidationError
+
+    wo = create_work_order(asset=vent, type="repair", priority="normal", problem="Booked ahead", opened_on=date.today() + timedelta(days=5))
+    with pytest.raises(ValidationError, match="before it was opened"):
+        change_status(wo, "in_progress")
+    with pytest.raises(ValidationError):
+        change_status(wo, "completed", as_of=date.today() + timedelta(days=4))
+    assert wo.turnaround_days is None and change_status(wo, "in_progress", as_of=wo.opened_on).started_on == wo.opened_on

@@ -12,7 +12,7 @@ from typing import NamedTuple
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import Count, Max, Q
+from django.db.models import Count, F, Max, Q
 
 from apps.equipment.models import Asset, DeviceModel
 from apps.workorders.models import OPEN_STATUSES, Priority, Source, WorkOrder, WoStatus, WoType
@@ -175,7 +175,7 @@ def filter_matches(view: str = "all"):
           .annotate(devices=Count("device_model__assets", filter=Q(device_model__assets__status__in=Asset.ACTIVE_STATUSES))))
     if statuses:
         qs = qs.filter(status__in=statuses)
-    return qs.order_by("-alert__published_on", "alert__external_id")
+    return qs.order_by(F("alert__published_on").desc(nulls_last=True), "alert__external_id")  # NULLs would sort first on Postgres otherwise
 
 
 def group_counts() -> dict:

@@ -10,7 +10,7 @@ KPI math for the Overview. Definitions match the mock so the demo and the produc
 """
 from datetime import date, timedelta
 
-from django.db.models import Count, Q
+from django.db.models import Count, DecimalField, F, Q, Sum
 from django.db.models.functions import Coalesce, TruncMonth
 
 from apps.contracts.models import Contract
@@ -19,7 +19,7 @@ from apps.equipment.services import fleet_bucket_counts
 from apps.pm.dates import month_bounds
 from apps.pm.services import overdue_assets, pm_on_time_rate, pm_on_time_series
 from apps.recalls.models import AlertMatch
-from apps.workorders.models import OPEN_STATUSES, Priority, WorkOrder, WoStatus, WoType
+from apps.workorders.models import OPEN_STATUSES, LaborLine, PartLine, Priority, WorkOrder, WoStatus, WoType
 from apps.workorders.services import PRIORITY_RANK, unassigned_portal_requests
 
 TRAILING_DAYS = 182  # the "6 months" every service-cost figure annualizes from (365/182): the Overview tile and the cost reports agree
@@ -73,14 +73,20 @@ def overview_kpis(year: int, month: int, today: date | None = None) -> dict:
 def cost_of_service(today: date, acquisition: float | None = None) -> dict:
     """The annualized service cost behind the cost-of-service ratio: work orders completed in the trailing 182 days
     (in-house, and vendor time and materials) scaled to a year, plus the annual cost of contracts that have not ended,
-    over the acquisition value of the active fleet. The Overview tile and the cost reports share this."""
+    over the acquisition value of the active fleet. The Overview tile and the cost reports share this. Two grouped
+    queries and two aggregates, whatever the fleet size: no work order is instantiated."""
     if acquisition is None:
-        acquisition = float(sum(a.acquisition_cost for a in Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES).only("acquisition_cost")))
+        acquisition = float(Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES).aggregate(s=Sum("acquisition_cost"))["s"] or 0)
     since = today - timedelta(days=TRAILING_DAYS)
-    done = list(WorkOrder.objects.filter(completed_on__gte=since, completed_on__lte=today).prefetch_related("labor_lines", "part_lines"))
-    in_house = sum(w.total_cost() for w in done if not w.vendor_service) * ANNUALIZE
-    vendor_tm = sum(w.total_cost() for w in done if w.vendor_service) * ANNUALIZE
-    contracts = float(sum(c.annual_cost for c in Contract.objects.filter(end_on__gte=today)))
+    money = DecimalField(max_digits=14, decimal_places=2)
+    by_vendor = {False: 0.0, True: 0.0}
+    for model, expr in ((LaborLine, Sum(F("hours") * F("rate"), output_field=money)), (PartLine, Sum(F("quantity") * F("unit_cost"), output_field=money))):
+        rows = (model.objects.filter(work_order__completed_on__gte=since, work_order__completed_on__lte=today)
+                .order_by().values("work_order__vendor_service").annotate(v=expr))
+        for row in rows:
+            by_vendor[bool(row["work_order__vendor_service"])] += float(row["v"] or 0)
+    in_house, vendor_tm = by_vendor[False] * ANNUALIZE, by_vendor[True] * ANNUALIZE
+    contracts = float(Contract.objects.filter(end_on__gte=today).aggregate(s=Sum("annual_cost"))["s"] or 0)
     total = in_house + vendor_tm + contracts
     return {"in_house": in_house, "vendor_tm": vendor_tm, "contracts": contracts, "total": total, "acquisition": acquisition,
             "ratio_pct": total / acquisition * 100 if acquisition else 0.0}
