@@ -1,3 +1,13 @@
 {% load web %}
-{# Context: r (the report data), p (its presentation), can_view_asset, can_view_wo, can_view_recalls. #}
-<div class="empty">This report is being built.</div>
+{# Context: r (apps.reports.cost.report_contract), p (present_contract: donut), today, report. The donut is the Overview's cost-of-service split. #}
+{% if p.donut %}{% include "web/_chart_donut.html" with c=p.donut aria="Service spend by source" %}{% else %}<div class="empty">No service cost recorded yet.</div>{% endif %}
+<div class="tbl-wrap" style="margin-top:14px">
+  <table>
+    <thead><tr><th>Support model</th><th class="num">Devices</th><th class="num">Acquisition value</th><th class="num">Annual cost</th><th class="num">Ratio</th></tr></thead>
+    <tbody>
+      {% for s in r.support %}<tr><td>{{ s.label }}</td><td class="num">{{ s.devices }}</td><td class="num">{{ s.acquisition|money_k }}</td><td class="num">{{ s.annual|money_k }}</td><td class="num">{{ s.ratio_pct|floatformat:1 }}%</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="hint" style="margin-top:8px">Contract cost is the annual cost of contracts that have not ended; in-house and vendor costs are work orders completed in the last 182 days, annualized. A device's support model follows its contract.</div>

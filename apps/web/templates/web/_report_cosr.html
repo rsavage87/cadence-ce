@@ -1,3 +1,10 @@
 {% load web %}
-{# Context: r (the report data), p (its presentation), can_view_asset, can_view_wo, can_view_recalls. #}
-<div class="empty">This report is being built.</div>
+{# Context: r (apps.reports.cost.report_cosr), p (present_cosr: chart), today, report. The stats equal the Overview's cost-of-service tile. #}
+<div class="stats" style="margin-bottom:14px">
+  <div class="stat"><div class="v">{{ r.fleet.ratio_pct|floatformat:1 }}%</div><div class="l">fleet-wide, annualized</div></div>
+  <div class="stat"><div class="v">{{ r.fleet.total|money_k }}</div><div class="l">annual service cost</div></div>
+  <div class="stat"><div class="v">{{ r.fleet.acquisition|money_k }}</div><div class="l">acquisition value in service</div></div>
+</div>
+{% if p.chart %}{% include "web/_chart_hbars.html" with c=p.chart aria="Cost of service ratio by category" %}{% else %}<div class="empty">No active devices.</div>{% endif %}
+<div class="hint" style="margin-top:8px">Red marker: {{ r.benchmark|floatformat:0 }}% benchmark midpoint. Ratio = (in-house labor and parts + vendor time and materials + service contracts) ÷ acquisition value; work orders completed in the last 182 days are annualized and each contract's annual cost is split across the devices it covers. Categories with OEM contracts run high; that is normal, but the categories above the marker are where a contract renegotiation or an in-house training investment pays back fastest.</div>
+{% if r.unallocated > 0 %}<div class="hint" style="margin-top:4px">{{ r.unallocated|money }} of annual service cost is on contracts that cover no active devices, or on devices since retired, and is not shown by category.</div>{% endif %}

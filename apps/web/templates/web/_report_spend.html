@@ -1,3 +1,9 @@
 {% load web %}
-{# Context: r (the report data), p (its presentation), can_view_asset, can_view_wo, can_view_recalls. #}
-<div class="empty">This report is being built.</div>
+{# Context: r (apps.reports.cost.report_spend), p (present_spend: chart), today, report. Month to date equals the Overview's repair spend tile. #}
+<div class="stats" style="margin-bottom:14px">
+  <div class="stat"><div class="v">{{ r.month_to_date|money_k }}</div><div class="l">month to date (partial month)</div></div>
+  <div class="stat"><div class="v">{{ r.six_months|money_k }}</div><div class="l">last 6 months</div></div>
+  <div class="stat"><div class="v">{{ r.monthly_average|money_k }}</div><div class="l">monthly average</div></div>
+</div>
+{% include "web/_chart_bars.html" with c=p.chart aria="Repair spend by month" %}
+<div class="hint" style="margin-top:8px">Repair work orders only; PM labor and service contracts are excluded. The current month is partial.</div>
