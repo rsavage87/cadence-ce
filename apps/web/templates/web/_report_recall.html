@@ -18,4 +18,4 @@
 {% else %}
 <div class="empty">No alerts have matched the inventory.</div>
 {% endif %}
-<div class="hint" style="margin-top:8px">This log is what a surveyor asks for: when the alert arrived, how many devices it touched, and what was done. Each row links to the alert and its work orders on the Recalls screen.</div>
+<div class="hint" style="margin-top:8px">This log is what a surveyor asks for: when the alert arrived, how many devices it touched, and what was done.{% if can_view_recalls %} Each row links to the alert and its work orders on the Recalls screen.{% endif %}</div>
