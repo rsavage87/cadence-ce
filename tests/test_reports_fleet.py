@@ -160,7 +160,8 @@ def test_mtbf_keeps_the_top_twelve(ctx, dept):
         for _ in range(i + 1):  # X13 fails most often
             wo(a, "repair", date(2026, 9, 20))
     r = report_mtbf(TODAY)
-    assert r["total_models"] == 14 and len(r["models"]) == 12 and len(r["rows"]) == 12
+    assert r["total_models"] == 14 and len(r["models"]) == 12 and len(r["rows"]) == 14  # the CSV keeps every model
+    assert [row[1] for row in r["rows"][-2:]] == ["X01", "X00"]
     assert r["models"][0]["device_model"].model == "X13" and r["models"][-1]["device_model"].model == "X02"
 
 

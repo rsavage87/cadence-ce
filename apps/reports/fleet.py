@@ -85,14 +85,13 @@ def report_mtbf(today: date) -> dict:
                            "flagged": rate is not None and rate > 1})
         # Highest failure rate first; models with nothing in service (a repair on a since-retired device) have no rate and go last.
         models.sort(key=lambda m: (m["rate"] is None, -(m["rate"] or 0.0), -m["repairs"], m["device_model"].manufacturer, m["device_model"].model))
-    total_models = len(models)
-    models = models[:MTBF_LIMIT]
+    # The screen shows the top MTBF_LIMIT; the CSV (`rows`) carries every model with repairs, like the replacement list.
     return {
         "columns": ["Manufacturer", "Model", "Device", "In service", "Repairs, 6 mo", "Repairs per device per year", "MTBF days", "Avg turnaround days",
                     "Avg repair cost"],
         "rows": [[m["device_model"].manufacturer, m["device_model"].model, m["device_model"].description, m["in_service"], m["repairs"], m["rate"],
                   round(m["mtbf_days"]) if m["mtbf_days"] is not None else None, m["turnaround"], m["cost"]] for m in models],
-        "models": models, "total_models": total_models, "since": since,
+        "models": models[:MTBF_LIMIT], "total_models": len(models), "since": since,
     }
 
 

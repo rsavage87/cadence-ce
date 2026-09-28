@@ -58,9 +58,12 @@ pytest
   `permissions.py` (review at Edit, close/reopen at Approve). ECRI import is deferred (license).
 - `apps/credentials` Technician, Credential, qualification and coverage services, credential add/renew/sign-off/remove
 - `apps/portal` public request form (`/r/<tenant-slug>/`)
-- `apps/reports` overview KPIs, the Overview bundle (`overview_page`), attention list, nav counts
+- `apps/reports` overview KPIs, the Overview bundle (`overview_page`), attention list, nav counts, `cost_of_service`; the eight Reports
+  (`REPORTS` catalog and `run_report` in `services.py`; the numbers in `cost.py`, `fleet.py`, `operations.py`, read-only, `today` passed in)
 - `apps/web` HTMX UI: one views/urls/forms module per screen (`views.py` Overview, Equipment, Work orders; `views_contracts.py`;
-  `views_users.py` Users and Roles tabs; `views_credentials.py`; `views_recalls.py`), templates, `charts.py` (SVG geometry), `htmx.py` helpers, shell
+  `views_users.py` Users and Roles tabs; `views_credentials.py`; `views_recalls.py`; `views_reports.py` with the CSV download), templates,
+  `charts.py` (SVG geometry: line, stacked bars, hbars with a benchmark marker, donut), `overview.py` and `reports_*.py` (chart geometry
+  and display values for the Overview and the Reports; services never import them), `htmx.py` helpers, shell
   context processor. Drawers and modals are partials swapped into `#drawer` / `#modal-card`; the same URLs render a full page
   when opened directly. List wrappers that re-fetch themselves carry `hx-disinherit="hx-swap"` (a test enforces it).
 - `apps/api` DRF viewsets under `/api/v1/`

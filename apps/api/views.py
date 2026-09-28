@@ -232,7 +232,8 @@ class ReportViewSet(viewsets.ViewSet):
             raise NotFound("No such report")
         today = date.today()
         data = run_report(pk, today)
-        return Response({"key": pk, "title": meta["title"], "as_of": today, "columns": data["columns"], "rows": data["rows"]})
+        rows = [[round(v, 2) if isinstance(v, float) else v for v in row] for row in data["rows"]]  # as the CSV: two decimals
+        return Response({"key": pk, "title": meta["title"], "as_of": today, "columns": data["columns"], "rows": rows})
 
 
 class PmViewSet(viewsets.ViewSet):

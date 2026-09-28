@@ -49,6 +49,8 @@ def test_list_links_swap_the_body_only(client, signed_in):
     r = client.get("/reports/spend/", **BODY)
     body = r.content.decode()
     assert body.lstrip().startswith("<div id=\"rep-body\"") and "<html" not in body and "<h2>Repair spend trend</h2>" in body
+    assert "<title>Repair spend trend · Reports · Riverside Regional</title>" in body  # htmx retitles the document from the fragment
+    assert "<title>" not in client.get("/reports/spend/").content.decode().split("<body")[1]  # never inside the full page's body
     assert r.templates[0].name == "web/_reports_body.html"
 
 
@@ -96,10 +98,11 @@ def test_api_lists_the_catalog_and_serves_one_report(client, signed_in, monkeypa
 
     signed_in("analyst")
     assert [r["key"] for r in client.get("/api/v1/reports/").json()] == REPORT_KEYS
-    monkeypatch.setattr(rs, "run_report", lambda key, today=None: {"columns": ["A"], "rows": [[1]], "extra": object()})
+    monkeypatch.setattr(rs, "run_report", lambda key, today=None: {"columns": ["A"], "rows": [[1, 3.14159, "x"]], "extra": object()})
     import apps.api.views as api_views
 
     monkeypatch.setattr(api_views, "run_report", rs.run_report)
     data = client.get("/api/v1/reports/tech/").json()
-    assert data["key"] == "tech" and data["title"] == "Technician productivity" and data["columns"] == ["A"] and data["rows"] == [[1]] and "extra" not in data
+    assert data["key"] == "tech" and data["title"] == "Technician productivity" and data["columns"] == ["A"] and "extra" not in data
+    assert data["rows"] == [[1, 3.14, "x"]]  # floats rounded like the CSV
     assert client.get("/api/v1/reports/nope/").status_code == 404
