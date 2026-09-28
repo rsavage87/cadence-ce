@@ -1,3 +1,21 @@
-{% load web %}
+{% load web recalls_tags %}
 {# Context: r (the report data), p (its presentation), can_view_asset, can_view_wo, can_view_recalls. #}
-<div class="empty">This report is being built.</div>
+{% if r.has_sample %}<div class="note warn" style="margin-bottom:12px">Sample alerts for demonstration only. They do not describe real recalls for these products.</div>{% endif %}
+{% if r.matches %}
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Received</th><th>Alert</th><th>Device</th><th class="num">Affected</th><th>Status</th><th>Response</th></tr></thead>
+  <tbody>{% for it in r.matches %}{% with m=it.match a=it.alert %}
+    <tr>
+      <td class="muted">{% if a.published_on %}{{ a.published_on|date:"M j" }}{% else %}—{% endif %}</td>
+      <td class="two">{% if can_view_recalls %}<a class="link" href="{{ it.url }}"><span class="tag">{{ a|alert_label }}</span></a>{% else %}<span class="tag">{{ a|alert_label }}</span>{% endif %}<small>{{ a.get_source_display }} · {{ a.classification|default:"Class not stated" }}</small></td>
+      <td class="two">{{ m.device_model.model }}<small>{{ m.device_model.manufacturer }}</small></td>
+      <td class="num">{{ it.devices }}</td>
+      <td>{% alert_status_chip m.status %}</td>
+      <td style="white-space:normal;min-width:220px">{{ it.response }}</td>
+    </tr>
+  {% endwith %}{% endfor %}</tbody>
+</table></div>
+{% else %}
+<div class="empty">No alerts have matched the inventory.</div>
+{% endif %}
+<div class="hint" style="margin-top:8px">This log is what a surveyor asks for: when the alert arrived, how many devices it touched, and what was done. Each row links to the alert and its work orders on the Recalls screen.</div>
