@@ -7,5 +7,5 @@
     <tr><td>{% risk_chip c.key %}</td><td class="num">{{ c.devices }}</td><td class="num">{{ c.due }}</td><td class="num">{{ c.completed }}</td><td class="num">{{ c.on_time }}</td><td class="num{% if c.overdue %} down{% endif %}">{{ c.overdue }}</td><td class="num {% if c.meets %}up{% else %}down{% endif %}"><b>{{ c.compliance_pct|floatformat:1 }}%</b></td><td class="muted">{{ c.target_pct }}%</td></tr>
   {% endfor %}</tbody>
 </table></div>
-<div class="note" style="margin-top:12px">Compliance here means the share of active devices whose PM is not past due today. High-risk and life-support equipment must be at 100% at the time of survey; other equipment follows the hospital policy target of 95% with completion within the due month. Devices marked missing are still counted as active and their PMs as overdue.</div>
+<div class="note" style="margin-top:12px">Compliance here means the share of active devices whose PM is not past due today. High-risk and life-support equipment must be at 100% at the time of survey; other equipment follows the hospital policy target of 95% with completion within the due month. Devices marked missing are still counted as active and are never counted as compliant.</div>
 <div style="margin-top:12px">{% include "web/_chart_line.html" with c=p.chart aria="PM completion rate by month" %}</div>

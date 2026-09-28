@@ -5,9 +5,11 @@ from .overview import pm_trend_chart
 
 
 def present_compliance(r: dict) -> dict:
-    """The Overview's 12-month PM trend, ending at the report's month (the mock draws the same chart under this table)."""
+    """The Overview's 12-month PM trend, ending at the report's month (the mock draws the same chart under this table). The series
+    follow the report's clock, so the chart and the table describe the same day."""
     today = r["today"]
-    return {"chart": pm_trend_chart(pm_on_time_series(today.year, today.month), pm_on_time_series(today.year, today.month, life_support_only=True))}
+    return {"chart": pm_trend_chart(pm_on_time_series(today.year, today.month, today=today),
+                                    pm_on_time_series(today.year, today.month, life_support_only=True, today=today))}
 
 
 def present_mtbf(r: dict) -> dict:

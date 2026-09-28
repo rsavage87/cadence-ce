@@ -1,7 +1,7 @@
 {% load web %}
 {# Context: r (the report data), p (its presentation), can_view_asset, can_view_wo, can_view_recalls. #}
 {% if r.top %}
-<div class="hint" style="margin-bottom:10px">Score weighs age against expected life (50%), repairs in the last six months (30%), and condition (20%). The top twelve are shown; the CSV carries the full ranked list of {{ r.scored_count }} active device{{ r.scored_count|pluralize }} for the capital request.</div>
+<div class="hint" style="margin-bottom:10px">Score weighs age against expected life (50%), repairs in the last six months (30%), and condition (20%). The top {{ p.shown }} {% if p.shown == 1 %}is{% else %}are{% endif %} shown; the CSV carries the full ranked list of {{ r.scored_count }} active device{{ r.scored_count|pluralize }} for the capital request.</div>
 <div class="tbl-wrap"><table>
   <thead><tr><th>Asset</th><th>Location</th><th class="num">Age</th><th class="num">Expected life</th><th class="num">Repairs, 6 mo</th><th>Condition</th><th class="num">Score</th><th class="num">Est. replacement</th></tr></thead>
   <tbody>{% for s in r.top %}{% with a=s.asset %}
