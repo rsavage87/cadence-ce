@@ -1,3 +1,20 @@
 {% load web %}
 {# Context: r (the report data), p (its presentation), can_view_asset, can_view_wo, can_view_recalls. #}
-<div class="empty">This report is being built.</div>
+{% if r.top %}
+<div class="hint" style="margin-bottom:10px">Score weighs age against expected life (50%), repairs in the last six months (30%), and condition (20%). The top twelve are shown; the CSV carries the full ranked list of {{ r.scored_count }} active device{{ r.scored_count|pluralize }} for the capital request.</div>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Asset</th><th>Location</th><th class="num">Age</th><th class="num">Expected life</th><th class="num">Repairs, 6 mo</th><th>Condition</th><th class="num">Score</th><th class="num">Est. replacement</th></tr></thead>
+  <tbody>{% for s in r.top %}{% with a=s.asset %}
+    <tr{% if can_view_asset %} class="row" hx-get="{% url 'web:asset' a.tag %}" hx-target="#drawer"{% endif %}>
+      <td class="two">{% if can_view_asset %}<a class="tag" href="{% url 'web:asset' a.tag %}">{{ a.tag }}</a>{% else %}{{ a.tag }}{% endif %} {{ a.device_model.description }}<small>{{ a.device_model.manufacturer }} {{ a.device_model.model }}</small></td>
+      <td>{{ a.department }}</td>
+      <td class="num{% if s.over_life %} down{% endif %}">{% if s.age is None %}—{% else %}{{ s.age|floatformat:1 }} yr{% endif %}</td>
+      <td class="num">{{ s.life }} yr</td><td class="num">{{ s.repairs }}</td><td>{{ s.condition }} of 5</td>
+      <td class="num"><b>{{ s.score_pct }}</b></td><td class="num">{{ s.estimate|money }}</td>
+    </tr>
+  {% endwith %}{% endfor %}</tbody>
+</table></div>
+<div class="hint" style="margin-top:8px">Estimated replacement total for these {{ p.shown }}: <b style="color:var(--ink)">{{ r.total|money }}</b> at current list price plus 5%{% if p.fallback_count %} ({{ p.fallback_count }} device{{ p.fallback_count|pluralize }} without a list price, estimated from acquisition cost){% endif %}.</div>
+{% else %}
+<div class="empty">No active devices.</div>
+{% endif %}

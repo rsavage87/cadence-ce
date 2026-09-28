@@ -1,3 +1,13 @@
 {% load web %}
 {# Context: r (the report data), p (its presentation), can_view_asset, can_view_wo, can_view_recalls. #}
-<div class="empty">This report is being built.</div>
+{% if r.models %}
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Model</th><th class="num">In service</th><th class="num">Repairs, 6 mo</th><th class="num">Repairs per device per year</th><th class="num">MTBF, days</th><th class="num">Avg turnaround</th><th class="num">Avg repair cost</th></tr></thead>
+  <tbody>{% for m in r.models %}
+    <tr><td class="two">{{ m.device_model.manufacturer }} {{ m.device_model.model }}<small>{{ m.device_model.description }}</small></td><td class="num">{{ m.in_service }}</td><td class="num">{{ m.repairs }}</td><td class="num{% if m.flagged %} down{% endif %}">{% if m.rate is None %}—{% else %}{{ m.rate|floatformat:2 }}{% endif %}</td><td class="num">{% if m.mtbf_days is None %}—{% else %}{{ m.mtbf_days|floatformat:"0g" }}{% endif %}</td><td class="num">{{ m.turnaround|floatformat:1 }} d</td><td class="num">{{ m.cost|money }}</td></tr>
+  {% endfor %}</tbody>
+</table></div>
+<div class="hint" style="margin-top:8px">Ranked by repairs per device per year{% if p.truncated %}, showing {{ p.shown }} of {{ r.total_models }} models with repairs{% endif %}; repairs opened since {{ r.since|date:"M j, Y" }}. MTBF is fleet-level: device-days in the period divided by repairs. Models above one repair per device per year are the first place to look for a training issue, an accessory problem, or an aging fleet.</div>
+{% else %}
+<div class="empty">No repairs opened in the last 6 months.</div>
+{% endif %}
