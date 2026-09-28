@@ -51,7 +51,8 @@
     const id = e.detail.target && e.detail.target.id;
     if (id === "drawer") openDrawer();
     if (id === "modal-card" && !$("#modal").classList.contains("open")) openModal();
-    if (e.detail.target.classList.contains("sugg")) e.detail.target.classList.toggle("show", e.detail.target.innerHTML.trim() !== "");
+    // A history restore (back button) fires afterSwap without a target.
+    if (e.detail.target && e.detail.target.classList.contains("sugg")) e.detail.target.classList.toggle("show", e.detail.target.innerHTML.trim() !== "");
   });
   document.addEventListener("htmx:responseError", (e) => {
     const s = e.detail.xhr.status;

@@ -51,4 +51,9 @@ The mock's toast-only buttons (Device list, Label, Print, Scan tag, and Export C
   serves as JSON. All reports are as of today and need Reports View. Contract cost is real (annual cost of contracts that have not
   ended, allocated to devices by acquisition cost) where the mock modeled 7% and 4% of acquisition value; the cost figures share
   `cost_of_service` with the Overview tile, and the Overview's uptime, MTTR, spend, and cost-of-service tiles link to their reports.
-  The mock's Custom report, PDF, and Schedule buttons are deferred (they need a report builder and an export service).
+  Rules settled in review: the contract-vs-in-house rows group devices by their live contract (a device whose contract has ended counts
+  as in-house and is called out); a category with no recorded acquisition value has no ratio (listed in the hint, blank in the CSV);
+  PM compliance counts a device marked missing as non-compliant and only counts PMs on active devices; the reliability rate uses the
+  mock's ×2 factor (two 182-day halves, the same base as its MTBF); a work order cannot start or complete before it was opened; asset
+  tags cannot contain spaces or slashes (they live in URLs). The mock's Custom report, PDF, and Schedule buttons are deferred (they
+  need a report builder and an export service).

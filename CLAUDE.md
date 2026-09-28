@@ -50,7 +50,7 @@ pytest
 - `apps/tenants` tenant model, context var, middleware, `enable_rls`
 - `apps/core` TenantModel, TenantManager, Sequence, TenantModelAdmin
 - `apps/accounts` User, Role, RolePermission, default roles, `require_level`; `services.py` for invites, role changes, (de)activation, role matrix edits
-- `apps/equipment` Department, DeviceModel, Asset, CSV importer
+- `apps/equipment` Department, DeviceModel, Asset (tags carry no spaces or slashes: they are URL segments), CSV importer
 - `apps/contracts` Contract with add/remove device operations and cost allocation; `services.py` for create/update/renew/delete, status, filters, KPI summary
 - `apps/workorders` WorkOrder and lines, ServiceRequest, lifecycle services
 - `apps/pm` PmProcedure, PM generation, on-time math, month helpers
