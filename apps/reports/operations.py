@@ -7,7 +7,7 @@ one round of queries rather than one per technician or per alert.
 """
 from datetime import date, timedelta
 
-from django.db.models import Count, Q, Sum
+from django.db.models import Count, F, Q, Sum
 from django.urls import reverse
 
 from apps.credentials.models import Technician
@@ -41,7 +41,8 @@ def report_tech(today: date) -> dict:
             s["pm_on_time"] += int(w["completed_on"] <= w["due_on"])
         elif w["type"] == WoType.REPAIR:
             s["repairs"] += 1
-            s["turnaround_total"] += (w["completed_on"] - w["opened_on"]).days
+            # The service refuses to complete before opening; clamp anyway so a bad row can never pull the average below zero.
+            s["turnaround_total"] += max(0, (w["completed_on"] - w["opened_on"]).days)
     hours = (LaborLine.objects.filter(work_order__assigned_to__in=technicians, work_order__vendor_service=False, work_order__status__in=DONE_WO_STATUSES,
                                       work_order__completed_on__gte=since, work_order__completed_on__lte=today)
              .order_by().values("work_order__assigned_to_id").annotate(h=Sum("hours")))
@@ -79,10 +80,11 @@ def _response(match: AlertMatch, today: date, completed: int) -> str:
 
 def report_recall(today: date) -> dict:
     """The surveyor's log: every alert that matched the inventory, when it arrived, how many devices it touched, its
-    disposition, and what was done. Newest first."""
+    disposition, and what was done. Newest first; alerts with no published date sort last on every database (a bare
+    `-alert__published_on` puts NULLs first on PostgreSQL and last on SQLite)."""
     matches = list(AlertMatch.objects.select_related("alert", "device_model")
                    .annotate(devices=Count("device_model__assets", filter=Q(device_model__assets__status__in=Asset.ACTIVE_STATUSES)))
-                   .order_by("-alert__published_on", "alert__external_id"))
+                   .order_by(F("alert__published_on").desc(nulls_last=True), "alert__external_id"))
     # Progress for the in-progress matches in one grouped query: devices with a completed recall work order for that
     # alert, the same count apps.recalls.services.progress makes per match (a retired device no longer counts either way).
     in_progress = [m for m in matches if m.status == AlertMatch.Status.IN_PROGRESS]
