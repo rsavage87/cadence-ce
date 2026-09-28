@@ -1,3 +1,11 @@
 {% load web %}
 {# Context: r (the report data), p (its presentation), can_view_asset, can_view_wo, can_view_recalls. #}
-<div class="empty">This report is being built.</div>
+<div class="hint" style="margin-bottom:10px">Fleet as of {{ r.today|date:"M j, Y" }} · PMs due in {{ r.month_label }}</div>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Risk class</th><th class="num">Devices</th><th class="num">PMs due this month</th><th class="num">Completed</th><th class="num">On time</th><th class="num">Overdue now</th><th class="num">Current compliance</th><th>Target</th></tr></thead>
+  <tbody>{% for c in r.classes %}
+    <tr><td>{% risk_chip c.key %}</td><td class="num">{{ c.devices }}</td><td class="num">{{ c.due }}</td><td class="num">{{ c.completed }}</td><td class="num">{{ c.on_time }}</td><td class="num{% if c.overdue %} down{% endif %}">{{ c.overdue }}</td><td class="num {% if c.meets %}up{% else %}down{% endif %}"><b>{{ c.compliance_pct|floatformat:1 }}%</b></td><td class="muted">{{ c.target_pct }}%</td></tr>
+  {% endfor %}</tbody>
+</table></div>
+<div class="note" style="margin-top:12px">Compliance here means the share of active devices whose PM is not past due today. High-risk and life-support equipment must be at 100% at the time of survey; other equipment follows the hospital policy target of 95% with completion within the due month. Devices marked missing are still counted as active and their PMs as overdue.</div>
+<div style="margin-top:12px">{% include "web/_chart_line.html" with c=p.chart aria="PM completion rate by month" %}</div>
