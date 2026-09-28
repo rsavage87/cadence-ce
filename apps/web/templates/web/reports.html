@@ -1,0 +1,13 @@
+{% extends "web/base.html" %}
+{% load web %}
+{% block title %}{{ report.title }} · Reports{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Reports and analytics</h1>
+    <p class="sub">Built from the same work order and inventory data as the Overview · as of today, {{ today|date:"M j, Y" }} · every report downloads as CSV</p>
+  </div>
+  {# The mock's "Custom report", "PDF", and "Schedule" buttons only toast; they wait for a report builder and an export service. #}
+</div>
+{% include "web/_reports_body.html" %}
+{% endblock %}

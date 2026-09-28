@@ -218,3 +218,42 @@ def overview_page(year: int, month: int, today: date | None = None) -> dict:
         "spend_by_category": repair_spend_by_category(start, as_of),
         "recent": recent_activity(start, as_of),
     }
+
+
+# --- Reports screen (slice 7) ---------------------------------------------------------------------
+# The mock's eight reports, in its order. The numbers for each live next door: cost.py (cosr, spend, contract),
+# fleet.py (compliance, mtbf, replace), and operations.py (tech, recall). This catalog is what the screen, the CSV
+# download, and the API iterate. Every report function takes `today` and returns a dict with "columns" and "rows"
+# (its table as plain values: str, int, float, date, or None; what the CSV and the API serve) plus whatever its
+# template needs. Chart geometry is presentation and lives in apps/web/reports.py.
+
+TRAILING_DAYS = 182  # the "6 months" every service-cost figure annualizes from (365/182), as on the Overview
+ANNUALIZE = 365 / TRAILING_DAYS
+
+REPORTS = [
+    {"key": "cosr", "title": "Cost of service ratio by category", "subtitle": "Annualized service cost against acquisition value"},
+    {"key": "compliance", "title": "PM compliance summary", "subtitle": "Survey-ready view by risk class (EC.02.04.03)"},
+    {"key": "mtbf", "title": "Reliability by model", "subtitle": "Failures, mean time between failures, turnaround"},
+    {"key": "replace", "title": "Replacement planning", "subtitle": "Devices scoring highest on age, failures, and condition"},
+    {"key": "spend", "title": "Repair spend trend", "subtitle": "Labor and parts by month"},
+    {"key": "contract", "title": "Contract vs in-house", "subtitle": "Where the service dollars go"},
+    {"key": "tech", "title": "Technician productivity", "subtitle": "Work closed, hours, on-time rate, last 30 days"},
+    {"key": "recall", "title": "Recall response log", "subtitle": "Every alert and how it was handled"},
+]
+for _r in REPORTS:
+    _r["template"] = f"web/_report_{_r['key']}.html"
+REPORT_KEYS = [r["key"] for r in REPORTS]
+
+
+def report_meta(key: str) -> dict | None:
+    return next((r for r in REPORTS if r["key"] == key), None)
+
+
+def run_report(key: str, today: date | None = None) -> dict:
+    """The data for one report as of `today`. Requires a tenant context, like everything else here."""
+    from . import cost, fleet, operations  # here, not at the top: the report modules import helpers from this module
+
+    functions = {"cosr": cost.report_cosr, "spend": cost.report_spend, "contract": cost.report_contract,
+                 "compliance": fleet.report_compliance, "mtbf": fleet.report_mtbf, "replace": fleet.report_replace,
+                 "tech": operations.report_tech, "recall": operations.report_recall}
+    return functions[key](today or date.today())

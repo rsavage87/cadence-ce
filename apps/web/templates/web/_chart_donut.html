@@ -1,0 +1,7 @@
+<div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">
+<svg viewBox="0 0 {{ c.size }} {{ c.size }}" style="width:{{ c.size }}px;height:{{ c.size }}px;flex:none" role="img" aria-label="{{ aria }}">
+{% for a in c.arcs %}<circle cx="{{ c.c }}" cy="{{ c.c }}" r="{{ c.r }}" fill="none" stroke="{{ a.color }}" stroke-width="18" stroke-dasharray="{{ a.dash }}" stroke-dashoffset="{{ a.offset }}" transform="rotate(-90 {{ c.c }} {{ c.c }})"><title>{{ a.title }}</title></circle>{% endfor %}
+<text x="{{ c.c }}" y="{{ c.center_y }}" text-anchor="middle" style="fill:var(--ink);font-size:20px;font-weight:600">{{ c.center }}</text><text x="{{ c.c }}" y="{{ c.label_y }}" text-anchor="middle" style="fill:var(--ink-3);font-size:11px">{{ c.center_label }}</text>
+</svg>
+<div class="clg" style="flex-direction:column;gap:6px;margin:0">{% for it in c.legend %}<span><i style="background:{{ it.color }}"></i>{{ it.label }}&nbsp;<b>{{ it.text }}</b></span>{% endfor %}</div>
+</div>

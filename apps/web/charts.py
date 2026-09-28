@@ -1,6 +1,6 @@
 """
 Chart geometry for inline SVG. Python does the math; templates draw it (see web/_chart_*.html).
-Shapes and spacing follow the mock's CH.line / CH.bars / CH.hbars. The SVGs use a fixed viewBox and scale with CSS.
+Shapes and spacing follow the mock's CH.line / CH.bars / CH.hbars / CH.donut. The SVGs use a fixed viewBox and scale with CSS.
 """
 import math
 from collections.abc import Callable
@@ -76,13 +76,33 @@ def stacked_bars(labels: list[str], series: list[dict], fmt: Callable = lambda v
     return {"w": W, "h": h, "left": pl, "tick_x": pl - 6, "right": W - pr, "label_y": h - 6, "grid": grid, "bars": bars, "xlabels": xlabels, "legend": series}
 
 
-def hbars(items: list[tuple[str, float]], fmt: Callable, color: str = "var(--accent)", rh: int = 26) -> dict:
+def hbars(items: list[tuple[str, float]], fmt: Callable, color: str = "var(--accent)", rh: int = 26, marker: float | None = None,
+          marker_label: str = "Benchmark") -> dict:
+    """Horizontal bars. `marker` draws the mock's red benchmark tick at that value on every row."""
     pl, pr = min(170, round(W * 0.34)), 66
     iw, h = W - pl - pr, len(items) * rh + 6
-    top = nice_max(max((v for _, v in items), default=1))
+    top = nice_max(max([v for _, v in items] + ([marker] if marker is not None else []), default=1))
     rows = []
     for i, (label, value) in enumerate(items):
         y0, bw = i * rh + 4, max(2, value / top * iw)
         rows.append({"label": label if len(label) <= 24 else label[:23] + "…", "full_label": label, "text_y": y0 + rh / 2 + 1, "bar_y": y0 + 4,
-                     "bar_w": round(bw, 1), "bar_h": rh - 12, "value": fmt(value), "value_x": round(pl + bw + 6, 1)})
-    return {"w": W, "h": h, "left": pl, "label_x": pl - 8, "color": color, "rows": rows}
+                     "bar_w": round(bw, 1), "bar_h": rh - 12, "value": fmt(value), "value_x": round(pl + bw + 6, 1),
+                     "marker_y1": y0 + 1, "marker_y2": y0 + rh - 5})
+    return {"w": W, "h": h, "left": pl, "label_x": pl - 8, "color": color, "rows": rows,
+            "marker_x": round(pl + marker / top * iw, 1) if marker is not None else None,
+            "marker_title": f"{marker_label}: {fmt(marker)}" if marker is not None else ""}
+
+
+def donut(items: list[dict], center: str = "", center_label: str = "", size: int = 150) -> dict:
+    """`items`: [{"label", "value", "color", "text"}]; `text` is the formatted value for the legend and tooltips. Follows the mock's CH.donut."""
+    r, c = size / 2 - 12, size / 2
+    total = sum(it["value"] for it in items) or 1
+    circ = 2 * math.pi * r
+    arcs, acc = [], 0.0
+    for it in items:
+        f = it["value"] / total
+        arcs.append({"color": it["color"], "dash": f"{f * circ:.2f} {circ - f * circ:.2f}", "offset": f"{-acc * circ:.2f}",
+                     "title": f"{it['label']}: {it['text']}"})
+        acc += f
+    return {"size": size, "c": c, "r": r, "arcs": arcs, "legend": items, "center": center, "center_label": center_label,
+            "center_y": c - 2, "label_y": c + 15}

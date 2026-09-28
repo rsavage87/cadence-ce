@@ -45,6 +45,10 @@ def kpi_tiles(data: dict, recalls_url: str | None = None) -> list[dict]:
     cur = k["period"]["current"]
     pv = (lambda f: f(p)) if p else (lambda f: None)
     eq, wo = reverse("web:equipment"), reverse("web:workorders")
+
+    def report(key):  # the Overview needs reports View, so these links always work for whoever sees the tiles
+        return reverse("web:report", args=[key])
+
     return [
         {"label": "PM completion on time", "value": f"{k['pm_on_time']['rate']:.1f}", "unit": "%",
          "parts": _parts(_delta(k["pm_on_time"]["rate"], pv(lambda p: p["pm_on_time"]["rate"]), True, lambda v: f"{v:.1f}", " pts"),
@@ -55,18 +59,18 @@ def kpi_tiles(data: dict, recalls_url: str | None = None) -> list[dict]:
          "parts": _parts(_delta(k["pm_on_time_life_support"]["rate"], pv(lambda p: p["pm_on_time_life_support"]["rate"]), True, lambda v: f"{v:.1f}", " pts"),
                          f"{k['pm_on_time_life_support']['on_time']} of {k['pm_on_time_life_support']['due']} due",
                          f"target {t['pm_on_time_life_support']:.0f}%")},
-        {"label": "Fleet uptime", "value": f"{k['uptime_pct']:.2f}", "unit": "%",
+        {"label": "Fleet uptime", "value": f"{k['uptime_pct']:.2f}", "unit": "%", "url": report("mtbf"),
          "parts": _parts(_delta(k["uptime_pct"], pv(lambda p: p["uptime_pct"]), True, lambda v: f"{v:.2f}", " pts"),
                          f"{k['downtime_days']} device-days down of {k['active_devices'] * k['period']['days']:,}", f"target {t['uptime_pct']}%")},
         {"label": "Open work orders" if cur else "Open work orders at month end", "value": str(k["open_work_orders"]), "url": wo,
          "parts": _parts(_delta(k["open_work_orders"], pv(lambda p: p["open_work_orders"]), False, lambda v: str(round(v))),
                          f"{k['overdue_work_orders']} past due", f"{k['awaiting_parts']} awaiting parts")},
-        {"label": "Mean time to repair", "value": f"{k['mttr_days']:.1f}", "unit": "days",
+        {"label": "Mean time to repair", "value": f"{k['mttr_days']:.1f}", "unit": "days", "url": report("mtbf"),
          "parts": _parts(_delta(k["mttr_days"], pv(lambda p: p["mttr_days"]), False, lambda v: f"{v:.1f}", " d"),
                          f"{k['repairs_closed']} repairs closed", f"target {t['mttr_days']:.1f}")},
-        {"label": "Repair spend, month to date" if cur else "Repair spend", "value": money_k(k["repair_spend"]),
+        {"label": "Repair spend, month to date" if cur else "Repair spend", "value": money_k(k["repair_spend"]), "url": report("spend"),
          "parts": _parts(_delta(k["repair_spend"], pv(lambda p: p["repair_spend"]), False, money_k), "labor and parts")},
-        {"label": "Cost of service ratio, annualized", "value": f"{k['cost_of_service']['ratio_pct']:.1f}", "unit": "%",
+        {"label": "Cost of service ratio, annualized", "value": f"{k['cost_of_service']['ratio_pct']:.1f}", "unit": "%", "url": report("cosr"),
          "parts": _parts("trailing 6 months", f"of {money_k(k['cost_of_service']['acquisition'])} acquisition value", "benchmark 5 to 7%")},
         {"label": "Recall alerts received", "value": str(k["alerts"]["received"]), **({"url": recalls_url} if recalls_url else {}),
          "parts": _parts(f"{k['alerts']['open']} open today", f"{k['alerts']['needs_action']} need action",

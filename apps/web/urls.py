@@ -23,4 +23,5 @@ urlpatterns = [
     path("users/", include("apps.web.urls_users")),
     path("users/credentials/", include("apps.web.urls_credentials")),
     path("recalls/", include("apps.web.urls_recalls")),
+    path("reports/", include("apps.web.urls_reports")),
 ]

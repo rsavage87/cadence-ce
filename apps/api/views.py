@@ -6,7 +6,7 @@ with no tenant in context and stay empty).
 from django.core.exceptions import ValidationError
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import MethodNotAllowed, PermissionDenied
+from rest_framework.exceptions import MethodNotAllowed, NotFound, PermissionDenied
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -20,7 +20,7 @@ from apps.pm.services import generate_pm_work_orders
 from apps.recalls import permissions as rc_perms
 from apps.recalls import services as rc_services
 from apps.recalls.models import AlertMatch
-from apps.reports.services import overview_kpis
+from apps.reports.services import REPORTS, overview_kpis, report_meta, run_report
 from apps.tenants.context import get_current_tenant
 from apps.workorders import permissions as wo_perms
 from apps.workorders import services as wo_services
@@ -213,6 +213,26 @@ class OverviewViewSet(viewsets.ViewSet):
         today = date.today()
         year, month = int(request.query_params.get("y", today.year)), int(request.query_params.get("m", today.month))
         return Response(overview_kpis(year, month))
+
+
+class ReportViewSet(viewsets.ViewSet):
+    """The Reports screen's tables as JSON: the list names them, `/<key>/` returns one (columns and rows, as the CSV download)."""
+
+    permission_classes = [IsAuthenticated, ModulePermission]
+    module = "reports"
+
+    def list(self, request):
+        return Response([{"key": r["key"], "title": r["title"], "subtitle": r["subtitle"]} for r in REPORTS])
+
+    def retrieve(self, request, pk=None):
+        from datetime import date
+
+        meta = report_meta(pk)
+        if meta is None:
+            raise NotFound("No such report")
+        today = date.today()
+        data = run_report(pk, today)
+        return Response({"key": pk, "title": meta["title"], "as_of": today, "columns": data["columns"], "rows": data["rows"]})
 
 
 class PmViewSet(viewsets.ViewSet):

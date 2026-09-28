@@ -1,0 +1,11 @@
+{% load web %}
+{# The list and the panel swap together so the active item follows the selection; the URL is pushed so each report has its own address. #}
+<div id="rep-body" class="grid g-13">
+  <div class="panel rep-list"><div class="list" style="padding:6px" role="tablist" aria-label="Reports">
+    {% for it in reports %}<a class="li{% if it.key == report.key %} active{% endif %}" role="tab" href="{% url 'web:report' it.key %}" hx-get="{% url 'web:report' it.key %}" hx-target="#rep-body" hx-swap="outerHTML" hx-push-url="true"{% if it.key == report.key %} aria-current="page"{% endif %}><div class="bd"><div class="t">{{ it.title }}</div><div class="s" style="white-space:normal">{{ it.subtitle }}</div></div></a>{% endfor %}
+  </div></div>
+  <div class="panel">
+    <div class="panel-h"><h2>{{ report.title }}</h2><div class="actions"><a class="btn sm" href="{% url 'web:report_csv' report.key %}" download>{% icon "dl" %} CSV</a></div></div>
+    <div class="panel-b">{% include report.template %}</div>
+  </div>
+</div>

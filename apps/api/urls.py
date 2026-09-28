@@ -12,6 +12,7 @@ router.register("technicians", views.TechnicianViewSet, basename="technician")
 router.register("credentials", views.CredentialViewSet, basename="credential")
 router.register("alert-matches", views.AlertMatchViewSet, basename="alertmatch")
 router.register("overview", views.OverviewViewSet, basename="overview")
+router.register("reports", views.ReportViewSet, basename="report")
 router.register("pm", views.PmViewSet, basename="pm")
 
 urlpatterns = router.urls
