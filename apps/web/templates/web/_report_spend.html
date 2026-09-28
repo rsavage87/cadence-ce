@@ -5,5 +5,5 @@
   <div class="stat"><div class="v">{{ r.six_months|money_k }}</div><div class="l">last 6 months</div></div>
   <div class="stat"><div class="v">{{ r.monthly_average|money_k }}</div><div class="l">monthly average</div></div>
 </div>
-{% include "web/_chart_bars.html" with c=p.chart aria="Repair spend by month" %}
+{% if r.six_months %}{% include "web/_chart_bars.html" with c=p.chart aria="Repair spend by month" %}{% else %}<div class="empty">No repairs completed in the last 6 months.</div>{% endif %}
 <div class="hint" style="margin-top:8px">Repair work orders only; PM labor and service contracts are excluded. The current month is partial.</div>
