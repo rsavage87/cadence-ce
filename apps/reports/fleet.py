@@ -5,17 +5,18 @@ The math follows the mock's repContent; departures are noted inline. Everything 
 """
 from datetime import date, timedelta
 
-from django.db.models import Count, F, Q
+from django.db.models import Count, DecimalField, F, Q, Sum
 
-from apps.equipment.models import Asset, DeviceModel, RiskClass
+from apps.equipment.models import Asset, AssetStatus, DeviceModel, RiskClass
 from apps.pm.dates import month_bounds
-from apps.reports.services import ANNUALIZE, TRAILING_DAYS
-from apps.workorders.models import WorkOrder, WoStatus, WoType
+from apps.reports.services import TRAILING_DAYS
+from apps.workorders.models import LaborLine, PartLine, WorkOrder, WoStatus, WoType
 
 # Survey targets by risk class (the mock: life support and high at 100%, the rest at the hospital policy's 95%).
 COMPLIANCE_TARGETS = {RiskClass.LIFE_SUPPORT: 100, RiskClass.HIGH: 100, RiskClass.MEDIUM: 95, RiskClass.LOW: 95}
 CLASS_ORDER = (RiskClass.LIFE_SUPPORT, RiskClass.HIGH, RiskClass.MEDIUM, RiskClass.LOW)
 MTBF_LIMIT = 12
+REPAIR_RATE_FACTOR = 2  # the mock's x2: two 182-day halves make its year, the same base MTBF uses (n * 182 / repairs)
 REPLACE_LIMIT = 12
 REPLACEMENT_MARKUP = 1.05  # list price plus 5%, as the mock estimates
 
@@ -35,13 +36,16 @@ def _repairs_in_window(today: date):
 
 def report_compliance(today: date) -> dict:
     """One row per risk class: active devices, this month's PMs (due, completed, on time), devices overdue now, and compliance
-    (the share of active devices whose PM is not past due today) against the class's target. Two grouped queries, no per-class work."""
+    (the share of active devices whose PM is not past due today) against the class's target. Two grouped queries, no per-class work.
+    A device marked missing stays in the active count and is always overdue (the mock's rule: it can never be shown compliant), and
+    this month's PMs are counted on active devices only, so every column describes the same fleet."""
     start, end = month_bounds(today.year, today.month)
+    overdue_q = Q(next_pm_on__lt=today) | Q(status=AssetStatus.MISSING)
     fleet = {row["device_model__risk_class"]: row for row in
-             _active_assets().order_by().values("device_model__risk_class").annotate(devices=Count("id"), overdue=Count("id", filter=Q(next_pm_on__lt=today)))}
+             _active_assets().order_by().values("device_model__risk_class").annotate(devices=Count("id"), overdue=Count("id", filter=overdue_q))}
     pms = {row["asset__device_model__risk_class"]: row for row in
-           WorkOrder.objects.filter(type=WoType.PM, due_on__gte=start, due_on__lte=end).exclude(status=WoStatus.CANCELLED)
-           .order_by().values("asset__device_model__risk_class")
+           WorkOrder.objects.filter(type=WoType.PM, due_on__gte=start, due_on__lte=end, asset__status__in=Asset.ACTIVE_STATUSES)
+           .exclude(status=WoStatus.CANCELLED).order_by().values("asset__device_model__risk_class")
            .annotate(due=Count("id"), completed=Count("id", filter=Q(completed_on__isnull=False)),
                      on_time=Count("id", filter=Q(completed_on__lte=F("due_on"))))}
     classes = []
@@ -63,8 +67,10 @@ def report_compliance(today: date) -> dict:
 
 
 def report_mtbf(today: date) -> dict:
-    """Models with at least one repair opened in the trailing 182 days, ranked by repairs per device per year. MTBF is fleet-level:
-    device-days in the period over repairs. Turnaround and cost average the repairs that have completed."""
+    """Models with at least one repair opened in the trailing 182 days, ranked by repairs per device per year (the mock's x2 of the
+    six-month count). MTBF is fleet-level: device-days in the period over repairs. Turnaround and cost average the repairs that have
+    completed. Six queries whatever the fleet size: repairs and devices per model, a dates-only pass for turnaround, one grouped sum
+    each over labor and part lines for cost, and the models; no work order is instantiated."""
     repairs, since = _repairs_in_window(today)
     counts = {row["asset__device_model"]: row["n"] for row in repairs.order_by().values("asset__device_model").annotate(n=Count("id"))}
     models = []
@@ -72,14 +78,23 @@ def report_mtbf(today: date) -> dict:
         in_service = {row["device_model"]: row["n"] for row in
                       _active_assets().filter(device_model__in=counts).order_by().values("device_model").annotate(n=Count("id"))}
         done = {}
-        for w in repairs.filter(completed_on__isnull=False).annotate(dm_id=F("asset__device_model")).prefetch_related("labor_lines", "part_lines"):
-            d = done.setdefault(w.dm_id, {"n": 0, "turnaround": 0, "cost": 0.0})
+        for row in repairs.filter(completed_on__isnull=False).order_by().values("asset__device_model", "opened_on", "completed_on"):
+            d = done.setdefault(row["asset__device_model"], {"n": 0, "turnaround": 0, "cost": 0.0})
             d["n"] += 1
-            d["turnaround"] += w.turnaround_days
-            d["cost"] += w.total_cost()
+            d["turnaround"] += max((row["completed_on"] - row["opened_on"]).days, 0)  # the service refuses completion before opening; clamp anyway
+        money = DecimalField(max_digits=14, decimal_places=2)
+        # The same repairs as `done` (type, window, not cancelled, completed), reached from the lines so no work order is instantiated.
+        line_filter = {"work_order__type": WoType.REPAIR, "work_order__opened_on__gte": since, "work_order__opened_on__lte": today,
+                       "work_order__completed_on__isnull": False}
+        for model, expr in ((LaborLine, Sum(F("hours") * F("rate"), output_field=money)), (PartLine, Sum(F("quantity") * F("unit_cost"), output_field=money))):
+            rows = (model.objects.filter(**line_filter).exclude(work_order__status=WoStatus.CANCELLED)
+                    .order_by().values("work_order__asset__device_model").annotate(v=expr))
+            for row in rows:
+                if row["work_order__asset__device_model"] in done:  # always true (same filter as `done`); guard the lookup anyway
+                    done[row["work_order__asset__device_model"]]["cost"] += float(row["v"] or 0)
         for dm in DeviceModel.objects.filter(pk__in=counts):
             n, reps, d = in_service.get(dm.pk, 0), counts[dm.pk], done.get(dm.pk)
-            rate = reps / n * ANNUALIZE if n else None
+            rate = reps / n * REPAIR_RATE_FACTOR if n else None
             models.append({"device_model": dm, "in_service": n, "repairs": reps, "rate": rate, "mtbf_days": n * TRAILING_DAYS / reps if n else None,
                            "turnaround": d["turnaround"] / d["n"] if d else 0.0, "cost": d["cost"] / d["n"] if d else 0.0,
                            "flagged": rate is not None and rate > 1})
@@ -99,8 +114,9 @@ def report_mtbf(today: date) -> dict:
 
 
 def replacement_score(age: float | None, life: int, repairs: int, condition: int) -> float:
-    """The mock's score: age against expected life (50%), repairs in the last six months (30%), condition (20%). 0 to 1."""
-    age_term = min((age or 0.0) / life, 1.5) / 1.5
+    """The mock's score: age against expected life (50%), repairs in the last six months (30%), condition (20%). 0 to 1.
+    A device installed in the future (a typo, or a record dated ahead) has no age yet: its age term is 0, never negative."""
+    age_term = min(max(age or 0.0, 0.0) / life, 1.5) / 1.5
     return 0.5 * age_term + 0.3 * min(repairs / 3, 1) + 0.2 * (5 - condition) / 4
 
 
@@ -112,6 +128,8 @@ def report_replace(today: date) -> dict:
     scored = []
     for a in _active_assets().select_related("device_model", "department"):
         age = a.age_years(today)
+        if age is not None:
+            age = max(age, 0.0)  # a future installed_on reads as 0.0 yr on the screen and in the CSV, not a negative age
         life = a.device_model.expected_life_years or 1  # a zero life would divide by zero; treat it as one year
         n = reps.get(a.pk, 0)
         condition = min(5, max(1, a.condition or 1))
