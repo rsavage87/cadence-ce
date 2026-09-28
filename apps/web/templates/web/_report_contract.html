@@ -10,4 +10,5 @@
     </tbody>
   </table>
 </div>
-<div class="hint" style="margin-top:8px">Contract cost is the annual cost of contracts that have not ended; in-house and vendor costs are work orders completed in the last 182 days, annualized. A device's support model follows its contract.</div>
+<div class="hint" style="margin-top:8px">Contract cost is the annual cost of contracts that have not ended; in-house and vendor costs are work orders completed in the last 182 days, annualized. A device counts under its contract's type while the contract runs; devices with no contract, or whose contract has ended, count as in-house.</div>
+{% if r.ended_contract_devices %}<div class="hint" style="margin-top:4px">{{ r.ended_contract_devices }} device{{ r.ended_contract_devices|pluralize }} {{ r.ended_contract_devices|pluralize:"is,are" }} on contracts that have ended and {{ r.ended_contract_devices|pluralize:"is,are" }} counted as in-house until the contract is renewed.</div>{% endif %}

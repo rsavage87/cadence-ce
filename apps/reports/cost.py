@@ -8,11 +8,12 @@ as 7% (OEM) and 4% (third-party) of acquisition value; here it is the real annua
 category and support-model breakdowns add up to the fleet-wide total exactly.
 
 Everything aggregates in the database (one query per line type or grouping) and finishes in Python, so a large fleet
-renders without touching each work order.
+renders without touching each work order; services.cost_of_service, which the fleet-wide figures come from, works the
+same way (two grouped queries and two aggregates).
 """
 from datetime import date, timedelta
 
-from django.db.models import Count, DecimalField, F, Sum
+from django.db.models import Case, CharField, Count, DecimalField, Expression, F, Sum, Value, When
 from django.db.models.functions import TruncMonth
 
 from apps.contracts.models import Contract, ContractType
@@ -29,15 +30,19 @@ _LABOR = Sum(F("hours") * F("rate"), output_field=_MONEY)
 _PARTS = Sum(F("quantity") * F("unit_cost"), output_field=_MONEY)
 
 
-def _completed_cost_by(group: str, today: date, since: date, wo_type: str | None = None) -> dict:
-    """Labor plus parts of work orders completed in [since, today], summed per value of `group` (a lookup from the line's
-    work order, e.g. "asset__device_model__category"). Two queries, one per line type, whatever the fleet size."""
+def _completed_cost_by(group: str | Expression, today: date, since: date, wo_type: str | None = None) -> dict:
+    """Labor plus parts of work orders completed in [since, today], summed per value of `group`: a lookup from the line's
+    work order (e.g. "asset__device_model__category") or an expression over the line (e.g. _live_support("work_order__asset__", today)).
+    Two queries, one per line type, whatever the fleet size."""
     totals: dict = {}
     for model, expr in ((LaborLine, _LABOR), (PartLine, _PARTS)):
         qs = model.objects.filter(work_order__completed_on__gte=since, work_order__completed_on__lte=today)
         if wo_type:
             qs = qs.filter(work_order__type=wo_type)
-        key = f"work_order__{group}"
+        if isinstance(group, str):
+            key = f"work_order__{group}"
+        else:
+            key, qs = "g", qs.annotate(g=group)
         for row in qs.order_by().values(key).annotate(v=expr):
             totals[row[key]] = totals.get(row[key], 0.0) + float(row["v"] or 0)
     return totals
@@ -85,14 +90,18 @@ def report_cosr(today: date) -> dict:
     categories = []
     for category, (devices, acquisition) in fleet_by_category.items():
         service = wo_cost.get(category, 0.0) * ANNUALIZE + contract_cost.get(category, 0.0)
+        # No recorded acquisition value means no ratio (None), not a flattering 0.0: the category is listed last and
+        # named in a hint with its service cost, and its Ratio cell is empty in the CSV.
         categories.append({"label": category, "devices": devices, "acquisition": acquisition, "service": service,
-                           "ratio_pct": service / acquisition * 100 if acquisition else 0.0})
-    categories.sort(key=lambda c: (-c["ratio_pct"], c["label"]))
+                           "ratio_pct": service / acquisition * 100 if acquisition else None})
+    categories.sort(key=lambda c: (c["ratio_pct"] is None, -(c["ratio_pct"] or 0.0), c["label"]))
     fleet = cost_of_service(today, sum(c["acquisition"] for c in categories))
     return {
         "columns": ["Category", "Devices", "Acquisition value", "Annual service cost", "Ratio %"],
-        "rows": [[c["label"], c["devices"], c["acquisition"], c["service"], round(c["ratio_pct"], 1)] for c in categories],
-        "categories": categories, "fleet": fleet, "unallocated": unallocated, "benchmark": BENCHMARK_PCT,
+        "rows": [[c["label"], c["devices"], c["acquisition"], c["service"], None if c["ratio_pct"] is None else round(c["ratio_pct"], 1)]
+                 for c in categories],
+        "categories": categories, "no_ratio": [c for c in categories if c["ratio_pct"] is None],
+        "fleet": fleet, "unallocated": unallocated, "benchmark": BENCHMARK_PCT,
     }
 
 
@@ -124,14 +133,37 @@ def report_spend(today: date) -> dict:
 
 SUPPORT_ORDER = [SupportType.IN_HOUSE, SupportType.OEM_CONTRACT, SupportType.THIRD_PARTY]
 SUPPORT_CONTRACT_TYPE = {SupportType.OEM_CONTRACT: ContractType.OEM, SupportType.THIRD_PARTY: ContractType.THIRD_PARTY}
+ENDED = "ended"  # a device whose contract has ended: in-house until it is renewed
+
+
+def _live_support(prefix: str, today: date) -> Case:
+    """The support model an asset is on as of `today`: its contract's type while the contract runs, ENDED when the contract
+    has ended, "" with no contract. Asset.support_type cannot be used here: it follows the contract even after it ends."""
+    return Case(When(**{f"{prefix}contract__end_on__gte": today}, then=F(f"{prefix}contract__type")),
+                When(**{f"{prefix}contract__isnull": False}, then=Value(ENDED)), default=Value(""), output_field=CharField())
+
+
+_LIVE_TO_SUPPORT = {"": SupportType.IN_HOUSE, ENDED: SupportType.IN_HOUSE, ContractType.OEM.value: SupportType.OEM_CONTRACT,
+                    ContractType.THIRD_PARTY.value: SupportType.THIRD_PARTY}
 
 
 def report_contract(today: date) -> dict:
     since = today - timedelta(days=TRAILING_DAYS)
-    fleet_by_support = _active_by("support_type")
-    wo_cost = _completed_cost_by("asset__support_type", today, since)
-    live = Contract.objects.filter(end_on__gte=today).order_by().values("type").annotate(v=Sum("annual_cost"))
-    contract_cost = {row["type"]: float(row["v"] or 0) for row in live}
+    fleet_by_support: dict = {}
+    ended_devices = 0
+    active = Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES).annotate(live=_live_support("", today))
+    for row in active.order_by().values("live").annotate(n=Count("id"), acq=Sum("acquisition_cost")):
+        st = _LIVE_TO_SUPPORT[row["live"]]
+        devices, acquisition = fleet_by_support.get(st, (0, 0.0))
+        fleet_by_support[st] = (devices + row["n"], acquisition + float(row["acq"] or 0))
+        if row["live"] == ENDED:
+            ended_devices = row["n"]
+    wo_cost: dict = {}
+    for live, v in _completed_cost_by(_live_support("work_order__asset__", today), today, since).items():
+        st = _LIVE_TO_SUPPORT[live]
+        wo_cost[st] = wo_cost.get(st, 0.0) + v
+    live_contracts = Contract.objects.filter(end_on__gte=today).order_by().values("type").annotate(v=Sum("annual_cost"))
+    contract_cost = {row["type"]: float(row["v"] or 0) for row in live_contracts}
     support = []
     for st in SUPPORT_ORDER:
         devices, acquisition = fleet_by_support.get(st, (0, 0.0))
@@ -143,5 +175,5 @@ def report_contract(today: date) -> dict:
     return {
         "columns": ["Support model", "Devices", "Acquisition value", "Annual cost", "Ratio %"],
         "rows": [[s["label"], s["devices"], s["acquisition"], s["annual"], round(s["ratio_pct"], 1)] for s in support],
-        "support": support, "fleet": fleet,
+        "support": support, "fleet": fleet, "ended_contract_devices": ended_devices,
     }

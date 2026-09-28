@@ -5,6 +5,7 @@
   <div class="stat"><div class="v">{{ r.fleet.total|money_k }}</div><div class="l">annual service cost</div></div>
   <div class="stat"><div class="v">{{ r.fleet.acquisition|money_k }}</div><div class="l">acquisition value in service</div></div>
 </div>
-{% if p.chart %}{% include "web/_chart_hbars.html" with c=p.chart aria="Cost of service ratio by category" %}{% else %}<div class="empty">No active devices.</div>{% endif %}
+{% if p.chart %}{% include "web/_chart_hbars.html" with c=p.chart aria="Cost of service ratio by category" %}{% elif r.categories %}<div class="empty">No active device has a recorded acquisition value, so no ratio can be shown.</div>{% else %}<div class="empty">No active devices.</div>{% endif %}
 <div class="hint" style="margin-top:8px">Red marker: {{ r.benchmark|floatformat:0 }}% benchmark midpoint. Ratio = (in-house labor and parts + vendor time and materials + service contracts) ÷ acquisition value; work orders completed in the last 182 days are annualized and each contract's annual cost is split across the devices it covers. Categories with OEM contracts run high; that is normal, but the categories above the marker are where a contract renegotiation or an in-house training investment pays back fastest.</div>
 {% if r.unallocated > 0 %}<div class="hint" style="margin-top:4px">{{ r.unallocated|money }} of annual service cost is on contracts that cover no active devices, or on devices since retired, and is not shown by category.</div>{% endif %}
+{% if r.no_ratio %}<div class="hint" style="margin-top:4px">{% for c in r.no_ratio %}{{ c.label }}: {{ c.service|money }} annual service cost on devices with no recorded acquisition value (no ratio){% if forloop.last %}.{% else %}; {% endif %}{% endfor %}</div>{% endif %}
