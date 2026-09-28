@@ -22,6 +22,9 @@ from apps.recalls.models import AlertMatch
 from apps.workorders.models import OPEN_STATUSES, Priority, WorkOrder, WoStatus, WoType
 from apps.workorders.services import PRIORITY_RANK, unassigned_portal_requests
 
+TRAILING_DAYS = 182  # the "6 months" every service-cost figure annualizes from (365/182): the Overview tile and the cost reports agree
+ANNUALIZE = 365 / TRAILING_DAYS
+
 
 def overview_kpis(year: int, month: int, today: date | None = None) -> dict:
     today = today or date.today()
@@ -49,14 +52,7 @@ def overview_kpis(year: int, month: int, today: date | None = None) -> dict:
     downtime = sum(w.downtime_days for w in repairs)
     uptime = 100.0 - (downtime / (active_count * days) * 100 if active_count and days else 0.0)
 
-    since = today - timedelta(days=182)
-    done6 = list(WorkOrder.objects.filter(completed_on__gte=since, completed_on__lte=today).prefetch_related("labor_lines", "part_lines"))
-    annualize = 365 / 182
-    in_house = sum(w.total_cost() for w in done6 if not w.vendor_service) * annualize
-    vendor_tm = sum(w.total_cost() for w in done6 if w.vendor_service) * annualize
-    contracts = float(sum(c.annual_cost for c in Contract.objects.filter(end_on__gte=today)))
-    total = in_house + vendor_tm + contracts
-    cosr = total / acquisition * 100 if acquisition else 0.0
+    cost = cost_of_service(today, acquisition)
 
     alerts_received = AlertMatch.objects.filter(alert__published_on__gte=start, alert__published_on__lte=as_of).values("alert").distinct().count()
     alerts_open = AlertMatch.objects.exclude(status__in=[AlertMatch.Status.CLOSED, AlertMatch.Status.NOT_AFFECTED]).values("alert").distinct().count()
@@ -69,10 +65,25 @@ def overview_kpis(year: int, month: int, today: date | None = None) -> dict:
         "open_work_orders": open_count, "overdue_work_orders": overdue_count, "awaiting_parts": awaiting_parts,
         "repairs_closed": len(repairs), "mttr_days": mttr, "repair_spend": spend,
         "downtime_days": downtime, "uptime_pct": uptime,
-        "cost_of_service": {"in_house": in_house, "vendor_tm": vendor_tm, "contracts": contracts, "total": total, "acquisition": acquisition,
-                            "ratio_pct": cosr},
+        "cost_of_service": cost,
         "alerts": {"received": alerts_received, "open": alerts_open, "needs_action": alerts_needing_action},
     }
+
+
+def cost_of_service(today: date, acquisition: float | None = None) -> dict:
+    """The annualized service cost behind the cost-of-service ratio: work orders completed in the trailing 182 days
+    (in-house, and vendor time and materials) scaled to a year, plus the annual cost of contracts that have not ended,
+    over the acquisition value of the active fleet. The Overview tile and the cost reports share this."""
+    if acquisition is None:
+        acquisition = float(sum(a.acquisition_cost for a in Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES).only("acquisition_cost")))
+    since = today - timedelta(days=TRAILING_DAYS)
+    done = list(WorkOrder.objects.filter(completed_on__gte=since, completed_on__lte=today).prefetch_related("labor_lines", "part_lines"))
+    in_house = sum(w.total_cost() for w in done if not w.vendor_service) * ANNUALIZE
+    vendor_tm = sum(w.total_cost() for w in done if w.vendor_service) * ANNUALIZE
+    contracts = float(sum(c.annual_cost for c in Contract.objects.filter(end_on__gte=today)))
+    total = in_house + vendor_tm + contracts
+    return {"in_house": in_house, "vendor_tm": vendor_tm, "contracts": contracts, "total": total, "acquisition": acquisition,
+            "ratio_pct": total / acquisition * 100 if acquisition else 0.0}
 
 
 def open_work_orders_count() -> int:
@@ -226,9 +237,6 @@ def overview_page(year: int, month: int, today: date | None = None) -> dict:
 # download, and the API iterate. Every report function takes `today` and returns a dict with "columns" and "rows"
 # (its table as plain values: str, int, float, date, or None; what the CSV and the API serve) plus whatever its
 # template needs. Chart geometry is presentation and lives in apps/web/reports.py.
-
-TRAILING_DAYS = 182  # the "6 months" every service-cost figure annualizes from (365/182), as on the Overview
-ANNUALIZE = 365 / TRAILING_DAYS
 
 REPORTS = [
     {"key": "cosr", "title": "Cost of service ratio by category", "subtitle": "Annualized service cost against acquisition value"},
