@@ -114,3 +114,23 @@ class AlertMatchSerializer(serializers.ModelSerializer):
     def get_progress(self, obj):
         p = recall_progress(obj)
         return {"total": p["total"], "completed": p["completed"]}
+
+
+class FacilitySettingsSerializer(serializers.Serializer):
+    """Parses types only; apps.facility.services validates ranges and text and writes the history."""
+
+    portal_require_callback = serializers.BooleanField(required=False)
+    portal_hotline = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False)
+    policy_life_support = serializers.CharField(required=False, allow_blank=True)
+    policy_medium_low = serializers.CharField(required=False, allow_blank=True)
+    policy_aem = serializers.CharField(required=False, allow_blank=True)
+    policy_missing = serializers.CharField(required=False, allow_blank=True)
+    policy_incoming = serializers.CharField(required=False, allow_blank=True)
+    policy_post_repair = serializers.CharField(required=False, allow_blank=True)
+    policy_assignment = serializers.CharField(required=False, allow_blank=True)
+    policy_portal = serializers.CharField(required=False, allow_blank=True)
+    target_pm_pct = serializers.DecimalField(max_digits=6, decimal_places=2, required=False)
+    target_uptime_pct = serializers.DecimalField(max_digits=6, decimal_places=2, required=False)
+    target_mttr_days = serializers.DecimalField(max_digits=6, decimal_places=2, required=False)
+    repair_budget_monthly = serializers.DecimalField(max_digits=14, decimal_places=2, required=False, allow_null=True)
+    updated_at = serializers.DateTimeField(read_only=True, allow_null=True)

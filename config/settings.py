@@ -50,6 +50,7 @@ INSTALLED_APPS = [
     "apps.recalls",
     "apps.credentials",
     "apps.portal",
+    "apps.facility",
     "apps.reports",
     "apps.api",
     "apps.demo",

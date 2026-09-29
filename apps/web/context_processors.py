@@ -5,7 +5,7 @@ from apps.accounts.models import Level, Module
 from apps.credentials.models import Technician
 from apps.reports.services import nav_counts
 
-# key, label, icon, url name, module that must be viewable. Later slices add PM schedule and Settings.
+# key, label, icon, url name, module that must be viewable. The PM schedule screen is still to come.
 NAV = [
     ("overview", "Overview", "dash", "web:overview", Module.REPORTS),
     ("equipment", "Equipment", "eq", "web:equipment", Module.EQUIPMENT),
@@ -14,6 +14,7 @@ NAV = [
     ("recalls", "Recalls and alerts", "recall", "web:recalls", Module.RECALLS),
     ("reports", "Reports", "rep", "web:reports", Module.REPORTS),
     ("users", "Users and access", "users", "web:users", Module.USERS),
+    ("settings", "Settings", "set", "web:settings", Module.SETTINGS),
 ]
 
 

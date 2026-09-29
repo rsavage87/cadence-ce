@@ -5,6 +5,7 @@ Seed a small, deterministic demo tenant (same fictional facility as the mock).
 """
 import random
 from datetime import date, timedelta
+from decimal import Decimal
 
 from django.core.management.base import BaseCommand
 from django.db import transaction
@@ -14,6 +15,7 @@ from apps.accounts.models import Role, User, create_default_roles
 from apps.contracts.models import Contract, ContractType, Coverage
 from apps.credentials.models import Credential, Scope, Technician
 from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, RiskClass
+from apps.facility.services import update_settings
 from apps.pm.dates import add_months
 from apps.pm.models import PmProcedure
 from apps.recalls.models import Alert, AlertMatch
@@ -178,6 +180,8 @@ class Command(BaseCommand):
                         change_status(wo, "in_progress", as_of=d)
                         change_status(wo, "completed", as_of=done)
                         change_status(wo, "closed", as_of=done)
+            # facility settings as the mock shows them: a shop hotline on the portal and a monthly repair budget
+            update_settings(portal_hotline="ext. 4400", repair_budget_monthly=Decimal("52000"))
             # recalls that match the fleet, in every disposition the screen shows
             # Alerts are global (shared by every tenant), so a second demo tenant reuses the same notice.
             for external_id, days_ago, cls, mfr, product, terms, model, title, action, status_, closed_days_ago, note in ALERTS:

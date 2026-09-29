@@ -1,3 +1,4 @@
+from django.urls import path
 from rest_framework.routers import DefaultRouter
 
 from . import views
@@ -15,4 +16,7 @@ router.register("overview", views.OverviewViewSet, basename="overview")
 router.register("reports", views.ReportViewSet, basename="report")
 router.register("pm", views.PmViewSet, basename="pm")
 
-urlpatterns = router.urls
+urlpatterns = router.urls + [
+    path("settings/", views.FacilitySettingsView.as_view(), name="facility-settings"),
+    path("settings/reset-policy/", views.ResetPolicyView.as_view(), name="facility-settings-reset-policy"),
+]

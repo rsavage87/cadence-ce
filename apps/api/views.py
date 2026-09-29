@@ -10,12 +10,14 @@ from rest_framework.exceptions import MethodNotAllowed, NotFound, PermissionDeni
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from apps.accounts.models import Level
 from apps.contracts.models import Contract
 from apps.credentials.models import Credential, Technician
 from apps.credentials.services import qualified_technicians
 from apps.equipment.models import Asset, Department, DeviceModel
+from apps.facility import services as fac_services
 from apps.pm.services import generate_pm_work_orders
 from apps.recalls import permissions as rc_perms
 from apps.recalls import services as rc_services
@@ -244,3 +246,45 @@ class PmViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["post"])
     def generate(self, request):
         return Response({"created": generate_pm_work_orders()})
+
+
+class FacilitySettingsView(APIView):
+    """GET the tenant's settings (defaults until first saved); PATCH any of them (Settings Edit). POST .../reset-policy/
+    restores the default policy text. Every change goes through apps.facility.services, which validates and audits it."""
+
+    permission_classes = [IsAuthenticated, ModulePermission]
+    module = "settings"
+    write_level = Level.EDIT
+
+    def _data(self):
+        row = fac_services.get_settings()
+        data = {f: getattr(row, f) for f in fac_services.EDITABLE}
+        data["updated_at"] = None if row._state.adding else row.updated_at  # unsaved defaults have never been changed
+        return s.FacilitySettingsSerializer(data).data
+
+    def get(self, request):
+        return Response(self._data())
+
+    def patch(self, request):
+        parsed = s.FacilitySettingsSerializer(data=request.data, partial=True)
+        parsed.is_valid(raise_exception=True)
+        unknown = set(request.data) - set(fac_services.EDITABLE)
+        if unknown:
+            return Response({"detail": f"Unknown settings: {', '.join(sorted(unknown))}."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            fac_services.update_settings(by=request.user, **parsed.validated_data)
+        except ValidationError as e:
+            return Response(e.message_dict if hasattr(e, "error_dict") else {"detail": e.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(self._data())
+
+
+class ResetPolicyView(FacilitySettingsView):
+    def get(self, request):
+        raise MethodNotAllowed("GET")
+
+    def patch(self, request):
+        raise MethodNotAllowed("PATCH")
+
+    def post(self, request):
+        fac_services.reset_policy(by=request.user)
+        return Response(self._data())
