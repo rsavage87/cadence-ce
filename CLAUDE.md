@@ -18,7 +18,8 @@ HTMX for the web UI (`apps/web`, via django-htmx), pytest. Tests run on SQLite a
    Per-action levels live next to the services (`apps/workorders/permissions.py`, `apps/recalls/permissions.py`). Hiding a button
    is not access control.
 4. **State changes go through services** (`apps/workorders/services.py`, `apps/pm/services.py`, `apps/contracts/services.py`,
-   `apps/accounts/services.py`, `apps/credentials/services.py`, `apps/recalls/services.py`), never by setting fields in a view or calling model helpers like
+   `apps/accounts/services.py`, `apps/credentials/services.py`, `apps/recalls/services.py`, `apps/facility/services.py`), never by setting fields in a
+   view or calling model helpers like
    `Contract.add_assets` directly. Services validate, write status history, and keep the asset in sync.
 5. **No PHI by design.** The portal never asks for patient identifiers. Don't add free-text fields that invite them.
 6. **Migrations are generated, never hand-edited**, and committed with the change. After adding a tenant-scoped model,
@@ -58,10 +59,14 @@ pytest
   `permissions.py` (review at Edit, close/reopen at Approve). ECRI import is deferred (license).
 - `apps/credentials` Technician, Credential, qualification and coverage services, credential add/renew/sign-off/remove
 - `apps/portal` public request form (`/r/<tenant-slug>/`)
+- `apps/facility` Settings: `FacilitySettings` (one row per tenant: portal callback and hotline, the eight maintenance-policy texts,
+  KPI targets and the monthly repair budget); `services.py` reads (`get_settings`, defaults until first saved), `update_settings`,
+  `reset_policy`, `kpi_targets`, `compliance_targets`, `portal_url`, the integration list, risk bands; `permissions.py` (View to see,
+  Edit to change). Named `facility` so it never reads like `django.conf.settings`.
 - `apps/reports` overview KPIs, the Overview bundle (`overview_page`), attention list, nav counts, `cost_of_service`; the eight Reports
   (`REPORTS` catalog and `run_report` in `services.py`; the numbers in `cost.py`, `fleet.py`, `operations.py`, read-only, `today` passed in)
 - `apps/web` HTMX UI: one views/urls/forms module per screen (`views.py` Overview, Equipment, Work orders; `views_contracts.py`;
-  `views_users.py` Users and Roles tabs; `views_credentials.py`; `views_recalls.py`; `views_reports.py` with the CSV download), templates,
+  `views_users.py` Users and Roles tabs; `views_credentials.py`; `views_recalls.py`; `views_reports.py` with the CSV download; `views_settings.py`), templates,
   `charts.py` (SVG geometry: line, stacked bars, hbars with a benchmark marker, donut), `overview.py` and `reports_*.py` (chart geometry
   and display values for the Overview and the Reports; services never import them), `htmx.py` helpers, shell
   context processor. Drawers and modals are partials swapped into `#drawer` / `#modal-card`; the same URLs render a full page

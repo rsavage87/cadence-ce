@@ -6,8 +6,8 @@ service contracts, recall matching, technician credentials, a public service req
 This is the starter codebase generated from the interactive mock in `spec/`. It contains the data model, tenancy,
 permissions, lifecycle services, importer, PM engine, KPI math, REST API, admin, portal, and tests, plus the HTMX
 web UI for Overview, Equipment, Work orders, Contracts, Recalls and alerts, Reports (eight survey-ready reports with CSV
-download), and Users and access (Users, Roles, Technician credentials). The remaining screens (PM schedule, Settings) land
-slice by slice (see `spec/BUILD_PLAN.md`).
+download), Users and access (Users, Roles, Technician credentials), and Settings (portal options, maintenance policy, KPI
+targets, integrations, risk scoring). The PM schedule screen is next (see `spec/BUILD_PLAN.md`).
 
 ## Run locally (Docker)
 ```
@@ -42,4 +42,4 @@ pytest
 
 ## First things to do in Claude Code
 1. `pip install -r requirements-dev.txt`, then `pytest`.
-2. Start slice 8 (`spec/BUILD_PLAN.md`): Settings (integrations, portal settings, editable policy, risk scoring).
+2. Start slice 9 (`spec/BUILD_PLAN.md`): the PM schedule screen (calendar of due PMs, create work orders for a day).

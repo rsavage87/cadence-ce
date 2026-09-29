@@ -1,7 +1,7 @@
 # Build plan
 
 The mock (`cadence-ce-cmms-mock.html`) is the spec. Each slice below is shippable on its own and ends with green tests.
-Slices 0 to 7 are built; 8 onward are the next work.
+Slices 0 to 8 are built; 9 onward are the next work.
 
 | # | Slice | Mock screen(s) | Code | Status |
 |---|-------|----------------|------|--------|
@@ -13,7 +13,8 @@ Slices 0 to 7 are built; 8 onward are the next work.
 | 5 | Contracts UI + credentials UI | Contracts section, Users and access (Users, Roles, Credentials tabs) | `contracts`, `accounts`, `credentials` + `web` | done (no invitation email yet) |
 | 6 | Recalls UI + ECRI importer | Recalls and alerts | `recalls` + `web` | done (openFDA feed; ECRI importer deferred, it needs a license) |
 | 7 | Reports | Reports (COSR, PM compliance, MTBF, replacement, spend, contract vs in-house, technician productivity, recall log) | `reports` + `web` | done (CSV download and JSON API; PDF, Schedule, and Custom report deferred) |
-| 8 | Settings | Integrations, portal settings, editable policy, risk scoring | `settings` app | next |
+| 8 | Settings | Integrations, portal settings, editable policy, risk scoring | `facility` + `web` | done (connectors, paging, photo upload, and email or text confirmation deferred) |
+| 9 | PM schedule UI | PM schedule (calendar, create work orders for a day) | `pm` + `web` | next |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.
@@ -27,7 +28,7 @@ Slices 0 to 7 are built; 8 onward are the next work.
 
 The mock's toast-only buttons (Device list, Label, Print, Scan tag, and Export CSV outside Reports) are deferred until an export feature exists; Reports downloads each report as CSV.
 
-## Screen → view map (slices 4 to 7)
+## Screen → view map (slices 4 to 8)
 - Overview: `reports.services.overview_kpis(year, month)` + `pm.services.pm_on_time_series` for the 12-month chart; attention list = life-support overdue PMs, alerts needing action, unassigned portal requests, expired/expiring contracts, critical open WOs, WOs awaiting parts > 7 days.
 - Equipment: `Asset.objects.select_related(...)` with the same filters as the mock's toolbar (category, status, risk, department, support, overdue-only, bucket). Fleet buckets: retired / out of service / in repair / open recall / PM overdue / PM due ≤ 30 d / compliant, each device counted once in that order.
 - Work orders: list and board; status buttons call `workorders.services.change_status`; assignment dropdown lists `credentials.services.qualified_technicians(asset)` first.
@@ -57,3 +58,13 @@ The mock's toast-only buttons (Device list, Label, Print, Scan tag, and Export C
   mock's ×2 factor (two 182-day halves, the same base as its MTBF); a work order cannot start or complete before it was opened; asset
   tags cannot contain spaces or slashes (they live in URLs). The mock's Custom report, PDF, and Schedule buttons are deferred (they
   need a report builder and an export service).
+- Settings: `facility.services` over one `FacilitySettings` row per tenant (unsaved defaults until the first save; every save is
+  audited). The portal panel auto-saves the callback requirement and the hotline (the public form and its confirmation page read
+  them); the department-links modal builds `/r/<slug>/?dept=` links. The eight maintenance-policy texts save together or reset to the
+  mock's defaults; the assignment text heads the work-order drawer's Assignment section and the portal text ends the work-orders
+  screen's unassigned-requests note. KPI targets (PM completion for medium and low risk, uptime, MTTR, monthly repair budget) drive
+  the Overview tiles, the PM trend line, and the compliance report; life support and high risk stay at 100%. Integrations show real
+  state (only the openFDA feed exists; ECRI needs a license; the rest are not built), so the mock's Sync and Connect buttons, paging,
+  photo upload (photos can capture patients), and email or text confirmation are shown as unavailable with a reason. Risk scoring shows
+  the mock's rubric and bands with active device counts; per-model scoring waits for a catalog editor. View to see, Edit to change
+  (the director by default; the manager sees it read-only). `/api/v1/settings/` (GET, PATCH) and `/api/v1/settings/reset-policy/`.
