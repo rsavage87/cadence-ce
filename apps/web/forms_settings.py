@@ -2,6 +2,7 @@
 Settings screen input parsing (slice 8). Plain helpers: they turn the POSTed form into keyword arguments for
 apps.facility.services.update_settings, which does all the validation. Nothing here saves anything.
 """
+import re
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
@@ -34,9 +35,21 @@ TARGET_FORM = [
 ]
 
 
-def _number(value: str) -> str:
-    """Tolerate what people paste into a number box: "$52,000", "95 %". The service rejects anything else."""
-    return str(value or "").strip().replace(",", "").removeprefix("$").removesuffix("%").strip()
+_THOUSANDS = re.compile(r"\d{1,3}(,\d{3})+(\.\d+)?")
+
+
+def _number(field: str, value: str) -> str:
+    """Tolerate what people paste into a number box: "$52,000" for the budget, "95 %" for a percentage. A comma counts only as a
+    thousands separator in the budget ("52,000"); anything else ("1,5" meaning 1.5) goes to the service unchanged and is refused
+    there, so a decimal comma never silently becomes a number ten times larger."""
+    text = str(value or "").strip()
+    if field == "repair_budget_monthly":
+        text = text.removeprefix("$").strip()
+        if _THOUSANDS.fullmatch(text):
+            text = text.replace(",", "")
+    elif field.endswith("_pct"):
+        text = text.removesuffix("%").strip()
+    return text
 
 
 def portal_fields(post) -> dict:
@@ -57,7 +70,7 @@ def policy_fields(post) -> dict:
 
 
 def target_fields(post) -> dict:
-    return {field: _number(post.get(field, "")) for field in TARGET_FIELDS}
+    return {field: _number(field, post.get(field, "")) for field in TARGET_FIELDS}
 
 
 def error_dict(e: ValidationError) -> dict:

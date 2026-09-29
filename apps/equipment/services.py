@@ -67,6 +67,9 @@ def fleet_summary(today: date | None = None) -> dict:
     return {"total": Asset.objects.count(), "active": active.count(), "under_contract": active.filter(contract__end_on__gte=today).count()}
 
 
+ACTIVE_STATUS_FILTER = "active"  # every status but retired: what the fleet counts on Overview and Settings mean by "devices"
+
+
 @dataclass
 class AssetFilters:
     q: str = ""
@@ -110,7 +113,9 @@ def filter_assets(f: AssetFilters, today: date | None = None):
                        | Q(contract__reference__icontains=q))
     if f.category:
         qs = qs.filter(device_model__category=f.category)
-    if f.status:
+    if f.status == ACTIVE_STATUS_FILTER:
+        qs = qs.filter(status__in=Asset.ACTIVE_STATUSES)
+    elif f.status:
         qs = qs.filter(status=f.status)
     if f.risk:
         qs = qs.filter(device_model__risk_class=f.risk)

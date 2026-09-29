@@ -157,8 +157,8 @@ def _workorders_context(request) -> dict:
     ctx = {"nav_active": "workorders", "list_url": reverse("web:workorders"), "f": f, "mode": mode, "technicians": techs,
            "types": WoType.choices, "statuses": WoStatus.choices,
            "unassigned_portal": unassigned_portal, "open_count": open_wos.count(),
-           # The note quotes the tenant's portal policy and closes the sentence itself, so a trailing period is dropped.
-           "portal_policy": get_settings().policy_portal.rstrip(". ") if unassigned_portal else "",
+           # Quoted as written: "(policy: Triage 7 a.m. to 7 p.m.)." keeps the policy's own punctuation intact.
+           "portal_policy": get_settings().policy_portal if unassigned_portal else "",
            "past_due": open_wos.filter(due_on__lt=today).count(),
            "done_7d": WorkOrder.objects.filter(completed_on__gte=today - timedelta(days=wo_services.BOARD_RECENT_DAYS)).count(),
            "can_create": request.user.has_level(wo_perms.MODULE, wo_perms.CREATE_LEVEL)}

@@ -1,0 +1,27 @@
+{# The portal settings rows. Auto-saves for editors and swaps only itself; the ids let htmx put focus back after the swap. #}
+<form class="set-rows" id="set-portal-form"{% if can_edit %} hx-post="{% url 'web:settings_portal' %}" hx-trigger="change, submit" hx-sync="this:replace" hx-target="this" hx-swap="outerHTML"{% endif %} hx-disinherit="hx-swap hx-target">
+  <div class="set-row">
+    <span class="lbl">Requester must give a callback number</span>
+    <label class="tog">
+      {# hidden 0 first: an unchecked box still posts a value, and QueryDict.get returns the last one #}
+      <input type="hidden" name="portal_require_callback" value="0"><input type="checkbox" id="set-portal-callback" name="portal_require_callback" value="1" aria-label="Requester must give a callback number"{% if s.portal_require_callback %} checked{% endif %}{% if not can_edit %} disabled{% endif %}><span class="sw"></span>{% if s.portal_require_callback %}On{% else %}Off{% endif %}
+    </label>
+  </div>
+  <label class="set-row">
+    <span class="lbl">Hotline shown to requesters</span>
+    <input class="perm" id="set-portal-hotline" name="portal_hotline" value="{{ s.portal_hotline }}" maxlength="{{ hotline_max }}" placeholder="e.g. ext. 4400" autocomplete="off"{% if not can_edit %} disabled{% endif %}>
+  </label>
+  {# The mock's other rows, shown honestly: none of them can work yet. #}
+  <div class="set-row off">
+    <span class="lbl">Page on-call for critical requests, around the clock<span class="why">Needs the notifications integration</span></span>
+    <label class="tog"><input type="checkbox" disabled aria-label="Page on-call for critical requests"><span class="sw"></span>Off</label>
+  </div>
+  <div class="set-row off">
+    <span class="lbl">Allow photo upload with a request<span class="why">Not offered: photos can capture patients</span></span>
+    <label class="tog"><input type="checkbox" disabled aria-label="Allow photo upload with a request"><span class="sw"></span>Off</label>
+  </div>
+  <div class="set-row off last">
+    <span class="lbl">Confirmation to the requester<span class="why">Email and text need the notifications integration</span></span>
+    <select class="perm" disabled aria-label="Confirmation to the requester"><option>On screen</option></select>
+  </div>
+</form>

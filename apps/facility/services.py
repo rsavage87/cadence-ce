@@ -10,10 +10,13 @@ from urllib.parse import urlencode
 
 from django.conf import settings as django_settings
 from django.core.exceptions import ValidationError
-from django.db.models import Count
+from django.db import IntegrityError, transaction
+from django.db.models import Count, Max
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.equipment.models import Asset, RiskClass
+from apps.tenants.context import get_current_tenant
 
 from .models import POLICY, POLICY_DEFAULTS, POLICY_MAX_LENGTH, FacilitySettings
 
@@ -28,10 +31,19 @@ TARGET_RANGES = [("target_pm_pct", "PM completion target", Decimal("50"), Decima
                  ("target_mttr_days", "Mean time to repair target", Decimal("0.5"), Decimal("30"))]
 LIFE_SUPPORT_PM_TARGET = 100.0
 HOTLINE_MAX_LENGTH = 40
+BUDGET_MAX = Decimal("9999999999.99")  # the largest value the DecimalField(12, 2) column holds
+
+
+def _places(field: str) -> int:
+    """Decimal places the column keeps. More precise input is refused, not rounded, so what the user confirmed is what is stored."""
+    return FacilitySettings._meta.get_field(field).decimal_places
 
 
 def get_settings() -> FacilitySettings:
-    """The tenant's settings, or unsaved defaults when it has never saved any. Requires a tenant context."""
+    """The tenant's settings, or unsaved defaults when it has never saved any. Requires a tenant context: without one the
+    scoped manager finds nothing and this would quietly return defaults, so it refuses instead."""
+    if get_current_tenant() is None:
+        raise RuntimeError("get_settings() needs a tenant context")
     return FacilitySettings.objects.first() or FacilitySettings()
 
 
@@ -46,11 +58,24 @@ def _decimal(value, field: str, errors: dict):
     if not d.is_finite():
         errors[field] = "Enter a number."
         return None
-    return d
+    places = _places(field)
+    exponent = d.normalize().as_tuple().exponent
+    if isinstance(exponent, int) and -exponent > places:
+        errors[field] = f"Use at most {places} decimal place{'' if places == 1 else 's'}."
+        return None
+    return d + 0  # drops a negative zero's sign
 
 
-def _clean(s: FacilitySettings, fields: dict) -> dict:
-    """Validate and normalize `fields` against `s`; returns the cleaned values or raises ValidationError (field -> message)."""
+def _text(value, field: str, errors: dict) -> str:
+    """One line, stray whitespace collapsed. NUL characters are refused (Postgres cannot store them)."""
+    text = " ".join(str(value or "").split())
+    if "\x00" in text:
+        errors[field] = "Remove the invisible control character from this text."
+    return text
+
+
+def _clean(fields: dict) -> dict:
+    """Validate and normalize `fields`; returns the cleaned values or raises ValidationError (field -> message)."""
     errors, cleaned = {}, {}
     unknown = set(fields) - set(EDITABLE)
     if unknown:
@@ -61,13 +86,15 @@ def _clean(s: FacilitySettings, fields: dict) -> dict:
                 errors[field] = "Choose on or off."
             cleaned[field] = value
         elif field == "portal_hotline":
-            text = " ".join(str(value or "").split())  # one line, no stray whitespace
-            if len(text) > HOTLINE_MAX_LENGTH:
+            text = _text(value, field, errors)
+            if field not in errors and len(text) > HOTLINE_MAX_LENGTH:
                 errors[field] = f"Keep the hotline to {HOTLINE_MAX_LENGTH} characters, e.g. ext. 4400."
             cleaned[field] = text
         elif field in POLICY_FIELDS:
-            text = " ".join(str(value or "").split())
-            if not text:
+            text = _text(value, field, errors)
+            if field in errors:
+                pass
+            elif not text:
                 errors[field] = "Policy text cannot be empty. Use Reset to defaults to restore it."
             elif len(text) > POLICY_MAX_LENGTH:
                 errors[field] = f"Keep each policy to {POLICY_MAX_LENGTH} characters."
@@ -76,9 +103,9 @@ def _clean(s: FacilitySettings, fields: dict) -> dict:
             d = _decimal(value, field, errors)
             if d is not None and d < 0:
                 errors[field] = "The budget cannot be negative."
-            elif d is not None and d >= Decimal("1e10"):
+            elif d is not None and d > BUDGET_MAX:
                 errors[field] = "That budget is too large."
-            cleaned[field] = d.quantize(Decimal("0.01")) if d is not None and field not in errors else None
+            cleaned[field] = d
         else:
             d = _decimal(value, field, errors)
             _f, label, low, high = next(r for r in TARGET_RANGES if r[0] == field)
@@ -92,14 +119,32 @@ def _clean(s: FacilitySettings, fields: dict) -> dict:
     return cleaned
 
 
+def _locked_row():
+    """The tenant's row, locked for this transaction (a no-op lock on SQLite), or None before the first save."""
+    return FacilitySettings.objects.select_for_update().first()
+
+
 def update_settings(by=None, **fields) -> FacilitySettings:
-    """Change any of EDITABLE. All or nothing: one invalid field rejects the whole change."""
-    s = get_settings()
-    for field, value in _clean(s, fields).items():
-        setattr(s, field, value)
-    if by is not None:
-        s._history_user = by
-    s.save()
+    """Change any of EDITABLE. All or nothing: one invalid field rejects the whole change and writes nothing. The row is
+    locked while it changes, and two first saves racing each other both land on the one row (the second retries)."""
+    cleaned = _clean(fields)
+    with transaction.atomic():
+        s = _locked_row()
+        if s is None:
+            s = FacilitySettings(**cleaned)
+            if by is not None:
+                s._history_user = by
+            try:
+                with transaction.atomic():  # savepoint: a concurrent first save may win the unique-per-tenant row
+                    s.save()
+                return s
+            except IntegrityError:
+                s = FacilitySettings.objects.select_for_update().get()
+        for field, value in cleaned.items():
+            setattr(s, field, value)
+        if by is not None:
+            s._history_user = by
+        s.save()
     return s
 
 
@@ -139,7 +184,7 @@ def portal_url(tenant, department: str | None = None) -> str:
 CONNECTED, NOT_CONNECTED, LICENSE = "connected", "not_connected", "license"
 INTEGRATIONS = [
     # key, short code, name, what it does (the mock's list; only the FDA feed is built)
-    ("fda", "FDA", "FDA recalls", "Recall notices for device models in the inventory, imported nightly and matched automatically"),
+    ("fda", "FDA", "FDA recalls", "Recall notices from the FDA, matched to device models in the inventory automatically"),
     ("ecri", "ECRI", "ECRI Alerts Tracker", "Hazard reports and recalls matched to the inventory"),
     ("oem", "OEM", "OEM PM library", "Standard PM procedures and intervals by manufacturer and model, with revision tracking"),
     ("ehr", "EHR", "EHR device association", "FHIR Device resources so patient-connected equipment appears in the chart and location"),
@@ -150,22 +195,31 @@ INTEGRATIONS = [
 ]
 
 
-def integrations() -> list[dict]:
-    """Each integration with its real state: only the openFDA feed exists; ECRI needs a license; the rest are not built."""
-    from apps.pm.models import PmProcedure
+def _fda_status() -> tuple[str, str]:
+    """Connected once the openFDA import has brought in a real notice. The demo seed's sample alerts (raw["demo"]) are
+    fictional and never count as a connection. Alerts are global; the match count is this tenant's."""
     from apps.recalls.models import Alert, AlertMatch
-    from apps.recalls.services import feed_imported_at
+
+    fda = Alert.objects.filter(source=Alert.Source.FDA)
+    samples = fda.filter(raw__demo=True).values("pk")
+    real = fda.exclude(pk__in=samples)
+    at = real.aggregate(at=Max("created_at"))["at"]
+    if at is None:
+        return NOT_CONNECTED, "Only sample alerts so far; no FDA notices imported yet" if fda.exists() else "No FDA notices imported yet"
+    at = timezone.localtime(at)
+    matched = AlertMatch.objects.filter(alert__in=real).count()
+    return CONNECTED, f"Newest notice imported {at:%b} {at.day}, {at.year} · {matched} matched to this inventory"
+
+
+def integrations() -> list[dict]:
+    """Each integration with its real state: only the openFDA import exists; ECRI needs a license; the rest are not built."""
+    from apps.pm.models import PmProcedure
 
     out = []
     for key, code, name, description in INTEGRATIONS:
         status, detail = NOT_CONNECTED, ""
         if key == "fda":
-            at = feed_imported_at()
-            if at:
-                matched = AlertMatch.objects.filter(alert__source=Alert.Source.FDA).count()
-                status, detail = CONNECTED, f"Newest notice imported {at:%b} {at.day}, {at.year} · {matched} matched to this inventory"
-            else:
-                detail = "No notices imported yet"
+            status, detail = _fda_status()
         elif key == "ecri":
             status, detail = LICENSE, "Needs a licensed ECRI feed"
         elif key == "oem":

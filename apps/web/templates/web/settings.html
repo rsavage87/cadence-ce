@@ -29,7 +29,7 @@
         </div>
         {% endfor %}
       </div>
-      <div class="panel-b"><div class="hint">The FDA feed imports nightly. The other connections are not available yet.</div></div>
+      <div class="panel-b"><div class="hint">FDA notices arrive each time the openFDA import runs. The other connections are not available yet.</div></div>
     </div>
     {% include "web/_settings_portal.html" %}
   </div>
@@ -48,7 +48,7 @@
               <tr>
                 <td>{{ r.band }}</td>
                 <td>{% risk_chip r.risk %}</td>
-                <td class="num">{% if can_view_equipment %}<a class="link" href="{% url 'web:equipment' %}?risk={{ r.risk }}">{{ r.devices }}</a>{% else %}{{ r.devices }}{% endif %}</td>
+                <td class="num">{% if can_view_equipment %}<a class="link" href="{% url 'web:equipment' %}?risk={{ r.risk }}&amp;status=active">{{ r.devices }}</a>{% else %}{{ r.devices }}{% endif %}</td>
               </tr>
               {% endfor %}
             </tbody>

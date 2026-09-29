@@ -9,7 +9,7 @@
       <td class="two">{{ t.technician.name }}<small>{{ t.technician.title|default:"Technician" }}</small></td>
       <td class="num">{{ t.closed }}</td><td class="num">{{ t.pms }}</td><td class="num">{{ t.repairs }}</td>
       <td class="num">{{ t.hours|floatformat:1 }}</td>
-      <td class="num {% if t.pm_on_time_pct >= 95 %}up{% else %}down{% endif %}">{{ t.pm_on_time_pct|floatformat:0 }}%</td>
+      <td class="num {% if t.pm_meets %}up{% else %}down{% endif %}">{{ t.pm_on_time_pct|floatformat:0 }}%</td>
       <td class="num">{{ t.turnaround|floatformat:1 }} d</td>
       <td class="num">{{ t.open }}</td>
     </tr>{% endfor %}
@@ -18,4 +18,4 @@
 {% else %}
 <div class="empty">No active technicians.</div>
 {% endif %}
-<div class="hint" style="margin-top:8px">Vendor-performed work is excluded. Hours are as logged on work orders, not badge time. Last {{ r.days }} days, {{ r.since|date:"M j" }} to {{ today|date:"M j, Y" }}.</div>
+<div class="hint" style="margin-top:8px">Vendor-performed work is excluded. Hours are as logged on work orders, not badge time. PM on time is green at or above the {{ p.pm_target }}% PM completion target. Last {{ r.days }} days, {{ r.since|date:"M j" }} to {{ today|date:"M j, Y" }}.</div>

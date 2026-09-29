@@ -60,13 +60,13 @@ def test_director_sees_every_panel_with_defaults(client, signed_in, ctx, vent, p
     assert body.count('<span class="chip ok">Connected</span>') == 1 and body.count('<span class="chip warn">License needed</span>') == 1
     assert body.count('<span class="chip neutral">Not connected</span>') == 6
     assert '<a class="btn sm ghost" href="/recalls/">Open recalls</a>' in body and "1 matched to this inventory" in body
-    assert "The FDA feed imports nightly. The other connections are not available yet." in body
+    assert "FDA notices arrive each time the openFDA import runs. The other connections are not available yet." in body
     assert "Sync" not in body and ">Connect<" not in body  # no fake connector buttons
     # portal
     assert f'<input readonly value="{PORTAL}" aria-label="Portal link">' in body and f'data-copy="{PORTAL}"' in body
     assert f'href="{PORTAL}" target="_blank" rel="noopener">Preview</a>' in body
     assert 'hx-get="/settings/portal/links/" hx-target="#modal-card"' in body
-    assert 'name="portal_require_callback" value="1" aria-label="Requester must give a callback number" checked>' in body
+    assert 'id="set-portal-callback" name="portal_require_callback" value="1" aria-label="Requester must give a callback number" checked>' in body
     assert 'name="portal_hotline" value="" maxlength="40" placeholder="e.g. ext. 4400"' in body
     for row, why in [("Page on-call for critical requests, around the clock", "Needs the notifications integration"),
                      ("Allow photo upload with a request", "Not offered: photos can capture patients"),
@@ -84,8 +84,9 @@ def test_director_sees_every_panel_with_defaults(client, signed_in, ctx, vent, p
     # risk scoring: one life-support vent, one high-risk pump, linked to the filtered Equipment list
     assert fs.RISK_RUBRIC in body and "A device&#x27;s class comes from its model in the catalog." not in body
     assert "A device's class comes from its model in the catalog." in body
-    assert '<a class="link" href="/equipment/?risk=life_support">1</a>' in body and '<a class="link" href="/equipment/?risk=high">1</a>' in body
-    assert '<a class="link" href="/equipment/?risk=low">0</a>' in body
+    assert '<a class="link" href="/equipment/?risk=life_support&amp;status=active">1</a>' in body
+    assert '<a class="link" href="/equipment/?risk=high&amp;status=active">1</a>' in body
+    assert '<a class="link" href="/equipment/?risk=low&amp;status=active">0</a>' in body
 
 
 def test_seeded_values_show_plainly(client, signed_in, ctx):
@@ -100,7 +101,7 @@ def test_seeded_values_show_plainly(client, signed_in, ctx):
 def test_no_fda_import_means_nothing_connected(client, signed_in, ctx):
     signed_in("director")
     body = client.get("/settings/").content.decode()
-    assert "0 of 8 connected" in body and "No notices imported yet" in body and "Open recalls" not in body
+    assert "0 of 8 connected" in body and "No FDA notices imported yet" in body and "Open recalls" not in body
 
 
 def test_manager_sees_everything_read_only(client, signed_in, ctx, vent, pump_recall):
@@ -118,7 +119,7 @@ def test_manager_sees_everything_read_only(client, signed_in, ctx, vent, pump_re
     assert "Changing settings needs Settings Edit access." in body and "Changes save as you make them." not in body
     # the manager can view Contracts, Users, Recalls, and Equipment, so the links stay
     assert '<a class="link" href="/users/">Users and access</a>' in body and "Open recalls" in body
-    assert '<a class="link" href="/equipment/?risk=life_support">1</a>' in body
+    assert '<a class="link" href="/equipment/?risk=life_support&amp;status=active">1</a>' in body
     # the modal is a read: the manager can open it
     assert client.get("/settings/portal/links/", **HX).status_code == 200
 
@@ -180,7 +181,9 @@ def test_portal_toggle_turns_off_and_back_on(client, signed_in, ctx):
     assert r.status_code == 200 and _toast(r) == "Portal setting saved"
     assert fs.get_settings().portal_require_callback is False
     body = r.content.decode()
-    assert body.lstrip().startswith('<div class="panel mt" id="set-portal">') and "<html" not in body
+    # the auto-save swaps only its own form, so the link box and Department links are never replaced under the pointer
+    assert body.lstrip().startswith('<form class="set-rows" id="set-portal-form"') and "<html" not in body and "Department links" not in body
+    assert 'hx-target="this" hx-swap="outerHTML"' in body and 'id="set-portal-hotline"' in body
     assert 'aria-label="Requester must give a callback number"><span class="sw"></span>Off' in body
     # a checked box posts the hidden 0 and then 1; the last value wins
     r = client.post("/settings/portal/", {"portal_require_callback": ["0", "1"], "portal_hotline": ""}, **HX)
@@ -218,7 +221,8 @@ def test_the_autosave_form_wraps_only_the_setting_rows(client, signed_in, ctx):
     form = form[:form.index("</form>")]
     assert 'hx-post="/settings/portal/"' in form and 'hx-disinherit="hx-swap hx-target"' in form
     assert "#modal-card" not in form and "Department links" not in form and "Portal link" not in form
-    assert form.index('type="hidden" name="portal_require_callback" value="0"') < form.index('type="checkbox" name="portal_require_callback" value="1"')
+    hidden, box = 'type="hidden" name="portal_require_callback" value="0"', 'type="checkbox" id="set-portal-callback" name="portal_require_callback" value="1"'
+    assert form.index(hidden) < form.index(box)
 
 
 # --- maintenance policy ------------------------------------------------------------------------------------
@@ -413,3 +417,45 @@ def test_form_helpers():
     assert target_fields({"target_pm_pct": " 95 % ", "repair_budget_monthly": "$52,000.50"}) == {
         "target_pm_pct": "95", "target_uptime_pct": "", "target_mttr_days": "", "repair_budget_monthly": "52000.50"}
     assert portal_fields({}) == {} and portal_fields({"portal_require_callback": "x"}) == {"portal_require_callback": "x"}
+
+
+# --- review fixes ---------------------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("field, typed, saved", [("repair_budget_monthly", "$52,000", Decimal("52000")),
+                                                 ("repair_budget_monthly", "1,234,567.50", Decimal("1234567.50")),
+                                                 ("target_pm_pct", "97.5 %", Decimal("97.5"))])
+def test_targets_accept_thousands_separators_and_units(client, signed_in, ctx, field, typed, saved):
+    signed_in("director")
+    post = {"target_pm_pct": "95", "target_uptime_pct": "99.5", "target_mttr_days": "3", "repair_budget_monthly": "", field: typed}
+    r = client.post("/settings/targets/", post, **HX)
+    assert _toast(r) == "Targets saved" and getattr(fs.get_settings(), field) == saved
+
+
+@pytest.mark.parametrize("field, typed, message", [("target_mttr_days", "1,5", "Enter a number."), ("repair_budget_monthly", "52000,50", "Enter a number."),
+                                                   ("target_pm_pct", "95.55", "Use at most 1 decimal place.")])
+def test_a_decimal_comma_or_extra_precision_is_refused_not_silently_changed(client, signed_in, ctx, field, typed, message):
+    signed_in("director")
+    post = {"target_pm_pct": "95", "target_uptime_pct": "99.5", "target_mttr_days": "3", "repair_budget_monthly": "", field: typed}
+    r = client.post("/settings/targets/", post, **HX)
+    assert _toast(r) == message and fs.get_settings()._state.adding  # nothing saved
+    assert f'value="{typed}"' in r.content.decode()  # what the user typed stays in the box
+
+
+@pytest.mark.parametrize("role, listed", [("director", True), ("manager", True), ("technician", False), ("analyst", False)])
+def test_nav_lists_settings_only_for_roles_that_can_view_it(client, signed_in, ctx, role, listed):
+    signed_in(role)
+    r = client.get("/equipment/") if role != "analyst" else client.get("/reports/")
+    item = next((i for i in r.context["shell"]["nav"] if i["key"] == "settings"), None)
+    assert (item is not None) == listed and (not listed or item["url"] == "/settings/")
+
+
+def test_risk_links_open_the_devices_they_count(client, signed_in, ctx, dept, vent, vent_model):
+    from apps.equipment.models import Asset, AssetStatus
+
+    Asset.objects.create(tag="CE-RET1", device_model=vent_model, department=dept, status=AssetStatus.RETIRED)
+    signed_in("director")
+    body = client.get("/settings/").content.decode()
+    assert '<a class="link" href="/equipment/?risk=life_support&amp;status=active">1</a>' in body
+    tags = [a.tag for a in client.get("/equipment/?risk=life_support&status=active").context["page"]]
+    assert tags == [vent.tag]  # the retired one is left out, as in the count
+    assert '<option value="active">Active (not retired)</option>' in client.get("/equipment/").content.decode()

@@ -6,12 +6,14 @@ Both are read-only and aggregate in the database (or in one pass over a values()
 one round of queries rather than one per technician or per alert.
 """
 from datetime import date, timedelta
+from decimal import Decimal
 
 from django.db.models import Count, F, Q, Sum
 from django.urls import reverse
 
 from apps.credentials.models import Technician
 from apps.equipment.models import Asset, AssetStatus
+from apps.facility.services import kpi_targets
 from apps.recalls.models import AlertMatch
 from apps.recalls.services import alert_label
 from apps.workorders.models import OPEN_STATUSES, LaborLine, WorkOrder, WoStatus, WoType
@@ -53,16 +55,19 @@ def report_tech(today: date) -> dict:
     for row in open_now:
         stats[row["assigned_to_id"]]["open"] = row["n"]
 
+    pm_target = kpi_targets()["pm_on_time"]  # the tenant's PM completion target (Settings), the mock's 95% by default
     items, rows = [], []
     for t in technicians:
         s = stats[t.pk]
         pm_on_time_pct = s["pm_on_time"] / s["pms"] * 100 if s["pms"] else 100.0
         turnaround = s["turnaround_total"] / s["repairs"] if s["repairs"] else 0.0
         items.append({"technician": t, "closed": s["closed"], "pms": s["pms"], "repairs": s["repairs"], "hours": s["hours"],
-                      "pm_on_time_pct": pm_on_time_pct, "turnaround": turnaround, "open": s["open"]})
+                      "pm_on_time_pct": pm_on_time_pct, "turnaround": turnaround, "open": s["open"],
+                      # exact, like the compliance report: 2 of 3 PMs (66.67%) against a 66.7 target is a miss, 3 of 3 is not
+                      "pm_meets": Decimal(s["pm_on_time"] * 100) >= Decimal(str(pm_target)) * s["pms"] if s["pms"] else True})
         rows.append([t.name, t.title, s["closed"], s["pms"], s["repairs"], s["hours"], pm_on_time_pct, turnaround, s["open"]])
     return {"columns": ["Technician", "Title", "Closed", "PMs", "Repairs", "Hours logged", "PM on time %", "Avg repair turnaround days", "Open now"],
-            "rows": rows, "technicians": items, "since": since, "days": TECH_DAYS}
+            "rows": rows, "technicians": items, "since": since, "days": TECH_DAYS, "pm_target": pm_target}
 
 
 def _response(match: AlertMatch, today: date, completed: int) -> str:

@@ -63,8 +63,11 @@ The mock's toast-only buttons (Device list, Label, Print, Scan tag, and Export C
   them); the department-links modal builds `/r/<slug>/?dept=` links. The eight maintenance-policy texts save together or reset to the
   mock's defaults; the assignment text heads the work-order drawer's Assignment section and the portal text ends the work-orders
   screen's unassigned-requests note. KPI targets (PM completion for medium and low risk, uptime, MTTR, monthly repair budget) drive
-  the Overview tiles, the PM trend line, and the compliance report; life support and high risk stay at 100%. Integrations show real
-  state (only the openFDA feed exists; ECRI needs a license; the rest are not built), so the mock's Sync and Connect buttons, paging,
+  the Overview tiles, the PM trend line, the compliance report (decided in exact arithmetic, so a target hit exactly is met), and the
+  technician report's PM on-time colour; life support and high risk stay at 100%. Targets keep the column's precision (more decimals
+  are refused, never rounded). Integrations show real state (only the openFDA import exists, and it counts as connected only once a
+  real notice arrives: the demo's sample alerts do not; ECRI needs a license; the rest are not built), so the mock's Sync and Connect buttons, paging,
   photo upload (photos can capture patients), and email or text confirmation are shown as unavailable with a reason. Risk scoring shows
-  the mock's rubric and bands with active device counts; per-model scoring waits for a catalog editor. View to see, Edit to change
+  the mock's rubric and bands with active device counts, each linking to Equipment's new "Active (not retired)" status filter;
+  per-model scoring waits for a catalog editor. View to see, Edit to change
   (the director by default; the manager sees it read-only). `/api/v1/settings/` (GET, PATCH) and `/api/v1/settings/reset-policy/`.

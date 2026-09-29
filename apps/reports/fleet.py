@@ -4,6 +4,7 @@ Each function returns {"columns": [...], "rows": [[...]], ...}; see the catalog 
 The math follows the mock's repContent; departures are noted inline. Everything here is read-only and tenant-scoped.
 """
 from datetime import date, timedelta
+from decimal import Decimal
 
 from django.db.models import Count, DecimalField, F, Q, Sum
 
@@ -55,8 +56,10 @@ def report_compliance(today: date) -> dict:
         devices, overdue = f.get("devices", 0), f.get("overdue", 0)
         pct = (1 - overdue / devices) * 100 if devices else 100.0
         target = targets[rc]
+        # Exact: 17 of 250 overdue is 93.2% exactly, which float division makes 93.19999... and would score as a miss.
+        meets = Decimal((devices - overdue) * 100) >= Decimal(str(target)) * devices if devices else True
         classes.append({"key": rc.value, "label": rc.label, "devices": devices, "due": p.get("due", 0), "completed": p.get("completed", 0),
-                        "on_time": p.get("on_time", 0), "overdue": overdue, "compliance_pct": float(pct), "target_pct": target, "meets": pct >= target})
+                        "on_time": p.get("on_time", 0), "overdue": overdue, "compliance_pct": float(pct), "target_pct": target, "meets": meets})
     return {
         "columns": ["Risk class", "Devices", "PMs due this month", "Completed", "On time", "Overdue now", "Current compliance %", "Target %"],
         "rows": [[c["label"], c["devices"], c["due"], c["completed"], c["on_time"], c["overdue"], c["compliance_pct"], c["target_pct"]] for c in classes],

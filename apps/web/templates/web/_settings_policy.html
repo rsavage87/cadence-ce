@@ -6,7 +6,7 @@
       <div class="form set-form">
         {% for p in policy %}
         <label>{{ p.label }}
-          <input name="{{ p.field }}" value="{{ p.text }}" maxlength="300" autocomplete="off"{% if p.error %} aria-invalid="true" aria-describedby="{{ p.field }}-err"{% endif %}{% if not can_edit %} disabled{% endif %}>
+          <input id="set-{{ p.field }}" name="{{ p.field }}" value="{{ p.text }}" maxlength="300" autocomplete="off"{% if p.error %} aria-invalid="true" aria-describedby="{{ p.field }}-err"{% endif %}{% if not can_edit %} disabled{% endif %}>
           {% if p.error %}<span class="hint err" id="{{ p.field }}-err">{{ p.error }}</span>{% endif %}
         </label>
         {% endfor %}

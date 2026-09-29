@@ -49,11 +49,14 @@ def request_form(request, tenant_slug):
                 initial["asset_tag"] = asset.tag
                 initial["department"] = asset.department
         if request.GET.get("dept") and "department" not in initial:
-            initial["department"] = Department.objects.filter(name__iexact=request.GET["dept"]).first()
+            # Department links carry the name; an exact match wins over a case-insensitive one ("ICU" and "Icu" can both exist).
+            wanted = request.GET["dept"]
+            initial["department"] = Department.objects.filter(name=wanted).first() or Department.objects.filter(name__iexact=wanted).first()
         if request.method == "POST":
             ip = _client_ip(request)
             if _rate_limited(ip):
-                return HttpResponse("Too many requests from this location. Please call the Clinical Engineering shop.", status=429)
+                shop = f"the Clinical Engineering shop at {facility.portal_hotline}" if facility.portal_hotline else "the Clinical Engineering shop"
+                return HttpResponse(f"Too many requests from this location. Please call {shop}.", status=429)
             form = ServiceRequestForm(request.POST, require_callback=facility.portal_require_callback)
             if form.is_valid():
                 sr = create_service_request(asset=form.asset, department=form.cleaned_data["department"], problem=form.cleaned_data["problem"],

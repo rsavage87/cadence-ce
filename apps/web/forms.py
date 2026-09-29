@@ -9,7 +9,7 @@ from django import forms
 
 from apps.credentials.services import ranked_technicians
 from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, RiskClass
-from apps.equipment.services import SORTS, AssetFilters, FleetBucket, SupportFilter
+from apps.equipment.services import ACTIVE_STATUS_FILTER, SORTS, AssetFilters, FleetBucket, SupportFilter
 from apps.workorders.models import Priority, WoStatus, WoType
 from apps.workorders.services import UNASSIGNED, WorkOrderFilters
 
@@ -31,7 +31,7 @@ def asset_filter_options() -> dict:
     return {
         "categories": list(DeviceModel.objects.order_by("category").values_list("category", flat=True).distinct()),
         "departments": list(Department.objects.values_list("name", flat=True)),
-        "statuses": AssetStatus.choices,
+        "statuses": [(ACTIVE_STATUS_FILTER, "Active (not retired)"), *AssetStatus.choices],
         "risks": RiskClass.choices,
         "supports": SupportFilter.choices,
     }
@@ -41,7 +41,7 @@ def parse_asset_filters(params, options: dict) -> AssetFilters:
     return AssetFilters(
         q=params.get("q", "").strip()[:100],
         category=_one_of(params.get("category"), options["categories"]),
-        status=_one_of(params.get("status"), AssetStatus.values),
+        status=_one_of(params.get("status"), [ACTIVE_STATUS_FILTER, *AssetStatus.values]),
         risk=_one_of(params.get("risk"), RiskClass.values),
         department=_one_of(params.get("dept"), options["departments"]),
         support=_one_of(params.get("support"), SupportFilter.values),

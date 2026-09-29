@@ -6,7 +6,7 @@
       <div class="form set-form two">
         {% for t in targets %}
         <label>{{ t.label }}
-          <input name="{{ t.field }}" value="{{ t.value }}" inputmode="decimal" autocomplete="off"{% if t.field == "repair_budget_monthly" %} placeholder="No budget"{% endif %} aria-describedby="{{ t.field }}-help"{% if t.error %} aria-invalid="true"{% endif %}{% if not can_edit %} disabled{% endif %}>
+          <input id="set-{{ t.field }}" name="{{ t.field }}" value="{{ t.value }}" inputmode="decimal" autocomplete="off"{% if t.field == "repair_budget_monthly" %} placeholder="No budget"{% endif %} aria-describedby="{{ t.field }}-help"{% if t.error %} aria-invalid="true"{% endif %}{% if not can_edit %} disabled{% endif %}>
           {% if t.error %}<span class="hint err">{{ t.error }}</span>{% endif %}
           <span class="hint" id="{{ t.field }}-help">{{ t.help }}</span>
         </label>

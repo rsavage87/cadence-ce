@@ -75,7 +75,8 @@ def settings_page(request):
 # --- service request portal -----------------------------------------------------------------------------
 
 def _portal_response(request, message: str):
-    return toast(render(request, "web/_settings_portal.html", _portal_ctx(request, fs.get_settings())), message)
+    """The auto-saving form only (it swaps itself), so the link box and its buttons are never replaced under the user's pointer."""
+    return toast(render(request, "web/_settings_portal_form.html", _portal_ctx(request, fs.get_settings())), message)
 
 
 @require_POST

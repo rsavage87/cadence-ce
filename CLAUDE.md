@@ -34,7 +34,7 @@ python manage.py bootstrap_tenant --name "Riverside" --slug riverside --admin-em
 python manage.py seed_demo                                         # small fictional dataset, login kim@riverside.example / DemoPass-2026
 python manage.py generate_pm                                       # nightly PM work-order generation (cron / scheduler)
 python manage.py import_assets --tenant riverside inventory.csv --dry-run
-python manage.py import_openfda --days 30
+python manage.py import_openfda --days 30                         # schedule daily, like generate_pm; nothing runs it for you
 python manage.py enable_rls --database=migrate                     # Postgres only, run after migrate
 pytest
 ```
@@ -48,7 +48,8 @@ pytest
 - Ruff (`ruff.toml`: E, F, W, I; line length 160; migrations excluded). CI runs `ruff check .` and `pytest` on every push.
 
 ## Where things are
-- `apps/tenants` tenant model, context var, middleware, `enable_rls`
+- `apps/tenants` tenant model, context var, middleware, `enable_rls`; `tenant_context()` sets both the ORM scope and the Postgres
+  `app.tenant_id` that RLS reads, so the public portal and management commands see the same rows under RLS
 - `apps/core` TenantModel, TenantManager, Sequence, TenantModelAdmin
 - `apps/accounts` User, Role, RolePermission, default roles, `require_level`; `services.py` for invites, role changes, (de)activation, role matrix edits
 - `apps/equipment` Department, DeviceModel, Asset (tags carry no spaces or slashes: they are URL segments), CSV importer

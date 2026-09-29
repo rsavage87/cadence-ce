@@ -255,6 +255,12 @@ class FacilitySettingsView(APIView):
     permission_classes = [IsAuthenticated, ModulePermission]
     module = "settings"
     write_level = Level.EDIT
+    read_only_fields = {"updated_at"}  # what GET returns but PATCH ignores, so a client can send back what it read
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if get_current_tenant() is None:  # a superuser who has not picked a tenant would otherwise read or write nobody's settings
+            raise PermissionDenied("Pick a tenant first (Admin, Tenants).")
 
     def _data(self):
         row = fac_services.get_settings()
@@ -268,7 +274,7 @@ class FacilitySettingsView(APIView):
     def patch(self, request):
         parsed = s.FacilitySettingsSerializer(data=request.data, partial=True)
         parsed.is_valid(raise_exception=True)
-        unknown = set(request.data) - set(fac_services.EDITABLE)
+        unknown = set(request.data) - set(fac_services.EDITABLE) - self.read_only_fields
         if unknown:
             return Response({"detail": f"Unknown settings: {', '.join(sorted(unknown))}."}, status=status.HTTP_400_BAD_REQUEST)
         try:

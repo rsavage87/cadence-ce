@@ -125,7 +125,8 @@ def test_tech_page_and_csv(client, signed_in, freeze_today, tech_data):
 
 
 def test_tech_renders_for_an_empty_tenant(client, signed_in, ctx):
-    assert run_report("tech", TODAY) == {"columns": report_tech(TODAY)["columns"], "rows": [], "technicians": [], "since": d(8, 29), "days": 30}
+    assert run_report("tech", TODAY) == {"columns": report_tech(TODAY)["columns"], "rows": [], "technicians": [], "since": d(8, 29), "days": 30,
+                                         "pm_target": 95.0}
     signed_in("director")
     r = client.get("/reports/tech/")
     assert r.status_code == 200 and "No active technicians." in r.content.decode()

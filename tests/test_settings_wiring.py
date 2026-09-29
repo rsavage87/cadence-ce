@@ -115,10 +115,10 @@ def test_work_orders_note_ends_with_the_portal_policy(client, signed_in, ctx, ve
     body = client.get("/work-orders/").content.decode()
     assert "1 request from the service portal is waiting for assignment (policy: Triage within 30 minutes during shop hours). " in body
     assert ">Show it</a>" in body and "Other hospital" not in body
-    fs.update_settings(policy_portal="ED requests triaged within 15 minutes.")  # case kept (ED); the trailing period is not doubled
+    fs.update_settings(policy_portal="ED requests triaged 7 a.m. to 7 p.m.")  # quoted as written: case (ED) and abbreviations kept
     create_service_request(asset=vent, department=dept, problem="Second alarm", urgency="normal")
     body = client.get("/work-orders/").content.decode()
-    assert "2 requests from the service portal are waiting for assignment (policy: ED requests triaged within 15 minutes). " in body
+    assert "2 requests from the service portal are waiting for assignment (policy: ED requests triaged 7 a.m. to 7 p.m.). " in body
     assert ">Show them</a>" in body
 
 
@@ -253,3 +253,63 @@ def test_compliance_report_renders_the_policy_target(client, signed_in, medium_f
     assert r.context["p"]["chart"]["target_label"] == "Target 97.5%"
     csv = client.get("/reports/compliance.csv").content.decode().splitlines()
     assert csv[3].startswith("Medium,10,") and csv[3].endswith(",90.00,97.50") and csv[1].endswith(",100.00")
+
+
+# --- review fixes -------------------------------------------------------------------------------------------------------------
+
+def test_department_links_prefill_the_department(client, ctx, vent, other_tenant):
+    from apps.equipment.models import Department
+
+    med = Department.objects.create(name="Med/Surg 3E")
+    icu_upper, icu_lower = Department.objects.get(name="ICU"), Department.objects.create(name="Icu")
+    with tenant_context(other_tenant):
+        Department.objects.create(name="Oncology")  # the other hospital's department never pre-fills here
+    body = client.get("/r/riverside/?dept=Med%2FSurg+3E").content.decode()
+    assert f'<option value="{med.pk}" selected>Med/Surg 3E</option>' in body
+    assert f'<option value="{icu_lower.pk}" selected>Icu</option>' in client.get("/r/riverside/?dept=Icu").content.decode()  # exact name first
+    assert f'<option value="{icu_upper.pk}" selected>ICU</option>' in client.get("/r/riverside/?dept=icu").content.decode()  # then any case
+    select = client.get("/r/riverside/?dept=Oncology").content.decode().split('name="department"')[1].split("</select>")[0]
+    assert select.count(" selected>") == 1 and '<option value="" selected>' in select and "Oncology" not in select  # nothing pre-filled
+
+
+def test_rate_limit_message_names_the_hotline(client, ctx, vent, other_tenant, settings):
+    settings.PORTAL_RATE_LIMIT_PER_HOUR = 0
+    set_other(other_tenant, portal_hotline="ext. 9")
+    r = portal_post(client, vent, callback="x1234")
+    assert r.status_code == 429 and r.content.decode() == "Too many requests from this location. Please call the Clinical Engineering shop."
+    fs.update_settings(portal_hotline="ext. 4400")
+    r = portal_post(client, vent, callback="x1234")
+    assert r.content.decode() == "Too many requests from this location. Please call the Clinical Engineering shop at ext. 4400."
+
+
+def test_compliance_meets_an_exactly_hit_target(ctx, dept):
+    """40 medium-risk devices, 17 overdue: exactly 57.5% compliant. Float division gives 57.4999..., which used to score a miss."""
+    dm = DeviceModel.objects.create(manufacturer="M", model="Med", description="Pump", category="C", risk_class=RiskClass.MEDIUM)
+    past, future = date.today() - timedelta(days=3), date.today() + timedelta(days=60)
+    Asset.objects.bulk_create([Asset(tenant=ctx, tag=f"CE-M{i:03d}", device_model=dm, department=dept, next_pm_on=past if i < 17 else future)
+                               for i in range(40)])
+    fs.update_settings(target_pm_pct="57.5")
+    row = next(c for c in report_compliance(date.today())["classes"] if c["key"] == RiskClass.MEDIUM)
+    assert row["devices"] == 40 and row["overdue"] == 17 and row["compliance_pct"] < 57.5 and row["meets"] is True
+    fs.update_settings(target_pm_pct="57.6")
+    assert next(c for c in report_compliance(date.today())["classes"] if c["key"] == RiskClass.MEDIUM)["meets"] is False
+
+
+def test_technician_pm_on_time_is_judged_against_the_tenants_target(ctx, vent, techs, other_tenant):
+    from apps.reports.operations import report_tech
+    from apps.workorders.services import assign, change_status
+
+    today = date.today()
+    for due, done in ((today - timedelta(days=5), today - timedelta(days=6)), (today - timedelta(days=5), today - timedelta(days=2))):
+        wo = create_work_order(asset=vent, type="pm", priority="normal", problem="PM", opened_on=today - timedelta(days=10), due_on=due)
+        assign(wo, technician=techs["dana"])
+        change_status(wo, "in_progress", as_of=today - timedelta(days=10))
+        change_status(wo, "completed", as_of=done)
+    set_other(other_tenant, target_pm_pct="50")
+
+    def dana():
+        return next(t for t in report_tech(today)["technicians"] if t["technician"] == techs["dana"])
+
+    assert dana()["pm_on_time_pct"] == 50.0 and dana()["pm_meets"] is False  # the default 95% target
+    fs.update_settings(target_pm_pct="50")
+    assert dana()["pm_meets"] is True
