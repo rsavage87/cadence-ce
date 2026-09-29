@@ -1,0 +1,18 @@
+{% load web %}
+{# The calendar and the day panel swap together (#pm-body, outerHTML) so the selected day follows the click; each link pushes its URL. #}
+<div id="pm-body" class="grid g-32">
+  <div class="panel pm-cal"><div class="panel-b">
+    <div class="cal-nav">
+      {% if prev_url %}<a class="btn sm" href="{{ prev_url }}" hx-get="{{ prev_url }}" hx-target="#pm-body" hx-swap="outerHTML" hx-push-url="true" aria-label="Previous month">{% icon "l" %}</a>{% else %}<button class="btn sm" type="button" disabled aria-label="Previous month">{% icon "l" %}</button>{% endif %}
+      <h2>{{ cal.first|date:"F Y" }}</h2>
+      {% if next_url %}<a class="btn sm" href="{{ next_url }}" hx-get="{{ next_url }}" hx-target="#pm-body" hx-swap="outerHTML" hx-push-url="true" aria-label="Next month">{% icon "r" %}</a>{% else %}<button class="btn sm" type="button" disabled aria-label="Next month">{% icon "r" %}</button>{% endif %}
+      <span class="hint">{{ cal.due_this_month }} due this month</span>
+    </div>
+    <div class="cal">
+      <div class="dow">Sun</div><div class="dow">Mon</div><div class="dow">Tue</div><div class="dow">Wed</div><div class="dow">Thu</div><div class="dow">Fri</div><div class="dow">Sat</div>
+      {% for week in cal.weeks %}{% for c in week %}<a class="day{% if not c.in_month %} out{% endif %}{% if c.is_today %} today{% endif %}{% if c.sel %} sel{% endif %}" href="{{ c.url }}" hx-get="{{ c.url }}" hx-target="#pm-body" hx-swap="outerHTML" hx-push-url="true" aria-label="{{ c.date|date:'M j, Y' }}{% if c.n %}: {{ c.n }} PM{{ c.n|pluralize }} due{% endif %}"{% if c.sel %} aria-current="date"{% endif %}><span class="n">{{ c.date.day }}</span>{% if c.n %}<span class="c">{% if c.life_support %}<i class="dot-crit" title="{{ c.life_support }} life support"></i>{% endif %}{% if c.high %}<i class="dot-warn" title="{{ c.high }} high risk"></i>{% endif %}<span class="cnt{% if c.past %} down{% endif %}">{{ c.n }}</span></span>{% endif %}</a>{% endfor %}{% endfor %}
+    </div>
+    <div class="clg pm-legend"><span><i class="dot-crit"></i>Life support due</span><span><i class="dot-warn"></i>High risk due</span><span class="down">Red count: past due</span></div>
+  </div></div>
+  {% include "web/_pm_day.html" %}
+</div>

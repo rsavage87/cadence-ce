@@ -1,6 +1,14 @@
 {% extends "web/base.html" %}
+{% load web %}
 {% block title %}PM schedule{% endblock %}
 {% block content %}
-<div class="page-head"><div><h1>PM schedule</h1></div></div>
-<div class="empty">The PM schedule is being built.</div>
+<div class="page-head">
+  <div>
+    <h1>PM schedule</h1>
+    <p class="sub">{{ head.due_30 }} PM{{ head.due_30|pluralize }} due in the next 30 days ({{ head.hours_30|floatformat:0 }} h) · {{ head.overdue }} overdue · intervals from each model's PM program, AEM where approved</p>
+  </div>
+  {# The mock's "Auto-assign week" and "Route sheets" buttons only toast, so they are left out. Assignment happens per day in "Create N PM work orders" (the least-loaded credentialed technician); route sheets wait for a print service. #}
+</div>
+{% include "web/_pm_body.html" %}
+{% include "web/_pm_panels.html" %}
 {% endblock %}

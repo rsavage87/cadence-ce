@@ -1,0 +1,30 @@
+{% load web %}
+{# The selected day: most critical first, the technician the create action would assign (credentialed, least loaded), and, for PM Approve, the create button. #}
+<div class="panel pm-day">
+  <div class="panel-h"><h2>Due {{ day|date:"M j, Y" }}</h2><span class="sub">{{ plan.count }} PM{{ plan.count|pluralize }} · {{ plan.hours|floatformat:1 }} h</span></div>
+  <div class="panel-b">
+    {% if plan.overdue and plan.count %}<div class="note warn pm-note">{% if plan.count == 1 %}This device is{% else %}These devices are{% endif %} overdue: the PM fell due on {{ day|date:"M j" }}. Work orders created now are due today.</div>{% endif %}
+    <div class="list">
+      {% for r in day_rows %}{% with a=r.asset %}
+      <div class="li{% if not can_view_asset %} static{% endif %}"{% if can_view_asset %} hx-get="{% url 'web:asset' a.tag %}" hx-target="#drawer"{% endif %}>
+        <span class="rail {{ r.rail }}"></span>
+        <div class="bd">
+          <div class="t">{% if can_view_asset %}<a class="tag" href="{% url 'web:asset' a.tag %}">{{ a.tag }}</a>{% else %}{{ a.tag }}{% endif %} · {{ a.device_model.description }}</div>
+          <div class="s">{{ a.device_model.manufacturer }} {{ a.device_model.model }} · {{ a.department }} · {% if r.procedure %}{{ r.procedure.code }}{% else %}No PM procedure{% endif %}</div>
+        </div>
+        <div class="r">{% if r.has_open_pm %}<span class="chip info">PM open</span>{% elif r.technician %}<span title="{{ r.technician.name }}">{{ r.tech_first }}</span>{% else %}<span class="down">Nobody credentialed</span>{% endif %}<br>{{ r.hours_label }} h</div>
+      </div>
+      {% endwith %}{% empty %}
+      <div class="empty">No PMs scheduled on this day.</div>
+      {% endfor %}
+    </div>
+    {% if day_more %}<div class="hint pm-more">{{ day_more }} more on this day</div>{% endif %}
+    {% if can_create and plan.count %}
+    <div class="pm-create">
+      {% if plan.to_create %}<button class="btn primary sm" type="button" hx-post="{{ create_url }}" hx-target="#pm-body" hx-swap="outerHTML" hx-confirm="{{ create_confirm }}">Create {{ plan.to_create }} PM work order{{ plan.to_create|pluralize }}</button>
+      {% if day_skipped %}<span class="hint">{{ day_skipped }} already {{ day_skipped|pluralize:"has,have" }} an open PM work order</span>{% endif %}
+      {% else %}<span class="hint">Every PM on this day already has an open work order</span>{% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
