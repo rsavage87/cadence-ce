@@ -45,8 +45,8 @@ def _parts(*parts):
     return [p if isinstance(p, tuple) else (p, "") for p in parts if p]
 
 
-def kpi_tiles(data: dict, recalls_url: str | None = None) -> list[dict]:
-    """`recalls_url` is None for users without recalls View; a tile without a url renders static."""
+def kpi_tiles(data: dict, recalls_url: str | None = None, pm_url: str | None = None) -> list[dict]:
+    """`recalls_url` and `pm_url` are None for users without View on those modules; a tile without a url renders static."""
     k, p, t = data["k"], data["prev"], data["targets"]
     cur = k["period"]["current"]
     pv = (lambda f: f(p)) if p else (lambda f: None)
@@ -56,7 +56,7 @@ def kpi_tiles(data: dict, recalls_url: str | None = None) -> list[dict]:
         return reverse("web:report", args=[key])
 
     return [
-        {"label": "PM completion on time", "value": f"{k['pm_on_time']['rate']:.1f}", "unit": "%", "url": reverse("web:pm"),
+        {"label": "PM completion on time", "value": f"{k['pm_on_time']['rate']:.1f}", "unit": "%", **({"url": pm_url} if pm_url else {}),
          "parts": _parts(_delta(k["pm_on_time"]["rate"], pv(lambda p: p["pm_on_time"]["rate"]), True, lambda v: f"{v:.1f}", " pts"),
                          f"{k['pm_on_time']['on_time']} of {k['pm_on_time']['due']} PMs due {'so far this month' if cur else 'in month'}",
                          f"target {pct_label(t['pm_on_time'])}%")},

@@ -56,16 +56,17 @@ class PmBatch(NamedTuple):
 def create_pm_work_orders_for_day(day: date, by=None, assign_to_technicians: bool = True, today: date | None = None) -> PmBatch:
     """The PM schedule's "Create N PM work orders": one PM work order for each active device whose next PM falls on `day` and
     that has no open PM work order yet. With `assign_to_technicians`, each goes to the technician the schedule suggests
-    (credentialed, least loaded; see schedule.suggest_technicians), recorded like any assignment; devices nobody is
+    (credentialed, least loaded; the same pick the day panel and the workload show, see schedule.suggestions_for_day),
+    recorded like any assignment; devices nobody is
     credentialed for, or every device when the caller may not assign, are left unassigned for a manager."""
     from apps.workorders.services import assign
 
-    from .schedule import day_devices, suggest_technicians
+    from .schedule import day_devices, suggestions_for_day
 
     today = today or date.today()
     devices = list(day_devices(day))
     needing = [a for a in devices if not a.has_open_pm]
-    suggested = suggest_technicians(needing, today) if assign_to_technicians else {}
+    suggested = suggestions_for_day(day, needing, today) if assign_to_technicians else {}
     assigned = 0
     for asset in needing:
         wo = _create_pm(asset, today, by=by)

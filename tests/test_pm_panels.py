@@ -2,7 +2,6 @@
 self-refresh contract with the page, the PM API's calendar, day, and create-for-day actions with their levels, and tenant isolation.
 
 Everything is built relative to date.today() (the panels, the page, and the API all read the real clock), so these pass on any day."""
-import pathlib
 import re
 from datetime import date, timedelta
 from decimal import Decimal
@@ -20,9 +19,6 @@ from apps.workorders.models import Source, WorkOrder, WoType
 from apps.workorders.services import assign, create_work_order
 
 HX = {"HTTP_HX_REQUEST": "true", "HTTP_HX_TARGET": "pm-panels"}
-# The page and its HX-Target branch are the calendar agent's (views_pm.py, pm.html); until that lands, pm.html is the stub.
-PAGE_LANDED = "_pm_panels.html" in pathlib.Path(__file__).resolve().parents[1].joinpath("apps/web/templates/web/pm.html").read_text()
-needs_page = pytest.mark.skipif(not PAGE_LANDED, reason="the PM schedule page (views_pm.py, pm.html) has not landed in this tree yet")
 
 
 def today():
@@ -71,7 +67,6 @@ def test_panels_root_refetches_itself_on_pm_changed_without_leaking_its_swap(ctx
     assert html.count('id="pm-panels"') == 1
 
 
-@needs_page
 def test_panels_render_inside_the_full_page(client, signed_in, fleet, techs):
     signed_in("manager")
     body = client.get("/pm/").content.decode()
@@ -79,7 +74,6 @@ def test_panels_render_inside_the_full_page(client, signed_in, fleet, techs):
     assert "<html" in body and "Dana Whitfield" in body
 
 
-@needs_page
 def test_panels_render_alone_for_their_own_refresh(client, signed_in, fleet, techs):
     signed_in("analyst")  # PM View is enough to read them
     r = client.get("/pm/", **HX)
@@ -88,7 +82,6 @@ def test_panels_render_alone_for_their_own_refresh(client, signed_in, fleet, tec
     assert 'hx-trigger="pm-changed from:body"' in body and 'hx-disinherit="hx-swap hx-target"' in body and "Technician workload" in body
 
 
-@needs_page
 @pytest.mark.parametrize("role", ["requester", "vendor"])
 def test_panels_refresh_is_refused_without_pm_view(client, signed_in, fleet, role):
     signed_in(role)
@@ -137,15 +130,15 @@ def test_workload_rows_over_capacity_and_hint_numbers(fleet, techs):
     html = panels(t)
     blocks = dict(re.findall(r'<b style="font-weight:500">([^<]+)</b>(.*?)</div>\s*</div>', html, re.S))
     assert '<span class="down">4.0 of 2 h</span>' in blocks["Tom Okafor"] and "background:var(--crit)" in blocks["Tom Okafor"]
-    assert "1 PM (1.0 h) · repairs 3.0 h" in blocks["Tom Okafor"] and "· BMET I" in blocks["Tom Okafor"]
+    assert "1 PM (1.0 h) · other open work 3.0 h" in blocks["Tom Okafor"] and "· BMET I" in blocks["Tom Okafor"]
     assert '<span class="muted">2.5 of 32 h</span>' in blocks["Dana Whitfield"] and "width:7.8%;background:var(--accent)" in blocks["Dana Whitfield"]
-    assert "2 PMs (2.5 h) · repairs 0.0 h" in blocks["Dana Whitfield"]
-    assert "Former Tech" not in html and "already assigned to its work order, or the one the schedule suggests" in html
+    assert "2 PMs (2.5 h) · other open work 0.0 h" in blocks["Dana Whitfield"]
+    assert "Former Tech" not in html and "counts for the technician its open work order is assigned to" in html
 
 
 def test_workload_empty_state(fleet):
     html = panels()
-    assert "No active technicians." in html and "already assigned to its work order" not in html
+    assert "No active technicians." in html and "counts for the technician its open work order is assigned to" not in html
 
 
 # --- the PM library ---------------------------------------------------------------------------------------------------
@@ -186,7 +179,9 @@ def test_api_calendar_shape(client, signed_in, fleet):
                                            "life_support": 1, "high": 0}
     assert data["weeks"][0][0]["date"] <= f"{tomorrow.year}-{tomorrow.month:02d}-01"
     default = client.get("/api/v1/pm/calendar/").json()  # this month by default
-    assert (default["year"], default["month"]) == (t.year, t.month) and default["due_this_month"] >= 0
+    in_this_month = [d for d in (t + timedelta(days=n) for n in (1, 2, 20, 45)) if (d.year, d.month) == (t.year, t.month)]
+    past_this_month = 1 if (t - timedelta(days=3)).month == t.month else 0  # the overdue pump, when three days ago is still this month
+    assert (default["year"], default["month"]) == (t.year, t.month) and default["due_this_month"] == len(in_this_month) + past_this_month
     assert any(c["is_today"] for w in default["weeks"] for c in w)
 
 
@@ -301,8 +296,9 @@ def test_api_never_shows_or_touches_another_tenants_devices(client, signed_in, f
     signed_in("director")
     t = today()
     day = (t + timedelta(days=1)).isoformat()
-    cal = client.get(f"/api/v1/pm/calendar/?y={t.year}&m={t.month}").json()
-    assert {c["date"]: c["n"] for w in cal["weeks"] for c in w}.get(day, 1) == 1  # our vent only (when tomorrow is on this month's grid)
+    tomorrow = t + timedelta(days=1)
+    cal = client.get(f"/api/v1/pm/calendar/?y={tomorrow.year}&m={tomorrow.month}").json()  # tomorrow's own month: always on the grid
+    assert {c["date"]: c["n"] for w in cal["weeks"] for c in w}[day] == 1  # our vent only, never their ventilator due the same day
     plan = client.get(f"/api/v1/pm/day/?day={day}").json()
     assert [d["tag"] for d in plan["devices"]] == ["CE-V1"] and plan["devices"][0]["technician"]["name"] == "Dana Whitfield"
     assert client.post("/api/v1/pm/create-for-day/", {"day": day}, content_type="application/json").json()["created"] == 1

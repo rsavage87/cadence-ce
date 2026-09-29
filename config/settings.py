@@ -67,6 +67,7 @@ MIDDLEWARE = [
     "apps.tenants.middleware.TenantMiddleware",
     "simple_history.middleware.HistoryRequestMiddleware",
     "django_htmx.middleware.HtmxMiddleware",
+    "apps.web.htmx.VaryOnHtmxMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]

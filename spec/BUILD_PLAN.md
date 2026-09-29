@@ -35,12 +35,18 @@ The mock's toast-only buttons (Device list, Label, Print, Scan tag, and Export C
 - PM schedule: `pm.schedule` over active devices' `next_pm_on` (the mock's pmByDay). A Sunday-first month calendar with a life-support
   and a high-risk dot and a count per day (red on past days: those devices are overdue), and the selected day's devices, most critical
   first, with hours from their PM procedure and the technician the schedule suggests: among technicians credentialed for the device,
-  the least loaded (open work-order hours, plus what the same batch has given them), ties by name, where the mock hashed. "Create N
-  PM work orders" calls `pm.services.create_pm_work_orders_for_day`: one per device without an open PM work order, due on the PM date
-  (today for a past day), assigned to the suggested technician only when the user may assign work orders. It needs PM Approve, as
-  the API's nightly `generate` always has. Below: the 30-day outlook by category, each technician's next-7-day load (PM hours for
-  the technician assigned or suggested, plus other open work) against weekly capacity, and the PM library (AEM only where approved,
-  never for life support). The nav badge counts overdue devices. The mock's Auto-assign week, Route sheets, and OEM library Sync
+  the least loaded (open work-order hours, plus what earlier devices in the plan were given), ties by name, where the mock hashed.
+  For the next 7 days one week plan (`pm.schedule.week_plan`, day by day in date order) is the single source for the day panel, the
+  create action, and the workload, so they always name the same technician. A device whose open PM work order is unassigned (the
+  nightly `generate_pm` makes those) or held by a deactivated technician is still planned for the suggested technician; a vendor PM
+  is nobody's. "Create N PM work orders" calls `pm.services.create_pm_work_orders_for_day`: one per device without an open PM work
+  order, due on the PM date (today for a past day), assigned to the suggested technician only when the user may assign work
+  orders. It needs PM Approve, as the API's nightly `generate` always has. The day list says who an open PM work order is with
+  (a technician, the vendor, or unassigned). Below: the 30-day outlook by category (today through day 30), each technician's
+  next-7-day load (today through day 6: PM hours as planned, plus other open work such as repairs and recalls) against weekly
+  capacity, and the PM library (AEM only where approved, never for life support). The nav badge counts overdue devices; the
+  Overview's PM tile links here only for PM viewers. Every web response varies on HX-Request and HX-Target, because pushed URLs
+  answer with a fragment or a full page. The mock's Auto-assign week, Route sheets, and OEM library Sync
   only toast and are deferred. `/api/v1/pm/calendar/`, `/api/v1/pm/day/`, `/api/v1/pm/create-for-day/`.
 - Contracts: table from `contracts.services.filter_contracts` + `contracts_summary`; the drawer calls `add_asset` / `add_model` / `remove_asset` /
   `renew_contract` / `delete_contract` (`create_contract` / `update_contract` behind the forms); the device drawer's support editor posts to

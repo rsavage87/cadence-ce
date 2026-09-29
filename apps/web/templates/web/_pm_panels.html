@@ -11,17 +11,17 @@
     </div>
     {% if outlook.chart %}{% include "web/_chart_hbars.html" with c=outlook.chart aria="PMs due in 30 days by category" %}{% else %}<div class="empty">Nothing is due in the next 30 days.</div>{% endif %}
   </div></div>
-  <div class="panel"><div class="panel-h"><h2>Technician workload, next 7 days</h2><span class="sub">PM hours plus open repair hours against weekly capacity</span></div><div class="panel-b">
+  <div class="panel"><div class="panel-h"><h2>Technician workload, next 7 days</h2><span class="sub">PM hours plus other open work against weekly capacity</span></div><div class="panel-b">
     {% for w in workload %}
     <div class="pm-load" style="margin-bottom:12px">
       <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span><b style="font-weight:500">{{ w.technician.name }}</b>{% if w.technician.title %} <span class="muted">· {{ w.technician.title }}</span>{% endif %}</span><span class="{% if w.over %}down{% else %}muted{% endif %}">{{ w.total|floatformat:1 }} of {{ w.capacity|floatformat }} h</span></div>
       <div class="bar" role="img" aria-label="{{ w.technician.name }}: {{ w.total|floatformat:1 }} of {{ w.capacity|floatformat }} hours"><i style="width:{{ w.width }}%;background:{% if w.over %}var(--crit){% else %}var(--accent){% endif %}"></i></div>
-      <div class="hint" style="margin-top:3px">{{ w.pm_count }} PM{{ w.pm_count|pluralize }} ({{ w.pm_hours|floatformat:1 }} h) · repairs {{ w.repair_hours|floatformat:1 }} h</div>
+      <div class="hint" style="margin-top:3px">{{ w.pm_count }} PM{{ w.pm_count|pluralize }} ({{ w.pm_hours|floatformat:1 }} h) · other open work {{ w.repair_hours|floatformat:1 }} h</div>
     </div>
     {% empty %}
     <div class="empty">No active technicians.</div>
     {% endfor %}
-    {% if workload %}<div class="hint">Each PM due in the next 7 days counts for the technician already assigned to its work order, or the one the schedule suggests (credentialed, least loaded). Devices nobody is credentialed for are on nobody's plate.</div>{% endif %}
+    {% if workload %}<div class="hint">Each PM due in the next 7 days counts for the technician its open work order is assigned to; otherwise, including the unassigned work orders the nightly PM job creates, for the technician the schedule suggests (credentialed, least loaded, day by day), the same one the day list shows and Create assigns. Vendor PMs and devices nobody is credentialed for are on nobody's plate. Other open work is repairs, recalls, and inspections.</div>{% endif %}
   </div></div>
 </div>
 <div class="panel mt"><div class="panel-h"><h2>PM library</h2><span class="sub">{{ library.with_procedure }} of {{ library.models }} model{{ library.models|pluralize }} {{ library.with_procedure|pluralize:"has,have" }} a PM procedure · from OEM service manuals, ECRI, or written in-house</span></div>
@@ -39,7 +39,7 @@
         <td class="num">{{ r.devices }}</td></tr>
     {% endfor %}</tbody>
   </table></div>
-  {% if library.with_procedure < library.models %}<div class="hint" style="margin-top:8px">A model without a procedure is estimated at 1 hour per PM and generates work orders with no checklist.</div>{% endif %}
+  {% if library.with_procedure < library.models %}<div class="hint" style="margin-top:8px">A model without a procedure is estimated at 1 hour per PM, and its work orders name no procedure.</div>{% endif %}
   {% else %}
   <div class="panel-b"><div class="empty">No device models yet.</div></div>
   {% endif %}

@@ -98,8 +98,10 @@ def _hours(h: Decimal) -> str:
 def _row(r: dict) -> dict:
     a, tech = r["asset"], r["technician"]
     risk = a.device_model.risk_class
+    held = r.get("open_pm_assignee") or ""
     return {**r, "rail": "crit" if risk == RiskClass.LIFE_SUPPORT else "warn" if risk == RiskClass.HIGH else "ok",
-            "tech_first": tech.name.split()[0] if tech and tech.name.split() else "", "hours_label": _hours(r["hours"])}
+            "tech_first": tech.name.split()[0] if tech and tech.name.split() else "", "hours_label": _hours(r["hours"]),
+            "open_pm_first": held.split()[0] if held.split() else ""}
 
 
 def _body_context(request, today: date, year: int, month: int, day: date) -> dict:

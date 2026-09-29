@@ -256,7 +256,7 @@ def test_a_device_with_an_open_pm_shows_the_chip(client, signed_in, fleet, techs
     signed_in("director")
     body = client.get("/pm/?day=2026-09-30").content.decode()
     rows = body.split('<div class="li"')[1:]
-    assert '<span class="chip info">PM open</span><br>1.5 h' in rows[1] and "PM open" not in rows[0] + rows[2]
+    assert '<span class="chip warn">PM open, unassigned</span><br>1.5 h' in rows[1] and "PM open" not in rows[0] + rows[2]
     assert "Create 2 PM work orders</button>" in body and "1 already has an open PM work order" in body
 
 
@@ -333,7 +333,9 @@ def test_create_makes_assigns_toasts_and_refreshes_the_panels(client, signed_in,
         {"CE-V1": "Dana Whitfield", "CE-V2": "Dana Whitfield", "CE-P1": "Tom Okafor", "CE-M1": None}
     body = r.content.decode().strip()
     assert body.startswith('<div id="pm-body"') and "<h2>September 2026</h2>" in body and "<h2>Due Sep 30, 2026</h2>" in body
-    assert body.count('<span class="chip info">PM open</span>') == 4 and "hx-post" not in body
+    # each row now says who the open PM work order is with: Dana twice, Tom once, and the one nobody is credentialed for unassigned
+    assert body.count('<span class="chip info" title="Dana Whitfield">PM open, Dana</span>') == 2 and "PM open, Tom" in body
+    assert body.count("PM open, unassigned") == 1 and "hx-post" not in body
     assert "Every PM on this day already has an open work order" in body
 
     again = client.post(SEP30, **BODY)
@@ -435,3 +437,54 @@ def test_another_tenants_user_sees_only_their_own(client, make_user, fleet, thei
     client.force_login(make_user("director", tenant_=other_tenant, username="dir@other.example"))
     body = client.get("/pm/?day=2026-09-30").content.decode()
     assert "THEIRS-1" in body and "CE-V1" not in body and "1 PM · 1.0 h" in body
+
+
+# --- review fixes: nav wiring, accessible calendar cells, cache keys, the Overview tile ------------------------------------
+
+def test_nav_links_the_schedule_with_the_overdue_badge_for_pm_viewers_only(client, signed_in, fleet):
+    from apps.reports.services import nav_counts
+
+    signed_in("technician")
+    item = next(i for i in client.get("/pm/").context["shell"]["nav"] if i["key"] == "pm")
+    assert item["url"] == "/pm/" and item["label"] == "PM schedule" and item["count"] == nav_counts()["pm"] >= 1 and item["hot"] is True
+    client.logout()
+    signed_in("requester")
+    assert "pm" not in [i["key"] for i in client.get("/equipment/").context["shell"]["nav"]]
+
+
+def test_calendar_cells_speak_their_counts_and_mark_today(client, signed_in, fleet):
+    signed_in("director")
+    body = client.get("/pm/?y=2026&m=9&day=2026-09-30").content.decode()
+    sep30, sep15, today = cell(body, date(2026, 9, 30)), cell(body, date(2026, 9, 15)), cell(body, TODAY)
+    assert 'aria-label="Sep 30, 2026: 3 PMs due, 2 life support, 1 high risk, selected"' in sep30 and 'aria-current' not in sep30
+    assert 'aria-label="Sep 15, 2026: 1 PM past due, 1 high risk"' in sep15
+    assert 'aria-label="Sep 29, 2026, today"' in today and 'aria-current="date"' in today
+
+
+def test_partial_and_full_responses_vary_on_the_htmx_headers(client, signed_in, fleet):
+    signed_in("director")
+    for r in (client.get("/pm/?day=2026-09-30"), client.get("/pm/?day=2026-09-30", **BODY)):
+        vary = {v.strip() for v in r["Vary"].split(",")}
+        assert {"HX-Request", "HX-Target", "Cookie"} <= vary
+
+
+def test_overview_pm_tile_links_only_for_pm_viewers(client, tenant, fleet):
+    from apps.accounts.models import Module
+
+    client.force_login(custom_user(tenant, {Module.REPORTS: Level.VIEW, Module.EQUIPMENT: Level.VIEW}))
+    tiles = {t["label"]: t.get("url") for t in client.get("/").context["tiles"]}
+    assert tiles["PM completion on time"] is None and client.get("/pm/").status_code == 403
+    client.force_login(custom_user(tenant, {Module.REPORTS: Level.VIEW, Module.PM: Level.VIEW}, username="viewer@riverside.example"))
+    assert {t["label"]: t.get("url") for t in client.get("/").context["tiles"]}["PM completion on time"] == "/pm/"
+
+
+def test_day_panel_says_who_an_open_pm_is_with(client, signed_in, fleet, techs):
+    from apps.workorders.services import assign
+
+    assign(create_work_order(asset=fleet["v1"], type=WoType.PM, priority="high", problem="PM"), technician=techs["dana"])
+    assign(create_work_order(asset=fleet["v2"], type=WoType.PM, priority="high", problem="PM"), vendor_name="Hamilton Medical")
+    create_work_order(asset=fleet["p1"], type=WoType.PM, priority="normal", problem="PM")  # the nightly job leaves these unassigned
+    signed_in("director")
+    body = client.get("/pm/?day=2026-09-30", **BODY).content.decode()
+    assert '<span class="chip info" title="Dana Whitfield">PM open, Dana</span>' in body and "PM open, vendor" in body
+    assert '<span class="chip warn">PM open, unassigned</span>' in body and "Every PM on this day already has an open work order" in body

@@ -141,9 +141,17 @@ def test_life_support_never_runs_on_aem_in_the_library(ctx, vent_model):
     assert row["program_months"] == 6 and row["aem"] is False
 
 
-def test_nav_badge_counts_overdue_devices(fleet):
+def test_nav_badge_counts_overdue_devices(ctx, dept, pump_model, other_tenant):
+    """The badge reads the real clock, so this fleet is built around it: two overdue, one due today (not overdue), one ahead."""
+    now = date.today()
+    for tag, day in (("CE-O1", now - timedelta(days=3)), ("CE-O2", now - timedelta(days=40)), ("CE-T0", now), ("CE-F1", now + timedelta(days=5))):
+        dev(tag, pump_model, dept, day)
+    dev("CE-OR", pump_model, dept, now - timedelta(days=9), status=AssetStatus.RETIRED)  # retired: never overdue
+    with tenant_context(other_tenant):  # another hospital's overdue device never inflates this badge
+        dm = DeviceModel.objects.create(manufacturer="X", model="Y", description="Z", category="C")
+        Asset.objects.create(tag="THEIRS", device_model=dm, department=Department.objects.create(name="ICU"), next_pm_on=now - timedelta(days=2))
     counts = nav_counts()
-    assert counts["pm"] == 1 and counts["pm_hot"] is True
+    assert counts["pm"] == 2 and counts["pm_hot"] is True
 
 
 def test_nav_badge_is_absent_without_overdue_devices(ctx, vent):
@@ -165,3 +173,101 @@ def test_other_tenants_devices_and_technicians_never_appear(fleet, techs, other_
     assert "Aaron Theirs" not in [w.technician.name for w in sch.workload_next_7_days(TODAY)]
     assert create_pm_work_orders_for_day(date(2026, 9, 30), today=TODAY).created == 3
     assert sch.next_30_days(TODAY)["due"] == 3 and len(sch.pm_library()) == 2
+
+
+# --- review fixes: one plan for the day panel, the create action, and the workload; windows; what blocks a device ----------
+
+def plates(today=TODAY):
+    return {w.technician.name: (w.pm_count, w.pm_hours) for w in sch.workload_next_7_days(today)}
+
+
+def test_workload_is_unchanged_after_the_nightly_job_creates_unassigned_pms(fleet, techs):
+    """generate_pm (21-day lead) makes unassigned PM work orders for everything due this week; they must stay on someone's plate."""
+    before = plates()
+    assert sum(n for n, _h in before.values()) == 3  # v1, v2, and p1, all due tomorrow
+    assert generate_pm_work_orders(as_of=TODAY, lead_days=21) == 4 and not WorkOrder.objects.filter(assigned_to__isnull=False).exists()
+    assert plates() == before
+
+
+def test_open_pms_with_a_deactivated_technician_are_replanned_and_vendor_pms_are_nobodys(fleet, techs):
+    gone = Technician.objects.create(name="Gone Tech", is_active=True)
+    assign(create_work_order(asset=fleet["v1"], type=WoType.PM, priority="high", problem="PM"), technician=gone)
+    Technician.objects.filter(pk=gone.pk).update(is_active=False)
+    assign(create_work_order(asset=fleet["v2"], type=WoType.PM, priority="high", problem="PM"), vendor_name="Hamilton Medical")
+    p = plates()
+    assert "Gone Tech" not in p and p["Dana Whitfield"][0] + p["Tom Okafor"][0] == 2  # v1 (replanned) and p1; v2 is the vendor's
+
+
+def test_the_day_panel_the_create_action_and_the_workload_name_the_same_technician(ctx, dept, pump_model, techs):
+    """Both technicians do pumps and start empty. Tomorrow's pump goes to Dana (tie, by name); the next day's to Tom, because the
+    plan carries tomorrow's hour forward. Every view of the plan says so, and creating the later day first changes nothing."""
+    d1, d2 = TODAY + timedelta(days=1), TODAY + timedelta(days=2)
+    a, b = dev("CE-A", pump_model, dept, d1), dev("CE-B", pump_model, dept, d2)
+    assert sch.day_plan(d2, TODAY)["rows"][0]["technician"] == techs["tom"]
+    assert plates()["Tom Okafor"] == (1, Decimal("1")) and plates()["Dana Whitfield"] == (1, Decimal("1"))
+    create_pm_work_orders_for_day(d2, today=TODAY)
+    assert WorkOrder.objects.get(asset=b).assigned_to == techs["tom"]
+    assert sch.day_plan(d1, TODAY)["rows"][0]["technician"] == techs["dana"]
+    create_pm_work_orders_for_day(d1, today=TODAY)
+    assert WorkOrder.objects.get(asset=a).assigned_to == techs["dana"]
+
+
+def test_procedure_hours_decide_who_is_lighter(fleet, techs):
+    """Tom starts with 2 h open. The two ventilators (1.5 h each, only Dana is credentialed) put Dana at 3 h, so the pump goes to Tom.
+    Counting a flat hour per device would leave Dana at 2 h and hand her the pump on the name tie."""
+    assign(create_work_order(asset=fleet["p_over"], type=WoType.REPAIR, priority="normal", problem="Door", estimated_hours=Decimal("2")),
+           technician=techs["tom"])
+    who = {r["asset"].tag: r["technician"].name for r in sch.day_plan(date(2026, 9, 30), TODAY)["rows"]}
+    assert who == {"CE-V1": "Dana Whitfield", "CE-V2": "Dana Whitfield", "CE-P1": "Tom Okafor"}
+
+
+def test_suggestions_cost_the_same_queries_for_many_device_models(ctx, dept, techs):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    def queries(n):
+        for i in range(n):
+            dm = DeviceModel.objects.create(manufacturer="M", model=f"N{n}-{i}", description="Pump", category="Infusion pumps")
+            dev(f"CE-N{n}-{i}", dm, dept, TODAY + timedelta(days=10 + n))
+        with CaptureQueriesContext(connection) as q:
+            sch.day_plan(TODAY + timedelta(days=10 + n), TODAY)
+        return len(q)
+
+    assert queries(3) == queries(15)  # technicians and their credentials are read once, not once per device model
+
+
+def test_the_30_day_window_includes_today_and_day_30(ctx, dept, pump_model):
+    for tag, n in (("CE-D0", 0), ("CE-D30", 30), ("CE-D31", 31), ("CE-DM1", -1)):
+        dev(tag, pump_model, dept, TODAY + timedelta(days=n))
+    out = sch.next_30_days(TODAY)
+    assert (out["due"], out["overdue"]) == (2, 1)  # today and day 30 are due; yesterday is overdue; day 31 is not yet counted
+
+
+def test_the_7_day_workload_window_is_today_through_day_6(ctx, dept, pump_model, techs):
+    for tag, n in (("CE-W0", 0), ("CE-W6", 6), ("CE-W7", 7)):
+        dev(tag, pump_model, dept, TODAY + timedelta(days=n))
+    assert sum(n for n, _h in plates().values()) == 2
+
+
+def test_only_an_open_pm_blocks_a_device(fleet):
+    """An open repair on a device, or a PM that was cancelled or closed, does not stand for this PM."""
+    create_work_order(asset=fleet["v1"], type=WoType.REPAIR, priority="normal", problem="Alarm")
+    cancelled = create_work_order(asset=fleet["v2"], type=WoType.PM, priority="high", problem="PM")
+    WorkOrder.objects.filter(pk=cancelled.pk).update(status=WoStatus.CANCELLED)
+    assert sch.day_plan(date(2026, 9, 30), TODAY)["to_create"] == 3
+    assert create_pm_work_orders_for_day(date(2026, 9, 30), today=TODAY) == (3, 0, 0)
+
+
+def test_neighbouring_months_on_the_grid_are_not_due_this_month(fleet, dept, pump_model):
+    dev("CE-OCT2", pump_model, dept, date(2026, 10, 2))  # on September's grid, in October
+    cal = sch.month_calendar(2026, 9, TODAY)
+    cells = {c["date"]: c for w in cal["weeks"] for c in w}
+    assert cells[date(2026, 10, 2)]["n"] == 1 and cells[date(2026, 10, 2)]["in_month"] is False and cal["due_this_month"] == 4
+
+
+def test_a_device_due_today_is_not_overdue(ctx, dept, pump_model):
+    dev("CE-TODAY", pump_model, dept, TODAY)
+    cells = {c["date"]: c for w in sch.month_calendar(2026, 9, TODAY)["weeks"] for c in w}
+    assert cells[TODAY]["n"] == 1 and cells[TODAY]["past"] is False and sch.day_plan(TODAY, TODAY)["overdue"] is False
+    create_pm_work_orders_for_day(TODAY, today=TODAY)
+    assert WorkOrder.objects.get(asset__tag="CE-TODAY").due_on == TODAY

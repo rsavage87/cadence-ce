@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
 
-from django.db.models import Case, Count, Exists, OuterRef, Q, Sum, Value, When
+from django.db.models import Case, Count, Exists, OuterRef, Q, Subquery, Sum, Value, When
 
 from apps.equipment.models import Asset, DeviceModel, RiskClass
 from apps.equipment.services import RISK_RANK
@@ -75,9 +75,13 @@ def month_calendar(year: int, month: int, today: date) -> dict:
 # --- a day ------------------------------------------------------------------------------------------
 
 def day_devices(day: date):
-    """Active devices whose next PM falls on `day`, most critical first, each annotated with has_open_pm."""
+    """Active devices whose next PM falls on `day`, most critical first. Each carries has_open_pm and, when it has one, who the
+    open PM work order is with (open_pm_assignee: a technician's name, or None; open_pm_vendor: True for vendor service)."""
+    first_open = _open_pm().order_by("opened_on", "number")
     return (_active().filter(next_pm_on=day).select_related("device_model", "device_model__pm_procedure", "department")
-            .annotate(has_open_pm=Exists(_open_pm()), risk_rank=RISK_RANK).order_by("risk_rank", "tag"))
+            .annotate(has_open_pm=Exists(_open_pm()), open_pm_assignee=Subquery(first_open.values("assigned_to__name")[:1]),
+                      open_pm_vendor=Subquery(first_open.values("vendor_service")[:1]), risk_rank=RISK_RANK)
+            .order_by("risk_rank", "tag"))
 
 
 def open_hours_by_technician() -> dict:
@@ -87,36 +91,97 @@ def open_hours_by_technician() -> dict:
     return {row["assigned_to_id"]: row["h"] or Decimal("0") for row in rows}
 
 
-def suggest_technicians(assets, today: date, load: dict | None = None) -> dict:
-    """{asset id: Technician or None}. Among the technicians credentialed for each device (qualification is by model,
-    manufacturer, or category, so it is worked out once per device model), the one with the fewest hours, counting open
-    work and what earlier devices in `assets` were given. Ties go by name. None when nobody is credentialed."""
-    from apps.credentials.services import qualified_technicians
+def _pools(today: date):
+    """(active technicians, pool(asset)): the technicians credentialed for a device, worked out once per device model from one
+    query of active technicians with their credentials, however many devices are asked about."""
+    from apps.credentials.models import Technician
+    from apps.credentials.services import qualification
 
-    load = dict(open_hours_by_technician() if load is None else load)
+    techs = list(Technician.objects.filter(is_active=True).prefetch_related("credentials"))
     by_model: dict = {}
+
+    def pool(asset):
+        if asset.device_model_id not in by_model:
+            by_model[asset.device_model_id] = [t for t in techs if qualification(t, asset, today).ok]
+        return by_model[asset.device_model_id]
+
+    return techs, pool
+
+
+def _assign(assets, load: dict, pool, hours_of=None) -> dict:
+    """The least-loaded credentialed technician for each device in order (ties by name), adding the device's hours to `load`
+    as it goes, so later devices see what earlier ones were given. Mutates `load`."""
     out = {}
     for asset in assets:
-        if asset.device_model_id not in by_model:
-            by_model[asset.device_model_id] = [t for t, _q in qualified_technicians(asset, today)]
-        pool = by_model[asset.device_model_id]
-        if not pool:
+        candidates = pool(asset)
+        if not candidates:
             out[asset.id] = None
             continue
-        tech = min(pool, key=lambda t: (load.get(t.id, Decimal("0")), t.name))
-        load[tech.id] = load.get(tech.id, Decimal("0")) + pm_hours(asset.device_model)
+        tech = min(candidates, key=lambda t: (load.get(t.id, Decimal("0")), t.name))
+        load[tech.id] = load.get(tech.id, Decimal("0")) + (hours_of(asset) if hours_of else pm_hours(asset.device_model))
         out[asset.id] = tech
     return out
 
 
+def suggest_technicians(assets, today: date, load: dict | None = None) -> dict:
+    """{asset id: Technician or None}. Among the technicians credentialed for each device, the one with the fewest hours,
+    counting open work and what earlier devices in `assets` were given. Ties go by name. None when nobody is credentialed."""
+    _techs, pool = _pools(today)
+    return _assign(assets, dict(open_hours_by_technician() if load is None else load), pool)
+
+
+WEEK_DAYS = 7
+
+
+def _planned(open_pm: dict | None, active_ids: set) -> bool:
+    """A device's PM is on someone's plate when its open PM work order is with an active in-house technician or with the vendor.
+    An unassigned one (the nightly generate_pm makes those) or one held by a deactivated technician still needs a technician."""
+    return bool(open_pm) and (open_pm["vendor_service"] or open_pm["assigned_to_id"] in active_ids)
+
+
+def week_plan(today: date) -> dict:
+    """The one plan the day panel, the create action, and the workload share for the next 7 days (today through today + 6):
+    day by day in date order, each day's devices most critical first, every device whose PM is not yet on someone's plate goes
+    to the least-loaded credentialed technician, carrying the load forward. Creating a day's work orders assigns what this plan
+    suggests, so creating the days in any order ends where the plan says."""
+    techs, pool = _pools(today)
+    active_ids = {t.id for t in techs}
+    devices = list(_active().filter(next_pm_on__gte=today, next_pm_on__lt=today + timedelta(days=WEEK_DAYS))
+                   .select_related("device_model", "device_model__pm_procedure").annotate(risk_rank=RISK_RANK)
+                   .order_by("next_pm_on", "risk_rank", "tag"))
+    open_pm = {}
+    for w in (WorkOrder.objects.filter(asset__in=devices, type=WoType.PM, status__in=OPEN_STATUSES).order_by("opened_on", "number")
+              .values("asset_id", "assigned_to_id", "vendor_service", "estimated_hours")):
+        open_pm.setdefault(w["asset_id"], w)
+
+    def hours_of(asset):
+        w = open_pm.get(asset.id)
+        return w["estimated_hours"] if w else pm_hours(asset.device_model)
+
+    load = open_hours_by_technician()
+    unplanned = [a for a in devices if not _planned(open_pm.get(a.id), active_ids)]
+    suggested = _assign(unplanned, load, pool, hours_of)  # already in date, then risk, then tag order
+    return {"techs": techs, "active_ids": active_ids, "devices": devices, "open_pm": open_pm, "suggested": suggested, "hours_of": hours_of}
+
+
+def suggestions_for_day(day: date, assets, today: date) -> dict:
+    """The technicians the schedule suggests for `assets` due on `day`: the week plan's inside the next 7 days (so the day panel,
+    the create action, and the workload agree), otherwise a fresh least-loaded pick for that day alone."""
+    if today <= day < today + timedelta(days=WEEK_DAYS):
+        suggested = week_plan(today)["suggested"]
+        return {a.id: suggested.get(a.id) for a in assets}
+    return suggest_technicians(assets, today)
+
+
 def day_plan(day: date, today: date) -> dict:
-    """What the day panel shows: every device due that day with its hours and suggested technician, the total hours, and how
-    many still need a PM work order (a device with an open one is skipped by the create action)."""
+    """What the day panel shows: every device due that day with its hours and the technician the create action would assign,
+    the total hours, and how many still need a PM work order (a device with any open one is skipped by the create action)."""
     devices = list(day_devices(day))
     needing = [a for a in devices if not a.has_open_pm]
-    suggested = suggest_technicians(needing, today)
+    suggested = suggestions_for_day(day, needing, today)
     rows = [{"asset": a, "hours": pm_hours(a.device_model), "procedure": a.device_model.pm_procedure, "has_open_pm": a.has_open_pm,
-             "technician": suggested.get(a.id)} for a in devices]
+             "open_pm_assignee": a.open_pm_assignee, "open_pm_vendor": bool(a.open_pm_vendor), "technician": suggested.get(a.id)}
+            for a in devices]
     return {"day": day, "rows": rows, "count": len(rows), "hours": sum((r["hours"] for r in rows), Decimal("0")), "to_create": len(needing),
             "overdue": day < today}
 
@@ -160,32 +225,28 @@ class Load:
 
 
 def workload_next_7_days(today: date) -> list[Load]:
-    """Per active technician: PM hours for devices due in the next 7 days (the assignee of the device's open PM work order, or
-    the technician the schedule suggests when there is none) plus the estimated hours of their open repair and other non-PM
-    work, against weekly capacity. Devices nobody is credentialed for are not on anyone's plate (the day panel shows them)."""
-    from apps.credentials.models import Technician
-
-    techs = list(Technician.objects.filter(is_active=True))
-    week = list(_active().filter(next_pm_on__gte=today, next_pm_on__lt=today + timedelta(days=7))
-                .select_related("device_model", "device_model__pm_procedure").order_by(RISK_RANK, "next_pm_on", "tag"))
-    open_pm = {w["asset_id"]: w for w in WorkOrder.objects.filter(asset__in=week, type=WoType.PM, status__in=OPEN_STATUSES)
-               .values("asset_id", "assigned_to_id", "vendor_service", "estimated_hours")}
-    repairs = {row["assigned_to_id"]: row["h"] or Decimal("0") for row in
-               WorkOrder.objects.filter(status__in=OPEN_STATUSES, vendor_service=False, assigned_to__isnull=False).exclude(type=WoType.PM)
-               .order_by().values("assigned_to_id").annotate(h=Sum("estimated_hours"))}
+    """Per active technician: PM hours for devices due in the next 7 days, from the week plan (the assignee of the device's open
+    PM work order when that is an active technician; otherwise the technician the plan suggests, which covers the unassigned
+    work orders the nightly generate_pm creates), plus the estimated hours of their other open in-house work orders, against
+    weekly capacity. Vendor PMs and devices nobody is credentialed for are on nobody's plate."""
+    plan = week_plan(today)
+    techs = plan["techs"]
+    other = {row["assigned_to_id"]: row["h"] or Decimal("0") for row in
+             WorkOrder.objects.filter(status__in=OPEN_STATUSES, vendor_service=False, assigned_to__isnull=False).exclude(type=WoType.PM)
+             .order_by().values("assigned_to_id").annotate(h=Sum("estimated_hours"))}
     pm = {t.id: [Decimal("0"), 0] for t in techs}
-    unplanned = [a for a in week if a.id not in open_pm]
-    for a in week:
-        w = open_pm.get(a.id)
-        if w and w["assigned_to_id"] in pm and not w["vendor_service"]:
-            pm[w["assigned_to_id"]][0] += w["estimated_hours"]
-            pm[w["assigned_to_id"]][1] += 1
-    for asset_id, tech in suggest_technicians(unplanned, today, load=open_hours_by_technician()).items():
-        if tech is not None and tech.id in pm:
-            hours = pm_hours(next(a for a in unplanned if a.id == asset_id).device_model)
-            pm[tech.id][0] += hours
+    for a in plan["devices"]:
+        w = plan["open_pm"].get(a.id)
+        if _planned(w, plan["active_ids"]):
+            if not w["vendor_service"]:
+                pm[w["assigned_to_id"]][0] += w["estimated_hours"]
+                pm[w["assigned_to_id"]][1] += 1
+            continue
+        tech = plan["suggested"].get(a.id)
+        if tech is not None:
+            pm[tech.id][0] += plan["hours_of"](a)
             pm[tech.id][1] += 1
-    return [Load(t, pm[t.id][0], pm[t.id][1], repairs.get(t.id, Decimal("0"))) for t in techs]
+    return [Load(t, pm[t.id][0], pm[t.id][1], other.get(t.id, Decimal("0"))) for t in techs]
 
 
 # --- the PM library --------------------------------------------------------------------------------------
