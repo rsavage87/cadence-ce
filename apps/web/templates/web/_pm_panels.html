@@ -1,2 +1,47 @@
-{# The PM schedule's lower panels. Stub until the panels build agent lands. #}
-<div id="pm-panels"></div>
+{% load web %}
+{# The PM schedule's lower panels. Context from apps.web.pm_panels.panels_context: outlook, workload, library. #}
+{# Re-fetches itself when the page fires pm-changed (after a day's PM work orders are created), so the workload and outlook follow. #}
+<div id="pm-panels" hx-get="{% url 'web:pm' %}" hx-trigger="pm-changed from:body" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap hx-target">
+<div class="grid g-2 mt">
+  <div class="panel"><div class="panel-h"><h2>Next 30 days</h2><span class="sub">What is coming due, by category</span></div><div class="panel-b">
+    <div class="stats" style="margin-bottom:12px">
+      <div class="stat"><div class="v">{{ outlook.due }}</div><div class="l">PMs due</div></div>
+      <div class="stat"><div class="v">{{ outlook.life_support }}</div><div class="l">life-support devices</div></div>
+      <div class="stat"><div class="v{% if outlook.overdue %} down{% endif %}">{{ outlook.overdue }}</div><div class="l">already overdue</div></div>
+    </div>
+    {% if outlook.chart %}{% include "web/_chart_hbars.html" with c=outlook.chart aria="PMs due in 30 days by category" %}{% else %}<div class="empty">Nothing is due in the next 30 days.</div>{% endif %}
+  </div></div>
+  <div class="panel"><div class="panel-h"><h2>Technician workload, next 7 days</h2><span class="sub">PM hours plus open repair hours against weekly capacity</span></div><div class="panel-b">
+    {% for w in workload %}
+    <div class="pm-load" style="margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span><b style="font-weight:500">{{ w.technician.name }}</b>{% if w.technician.title %} <span class="muted">· {{ w.technician.title }}</span>{% endif %}</span><span class="{% if w.over %}down{% else %}muted{% endif %}">{{ w.total|floatformat:1 }} of {{ w.capacity|floatformat }} h</span></div>
+      <div class="bar" role="img" aria-label="{{ w.technician.name }}: {{ w.total|floatformat:1 }} of {{ w.capacity|floatformat }} hours"><i style="width:{{ w.width }}%;background:{% if w.over %}var(--crit){% else %}var(--accent){% endif %}"></i></div>
+      <div class="hint" style="margin-top:3px">{{ w.pm_count }} PM{{ w.pm_count|pluralize }} ({{ w.pm_hours|floatformat:1 }} h) · repairs {{ w.repair_hours|floatformat:1 }} h</div>
+    </div>
+    {% empty %}
+    <div class="empty">No active technicians.</div>
+    {% endfor %}
+    {% if workload %}<div class="hint">Each PM due in the next 7 days counts for the technician already assigned to its work order, or the one the schedule suggests (credentialed, least loaded). Devices nobody is credentialed for are on nobody's plate.</div>{% endif %}
+  </div></div>
+</div>
+<div class="panel mt"><div class="panel-h"><h2>PM library</h2><span class="sub">{{ library.with_procedure }} of {{ library.models }} model{{ library.models|pluralize }} {{ library.with_procedure|pluralize:"has,have" }} a PM procedure · from OEM service manuals, ECRI, or written in-house</span></div>
+  {% if library.rows %}
+  <div class="tbl-wrap flat" style="margin-top:8px"><table>
+    <thead><tr><th>Model</th><th>Risk class</th><th>OEM interval</th><th>Program interval</th><th>Procedure</th><th class="num">Est. hours</th><th>Checklist</th><th class="num">Devices</th></tr></thead>
+    <tbody>{% for r in library.rows %}
+      <tr><td class="two">{{ r.device_model.manufacturer }} {{ r.device_model.model }}<small>{{ r.device_model.description }}</small></td>
+        <td>{% risk_chip r.device_model.risk_class %}</td>
+        <td>{{ r.oem_months }} mo</td>
+        <td>{% if r.aem %}<span class="chip acc">AEM {{ r.program_months }} mo</span>{% else %}<span class="muted">OEM interval</span>{% endif %}</td>
+        <td{% if r.procedure %} class="two"{% endif %}>{% if r.procedure %}{{ r.procedure.code }}<small>{{ r.procedure.get_source_kind_display }}</small>{% else %}<span class="muted">No procedure</span>{% endif %}</td>
+        <td class="num{% if not r.procedure %} muted{% endif %}">{{ r.hours|floatformat:2 }}</td>
+        <td class="muted">{% if r.procedure %}{{ r.steps }} step{{ r.steps|pluralize }}{% else %}—{% endif %}</td>
+        <td class="num">{{ r.devices }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% if library.with_procedure < library.models %}<div class="hint" style="margin-top:8px">A model without a procedure is estimated at 1 hour per PM and generates work orders with no checklist.</div>{% endif %}
+  {% else %}
+  <div class="panel-b"><div class="empty">No device models yet.</div></div>
+  {% endif %}
+</div>
+</div>
