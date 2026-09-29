@@ -33,7 +33,7 @@
   </dl></div>
 
   {% if can_assign %}
-  <div class="sec"><h3>Assignment <span>credentialed technicians first</span></h3>
+  <div class="sec"><h3>Assignment <span>{{ assignment_policy }}</span></h3>
     <form style="display:flex;gap:8px;flex-wrap:wrap" hx-post="{% url 'web:wo_assign' wo.number %}" hx-target="#drawer">
       <select name="assignee" class="perm" style="flex:1;min-width:220px;padding:7px 9px" aria-label="Assign to">
         {% if unassigned %}<option value="">Choose…</option>{% endif %}
