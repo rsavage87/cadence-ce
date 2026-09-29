@@ -1,0 +1,41 @@
+{% load web %}
+{# The Settings screen's service request portal panel. Only the settings form auto-saves; the link box and Department links sit outside it, #}
+{# so nothing that loads #modal-card can pick up the form's hx-target or hx-swap (hx-disinherit guards that as well). #}
+<div class="panel mt" id="set-portal">
+  <div class="panel-h"><h2>Service request portal</h2><span class="sub">No sign-in required</span></div>
+  <div class="panel-b">
+    <div class="linkbox">
+      <input readonly value="{{ portal_url }}" aria-label="Portal link">
+      <button class="btn sm" type="button" data-act="copy" data-copy="{{ portal_url }}">Copy</button>
+      <button class="btn sm" type="button" hx-get="{% url 'web:settings_dept_links' %}" hx-target="#modal-card">Department links</button>
+      <a class="btn sm" href="{{ portal_url }}" target="_blank" rel="noopener">Preview</a>
+    </div>
+    <form class="set-rows"{% if can_edit %} hx-post="{% url 'web:settings_portal' %}" hx-trigger="change, submit" hx-sync="this:replace" hx-target="#set-portal" hx-swap="outerHTML"{% endif %} hx-disinherit="hx-swap hx-target">
+      <div class="set-row">
+        <span class="lbl">Requester must give a callback number</span>
+        <label class="tog">
+          {# hidden 0 first: an unchecked box still posts a value, and QueryDict.get returns the last one #}
+          <input type="hidden" name="portal_require_callback" value="0"><input type="checkbox" name="portal_require_callback" value="1" aria-label="Requester must give a callback number"{% if s.portal_require_callback %} checked{% endif %}{% if not can_edit %} disabled{% endif %}><span class="sw"></span>{% if s.portal_require_callback %}On{% else %}Off{% endif %}
+        </label>
+      </div>
+      <label class="set-row">
+        <span class="lbl">Hotline shown to requesters</span>
+        <input class="perm" name="portal_hotline" value="{{ s.portal_hotline }}" maxlength="{{ hotline_max }}" placeholder="e.g. ext. 4400" autocomplete="off"{% if not can_edit %} disabled{% endif %}>
+      </label>
+      {# The mock's other rows, shown honestly: none of them can work yet. #}
+      <div class="set-row off">
+        <span class="lbl">Page on-call for critical requests, around the clock<span class="why">Needs the notifications integration</span></span>
+        <label class="tog"><input type="checkbox" disabled aria-label="Page on-call for critical requests"><span class="sw"></span>Off</label>
+      </div>
+      <div class="set-row off">
+        <span class="lbl">Allow photo upload with a request<span class="why">Not offered: photos can capture patients</span></span>
+        <label class="tog"><input type="checkbox" disabled aria-label="Allow photo upload with a request"><span class="sw"></span>Off</label>
+      </div>
+      <div class="set-row off last">
+        <span class="lbl">Confirmation to the requester<span class="why">Email and text need the notifications integration</span></span>
+        <select class="perm" disabled aria-label="Confirmation to the requester"><option>On screen</option></select>
+      </div>
+    </form>
+    <div class="hint">{% if can_edit %}Changes save as you make them.{% else %}Changing settings needs Settings Edit access.{% endif %}</div>
+  </div>
+</div>

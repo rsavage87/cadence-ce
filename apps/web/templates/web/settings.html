@@ -1,6 +1,62 @@
 {% extends "web/base.html" %}
+{% load web %}
 {% block title %}Settings{% endblock %}
 {% block content %}
-<div class="page-head"><div><h1>Settings</h1></div></div>
-<div class="empty">Settings are being built.</div>
+<div class="page-head">
+  <div>
+    <h1>Settings</h1>
+    <p class="sub">Integrations, the service request portal, maintenance policy, and risk scoring for {{ request.tenant.name }}. Contracts have their own section under {% if can_view_contracts %}<a class="link" href="{% url 'web:contracts' %}">Contracts</a>{% else %}Contracts{% endif %}; users and roles are under {% if can_view_users %}<a class="link" href="{% url 'web:users' %}">Users and access</a>{% else %}Users and access{% endif %}.</p>
+  </div>
+</div>
+<div class="grid g-2">
+  <div>
+    {# The mock's Sync and Connect buttons only toast; there is no connector yet, so each row states its real status instead. #}
+    <div class="panel" id="set-integrations">
+      <div class="panel-h"><h2>Integrations</h2><span class="sub">{{ connected }} of {{ integrations|length }} connected</span></div>
+      <div style="margin-top:6px">
+        {% for i in integrations %}
+        <div class="int">
+          <div class="ic">{{ i.code }}</div>
+          <div>
+            <div style="font-weight:500">{{ i.name }}</div>
+            <div class="s">{{ i.description }}</div>
+            {% if i.detail %}<div class="s">{{ i.detail }}</div>{% endif %}
+          </div>
+          <div class="rt">
+            <span class="chip {{ i.chip_css }}">{{ i.chip_label }}</span>
+            {% if i.key == "fda" and i.status == "connected" and can_view_recalls %}<a class="btn sm ghost" href="{% url 'web:recalls' %}">Open recalls</a>{% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      <div class="panel-b"><div class="hint">The FDA feed imports nightly. The other connections are not available yet.</div></div>
+    </div>
+    {% include "web/_settings_portal.html" %}
+  </div>
+  <div>
+    {% include "web/_settings_policy.html" %}
+    {% include "web/_settings_targets.html" %}
+    <div class="panel mt" id="set-risk">
+      <div class="panel-h"><h2>Risk scoring</h2><span class="sub">Assigned at intake, reviewed yearly</span></div>
+      <div class="panel-b">
+        <div class="note" style="margin-bottom:10px">{{ risk_rubric }}</div>
+        <div class="tbl-wrap">
+          <table class="mini-tbl">
+            <thead><tr><th>Score</th><th>Class</th><th class="num">Devices</th></tr></thead>
+            <tbody>
+              {% for r in risk_rows %}
+              <tr>
+                <td>{{ r.band }}</td>
+                <td>{% risk_chip r.risk %}</td>
+                <td class="num">{% if can_view_equipment %}<a class="link" href="{% url 'web:equipment' %}?risk={{ r.risk }}">{{ r.devices }}</a>{% else %}{{ r.devices }}{% endif %}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="hint" style="margin-top:8px">A device's class comes from its model in the catalog.</div>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}

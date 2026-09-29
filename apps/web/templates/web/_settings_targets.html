@@ -1,0 +1,19 @@
+{# The Settings screen's KPI targets panel (not in the mock): the targets the Overview and the PM compliance report compare against. #}
+<div class="panel mt" id="set-targets">
+  <div class="panel-h"><h2>KPI targets</h2><span class="sub">Shown on the Overview and in the PM compliance report</span></div>
+  <div class="panel-b">
+    <form{% if can_edit %} hx-post="{% url 'web:settings_targets' %}" hx-target="#set-targets" hx-swap="outerHTML"{% endif %} hx-disinherit="hx-swap hx-target">
+      <div class="form set-form two">
+        {% for t in targets %}
+        <label>{{ t.label }}
+          <input name="{{ t.field }}" value="{{ t.value }}" inputmode="decimal" autocomplete="off"{% if t.field == "repair_budget_monthly" %} placeholder="No budget"{% endif %} aria-describedby="{{ t.field }}-help"{% if t.error %} aria-invalid="true"{% endif %}{% if not can_edit %} disabled{% endif %}>
+          {% if t.error %}<span class="hint err">{{ t.error }}</span>{% endif %}
+          <span class="hint" id="{{ t.field }}-help">{{ t.help }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      {% if can_edit %}<div class="set-actions"><button class="btn sm primary" type="submit">Save targets</button></div>{% endif %}
+    </form>
+    {% if not can_edit %}<div class="hint" style="margin-top:8px">Changing settings needs Settings Edit access.</div>{% endif %}
+  </div>
+</div>
