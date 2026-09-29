@@ -1,0 +1,211 @@
+"""
+PM schedule read models (slice 9): the month calendar, the devices due on a day, the next 30 days, technician workload
+for the next 7 days, and the PM library. Everything reads `Asset.next_pm_on` for active devices, as the mock's
+pmByDay does. Read-only; the one state change (creating a day's work orders) is in services.py.
+
+`suggest_technicians` is the assignment rule the schedule shows and the create action applies: among the technicians
+credentialed for a device, the one with the fewest hours already on their plate, counting what this batch has just
+given them. The mock hashed devices across credentialed technicians; balancing by workload is the same idea, made
+deterministic and fair.
+"""
+from dataclasses import dataclass
+from datetime import date, timedelta
+from decimal import Decimal
+
+from django.db.models import Case, Count, Exists, OuterRef, Q, Sum, Value, When
+
+from apps.equipment.models import Asset, DeviceModel, RiskClass
+from apps.equipment.services import RISK_RANK
+from apps.workorders.models import OPEN_STATUSES, WorkOrder, WoType
+
+from .dates import month_bounds
+
+DEFAULT_PM_HOURS = Decimal("1")  # a model without a PM procedure; generate_pm_work_orders estimates the same
+DAY_LIST_LIMIT = 12  # the mock lists the first twelve devices on a day
+CATEGORY_LIMIT = 8
+RISK_ORDER = {rc: i for i, rc in enumerate(RiskClass.values)}
+# RISK_RANK orders assets (it reads device_model__risk_class); the library orders device models, so it needs its own.
+RISK_RANK_MODEL = Case(*[When(risk_class=r, then=Value(i)) for i, r in enumerate(RiskClass.values)], default=Value(9))
+
+
+def pm_hours(device_model) -> Decimal:
+    proc = device_model.pm_procedure
+    return proc.estimated_hours if proc else DEFAULT_PM_HOURS
+
+
+def _active():
+    return Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES, next_pm_on__isnull=False)
+
+
+def _open_pm(asset_ref="pk"):
+    return WorkOrder.objects.filter(asset_id=OuterRef(asset_ref), type=WoType.PM, status__in=OPEN_STATUSES)
+
+
+# --- calendar ---------------------------------------------------------------------------------------
+
+def month_calendar(year: int, month: int, today: date) -> dict:
+    """Six-or-fewer Sunday-first weeks covering the month. Each cell: date, in_month, is_today, n (active devices whose next PM
+    falls that day), life_support and high counts (the mock's coloured dots), and past (a past day that still has PMs on it:
+    those devices are overdue, the red count). One grouped query."""
+    first, last = month_bounds(year, month)
+    grid_start = first - timedelta(days=(first.weekday() + 1) % 7)  # back to Sunday
+    grid_end = last + timedelta(days=(5 - last.weekday()) % 7)  # forward to Saturday
+    counts: dict = {}
+    rows = (_active().filter(next_pm_on__gte=grid_start, next_pm_on__lte=grid_end).order_by()
+            .values("next_pm_on", "device_model__risk_class").annotate(n=Count("id")))
+    for row in rows:
+        c = counts.setdefault(row["next_pm_on"], {"n": 0, "life_support": 0, "high": 0})
+        c["n"] += row["n"]
+        if row["device_model__risk_class"] == RiskClass.LIFE_SUPPORT:
+            c["life_support"] += row["n"]
+        elif row["device_model__risk_class"] == RiskClass.HIGH:
+            c["high"] += row["n"]
+    weeks, d = [], grid_start
+    while d <= grid_end:
+        week = []
+        for _ in range(7):
+            c = counts.get(d, {"n": 0, "life_support": 0, "high": 0})
+            week.append({"date": d, "in_month": d.month == month, "is_today": d == today, "past": d < today and c["n"] > 0, **c})
+            d += timedelta(days=1)
+        weeks.append(week)
+    due_this_month = sum(c["n"] for day, c in counts.items() if first <= day <= last)
+    return {"year": year, "month": month, "first": first, "weeks": weeks, "due_this_month": due_this_month}
+
+
+# --- a day ------------------------------------------------------------------------------------------
+
+def day_devices(day: date):
+    """Active devices whose next PM falls on `day`, most critical first, each annotated with has_open_pm."""
+    return (_active().filter(next_pm_on=day).select_related("device_model", "device_model__pm_procedure", "department")
+            .annotate(has_open_pm=Exists(_open_pm()), risk_rank=RISK_RANK).order_by("risk_rank", "tag"))
+
+
+def open_hours_by_technician() -> dict:
+    """{technician id: estimated hours of their open in-house work orders}: what is already on each plate."""
+    rows = (WorkOrder.objects.filter(status__in=OPEN_STATUSES, vendor_service=False, assigned_to__isnull=False).order_by()
+            .values("assigned_to_id").annotate(h=Sum("estimated_hours")))
+    return {row["assigned_to_id"]: row["h"] or Decimal("0") for row in rows}
+
+
+def suggest_technicians(assets, today: date, load: dict | None = None) -> dict:
+    """{asset id: Technician or None}. Among the technicians credentialed for each device (qualification is by model,
+    manufacturer, or category, so it is worked out once per device model), the one with the fewest hours, counting open
+    work and what earlier devices in `assets` were given. Ties go by name. None when nobody is credentialed."""
+    from apps.credentials.services import qualified_technicians
+
+    load = dict(open_hours_by_technician() if load is None else load)
+    by_model: dict = {}
+    out = {}
+    for asset in assets:
+        if asset.device_model_id not in by_model:
+            by_model[asset.device_model_id] = [t for t, _q in qualified_technicians(asset, today)]
+        pool = by_model[asset.device_model_id]
+        if not pool:
+            out[asset.id] = None
+            continue
+        tech = min(pool, key=lambda t: (load.get(t.id, Decimal("0")), t.name))
+        load[tech.id] = load.get(tech.id, Decimal("0")) + pm_hours(asset.device_model)
+        out[asset.id] = tech
+    return out
+
+
+def day_plan(day: date, today: date) -> dict:
+    """What the day panel shows: every device due that day with its hours and suggested technician, the total hours, and how
+    many still need a PM work order (a device with an open one is skipped by the create action)."""
+    devices = list(day_devices(day))
+    needing = [a for a in devices if not a.has_open_pm]
+    suggested = suggest_technicians(needing, today)
+    rows = [{"asset": a, "hours": pm_hours(a.device_model), "procedure": a.device_model.pm_procedure, "has_open_pm": a.has_open_pm,
+             "technician": suggested.get(a.id)} for a in devices]
+    return {"day": day, "rows": rows, "count": len(rows), "hours": sum((r["hours"] for r in rows), Decimal("0")), "to_create": len(needing),
+            "overdue": day < today}
+
+
+# --- next 30 days and the week's workload ------------------------------------------------------------------
+
+def next_30_days(today: date) -> dict:
+    """The mock's outlook: PMs due today through 30 days out, the life-support devices among them, devices already overdue, the
+    estimated hours, and the categories with the most PMs coming due."""
+    upcoming = _active().filter(next_pm_on__gte=today, next_pm_on__lte=today + timedelta(days=30))
+    hours = sum((pm_hours(a.device_model) for a in upcoming.select_related("device_model__pm_procedure").only(
+        "device_model__pm_procedure__estimated_hours")), Decimal("0"))
+    by_category = list(upcoming.order_by().values("device_model__category").annotate(n=Count("id")).order_by("-n", "device_model__category"))
+    return {"due": upcoming.count(), "life_support": upcoming.filter(device_model__risk_class=RiskClass.LIFE_SUPPORT).count(),
+            "overdue": _active().filter(next_pm_on__lt=today).count(), "hours": hours,
+            "by_category": [(r["device_model__category"], r["n"]) for r in by_category[:CATEGORY_LIMIT]]}
+
+
+@dataclass
+class Load:
+    technician: object
+    pm_hours: Decimal
+    pm_count: int
+    repair_hours: Decimal
+
+    @property
+    def total(self) -> Decimal:
+        return self.pm_hours + self.repair_hours
+
+    @property
+    def capacity(self) -> Decimal:
+        return self.technician.weekly_capacity_hours
+
+    @property
+    def over(self) -> bool:
+        return self.total > self.capacity
+
+    @property
+    def pct(self) -> float:
+        return min(100.0, float(self.total / self.capacity * 100)) if self.capacity else 100.0
+
+
+def workload_next_7_days(today: date) -> list[Load]:
+    """Per active technician: PM hours for devices due in the next 7 days (the assignee of the device's open PM work order, or
+    the technician the schedule suggests when there is none) plus the estimated hours of their open repair and other non-PM
+    work, against weekly capacity. Devices nobody is credentialed for are not on anyone's plate (the day panel shows them)."""
+    from apps.credentials.models import Technician
+
+    techs = list(Technician.objects.filter(is_active=True))
+    week = list(_active().filter(next_pm_on__gte=today, next_pm_on__lt=today + timedelta(days=7))
+                .select_related("device_model", "device_model__pm_procedure").order_by(RISK_RANK, "next_pm_on", "tag"))
+    open_pm = {w["asset_id"]: w for w in WorkOrder.objects.filter(asset__in=week, type=WoType.PM, status__in=OPEN_STATUSES)
+               .values("asset_id", "assigned_to_id", "vendor_service", "estimated_hours")}
+    repairs = {row["assigned_to_id"]: row["h"] or Decimal("0") for row in
+               WorkOrder.objects.filter(status__in=OPEN_STATUSES, vendor_service=False, assigned_to__isnull=False).exclude(type=WoType.PM)
+               .order_by().values("assigned_to_id").annotate(h=Sum("estimated_hours"))}
+    pm = {t.id: [Decimal("0"), 0] for t in techs}
+    unplanned = [a for a in week if a.id not in open_pm]
+    for a in week:
+        w = open_pm.get(a.id)
+        if w and w["assigned_to_id"] in pm and not w["vendor_service"]:
+            pm[w["assigned_to_id"]][0] += w["estimated_hours"]
+            pm[w["assigned_to_id"]][1] += 1
+    for asset_id, tech in suggest_technicians(unplanned, today, load=open_hours_by_technician()).items():
+        if tech is not None and tech.id in pm:
+            hours = pm_hours(next(a for a in unplanned if a.id == asset_id).device_model)
+            pm[tech.id][0] += hours
+            pm[tech.id][1] += 1
+    return [Load(t, pm[t.id][0], pm[t.id][1], repairs.get(t.id, Decimal("0"))) for t in techs]
+
+
+# --- the PM library --------------------------------------------------------------------------------------
+
+def pm_library() -> list[dict]:
+    """Every device model with its PM program: the OEM interval, the interval in force (AEM when approved; never for life
+    support), and its procedure. Most critical first, then category."""
+    models = (DeviceModel.objects.select_related("pm_procedure")
+              .annotate(devices=Count("assets", filter=Q(assets__status__in=Asset.ACTIVE_STATUSES)), rank=RISK_RANK_MODEL)
+              .order_by("rank", "category", "manufacturer", "model"))
+    out = []
+    for dm in models:
+        proc = dm.pm_procedure
+        aem = dm.pm_interval_months != dm.oem_pm_interval_months
+        out.append({"device_model": dm, "devices": dm.devices, "oem_months": dm.oem_pm_interval_months, "program_months": dm.pm_interval_months,
+                    "aem": aem, "procedure": proc, "hours": pm_hours(dm), "steps": len(proc.checklist) if proc else 0})
+    return out
+
+
+def schedule_summary(today: date) -> dict:
+    """The page head: PMs due in the next 30 days, their hours, and devices overdue now."""
+    n = next_30_days(today)
+    return {"due_30": n["due"], "hours_30": n["hours"], "overdue": n["overdue"]}

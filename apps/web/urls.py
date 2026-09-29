@@ -19,6 +19,7 @@ urlpatterns = [
     path("work-orders/<str:number>/status/", views.wo_status, name="wo_status"),
     path("work-orders/<str:number>/assign/", views.wo_assign, name="wo_assign"),
     path("work-orders/<str:number>/notes/", views.wo_note, name="wo_note"),
+    path("pm/", include("apps.web.urls_pm")),
     path("contracts/", include("apps.web.urls_contracts")),
     path("users/", include("apps.web.urls_users")),
     path("users/credentials/", include("apps.web.urls_credentials")),

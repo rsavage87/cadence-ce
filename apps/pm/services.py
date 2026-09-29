@@ -3,8 +3,10 @@ PM engine: generate work orders from schedules and compute completion-rate KPIs.
 The math matches the mock's Overview so the product and the demo agree.
 """
 from datetime import date, timedelta
+from typing import NamedTuple
 
 from django.conf import settings
+from django.db import transaction
 from django.db.models import F, Q
 
 from apps.equipment.models import Asset, RiskClass
@@ -12,6 +14,17 @@ from apps.workorders.models import OPEN_STATUSES, Priority, Source, WorkOrder, W
 from apps.workorders.services import create_work_order
 
 from .dates import month_bounds
+from .schedule import DEFAULT_PM_HOURS
+
+
+def _create_pm(asset, as_of: date, by=None):
+    """One PM work order for `asset`, due on its next PM date (or today when that has passed), priced from its procedure."""
+    proc = asset.device_model.pm_procedure
+    priority = Priority.HIGH if asset.device_model.risk_class == RiskClass.LIFE_SUPPORT else Priority.NORMAL
+    problem = f"Scheduled {asset.pm_interval_months}-month preventive maintenance" + (f", {proc.code}" if proc else "")
+    return create_work_order(asset=asset, type=WoType.PM, priority=priority, problem=problem, requester="PM planner", source=Source.PM_PLANNER,
+                             opened_on=as_of, due_on=max(asset.next_pm_on, as_of), created_by=by,
+                             estimated_hours=proc.estimated_hours if proc else DEFAULT_PM_HOURS)
 
 
 def generate_pm_work_orders(as_of: date | None = None, lead_days: int | None = None) -> int:
@@ -28,13 +41,39 @@ def generate_pm_work_orders(as_of: date | None = None, lead_days: int | None = N
     for asset in assets:
         if WorkOrder.objects.filter(asset=asset, type=WoType.PM, status__in=OPEN_STATUSES).exists():
             continue
-        proc = asset.device_model.pm_procedure
-        priority = Priority.HIGH if asset.device_model.risk_class == RiskClass.LIFE_SUPPORT else Priority.NORMAL
-        problem = f"Scheduled {asset.pm_interval_months}-month preventive maintenance" + (f", {proc.code}" if proc else "")
-        create_work_order(asset=asset, type=WoType.PM, priority=priority, problem=problem, requester="PM planner", source=Source.PM_PLANNER,
-                          opened_on=as_of, due_on=max(asset.next_pm_on, as_of), estimated_hours=proc.estimated_hours if proc else 1)
+        _create_pm(asset, as_of)
         created += 1
     return created
+
+
+class PmBatch(NamedTuple):
+    created: int
+    assigned: int  # of the created ones, how many went to a credentialed technician
+    skipped: int  # devices due that day that already had an open PM work order
+
+
+@transaction.atomic
+def create_pm_work_orders_for_day(day: date, by=None, assign_to_technicians: bool = True, today: date | None = None) -> PmBatch:
+    """The PM schedule's "Create N PM work orders": one PM work order for each active device whose next PM falls on `day` and
+    that has no open PM work order yet. With `assign_to_technicians`, each goes to the technician the schedule suggests
+    (credentialed, least loaded; see schedule.suggest_technicians), recorded like any assignment; devices nobody is
+    credentialed for, or every device when the caller may not assign, are left unassigned for a manager."""
+    from apps.workorders.services import assign
+
+    from .schedule import day_devices, suggest_technicians
+
+    today = today or date.today()
+    devices = list(day_devices(day))
+    needing = [a for a in devices if not a.has_open_pm]
+    suggested = suggest_technicians(needing, today) if assign_to_technicians else {}
+    assigned = 0
+    for asset in needing:
+        wo = _create_pm(asset, today, by=by)
+        tech = suggested.get(asset.id)
+        if tech is not None:
+            assign(wo, technician=tech, by=by)
+            assigned += 1
+    return PmBatch(len(needing), assigned, len(devices) - len(needing))
 
 
 def pm_due_queryset(start: date, end: date, as_of: date | None = None, life_support_only: bool = False):

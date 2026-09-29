@@ -93,7 +93,7 @@ def test_overview_tiles_link_to_their_reports(client, signed_in, vent):
     tiles = {t["label"]: t.get("url") for t in client.get("/").context["tiles"]}
     assert tiles["Fleet uptime"] == "/reports/mtbf/" and tiles["Mean time to repair"] == "/reports/mtbf/"
     assert tiles["Repair spend, month to date"] == "/reports/spend/" and tiles["Cost of service ratio, annualized"] == "/reports/cosr/"
-    assert tiles["PM completion on time"] is None  # the mock sends it to the PM schedule, which is a later slice
+    assert tiles["PM completion on time"] == "/pm/"  # the mock sends it to the PM schedule
 
 
 def test_api_lists_the_catalog_and_serves_one_report(client, signed_in, monkeypatch):

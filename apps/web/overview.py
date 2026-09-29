@@ -56,7 +56,7 @@ def kpi_tiles(data: dict, recalls_url: str | None = None) -> list[dict]:
         return reverse("web:report", args=[key])
 
     return [
-        {"label": "PM completion on time", "value": f"{k['pm_on_time']['rate']:.1f}", "unit": "%",
+        {"label": "PM completion on time", "value": f"{k['pm_on_time']['rate']:.1f}", "unit": "%", "url": reverse("web:pm"),
          "parts": _parts(_delta(k["pm_on_time"]["rate"], pv(lambda p: p["pm_on_time"]["rate"]), True, lambda v: f"{v:.1f}", " pts"),
                          f"{k['pm_on_time']['on_time']} of {k['pm_on_time']['due']} PMs due {'so far this month' if cur else 'in month'}",
                          f"target {pct_label(t['pm_on_time'])}%")},

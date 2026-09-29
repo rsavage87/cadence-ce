@@ -35,7 +35,7 @@ def wo(ctx, vent):
 
 def test_every_screen_requires_sign_in(client, db):
     for url in ["/", "/equipment/", "/work-orders/", "/work-orders/new/", "/search/?q=x", "/contracts/", "/users/", "/users/credentials/", "/recalls/",
-                "/reports/", "/reports/cosr.csv", "/settings/"]:
+                "/reports/", "/reports/cosr.csv", "/settings/", "/pm/"]:
         r = client.get(url)
         assert r.status_code == 302 and r["Location"].startswith("/login/"), url
 
