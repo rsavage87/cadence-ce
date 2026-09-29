@@ -293,7 +293,7 @@ def test_past_days_say_the_devices_are_overdue(client, signed_in, fleet):
     signed_in("manager")
     body = client.get("/pm/?day=2026-09-15").content.decode()
     assert "This device is overdue: the PM fell due on Sep 15. Work orders created now are due today." in body
-    assert 'hx-confirm="Create 1 PM work order for Sep 15, 2026? They will be due today."' in body
+    assert 'hx-confirm="Create 1 PM work order for Sep 15, 2026? It will be due today."' in body
     assert "overdue: the PM fell due" not in client.get("/pm/?day=2026-09-01").content.decode()  # a past day with nothing on it
 
 
