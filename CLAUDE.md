@@ -55,7 +55,9 @@ pytest
 - `apps/equipment` Department, DeviceModel, Asset (tags carry no spaces or slashes: they are URL segments), CSV importer
 - `apps/contracts` Contract with add/remove device operations and cost allocation; `services.py` for create/update/renew/delete, status, filters, KPI summary
 - `apps/workorders` WorkOrder and lines, ServiceRequest, lifecycle services
-- `apps/pm` PmProcedure, PM generation, on-time math, month helpers
+- `apps/pm` PmProcedure, PM generation, on-time math, month helpers; `schedule.py` the PM schedule's read models (month calendar,
+  a day's devices, suggested technicians, 30-day outlook, 7-day workload, PM library); `services.create_pm_work_orders_for_day`;
+  `permissions.py` (View to see, Approve to create a day's work orders)
 - `apps/recalls` Alert (global), AlertMatch (per tenant), matching, openFDA importer; `services.py` dispositions and recall work-order batches,
   `permissions.py` (review at Edit, close/reopen at Approve). ECRI import is deferred (license).
 - `apps/credentials` Technician, Credential, qualification and coverage services, credential add/renew/sign-off/remove
@@ -67,7 +69,7 @@ pytest
 - `apps/reports` overview KPIs, the Overview bundle (`overview_page`), attention list, nav counts, `cost_of_service`; the eight Reports
   (`REPORTS` catalog and `run_report` in `services.py`; the numbers in `cost.py`, `fleet.py`, `operations.py`, read-only, `today` passed in)
 - `apps/web` HTMX UI: one views/urls/forms module per screen (`views.py` Overview, Equipment, Work orders; `views_contracts.py`;
-  `views_users.py` Users and Roles tabs; `views_credentials.py`; `views_recalls.py`; `views_reports.py` with the CSV download; `views_settings.py`), templates,
+  `views_users.py` Users and Roles tabs; `views_credentials.py`; `views_recalls.py`; `views_reports.py` with the CSV download; `views_settings.py`; `views_pm.py` with `pm_panels.py` for its lower panels), templates,
   `charts.py` (SVG geometry: line, stacked bars, hbars with a benchmark marker, donut), `overview.py` and `reports_*.py` (chart geometry
   and display values for the Overview and the Reports; services never import them), `htmx.py` helpers, shell
   context processor. Drawers and modals are partials swapped into `#drawer` / `#modal-card`; the same URLs render a full page

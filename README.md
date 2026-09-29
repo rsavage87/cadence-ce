@@ -7,7 +7,8 @@ This is the starter codebase generated from the interactive mock in `spec/`. It 
 permissions, lifecycle services, importer, PM engine, KPI math, REST API, admin, portal, and tests, plus the HTMX
 web UI for Overview, Equipment, Work orders, Contracts, Recalls and alerts, Reports (eight survey-ready reports with CSV
 download), Users and access (Users, Roles, Technician credentials), and Settings (portal options, maintenance policy, KPI
-targets, integrations, risk scoring). The PM schedule screen is next (see `spec/BUILD_PLAN.md`).
+targets, integrations, risk scoring), and the PM schedule (calendar, a day's devices, create that day's PM work orders).
+Every screen in the mock is built; `spec/BUILD_PLAN.md` lists what each slice deferred.
 
 ## Run locally (Docker)
 ```
@@ -42,4 +43,5 @@ pytest
 
 ## First things to do in Claude Code
 1. `pip install -r requirements-dev.txt`, then `pytest`.
-2. Start slice 9 (`spec/BUILD_PLAN.md`): the PM schedule screen (calendar of due PMs, create work orders for a day).
+2. Pick up a deferred item from `spec/BUILD_PLAN.md` (exports, connectors, invitation email, the ECRI importer), or schedule
+   `generate_pm` and `import_openfda` to run daily.

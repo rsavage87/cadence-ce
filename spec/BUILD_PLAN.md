@@ -1,7 +1,7 @@
 # Build plan
 
 The mock (`cadence-ce-cmms-mock.html`) is the spec. Each slice below is shippable on its own and ends with green tests.
-Slices 0 to 8 are built; 9 onward are the next work.
+Slices 0 to 9 are built: every screen in the mock exists. What each slice deferred is noted in its row and below.
 
 | # | Slice | Mock screen(s) | Code | Status |
 |---|-------|----------------|------|--------|
@@ -14,7 +14,7 @@ Slices 0 to 8 are built; 9 onward are the next work.
 | 6 | Recalls UI + ECRI importer | Recalls and alerts | `recalls` + `web` | done (openFDA feed; ECRI importer deferred, it needs a license) |
 | 7 | Reports | Reports (COSR, PM compliance, MTBF, replacement, spend, contract vs in-house, technician productivity, recall log) | `reports` + `web` | done (CSV download and JSON API; PDF, Schedule, and Custom report deferred) |
 | 8 | Settings | Integrations, portal settings, editable policy, risk scoring | `facility` + `web` | done (connectors, paging, photo upload, and email or text confirmation deferred) |
-| 9 | PM schedule UI | PM schedule (calendar, create work orders for a day) | `pm` + `web` | next |
+| 9 | PM schedule UI | PM schedule (calendar, create work orders for a day) | `pm` + `web` | done (Auto-assign week, Route sheets, and OEM library sync deferred) |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.
@@ -28,11 +28,20 @@ Slices 0 to 8 are built; 9 onward are the next work.
 
 The mock's toast-only buttons (Device list, Label, Print, Scan tag, and Export CSV outside Reports) are deferred until an export feature exists; Reports downloads each report as CSV.
 
-## Screen → view map (slices 4 to 8)
+## Screen → view map (slices 4 to 9)
 - Overview: `reports.services.overview_kpis(year, month)` + `pm.services.pm_on_time_series` for the 12-month chart; attention list = life-support overdue PMs, alerts needing action, unassigned portal requests, expired/expiring contracts, critical open WOs, WOs awaiting parts > 7 days.
 - Equipment: `Asset.objects.select_related(...)` with the same filters as the mock's toolbar (category, status, risk, department, support, overdue-only, bucket). Fleet buckets: retired / out of service / in repair / open recall / PM overdue / PM due ≤ 30 d / compliant, each device counted once in that order.
 - Work orders: list and board; status buttons call `workorders.services.change_status`; assignment dropdown lists `credentials.services.qualified_technicians(asset)` first.
-- PM schedule: calendar from `Asset.next_pm_on`; "create work orders for this day" calls `pm.services.generate_pm_work_orders` with a one-day horizon per asset.
+- PM schedule: `pm.schedule` over active devices' `next_pm_on` (the mock's pmByDay). A Sunday-first month calendar with a life-support
+  and a high-risk dot and a count per day (red on past days: those devices are overdue), and the selected day's devices, most critical
+  first, with hours from their PM procedure and the technician the schedule suggests: among technicians credentialed for the device,
+  the least loaded (open work-order hours, plus what the same batch has given them), ties by name, where the mock hashed. "Create N
+  PM work orders" calls `pm.services.create_pm_work_orders_for_day`: one per device without an open PM work order, due on the PM date
+  (today for a past day), assigned to the suggested technician only when the user may assign work orders. It needs PM Approve, as
+  the API's nightly `generate` always has. Below: the 30-day outlook by category, each technician's next-7-day load (PM hours for
+  the technician assigned or suggested, plus other open work) against weekly capacity, and the PM library (AEM only where approved,
+  never for life support). The nav badge counts overdue devices. The mock's Auto-assign week, Route sheets, and OEM library Sync
+  only toast and are deferred. `/api/v1/pm/calendar/`, `/api/v1/pm/day/`, `/api/v1/pm/create-for-day/`.
 - Contracts: table from `contracts.services.filter_contracts` + `contracts_summary`; the drawer calls `add_asset` / `add_model` / `remove_asset` /
   `renew_contract` / `delete_contract` (`create_contract` / `update_contract` behind the forms); the device drawer's support editor posts to
   `/contracts/assets/<tag>/support/`.
