@@ -1,6 +1,6 @@
 {% extends "portal/base.html" %}
 {% block body %}
-<div class="note">If a device failure is affecting a patient right now, call the Clinical Engineering hotline in addition to submitting this form.</div>
+<div class="note">If a device failure is affecting a patient right now, call the Clinical Engineering hotline{% if hotline %} at {{ hotline }}{% endif %} in addition to submitting this form.</div>
 <form method="post">{% csrf_token %}
   {% if form.non_field_errors %}<div class="err">{{ form.non_field_errors }}</div>{% endif %}
   {% for field in form.visible_fields %}

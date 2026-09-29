@@ -16,6 +16,7 @@ from django.db.models.functions import Coalesce, TruncMonth
 from apps.contracts.models import Contract
 from apps.equipment.models import Asset, AssetStatus, RiskClass
 from apps.equipment.services import fleet_bucket_counts
+from apps.facility.services import kpi_targets
 from apps.pm.dates import month_bounds
 from apps.pm.services import overdue_assets, pm_on_time_rate, pm_on_time_series
 from apps.recalls.models import AlertMatch
@@ -97,8 +98,6 @@ def open_work_orders_count() -> int:
 
 
 # --- Overview screen ----------------------------------------------------------------------------
-# Targets shown on the KPI tiles. Hard-coded until editable policy lands (slice 8).
-KPI_TARGETS = {"pm_on_time": 95.0, "pm_on_time_life_support": 100.0, "uptime_pct": 99.5, "mttr_days": 3.0}
 ATTENTION_CONTRACT_DAYS = 30  # the mock flags contracts ending within 30 days (the contracts screen warns at 90)
 ATTENTION_AWAITING_PARTS_DAYS = 7
 ATTENTION_HIGH_RISK_LIMIT = 3
@@ -217,7 +216,8 @@ def recent_activity(start: date, as_of: date, limit: int = 8):
 
 
 def overview_page(year: int, month: int, today: date | None = None) -> dict:
-    """Everything the Overview screen shows for one month. Fleet state and attention items are always as of today."""
+    """Everything the Overview screen shows for one month. Fleet state and attention items are always as of today; the targets are
+    the tenant's, from Settings (apps.facility)."""
     today = today or date.today()
     k = overview_kpis(year, month, today)
     py, pm = _shift_month(year, month, -1)
@@ -227,7 +227,7 @@ def overview_page(year: int, month: int, today: date | None = None) -> dict:
     start, as_of = k["period"]["start"], k["period"]["as_of"]
     affected = Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES, device_model__alert_matches__status=AlertMatch.Status.NEEDS_ACTION).distinct().count()
     return {
-        "k": k, "prev": prev, "targets": KPI_TARGETS, "alert_devices_affected": affected,
+        "k": k, "prev": prev, "targets": kpi_targets(), "alert_devices_affected": affected,
         "buckets": fleet_bucket_counts(today),
         "pm_series": pm_on_time_series(year, month), "pm_series_life_support": pm_on_time_series(year, month, life_support_only=True),
         "attention": attention_items(today),

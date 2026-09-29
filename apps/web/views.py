@@ -22,6 +22,7 @@ from apps.credentials.models import Technician
 from apps.credentials.services import qualification, qualified_technicians
 from apps.equipment.models import Asset
 from apps.equipment.services import FleetBucket, asset_service_summary, filter_assets, fleet_summary, search_assets
+from apps.facility.services import get_settings
 from apps.recalls.models import AlertMatch
 from apps.reports.services import overview_page
 from apps.workorders import permissions as wo_perms
@@ -73,7 +74,7 @@ def overview(request):
     return render(request, "web/overview.html", {
         "nav_active": "overview", "today": today, "year": year, "month": month, "d": data, "k": data["k"],
         "tiles": ov.kpi_tiles(data, recalls_url=recalls_url), "strip": ov.fleet_strip(data["buckets"]),
-        "pm_chart": ov.pm_trend_chart(data["pm_series"], data["pm_series_life_support"]),
+        "pm_chart": ov.pm_trend_chart(data["pm_series"], data["pm_series_life_support"], target=data["targets"]["pm_on_time"]),
         "type_chart": ov.opened_by_type_chart(data["opened_by_type"]), "spend_chart": ov.spend_chart(data["spend_by_category"]),
         "attention": attention[:9], "attention_more": max(0, len(attention) - 9), "attention_total": len(attention),
         **ov.month_options(today, first.year),
@@ -152,9 +153,12 @@ def _workorders_context(request) -> dict:
     mode = "board" if request.GET.get("mode") == "board" else "list"
     today = date.today()
     open_wos = wo_services.open_work_orders()
+    unassigned_portal = wo_services.unassigned_portal_requests().count()
     ctx = {"nav_active": "workorders", "list_url": reverse("web:workorders"), "f": f, "mode": mode, "technicians": techs,
            "types": WoType.choices, "statuses": WoStatus.choices,
-           "unassigned_portal": wo_services.unassigned_portal_requests().count(), "open_count": open_wos.count(),
+           "unassigned_portal": unassigned_portal, "open_count": open_wos.count(),
+           # The note quotes the tenant's portal policy and closes the sentence itself, so a trailing period is dropped.
+           "portal_policy": get_settings().policy_portal.rstrip(". ") if unassigned_portal else "",
            "past_due": open_wos.filter(due_on__lt=today).count(),
            "done_7d": WorkOrder.objects.filter(completed_on__gte=today - timedelta(days=wo_services.BOARD_RECENT_DAYS)).count(),
            "can_create": request.user.has_level(wo_perms.MODULE, wo_perms.CREATE_LEVEL)}
@@ -201,6 +205,7 @@ def _wo_drawer_context(request, wo) -> dict:
         "open_days": (today - wo.opened_on).days,
         "qual": qualification(wo.assigned_to, wo.asset) if wo.assigned_to_id else None,
         "can_assign": can_assign, "assign_choices": technician_choices(wo.asset) if can_assign else [], "assign_current": current,
+        "assignment_policy": get_settings().policy_assignment if can_assign else "",
         "can_note": request.user.has_level(wo_perms.MODULE, wo_perms.NOTE_LEVEL),
         "can_view_asset": request.user.has_level(Module.EQUIPMENT, Level.VIEW),
         "timeline": wo_services.timeline(wo),

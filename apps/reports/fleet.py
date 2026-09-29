@@ -8,12 +8,11 @@ from datetime import date, timedelta
 from django.db.models import Count, DecimalField, F, Q, Sum
 
 from apps.equipment.models import Asset, AssetStatus, DeviceModel, RiskClass
+from apps.facility.services import compliance_targets
 from apps.pm.dates import month_bounds
 from apps.reports.services import TRAILING_DAYS
 from apps.workorders.models import LaborLine, PartLine, WorkOrder, WoStatus, WoType
 
-# Survey targets by risk class (the mock: life support and high at 100%, the rest at the hospital policy's 95%).
-COMPLIANCE_TARGETS = {RiskClass.LIFE_SUPPORT: 100, RiskClass.HIGH: 100, RiskClass.MEDIUM: 95, RiskClass.LOW: 95}
 CLASS_ORDER = (RiskClass.LIFE_SUPPORT, RiskClass.HIGH, RiskClass.MEDIUM, RiskClass.LOW)
 MTBF_LIMIT = 12
 REPAIR_RATE_FACTOR = 2  # the mock's x2: two 182-day halves make its year, the same base MTBF uses (n * 182 / repairs)
@@ -48,18 +47,20 @@ def report_compliance(today: date) -> dict:
            .exclude(status=WoStatus.CANCELLED).order_by().values("asset__device_model__risk_class")
            .annotate(due=Count("id"), completed=Count("id", filter=Q(completed_on__isnull=False)),
                      on_time=Count("id", filter=Q(completed_on__lte=F("due_on"))))}
+    # Survey targets by risk class: life support and high at 100%, medium and low at the tenant's PM completion target (Settings).
+    targets = compliance_targets()
     classes = []
     for rc in CLASS_ORDER:
         f, p = fleet.get(rc, {}), pms.get(rc, {})
         devices, overdue = f.get("devices", 0), f.get("overdue", 0)
         pct = (1 - overdue / devices) * 100 if devices else 100.0
-        target = COMPLIANCE_TARGETS[rc]
+        target = targets[rc]
         classes.append({"key": rc.value, "label": rc.label, "devices": devices, "due": p.get("due", 0), "completed": p.get("completed", 0),
                         "on_time": p.get("on_time", 0), "overdue": overdue, "compliance_pct": float(pct), "target_pct": target, "meets": pct >= target})
     return {
         "columns": ["Risk class", "Devices", "PMs due this month", "Completed", "On time", "Overdue now", "Current compliance %", "Target %"],
         "rows": [[c["label"], c["devices"], c["due"], c["completed"], c["on_time"], c["overdue"], c["compliance_pct"], c["target_pct"]] for c in classes],
-        "classes": classes, "month_label": today.strftime("%B %Y"), "today": today,
+        "classes": classes, "month_label": today.strftime("%B %Y"), "today": today, "policy_target_pct": targets[RiskClass.MEDIUM],
     }
 
 

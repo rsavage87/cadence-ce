@@ -19,6 +19,8 @@ class ServiceRequestForm(forms.Form):
         # Department.objects is tenant-scoped; the view wraps this form in tenant_context().
         self.fields["department"].queryset = Department.objects.all()
         self.fields["callback"].required = require_callback
+        if not require_callback:
+            self.fields["callback"].label = "Callback extension (optional)"
 
     def clean_asset_tag(self):
         tag = self.cleaned_data["asset_tag"].strip().upper()
