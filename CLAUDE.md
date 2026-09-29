@@ -32,9 +32,11 @@ HTMX for the web UI (`apps/web`, via django-htmx), pytest. Tests run on SQLite a
 python manage.py makemigrations && python manage.py migrate        # first run creates all migrations
 python manage.py bootstrap_tenant --name "Riverside" --slug riverside --admin-email you@example.com
 python manage.py seed_demo                                         # small fictional dataset, login kim@riverside.example / DemoPass-2026
-python manage.py generate_pm                                       # nightly PM work-order generation (cron / scheduler)
+python manage.py generate_pm                                       # PM work-order generation; the scheduler runs it daily
 python manage.py import_assets --tenant riverside inventory.csv --dry-run
-python manage.py import_openfda --days 30                         # schedule daily, like generate_pm; nothing runs it for you
+python manage.py import_openfda --days 30                         # FDA recall import; the scheduler runs it daily
+python manage.py run_daily_jobs                                    # both daily jobs, each at most once per local day (cron-safe)
+python manage.py scheduler                                         # long-running: runs them at SCHEDULER_DAILY_AT (docker-compose `scheduler`)
 python manage.py enable_rls --database=migrate                     # Postgres only, run after migrate
 pytest
 ```
@@ -75,4 +77,6 @@ pytest
   context processor. Drawers and modals are partials swapped into `#drawer` / `#modal-card`; the same URLs render a full page
   when opened directly. List wrappers that re-fetch themselves carry `hx-disinherit="hx-swap"` (a test enforces it).
 - `apps/api` DRF viewsets under `/api/v1/`
+- `apps/jobs` the daily jobs (`services.DAILY_JOBS`, `run_daily_jobs`, `is_due`), `JobRun` (a system table, not tenant-scoped: one row per
+  job per local day is the lock against double runs), and the `scheduler` / `run_daily_jobs` commands
 - `apps/demo` seed data

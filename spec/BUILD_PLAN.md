@@ -26,6 +26,9 @@ Slices 0 to 9 are built: every screen in the mock exists. What each slice deferr
 - **Cost of service ratio**: (work-order cost of the trailing 182 days × 365/182 + annual cost of active contracts) / acquisition value of active devices.
 - **Recall alerts received**: alert matches whose alert was published in the period.
 
+Operations: `apps/jobs` runs `generate_pm` and `import_openfda` once a day (the docker-compose `scheduler` service, at
+`SCHEDULER_DAILY_AT`), each at most once per local day and recorded in Admin under Scheduled jobs.
+
 The mock's toast-only buttons (Device list, Label, Print, Scan tag, and Export CSV outside Reports) are deferred until an export feature exists; Reports downloads each report as CSV.
 
 ## Screen → view map (slices 4 to 9)

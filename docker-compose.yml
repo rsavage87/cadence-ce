@@ -25,5 +25,22 @@ services:
     depends_on:
       db:
         condition: service_healthy
+  scheduler:
+    # Runs the daily jobs (PM work-order generation, then the openFDA recall import) at SCHEDULER_DAILY_AT, local time.
+    # It waits for the web service, which applies migrations, and retries quietly while the database is not ready.
+    build: .
+    command: python manage.py scheduler
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://cadence_app:cadence_app@db:5432/cadence
+      MIGRATE_DATABASE_URL: postgres://cadence:cadence@db:5432/cadence
+      SCHEDULER_DAILY_AT: ${SCHEDULER_DAILY_AT:-02:30}
+    volumes: [".:/app"]
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      web:
+        condition: service_started
 volumes:
   pgdata:

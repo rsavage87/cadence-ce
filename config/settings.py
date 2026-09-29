@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     "apps.credentials",
     "apps.portal",
     "apps.facility",
+    "apps.jobs",
     "apps.reports",
     "apps.api",
     "apps.demo",
@@ -160,6 +161,7 @@ if not DEBUG and not TESTING:
 PORTAL_BASE_URL = os.environ.get("PORTAL_BASE_URL", "http://localhost:8000")
 PORTAL_RATE_LIMIT_PER_HOUR = int(os.environ.get("PORTAL_RATE_LIMIT_PER_HOUR", "20"))
 PM_LEAD_DAYS = int(os.environ.get("PM_LEAD_DAYS", "21"))  # generate PM work orders this many days before due
+SCHEDULER_DAILY_AT = os.environ.get("SCHEDULER_DAILY_AT", "02:30")  # local time (TIME_ZONE) the scheduler runs the daily jobs
 CREDENTIAL_EXPIRY_WARNING_DAYS = 60
 CONTRACT_EXPIRY_WARNING_DAYS = 90
 

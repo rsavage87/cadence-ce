@@ -23,22 +23,31 @@ class Command(BaseCommand):
     help = "Import recent openFDA device recalls and match them to inventory."
 
     def add_arguments(self, parser):
-        parser.add_argument("--days", type=int, default=30)
+        parser.add_argument("--days", type=int, default=30, help="Recalls FDA posted in the last N days (default 30)")
         parser.add_argument("--manufacturer", help="Limit to one manufacturer name (openFDA text search)")
-        parser.add_argument("--limit", type=int, default=100)
+        parser.add_argument("--limit", type=int, default=1000, help="Records to fetch; openFDA's maximum per request is 1000")
 
     def handle(self, *args, **opts):
         since = (date.today() - timedelta(days=opts["days"])).strftime("%Y%m%d")
-        search = f"event_date_initiated:[{since}+TO+{date.today():%Y%m%d}]"
+        # By posting date, not initiation date: FDA posts a recall weeks after the firm starts it, so a window on the start date
+        # finds almost nothing recent (1 record against 273 for the same 30 days when this was checked). Spaces, not "+":
+        # requests encodes the spaces, and a literal "+" makes openFDA answer 500.
+        search = f"event_date_posted:[{since} TO {date.today():%Y%m%d}]"
         if opts["manufacturer"]:
-            search += f'+AND+recalling_firm:"{opts["manufacturer"]}"'
+            search += f' AND recalling_firm:"{opts["manufacturer"]}"'
         resp = requests.get(ENDPOINT, params={"search": search, "limit": opts["limit"]}, timeout=30)
         if resp.status_code == 404:  # openFDA returns 404 for "no results"
             self.stdout.write("No recalls in that window.")
             return
         resp.raise_for_status()
+        payload = resp.json()
+        results = payload.get("results", [])
+        total = (payload.get("meta") or {}).get("results", {}).get("total")
+        if isinstance(total, int) and total > len(results):
+            # openFDA returns at most --limit records (1000 per request); say so instead of silently dropping the rest.
+            self.stderr.write(f"openFDA reports {total} recalls in the window but returned {len(results)}; raise --limit or shorten --days.")
         imported = 0
-        for rec in resp.json().get("results", []):
+        for rec in results:
             ext = rec.get("res_event_number") or rec.get("product_res_number") or rec.get("cfres_id")
             if not ext:
                 continue
@@ -53,7 +62,8 @@ class Command(BaseCommand):
                     "model_terms": [],
                     "title": (rec.get("reason_for_recall") or rec.get("product_description") or "")[:300],
                     "action": rec.get("action", ""),
-                    "published_on": _parse(rec.get("event_date_initiated")),
+                    # When FDA made it public, which is when a CE department could have received it; the start date if missing.
+                    "published_on": _parse(rec.get("event_date_posted")) or _parse(rec.get("event_date_initiated")),
                     "raw": rec,
                 },
             )
@@ -66,7 +76,9 @@ class Command(BaseCommand):
 
 
 def _parse(s):
+    """openFDA dates: "2026-09-14" in the live feed, "20260914" in older records and in search syntax."""
+    digits = str(s or "").replace("-", "")
     try:
-        return date(int(s[:4]), int(s[4:6]), int(s[6:8]))
-    except (TypeError, ValueError):
+        return date(int(digits[:4]), int(digits[4:6]), int(digits[6:8])) if len(digits) == 8 and digits.isdigit() else None
+    except ValueError:
         return None

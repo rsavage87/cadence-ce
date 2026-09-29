@@ -33,6 +33,17 @@ python manage.py seed_demo && python manage.py runserver
 pytest
 ```
 
+## Daily jobs
+Two jobs run once a day: `generate_pm` (PM work orders coming due within `PM_LEAD_DAYS`, 21 by default, for every tenant) and
+`import_openfda` (the last 30 days of FDA device recalls, matched to every tenant's inventory). `docker compose up` starts a
+`scheduler` service that runs both at `SCHEDULER_DAILY_AT` (default 02:30, local time in `DJANGO_TIME_ZONE`). If it starts after
+that time and today's jobs have not run, it runs them at once.
+
+Each job runs at most once per local day, recorded in Admin under Scheduled jobs with what it printed. A second scheduler or a
+restart does not repeat a job, and one job failing does not stop the other. Elsewhere, run one `python manage.py scheduler`
+process, or call `python manage.py run_daily_jobs` from a platform cron or a Kubernetes CronJob; it is safe to call more than
+once a day. `run_daily_jobs --force` runs the jobs again today. If a run was killed partway, delete its row in Admin, then rerun.
+
 ## Security model
 - One tenant per hospital. Every row carries `tenant_id`; the ORM scopes queries through `TenantManager`, and
   PostgreSQL row-level security enforces the same rule at the database (`manage.py enable_rls`) when the app
@@ -43,5 +54,4 @@ pytest
 
 ## First things to do in Claude Code
 1. `pip install -r requirements-dev.txt`, then `pytest`.
-2. Pick up a deferred item from `spec/BUILD_PLAN.md` (exports, connectors, invitation email, the ECRI importer), or schedule
-   `generate_pm` and `import_openfda` to run daily.
+2. Pick up a deferred item from `spec/BUILD_PLAN.md` (exports, connectors, invitation email, the ECRI importer).
