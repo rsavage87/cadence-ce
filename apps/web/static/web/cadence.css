@@ -428,3 +428,26 @@ button.link{background:none;border:0;padding:0;font:inherit;font-size:12px;font-
 .alert .progress .hint{margin-top:4px}
 .alert .more .hint{margin-top:8px}
 .alert .foot a.btn{text-decoration:none}
+
+
+
+/* ===== settings screen (slice 8) ===== */
+/* Portal rows (the mock's inline prow styles), the one-line reason under a row that cannot work yet, and the forms' button rows. */
+.set-rows{margin:10px 0 8px}
+.set-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px}
+.set-row.last{border-bottom:0}
+.set-row .lbl{color:var(--ink-2);display:flex;flex-direction:column;gap:2px}
+.set-row .why{font-size:12px;color:var(--ink-3)}
+.set-row.off .tog{cursor:default;opacity:.6}
+.set-row input.perm{width:170px;padding:5px 8px}
+.set-form{padding:0;grid-template-columns:1fr}
+.set-form.two{grid-template-columns:1fr 1fr}
+.set-form input:disabled{color:var(--ink-2);background:var(--surface-2)}
+.set-form input[aria-invalid="true"]{border-color:var(--crit)}
+.set-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px;flex-wrap:wrap}
+.set-actions a.btn,#set-portal a.btn,#set-integrations a.btn{text-decoration:none}
+#set-integrations .int .rt{flex-direction:column;align-items:flex-end;gap:2px}
+.share-links{padding:8px 16px 16px;display:grid;gap:14px}
+.share-links .lbl{font-size:12.5px;color:var(--ink-2);margin-bottom:4px}
+.share-links .linkbox.grow{flex:1;min-width:220px}
+@media (max-width:760px){.set-form.two{grid-template-columns:1fr}.set-row input.perm{width:130px}}

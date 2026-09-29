@@ -1,0 +1,27 @@
+{% load web %}
+{# The mock's share modal (openShareModal), loaded into #modal-card. The department select re-fetches only the link box. #}
+<div class="modal-h"><h2>Service request link</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+<div class="share-links">
+  <div class="hint">Anyone with the link can submit a request without signing in. Requests arrive in Work orders as unassigned, tagged with the department and callback number, and the requester gets a confirmation number.</div>
+  <div>
+    <div class="lbl">General link</div>
+    <div class="linkbox"><input readonly value="{{ portal_url }}" aria-label="General link"><button class="btn sm" type="button" data-act="copy" data-copy="{{ portal_url }}">Copy</button></div>
+  </div>
+  <div>
+    <div class="lbl">Department link, pre-fills the department</div>
+    {% if departments %}
+    <div class="linkbox">
+      <label class="field"><span>Department</span>
+        <select name="dept" aria-label="Department" hx-get="{% url 'web:settings_dept_links' %}" hx-trigger="change" hx-target="#{{ box_id }}" hx-swap="innerHTML">
+          {% for d in departments %}<option value="{{ d.pk }}"{% if d.pk == dept.pk %} selected{% endif %}>{{ d.name }}</option>{% endfor %}
+        </select>
+      </label>
+      <div class="linkbox grow" id="{{ box_id }}">{% include "web/_settings_dept_link.html" %}</div>
+    </div>
+    {% else %}
+    <div class="hint">No departments yet. Department links appear once the inventory has departments.</div>
+    {% endif %}
+  </div>
+  <div class="note">Device-specific links for QR labels are on each device: Equipment, open the device, Request link.</div>
+  <div class="set-actions"><a class="btn" href="{{ portal_url }}" target="_blank" rel="noopener">Preview the portal</a><button class="btn primary" type="button" data-act="close-modal">Done</button></div>
+</div>
