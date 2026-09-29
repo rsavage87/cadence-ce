@@ -183,3 +183,146 @@ def test_import_warns_when_openfda_has_more_than_it_returned(db, monkeypatch):
     err = StringIO()
     call_command("import_openfda", days=30, stdout=StringIO(), stderr=err)
     assert "openFDA reports 2500 recalls in the window but returned 1" in err.getvalue()
+
+
+# --- review fixes: never double a running job, take over dead runs, record results robustly, stop cleanly -----------------
+
+def test_force_never_starts_a_second_copy_of_a_running_job(due_pump, monkeypatch):
+    """The scheduler is mid-way through generate_pm when someone runs `run_daily_jobs --force`: the forced run must not start it again,
+    the first run must still record its result, and the next job must still run."""
+    calls = []
+    real = jobs.call_command
+
+    def during(command, **kw):
+        calls.append(command)
+        if command == "generate_pm" and calls.count("generate_pm") == 1:
+            assert jobs.run_daily_jobs(force=True, jobs=["generate_pm"]) == []  # held: still running
+        return real(command, **kw)
+
+    monkeypatch.setattr(jobs, "call_command", during)
+    runs = jobs.run_daily_jobs()
+    assert calls == ["generate_pm", "import_openfda"] and [(r.job, r.status) for r in runs] == [("generate_pm", "succeeded"), ("import_openfda", "succeeded")]
+    assert JobRun.objects.get(job="generate_pm").status == "succeeded"
+
+
+def test_force_reruns_a_finished_job(due_pump):
+    jobs.run_daily_jobs(jobs=["generate_pm"])
+    first = JobRun.objects.get(job="generate_pm")
+    again = jobs.run_daily_jobs(force=True, jobs=["generate_pm"])
+    assert [r.pk for r in again] == [first.pk] and JobRun.objects.get(pk=first.pk).status == "succeeded"
+
+
+def test_a_run_left_running_is_taken_over_once_stale(due_pump, settings):
+    settings.SCHEDULER_DAILY_AT = "00:00"
+    now = jobs.timezone.now()
+    fresh = JobRun.objects.create(job="generate_pm", run_on=jobs.timezone.localdate(), started_at=now - timedelta(hours=1))
+    assert "generate_pm" not in jobs.pending_jobs(fresh.run_on) and jobs.run_daily_jobs(jobs=["generate_pm"]) == []  # maybe still going
+    JobRun.objects.filter(pk=fresh.pk).update(started_at=now - jobs.STALE_AFTER - timedelta(minutes=1))
+    assert "generate_pm" in jobs.pending_jobs(fresh.run_on) and jobs.is_due() is True
+    [run] = jobs.run_daily_jobs(jobs=["generate_pm"])
+    assert run.pk == fresh.pk and run.status == "succeeded" and run.output.startswith("Took over a run that started")
+
+
+def test_two_schedulers_claiming_at_once_run_a_job_once(db, monkeypatch):
+    """Between one scheduler finding no row and inserting it, the other inserts first: the unique constraint makes the loser skip."""
+    real_create = JobRun.objects.create
+    raced = []
+
+    def racing_create(**kw):
+        if not raced:
+            raced.append(kw["job"])
+            JobRun.objects.bulk_create([JobRun(job=kw["job"], run_on=kw["run_on"])])  # the other scheduler got there first
+        return real_create(**kw)
+
+    monkeypatch.setattr(JobRun.objects, "create", racing_create)
+    ran = []
+    monkeypatch.setattr(jobs, "call_command", lambda command, **kw: ran.append(command))
+    runs = jobs.run_daily_jobs()
+    assert raced == ["generate_pm"] and "generate_pm" not in ran and [r.job for r in runs] == ["import_openfda"]
+
+
+def test_a_lost_connection_while_recording_does_not_skip_the_next_job(db, monkeypatch):
+    real_update = jobs.JobRun.objects.filter
+    failures = []
+
+    class Flaky:
+        def __init__(self, qs):
+            self.qs = qs
+
+        def update(self, **kw):
+            if not failures:
+                failures.append(1)
+                raise OperationalError("server closed the connection unexpectedly")
+            return self.qs.update(**kw)
+
+        def __getattr__(self, name):
+            return getattr(self.qs, name)
+
+    monkeypatch.setattr(jobs, "call_command", lambda command, **kw: None)
+    monkeypatch.setattr(jobs.JobRun.objects, "filter", lambda *a, **kw: Flaky(real_update(*a, **kw)) if "pk" in kw else real_update(*a, **kw))
+    runs = jobs.run_daily_jobs()
+    assert [r.job for r in runs] == ["generate_pm", "import_openfda"] and failures == [1]
+    assert set(JobRun.objects.values_list("status", flat=True)) == {"succeeded"}  # the retry on a fresh connection recorded it
+
+
+def test_a_stop_during_a_job_is_recorded_and_honoured(db, monkeypatch):
+    def stopped(command, **kw):
+        raise SystemExit(0)  # what the scheduler's SIGTERM handler raises
+
+    monkeypatch.setattr(jobs, "call_command", stopped)
+    with pytest.raises(SystemExit):
+        jobs.run_daily_jobs()
+    run = JobRun.objects.get()
+    assert (run.job, run.status) == ("generate_pm", "failed") and "Stopped before finishing (SystemExit)" in run.output
+    assert not JobRun.objects.filter(job="import_openfda").exists()  # it stopped, as asked
+
+
+def test_scheduler_turns_sigterm_into_a_clean_exit_and_waits_for_migrations(db, monkeypatch, settings):
+    import signal
+
+    from apps.jobs.management.commands import scheduler as cmd
+
+    settings.SCHEDULER_DAILY_AT = "00:00"
+    monkeypatch.setattr(cmd, "unapplied_migrations", lambda: True)
+    call_command("scheduler", "--once", stdout=StringIO())
+    assert JobRun.objects.count() == 0  # nothing runs against a half-migrated schema
+    assert signal.getsignal(signal.SIGTERM) is cmd._stop
+    with pytest.raises(SystemExit):
+        cmd._stop(signal.SIGTERM, None)
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+
+
+def test_import_keeps_one_alert_per_recalled_product(monkeypatch, tenant, pump_model):
+    pump = {**RECORD, "res_event_number": "97001", "product_res_number": "Z-0101-2026", "product_description": "Alaris 8015 PCU infusion pump"}
+    syringe = {**RECORD, "res_event_number": "97001", "product_res_number": "Z-0102-2026", "product_description": "Alaris 8110 syringe module"}
+
+    class TwoProducts(FakeFDA):
+        def json(self):
+            return {"meta": {"results": {"total": 2}}, "results": [pump, syringe]}
+
+    monkeypatch.setattr("apps.recalls.management.commands.import_openfda.requests.get", lambda *a, **kw: TwoProducts())
+    call_command("import_openfda", days=30, stdout=StringIO())
+    assert set(Alert.objects.filter(source="fda").values_list("external_id", flat=True)) == {"Z-0101-2026", "Z-0102-2026"}
+    with tenant_context(tenant):
+        from apps.recalls.models import AlertMatch
+
+        assert AlertMatch.objects.get().alert.external_id == "Z-0101-2026"  # the pump product matched the pump model
+
+
+def test_import_matching_keeps_going_when_one_tenant_fails(tenant, other_tenant, pump_model, monkeypatch):
+    import apps.recalls.management.commands.import_openfda as cmd
+
+    real = cmd.match_all_open_alerts
+
+    def flaky():
+        from apps.tenants.context import get_current_tenant
+
+        if get_current_tenant().slug == "other":
+            raise RuntimeError("bad data")
+        return real()
+
+    monkeypatch.setattr(cmd, "match_all_open_alerts", flaky)
+    out, err = StringIO(), StringIO()
+    with pytest.raises(CommandError, match="Recall matching failed for other"):
+        call_command("import_openfda", days=30, stdout=out, stderr=err)
+    assert "riverside: 1 new matches" in out.getvalue() and "other: matching failed" in err.getvalue()

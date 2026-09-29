@@ -24,4 +24,4 @@ class JobRunAdmin(admin.ModelAdmin):
         return False
 
     def has_delete_permission(self, request, obj=None):
-        return request.user.is_superuser  # clearing a stuck "running" row lets the job run again today
+        return request.user.is_superuser  # deleting a row lets its job run again today (a dead "running" row is taken over after 6 h anyway)

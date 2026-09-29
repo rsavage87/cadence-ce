@@ -9,7 +9,8 @@ ECRI alerts require an ECRI membership and API agreement; add a second importer 
 from datetime import date, timedelta
 
 import requests
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
+from django.db import transaction
 
 from apps.recalls.models import Alert
 from apps.recalls.services import match_all_open_alerts
@@ -48,7 +49,9 @@ class Command(BaseCommand):
             self.stderr.write(f"openFDA reports {total} recalls in the window but returned {len(results)}; raise --limit or shorten --days.")
         imported = 0
         for rec in results:
-            ext = rec.get("res_event_number") or rec.get("product_res_number") or rec.get("cfres_id")
+            # One record per recalled product: key on the product's recall number (Z-1234-2026), not the event, which covers
+            # several products; keyed by event, every product but the last would be lost, with its device description.
+            ext = rec.get("product_res_number") or rec.get("cfres_id") or rec.get("res_event_number")
             if not ext:
                 continue
             _, created = Alert.objects.update_or_create(
@@ -69,10 +72,18 @@ class Command(BaseCommand):
             )
             imported += int(created)
         self.stdout.write(f"Imported {imported} new alerts")
+        failed = []
         for tenant in Tenant.objects.filter(is_active=True):
-            with tenant_context(tenant):
-                n = match_all_open_alerts()
+            try:
+                with transaction.atomic(), tenant_context(tenant):
+                    n = match_all_open_alerts()
+            except Exception as e:  # one hospital's bad data must not keep the others from their matches
+                failed.append(tenant.slug)
+                self.stderr.write(f"{tenant.slug}: matching failed: {e!r}")
+                continue
             self.stdout.write(f"{tenant.slug}: {n} new matches")
+        if failed:
+            raise CommandError(f"Recall matching failed for {', '.join(failed)}")
 
 
 def _parse(s):

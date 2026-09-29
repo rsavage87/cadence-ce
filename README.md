@@ -42,7 +42,9 @@ that time and today's jobs have not run, it runs them at once.
 Each job runs at most once per local day, recorded in Admin under Scheduled jobs with what it printed. A second scheduler or a
 restart does not repeat a job, and one job failing does not stop the other. Elsewhere, run one `python manage.py scheduler`
 process, or call `python manage.py run_daily_jobs` from a platform cron or a Kubernetes CronJob; it is safe to call more than
-once a day. `run_daily_jobs --force` runs the jobs again today. If a run was killed partway, delete its row in Admin, then rerun.
+once a day. `run_daily_jobs --force` runs a finished job again today; it never starts a second copy of a job that is still
+running. A run killed partway (the container stopped, the database dropped) is recorded as stopped, or, if the process died
+outright, taken over by the scheduler six hours after it started.
 
 ## Security model
 - One tenant per hospital. Every row carries `tenant_id`; the ORM scopes queries through `TenantManager`, and
