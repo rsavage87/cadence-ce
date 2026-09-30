@@ -3,7 +3,6 @@ Sending the account emails (invitations, password resets). One place decides how
 reported to the caller as False, never raised, so a mail outage cannot undo the account change that asked for the email.
 """
 import logging
-import smtplib
 
 from django.conf import settings
 from django.core.mail import EmailMessage
@@ -18,7 +17,7 @@ def send(to: str, template: str, context: dict) -> bool:
     body = render_to_string(f"{template}_body.txt", context)
     try:
         EmailMessage(subject, body, settings.DEFAULT_FROM_EMAIL, [to]).send(fail_silently=False)
-    except (smtplib.SMTPException, OSError):
+    except Exception:  # SMTP and network errors, and misconfiguration (a bad port, a password the server cannot encode)
         log.exception("Could not send %s to %s", template, to)
         return False
     return True

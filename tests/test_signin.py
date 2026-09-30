@@ -228,7 +228,7 @@ def test_the_lockout_also_covers_the_admin_sign_in(client, settings, tenant):
 
 def test_lockout_keys_do_not_hold_the_typed_login():
     signin.record_failure("Kim@Riverside.example", "10.0.0.1")
-    assert not any("riverside" in k or "10.0.0.1" in k for k in locmem._caches[""].keys())
+    assert not any("riverside" in k or "10.0.0.1" in k for k in locmem._caches["limits"].keys())
 
 
 # --- password reset -------------------------------------------------------------------------------------
@@ -464,3 +464,23 @@ def test_signed_out_forms_pass_csrf_with_a_browser_origin(client, tenant, make_u
     r = refused.post("/login/", {"username": "kim@riverside.example", "password": "x", "csrfmiddlewaretoken": refused.cookies["csrftoken"].value},
                      HTTP_ORIGIN="null")
     assert r.status_code == 403  # what no-referrer would have caused in a real browser
+
+
+def test_a_dotless_i_shares_the_accounts_lockout_counter(settings):
+    """Postgres matches 'kım@...' to kim's account (UPPER folds the dotless i), so it must count against the same lock."""
+    settings.SIGNIN_MAX_FAILURES = 2
+    signin.record_failure("kim@riverside.example", None)
+    signin.record_failure("KıM@riverside.example ", None)
+    assert signin.is_locked("kim@riverside.example", None) and signin.is_locked("kım@riverside.example", None)
+
+
+def test_lockouts_survive_a_flood_of_other_cache_keys(settings):
+    """The counters live in their own store: filling the default cache (or making hundreds of junk logins) evicts nothing."""
+    from django.core.cache import cache
+
+    settings.SIGNIN_MAX_FAILURES = 1
+    signin.record_failure("kim@riverside.example", None)
+    for i in range(400):
+        cache.set(f"junk:{i}", i)
+        signin.record_failure(f"junk-{i}@example.com", None)
+    assert signin.is_locked("kim@riverside.example", None)

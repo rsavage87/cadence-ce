@@ -14,6 +14,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 from apps.accounts import invitations
 from apps.accounts.models import User, create_default_roles
+from apps.tenants.context import tenant_context
 from apps.tenants.models import Tenant
 
 
@@ -32,6 +33,12 @@ class Command(BaseCommand):
         if opts["invite"] and opts["password"]:  # call_command() with keyword options skips argparse's group check
             raise CommandError("Use either --invite or --password, not both.")
         tenant, created = Tenant.objects.get_or_create(slug=opts["slug"], defaults={"name": opts["name"]})
+        # Inside the new tenant from here on: roles are tenant-scoped, and row-level security only shows (and accepts) a
+        # tenant's rows while that tenant is set.
+        with tenant_context(tenant):
+            self._set_up(tenant, created, opts)
+
+    def _set_up(self, tenant, created, opts):
         roles = create_default_roles(tenant)
         director = next(r for r in [*roles, *tenant_roles(tenant)] if r.slug == "director")
         password = opts["password"] or secrets.token_urlsafe(12)

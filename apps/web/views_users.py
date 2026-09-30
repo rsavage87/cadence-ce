@@ -151,11 +151,11 @@ def user_invite(request):
     except ValidationError as e:
         form.add_error(None, e.messages[0])
         return _invite_modal(request, form)
-    # The account exists whatever happens to the email; a failed send is reported, and Resend invite tries again.
+    # The account exists whatever happens to the email. A failed send keeps the modal open with the warning (a toast fades
+    # before it is read); Resend invite tries again.
     if invitations.send_invitation(user, by=request.user):
         return _modal_done(f"Invitation sent to {user.email}", "users-changed")
-    return _modal_done(f"Account created for {user.email}, but the invitation email could not be sent. Use Resend invite once email is working.",
-                       "users-changed")
+    return trigger_client_event(render(request, "web/_user_invite_unsent.html", {"email": user.email}), "users-changed", {})
 
 
 # --- Roles tab ------------------------------------------------------------------------------------

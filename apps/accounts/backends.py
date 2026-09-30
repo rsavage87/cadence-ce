@@ -53,9 +53,11 @@ class UsernameOrEmailBackend(ModelBackend):
         return None
 
     def get_user(self, user_id):
-        """Every request loads the signed-in user; bring the facility and role along, since the middleware and shell read both."""
+        """Every request loads the signed-in user, with the facility (the middleware reads it). Not the role: this runs before
+        the middleware sets the tenant, and Role is tenant-scoped, so under row-level security a join here would find no role
+        (or fail) and the user would have no access. The role loads lazily once the tenant is set."""
         try:
-            user = User._default_manager.select_related("tenant", "role").get(pk=user_id)
+            user = User._default_manager.select_related("tenant").get(pk=user_id)
         except User.DoesNotExist:
             return None
         return user if self.user_can_authenticate(user) else None

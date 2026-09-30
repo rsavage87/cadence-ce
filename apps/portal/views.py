@@ -5,7 +5,7 @@ Rate-limited per IP. Creates a ServiceRequest plus an unassigned work order, the
 request number and response target. No patient identifiers are asked for.
 """
 from django.conf import settings
-from django.core.cache import cache
+from django.core.cache import caches
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.csrf import csrf_protect
@@ -24,6 +24,7 @@ RESPONSE_TARGETS = {Urgency.CRITICAL: "Within 1 hour, around the clock", Urgency
 
 
 def _rate_limited(ip) -> bool:
+    cache = caches["limits"]  # the rate-limit store (settings.CACHES)
     key = f"portal:{ip}"
     n = cache.get(key, 0)
     if n >= settings.PORTAL_RATE_LIMIT_PER_HOUR:

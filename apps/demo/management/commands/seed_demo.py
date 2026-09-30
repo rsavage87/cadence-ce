@@ -97,9 +97,12 @@ class Command(BaseCommand):
         rnd = random.Random(20260922)
         today = date.today()
         tenant, created = Tenant.objects.get_or_create(slug=opts["slug"], defaults={"name": opts["name"]})
-        if not created and Asset.unscoped.filter(tenant=tenant).exists():  # unscoped: idempotency check before entering context
-            self.stdout.write("Demo tenant already seeded.")
-            return
+        if not created:
+            with tenant_context(tenant):  # inside the tenant: under row-level security the check would otherwise see no devices
+                seeded = Asset.objects.exists()
+            if seeded:
+                self.stdout.write("Demo tenant already seeded.")
+                return
         create_default_roles(tenant)
         with tenant_context(tenant):
             director = Role.objects.get(slug="director")

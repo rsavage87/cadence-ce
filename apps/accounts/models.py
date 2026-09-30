@@ -3,6 +3,7 @@ from django.db import models
 from simple_history.models import HistoricalRecords
 
 from apps.core.models import TenantModel
+from apps.tenants.context import tenant_context
 
 
 class Module(models.TextChoices):
@@ -108,11 +109,15 @@ DEFAULT_ROLES = [
 
 
 def create_default_roles(tenant):
-    """Create the six standard roles for a new tenant. Idempotent."""
+    """Create the six standard roles for a new tenant. Idempotent. Runs inside the tenant, so the rows pass row-level
+    security whoever calls it (bootstrap_tenant and seed_demo run with no tenant set)."""
     created = []
-    for slug, name, desc, levels in DEFAULT_ROLES:
-        role, was_created = Role.unscoped.get_or_create(tenant=tenant, slug=slug, defaults={"name": name, "description": desc, "is_system": slug == "director"})
-        role.set_levels(levels)
-        if was_created:
-            created.append(role)
+    with tenant_context(tenant):
+        for slug, name, desc, levels in DEFAULT_ROLES:
+            # unscoped: the tenant is explicit here; the DB setting above is what row-level security checks
+            role, was_created = Role.unscoped.get_or_create(tenant=tenant, slug=slug,
+                                                            defaults={"name": name, "description": desc, "is_system": slug == "director"})
+            role.set_levels(levels)
+            if was_created:
+                created.append(role)
     return created

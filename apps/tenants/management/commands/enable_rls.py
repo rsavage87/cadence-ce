@@ -18,9 +18,11 @@ ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;
 ALTER TABLE {table} FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS tenant_isolation ON {table};
 CREATE POLICY tenant_isolation ON {table}
-    USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
-    WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+    USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 """
+# NULLIF: once a connection has set app.tenant_id, RESET leaves it as '' rather than unset, and ''::uuid raises. With the
+# NULLIF a connection with no tenant sees no rows, the same as a fresh one, instead of failing every query.
 
 
 def tenant_scoped_tables():

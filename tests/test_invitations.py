@@ -244,9 +244,9 @@ def test_email_failure_still_creates_the_account_and_says_so(client, signed_in, 
     _broken_mail(monkeypatch)
     r = client.post("/users/invite/", {"first_name": "Maria", "last_name": "Santos", "email": "msantos@riverside.example",
                                        "role": str(role("technician").id), "department": "Clinical Engineering"}, **HX)
-    assert r.status_code == 200 and "users-changed" in r["HX-Trigger"] and "modal-close" in r["HX-Trigger-After-Settle"]
-    assert "Account created for msantos@riverside.example, but the invitation email could not be sent. Use Resend invite once email is working." \
-        in r["HX-Trigger"]
+    # the modal stays open with the warning (no toast, no modal-close) and the list refreshes behind it
+    assert r.status_code == 200 and "users-changed" in r["HX-Trigger"] and "HX-Trigger-After-Settle" not in r
+    assert "The account for msantos@riverside.example was created, but the invitation email could not be sent." in r.content.decode()
     user = User.objects.get(username="msantos@riverside.example")
     assert invitations.is_pending(user) and mailoutbox == []
     r = client.post(f"/users/{user.pk}/resend-invite/", **HX)
@@ -342,3 +342,14 @@ def test_a_withdrawn_invitation_stays_dead_after_reactivation(ctx, role):
     assert invitations.user_for_link(uidb64, token) is None
     invitations.send_invitation(user)  # Resend invite still works
     assert invitations.user_for_link(*invitations.invitation_url(user).rstrip("/").split("/")[-2:]) == user
+
+
+def test_a_failed_resend_leaves_the_earlier_link_working(invitee, mailoutbox, monkeypatch):
+    """Nothing went out, so nothing changes: the link in the earlier email still sets the password."""
+    assert invitations.send_invitation(invitee)
+    uidb64, token = invitations.invitation_url(invitee).rstrip("/").split("/")[-2:]
+    sent_at = User.objects.get(pk=invitee.pk).invited_at
+    _broken_mail(monkeypatch)
+    assert invitations.send_invitation(invitee) is False
+    assert User.objects.get(pk=invitee.pk).invited_at == sent_at
+    assert invitations.user_for_link(uidb64, token) == invitee

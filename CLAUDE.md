@@ -11,20 +11,24 @@ HTMX for the web UI (`apps/web`, via django-htmx), pytest. Tests run on SQLite a
 ## Non-negotiables
 1. **Every business table inherits `apps.core.models.TenantModel`.** Query through `Model.objects` (tenant-scoped).
    `Model.unscoped` is only for tenant bootstrap, cross-tenant jobs, and tests, and each use gets a comment saying why.
-2. **Never write `queryset = Model.objects.all()` at class level** (admin, DRF, forms): it is evaluated at import time
+2. **Code that runs before a tenant is set never touches a tenant-scoped table**: loading the signed-in user
+   (`backends.get_user`), signed-out pages, and management commands before `tenant_context()`. No `select_related("role")`
+   there: under row-level security the row is hidden or the query fails, and SQLite tests cannot tell (`tests/test_rls_paths.py`
+   stands in for the policy; add new signed-out paths to it).
+3. **Never write `queryset = Model.objects.all()` at class level** (admin, DRF, forms): it is evaluated at import time
    with no tenant in context and stays empty. Resolve querysets inside the request (`get_queryset`).
-3. **Permissions are server-side.** Web views use `@web_view(Module.X, Level.Y)` (apps/web/decorators.py, which wraps
+4. **Permissions are server-side.** Web views use `@web_view(Module.X, Level.Y)` (apps/web/decorators.py, which wraps
    `require_level` with `login_required` and the no-tenant guard); API viewsets set `module` and rely on `ModulePermission`.
    Per-action levels live next to the services (`apps/workorders/permissions.py`, `apps/recalls/permissions.py`). Hiding a button
    is not access control.
-4. **State changes go through services** (`apps/workorders/services.py`, `apps/pm/services.py`, `apps/contracts/services.py`,
+5. **State changes go through services** (`apps/workorders/services.py`, `apps/pm/services.py`, `apps/contracts/services.py`,
    `apps/accounts/services.py`, `apps/credentials/services.py`, `apps/recalls/services.py`, `apps/facility/services.py`), never by setting fields in a
    view or calling model helpers like
    `Contract.add_assets` directly. Services validate, write status history, and keep the asset in sync.
-5. **No PHI by design.** The portal never asks for patient identifiers. Don't add free-text fields that invite them.
-6. **Migrations are generated, never hand-edited**, and committed with the change. After adding a tenant-scoped model,
+6. **No PHI by design.** The portal never asks for patient identifiers. Don't add free-text fields that invite them.
+7. **Migrations are generated, never hand-edited**, and committed with the change. After adding a tenant-scoped model,
    run `manage.py enable_rls --database=migrate` in the deploy step (docker-compose already does).
-7. **Tests for every slice:** a tenant-isolation test for each new model, and a service test for each rule.
+8. **Tests for every slice:** a tenant-isolation test for each new model, and a service test for each rule.
    `pytest` must be green before a slice is done.
 
 ## Commands

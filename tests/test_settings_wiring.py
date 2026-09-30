@@ -4,7 +4,6 @@ compliance report's targets. Every test also changes the other tenant's settings
 from datetime import date, timedelta
 
 import pytest
-from django.core.cache import cache
 
 from apps.equipment.models import Asset, DeviceModel, RiskClass
 from apps.facility import services as fs
@@ -30,12 +29,6 @@ def signed_in(client, make_user):
 
     return _as
 
-
-@pytest.fixture(autouse=True)
-def _fresh_rate_limit():
-    cache.clear()  # the portal's per-IP counter lives in the cache; keep each test's posts under the limit
-    yield
-    cache.clear()
 
 
 def set_other(other_tenant, **fields):

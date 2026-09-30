@@ -137,7 +137,12 @@ STORAGES = {
                     else "whitenoise.storage.CompressedManifestStaticFilesStorage"},
 }
 
-CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+CACHES = {
+    "default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
+    # Sign-in lockouts and rate limits (apps.accounts.signin, the portal): their own store, sized so a flood of junk logins
+    # cannot push real counters out (LocMem evicts once full; the default holds 300 keys). Per process: see the README.
+    "limits": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "LOCATION": "limits", "OPTIONS": {"MAX_ENTRIES": 200_000}},
+}
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
@@ -176,7 +181,8 @@ EMAIL_HOST = os.environ.get("EMAIL_HOST", "localhost")
 EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
 EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
-EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "1") == "1"
+EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "1") == "1"   # STARTTLS, usually port 587
+EMAIL_USE_SSL = os.environ.get("EMAIL_USE_SSL", "0") == "1"   # implicit TLS, usually port 465; set EMAIL_USE_TLS=0 with it
 EMAIL_TIMEOUT = 10  # seconds; a send happens inside the request that asked for it
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "Cadence CE <no-reply@localhost>")
 INVITATION_VALID_DAYS = 7              # an invitation link sets the first password within this many days

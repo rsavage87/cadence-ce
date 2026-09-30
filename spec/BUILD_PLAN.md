@@ -1,7 +1,8 @@
 # Build plan
 
 The mock (`cadence-ce-cmms-mock.html`) is the spec. Each slice below is shippable on its own and ends with green tests.
-Slices 0 to 9 are built: every screen in the mock exists. What each slice deferred is noted in its row and below.
+Slices 0 to 10 are built: every screen in the mock exists, and people can be invited and sign in on their own. What each
+slice deferred is noted in its row and below.
 
 | # | Slice | Mock screen(s) | Code | Status |
 |---|-------|----------------|------|--------|
@@ -10,12 +11,12 @@ Slices 0 to 9 are built: every screen in the mock exists. What each slice deferr
 | 2 | Work orders + portal | Work orders list/board, WO drawer, request portal | `workorders`, `portal` | done (services, API, portal HTML) |
 | 3 | PM engine + KPIs | PM schedule, Overview KPIs | `pm`, `reports` | done (services, API, plain home page) |
 | 4 | Web UI shell (HTMX) | Nav, topbar, Overview, Equipment, Work orders | new `apps/web` | done (device drawer: Overview + Work orders tabs) |
-| 5 | Contracts UI + credentials UI | Contracts section, Users and access (Users, Roles, Credentials tabs) | `contracts`, `accounts`, `credentials` + `web` | done (no invitation email yet) |
+| 5 | Contracts UI + credentials UI | Contracts section, Users and access (Users, Roles, Credentials tabs) | `contracts`, `accounts`, `credentials` + `web` | done (invitation email added in slice 10) |
 | 6 | Recalls UI + ECRI importer | Recalls and alerts | `recalls` + `web` | done (openFDA feed; ECRI importer deferred, it needs a license) |
 | 7 | Reports | Reports (COSR, PM compliance, MTBF, replacement, spend, contract vs in-house, technician productivity, recall log) | `reports` + `web` | done (CSV download and JSON API; PDF, Schedule, and Custom report deferred) |
 | 8 | Settings | Integrations, portal settings, editable policy, risk scoring | `facility` + `web` | done (connectors, paging, photo upload, and email or text confirmation deferred) |
 | 9 | PM schedule UI | PM schedule (calendar, create work orders for a day) | `pm` + `web` | done (Auto-assign week, Route sheets, and OEM library sync deferred) |
-| 10 | Sign-in and invitations | Users and access (Invite user, Resend invite), sign-in page | `accounts` + `web` | in progress |
+| 10 | Sign-in and invitations | Users and access (Invite user, Resend invite), sign-in page | `accounts` + `web` | done (shared lockout counters across workers need Redis; email is sent in the request) |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.
@@ -32,7 +33,7 @@ Operations: `apps/jobs` runs `generate_pm` and `import_openfda` once a day (the 
 
 The mock's toast-only buttons (Device list, Label, Print, Scan tag, and Export CSV outside Reports) are deferred until an export feature exists; Reports downloads each report as CSV.
 
-## Screen → view map (slices 4 to 9)
+## Screen → view map (slices 4 to 10)
 - Overview: `reports.services.overview_kpis(year, month)` + `pm.services.pm_on_time_series` for the 12-month chart; attention list = life-support overdue PMs, alerts needing action, unassigned portal requests, expired/expiring contracts, critical open WOs, WOs awaiting parts > 7 days.
 - Equipment: `Asset.objects.select_related(...)` with the same filters as the mock's toolbar (category, status, risk, department, support, overdue-only, bucket). Fleet buckets: retired / out of service / in repair / open recall / PM overdue / PM due ≤ 30 d / compliant, each device counted once in that order.
 - Work orders: list and board; status buttons call `workorders.services.change_status`; assignment dropdown lists `credentials.services.qualified_technicians(asset)` first.
@@ -90,3 +91,18 @@ The mock's toast-only buttons (Device list, Label, Print, Scan tag, and Export C
   the mock's rubric and bands with active device counts, each linking to Equipment's new "Active (not retired)" status filter;
   per-model scoring waits for a catalog editor. View to see, Edit to change
   (the director by default; the manager sees it read-only). `/api/v1/settings/` (GET, PATCH) and `/api/v1/settings/reset-policy/`.
+- Sign-in and invitations (slice 10): Invite user creates the Invited account (`accounts.services.invite_user`) and emails a link to
+  set the first password (`accounts.invitations.send_invitation`): a signed token over the account's state and `invited_at`,
+  valid for `INVITATION_VALID_DAYS` (7), used up by setting the password, replaced by Resend invite (the mock's button, on rows
+  still pending), and killed for good by deactivating the account. A failed send changes nothing (an earlier link still works)
+  and the modal stays open to say so. `/invite/<uid>/<token>/` sets the password and signs in. "Forgot your password?" emails a
+  reset link valid for 2 hours, or a fresh invitation to an account that never set a password; the answer is the same for any
+  address, and requests are limited per address and per caller. Signed-in users change their password at `/account/password/`
+  (other sessions are signed out). Sign-in takes the username or email in any case; 10 failures for one typed login within 15
+  minutes lock that login (in the backend, so Admin's sign-in is covered too), a reset lifts it, and accounts of an inactive
+  facility cannot sign in. Links in emails start with `APP_BASE_URL`; signed-out pages send a same-origin Referer only (no-referrer
+  would blank the Origin header and fail CSRF). Rules settled in review: nothing that runs before the tenant is set joins a
+  tenant-scoped table (the signed-in user loads without its role; `tests/test_rls_paths.py` stands in for row-level security on
+  SQLite), the policy reads an empty `app.tenant_id` as no tenant (`NULLIF`, re-applied by `enable_rls` on deploy), default
+  roles are created inside their tenant, and lockout keys fold case the way Postgres does (`upper()`, so a dotless i shares kim's
+  counter) in a cache of their own that junk logins cannot flush. `bootstrap_tenant --invite` emails the first director.

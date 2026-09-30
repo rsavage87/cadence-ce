@@ -1,7 +1,7 @@
 """
 Sign-in lockouts and password-reset requests (slice 10).
 
-Lockouts count failed sign-ins in the Django cache under two keys: the login text as typed (lowercased and stripped) and
+Lockouts count failed sign-ins in the Django cache under two keys: the login text as typed (case-folded and stripped) and
 the client address. The login key is never an account: a lockout for a name nobody uses looks exactly like one for a real
 account, so neither the message nor the timing says whether the account exists. Each key has a fixed window of
 SIGNIN_WINDOW_MINUTES that starts at its first failure; reaching SIGNIN_MAX_FAILURES (or SIGNIN_MAX_FAILURES_PER_IP for
@@ -19,9 +19,10 @@ import time
 
 from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
-from django.core.cache import cache
+from django.core.cache import caches
 from django.core.exceptions import ValidationError
 from django.urls import reverse
+from django.utils.connection import ConnectionProxy
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 
@@ -29,10 +30,15 @@ from . import emails, invitations
 from .models import User
 
 HOUR = 60 * 60
+# A store of its own, large enough that junk logins cannot evict real counters (settings.CACHES). A proxy, like
+# django.core.cache.cache, so each thread uses its own connection if the store is ever shared (Redis).
+cache = ConnectionProxy(caches, "limits")
 
 
 def _norm(login) -> str:
-    return (login or "").strip().lower()
+    """One key per login however it is typed. upper(), not lower(): Postgres compares iexact with UPPER, which folds a
+    dotless 'ı' to 'I' (Python's lower() keeps it), so 'kım@...' names kim's account and must share kim's counter."""
+    return (login or "").strip().upper()
 
 
 def _key(kind: str, value: str) -> str:
@@ -149,9 +155,10 @@ def request_password_reset(email, ip) -> None:
         return
     if ip and not _allowed("reset-ip", str(ip), settings.PASSWORD_RESET_MAX_PER_IP_PER_HOUR):
         return
-    if not _allowed("reset-address", email.lower(), settings.PASSWORD_RESET_MAX_PER_HOUR):
+    if not _allowed("reset-address", _norm(email), settings.PASSWORD_RESET_MAX_PER_HOUR):
         return
-    for user in User.objects.filter(email__iexact=email, is_active=True).select_related("tenant", "role").order_by("pk"):
+    # Not select_related("role"): this runs signed out, with no tenant set, and Role is tenant-scoped (row-level security).
+    for user in User.objects.filter(email__iexact=email, is_active=True).select_related("tenant").order_by("pk"):
         if not can_reset(user):
             continue
         if invitations.is_pending(user):

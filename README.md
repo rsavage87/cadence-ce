@@ -51,13 +51,15 @@ Inviting a user from Users and access emails them a link to set their password (
 it). "Forgot your password?" on the sign-in page emails a reset link (valid for 2 hours), or a fresh invitation to someone
 who never set a password. Signed-in users change their password from the account menu. With `DJANGO_DEBUG=1` the emails
 are printed to the server's console; for real delivery set `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`,
-`EMAIL_HOST_PASSWORD`, `EMAIL_USE_TLS`, and `DEFAULT_FROM_EMAIL`, and set `APP_BASE_URL` to the address people use to reach
+`EMAIL_HOST_PASSWORD`, `EMAIL_USE_TLS` (or `EMAIL_USE_SSL` for port 465), and `DEFAULT_FROM_EMAIL`, and set `APP_BASE_URL` to the address people use to reach
 the app (links in emails start with it). Check delivery with `python manage.py sendtestemail you@example.com`. A failed send
 never undoes the invitation: the account stays Invited and the toast says so.
 
 People sign in with their email or username in any letter case. Ten failed sign-ins for one login within 15 minutes lock
 that login for the rest of the window (the lock is on the typed login, so it says nothing about whether the account exists).
-`bootstrap_tenant --invite` emails the first director an invitation instead of printing a password.
+`bootstrap_tenant --invite` emails the first director an invitation instead of printing a password. The lockout and
+rate-limit counters live in each web process's memory, so with several gunicorn workers each counts on its own and a
+restart clears them; a shared cache (Redis) would make them exact.
 
 ## Security model
 - One tenant per hospital. Every row carries `tenant_id`; the ORM scopes queries through `TenantManager`, and

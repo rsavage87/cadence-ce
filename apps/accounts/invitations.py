@@ -21,7 +21,7 @@ from django.utils.http import base36_to_int, urlsafe_base64_decode, urlsafe_base
 from apps.tenants.context import tenant_context
 
 from . import emails
-from .models import User
+from .models import Role, User
 
 
 def is_pending(user) -> bool:
@@ -63,29 +63,34 @@ def invitation_url(user) -> str:
 
 
 def _role_name(user) -> str:
-    if not user.role_id:
+    """Read fresh inside the invitee's facility, never from user.role: Role is tenant-scoped, and a sender with no tenant in
+    context (bootstrap_tenant, the signed-out password-reset form) would find a role loaded earlier hidden by row-level
+    security, and a cached relation would keep that answer."""
+    if not user.role_id or not user.tenant_id:
         return ""
-    if not user.tenant_id:
-        return user.role.name
-    # Role is tenant-scoped: senders with no tenant in context (bootstrap_tenant, the signed-out password-reset form) must
-    # still see the row once Postgres row-level security is on.
     with tenant_context(user.tenant):
-        return user.role.name
+        return Role.objects.filter(pk=user.role_id).values_list("name", flat=True).first() or ""
 
 
 def send_invitation(user, *, by=None) -> bool:
     """Email `user` a fresh link to set their first password; any earlier link stops working. False if the email could not
-    be sent (the account stays Invited and the Users screen's Resend invite tries again). Raises ValidationError for an
-    account that is not a pending invitation."""
+    be sent: then nothing changes (an earlier link still works, the account stays Invited, and the Users screen's Resend
+    invite tries again). Raises ValidationError for an account that is not a pending invitation."""
     if not is_pending(user):
         raise ValidationError(f"{user.get_full_name() or user.email} already has a password or is deactivated; there is no invitation to send.")
     if not user.email:
         raise ValidationError("This account has no email address.")
+    previous = user.invited_at
     user.invited_at = timezone.now()
-    user.save(update_fields=["invited_at"])
+    user.save(update_fields=["invited_at"])  # saved first, so the emailed link always matches what is stored
     context = {"user": user, "by": by, "facility": user.tenant.name if user.tenant_id else "Cadence CE", "role": _role_name(user),
                "url": invitation_url(user), "valid_days": settings.INVITATION_VALID_DAYS}
-    return emails.send(user.email, "accounts/email/invitation", context)
+    if emails.send(user.email, "accounts/email/invitation", context):
+        return True
+    # Nothing went out: put the earlier invitation back, so its link (if one was sent) keeps working.
+    user.invited_at = previous
+    user.save(update_fields=["invited_at"])
+    return False
 
 
 def pending_user_from_uid(uidb64: str):
