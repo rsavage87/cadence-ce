@@ -1,14 +1,6 @@
-{% load static web %}<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign in · Cadence CE</title>
-<script>try{var t=localStorage.getItem('cadence-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
-<link rel="stylesheet" href="{% static 'web/cadence.css' %}">
-</head>
-<body>
-<div class="login-wrap"><div class="login-card">
-  <div class="brand"><span class="mark">{% icon "brand" %}</span><span>Cadence CE<small>Clinical Engineering</small></span></div>
+{% extends "web/auth_base.html" %}
+{% block title %}Sign in{% endblock %}
+{% block card %}
   <h1 style="margin-bottom:4px">Sign in</h1>
   <p class="hint" style="margin-bottom:14px">Unit staff reporting a problem don't need to sign in; use the request link posted on your unit.</p>
   <form method="post" class="form">{% csrf_token %}
@@ -18,6 +10,4 @@
     <input type="hidden" name="next" value="{{ next }}">
     <button class="btn primary" type="submit">Sign in</button>
   </form>
-</div></div>
-</body>
-</html>
+{% endblock %}

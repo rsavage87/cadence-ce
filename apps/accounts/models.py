@@ -70,6 +70,7 @@ class User(AbstractUser):
     department = models.CharField(max_length=80, blank=True)
     phone = models.CharField(max_length=40, blank=True)
     is_invited = models.BooleanField(default=False, help_text="Invitation sent, first sign-in pending.")
+    invited_at = models.DateTimeField(null=True, blank=True, help_text="When the latest invitation email was sent; resending replaces the link.")
 
     def level_for(self, module: str) -> int:
         if self.is_superuser:

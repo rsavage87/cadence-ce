@@ -10,6 +10,7 @@ from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.csrf import csrf_protect
 
+from apps.core.http import client_ip
 from apps.equipment.models import Asset, Department
 from apps.facility.services import get_settings
 from apps.tenants.context import tenant_context
@@ -20,11 +21,6 @@ from apps.workorders.services import create_service_request
 from .forms import ServiceRequestForm
 
 RESPONSE_TARGETS = {Urgency.CRITICAL: "Within 1 hour, around the clock", Urgency.HIGH: "Within 4 hours", Urgency.NORMAL: "Within 2 business days"}
-
-
-def _client_ip(request):
-    fwd = request.META.get("HTTP_X_FORWARDED_FOR", "")
-    return (fwd.split(",")[0].strip() if fwd else request.META.get("REMOTE_ADDR")) or None
 
 
 def _rate_limited(ip) -> bool:
@@ -53,7 +49,7 @@ def request_form(request, tenant_slug):
             wanted = request.GET["dept"]
             initial["department"] = Department.objects.filter(name=wanted).first() or Department.objects.filter(name__iexact=wanted).first()
         if request.method == "POST":
-            ip = _client_ip(request)
+            ip = client_ip(request)
             if _rate_limited(ip):
                 shop = f"the Clinical Engineering shop at {facility.portal_hotline}" if facility.portal_hotline else "the Clinical Engineering shop"
                 return HttpResponse(f"Too many requests from this location. Please call {shop}.", status=429)

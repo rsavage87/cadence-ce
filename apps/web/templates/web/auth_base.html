@@ -1,0 +1,17 @@
+{% load static web %}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>{% block title %}Sign in{% endblock %} · Cadence CE</title>
+<script>try{var t=localStorage.getItem('cadence-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
+<link rel="stylesheet" href="{% static 'web/cadence.css' %}">
+</head>
+<body>
+{# Pages for people who are not signed in: sign in, password reset, and accepting an invitation. No app shell, no tenant. #}
+<div class="login-wrap"><div class="login-card">
+  <div class="brand"><span class="mark">{% icon "brand" %}</span><span>Cadence CE<small>Clinical Engineering</small></span></div>
+  {% block card %}{% endblock %}
+</div></div>
+</body>
+</html>

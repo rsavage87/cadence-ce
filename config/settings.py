@@ -113,6 +113,8 @@ AUTH_USER_MODEL = "accounts.User"
 LOGIN_URL = "web:login"
 LOGIN_REDIRECT_URL = "web:overview"
 LOGOUT_REDIRECT_URL = "web:login"
+# Sign in with the username or the email address in any letter case; accounts of a deactivated facility cannot sign in.
+AUTHENTICATION_BACKENDS = ["apps.accounts.backends.UsernameOrEmailBackend"]
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
@@ -164,6 +166,26 @@ PM_LEAD_DAYS = int(os.environ.get("PM_LEAD_DAYS", "21"))  # generate PM work ord
 SCHEDULER_DAILY_AT = os.environ.get("SCHEDULER_DAILY_AT", "02:30")  # local time (TIME_ZONE) the scheduler runs the daily jobs
 CREDENTIAL_EXPIRY_WARNING_DAYS = 60
 CONTRACT_EXPIRY_WARNING_DAYS = 90
+
+# --- Email and sign-in (slice 10) ------------------------------------------------
+# Links in invitation and password-reset emails start with APP_BASE_URL, never with the request's Host header.
+APP_BASE_URL = os.environ.get("APP_BASE_URL", PORTAL_BASE_URL).rstrip("/")
+EMAIL_BACKEND = os.environ.get("DJANGO_EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend" if DEBUG
+                               else "django.core.mail.backends.smtp.EmailBackend")
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "localhost")
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "1") == "1"
+EMAIL_TIMEOUT = 10  # seconds; a send happens inside the request that asked for it
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "Cadence CE <no-reply@localhost>")
+INVITATION_VALID_DAYS = 7              # an invitation link sets the first password within this many days
+PASSWORD_RESET_TIMEOUT = 60 * 60 * 2   # a password-reset link works for two hours (seconds, Django's setting)
+SIGNIN_MAX_FAILURES = 10               # failed sign-ins for one account within the window lock that account for the window
+SIGNIN_MAX_FAILURES_PER_IP = 100       # generous: a hospital's staff often share one outbound address
+SIGNIN_WINDOW_MINUTES = 15
+PASSWORD_RESET_MAX_PER_HOUR = 5        # reset emails one address can be sent per hour
+PASSWORD_RESET_MAX_PER_IP_PER_HOUR = 30
 
 LOGGING = {
     "version": 1,

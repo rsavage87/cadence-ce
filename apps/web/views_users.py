@@ -109,6 +109,13 @@ def user_reactivate(request, pk):
         return _body_response(request, e.messages[0])
 
 
+
+@require_POST
+@web_view(Module.USERS, Level.FULL)
+def user_resend_invite(request, pk):
+    raise NotImplementedError  # scaffold: agent A
+
+
 def _modal_done(message: str, event: str):
     """Empty the modal card, tell the list to refresh, then close. Closing first would detach the form and cancel the swap."""
     response = toast(HttpResponse(""), message)

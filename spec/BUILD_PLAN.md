@@ -15,6 +15,7 @@ Slices 0 to 9 are built: every screen in the mock exists. What each slice deferr
 | 7 | Reports | Reports (COSR, PM compliance, MTBF, replacement, spend, contract vs in-house, technician productivity, recall log) | `reports` + `web` | done (CSV download and JSON API; PDF, Schedule, and Custom report deferred) |
 | 8 | Settings | Integrations, portal settings, editable policy, risk scoring | `facility` + `web` | done (connectors, paging, photo upload, and email or text confirmation deferred) |
 | 9 | PM schedule UI | PM schedule (calendar, create work orders for a day) | `pm` + `web` | done (Auto-assign week, Route sheets, and OEM library sync deferred) |
+| 10 | Sign-in and invitations | Users and access (Invite user, Resend invite), sign-in page | `accounts` + `web` | in progress |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.

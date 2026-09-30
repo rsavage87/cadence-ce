@@ -1,14 +1,21 @@
 from django.contrib.auth import views as auth_views
 from django.urls import include, path
 
-from . import views
+from . import views, views_account, views_invite
 
 app_name = "web"
 
 urlpatterns = [
     path("", views.overview, name="overview"),
-    path("login/", auth_views.LoginView.as_view(template_name="web/login.html", redirect_authenticated_user=True), name="login"),
+    path("login/", views_account.sign_in, name="login"),
     path("logout/", auth_views.LogoutView.as_view(), name="logout"),
+    # Signing in without a password yet (slice 10): reset links, the signed-in password change, and invitation links.
+    path("password-reset/", views_account.password_reset, name="password_reset"),
+    path("password-reset/sent/", views_account.password_reset_sent, name="password_reset_sent"),
+    path("password-reset/done/", views_account.password_reset_complete, name="password_reset_complete"),
+    path("password-reset/<uidb64>/<token>/", views_account.password_reset_confirm, name="password_reset_confirm"),
+    path("account/password/", views_account.password_change, name="password_change"),
+    path("invite/<uidb64>/<token>/", views_invite.invite_accept, name="invite_accept"),
     path("search/", views.search, name="search"),
     path("search/assets/", views.asset_search, name="asset_search"),
     path("equipment/", views.equipment, name="equipment"),
