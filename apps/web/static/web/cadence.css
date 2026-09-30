@@ -465,3 +465,13 @@ button.link{background:none;border:0;padding:0;font:inherit;font-size:12px;font-
 .pm-day .pm-note{margin-bottom:10px}
 .pm-day .pm-more{margin-top:8px}
 .pm-day .pm-create{margin-top:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+
+/* Slice 10: sign-in pages */
+.auth-foot{margin-top:14px;text-align:center;font-size:13px}
+.auth-gap{margin-top:10px}
+.login-card a.btn{text-decoration:none}
+.pw-rules{margin:-4px 0 0;padding-left:18px;font-size:12px;color:var(--ink-3)}
+.pw-rules li+li{margin-top:2px}
+.pw-panel{max-width:520px}
+.note.pw-panel{margin-bottom:14px}
+.note.ok{background:var(--ok-soft);border-color:transparent;color:var(--ok)}

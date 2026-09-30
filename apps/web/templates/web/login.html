@@ -10,4 +10,5 @@
     <input type="hidden" name="next" value="{{ next }}">
     <button class="btn primary" type="submit">Sign in</button>
   </form>
+  <p class="auth-foot"><a href="{% url 'web:password_reset' %}">Forgot your password?</a></p>
 {% endblock %}
