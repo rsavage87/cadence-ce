@@ -18,6 +18,8 @@ from django.utils.crypto import constant_time_compare
 from django.utils.encoding import force_bytes
 from django.utils.http import base36_to_int, urlsafe_base64_decode, urlsafe_base64_encode
 
+from apps.tenants.context import tenant_context
+
 from . import emails
 from .models import User
 
@@ -31,7 +33,9 @@ class InvitationTokenGenerator(PasswordResetTokenGenerator):
     key_salt = "apps.accounts.invitations.InvitationTokenGenerator"
 
     def _make_hash_value(self, user, timestamp):
-        sent = "" if user.invited_at is None else int(user.invited_at.timestamp())
+        # invited_at to the microsecond (timestamp() is the same whatever time zone the value was read in): two sends within
+        # one second must still give different links, or a resend would not replace the earlier one.
+        sent = "" if user.invited_at is None else repr(user.invited_at.timestamp())
         return f"{user.pk}{user.password}{user.last_login}{user.is_active}{sent}{user.email}{timestamp}"
 
     def check_token(self, user, token):
@@ -53,8 +57,20 @@ invitation_tokens = InvitationTokenGenerator()
 
 
 def invitation_url(user) -> str:
+    """The link for `user`'s current invitation. Sending a new one changes it, so compute it after send_invitation."""
     uidb64 = urlsafe_base64_encode(force_bytes(user.pk))
     return settings.APP_BASE_URL + reverse("web:invite_accept", args=[uidb64, invitation_tokens.make_token(user)])
+
+
+def _role_name(user) -> str:
+    if not user.role_id:
+        return ""
+    if not user.tenant_id:
+        return user.role.name
+    # Role is tenant-scoped: senders with no tenant in context (bootstrap_tenant, the signed-out password-reset form) must
+    # still see the row once Postgres row-level security is on.
+    with tenant_context(user.tenant):
+        return user.role.name
 
 
 def send_invitation(user, *, by=None) -> bool:
@@ -62,23 +78,30 @@ def send_invitation(user, *, by=None) -> bool:
     be sent (the account stays Invited and the Users screen's Resend invite tries again). Raises ValidationError for an
     account that is not a pending invitation."""
     if not is_pending(user):
-        raise ValidationError(f"{user.get_full_name() or user.email} has already signed in or is deactivated; there is no invitation to send.")
+        raise ValidationError(f"{user.get_full_name() or user.email} already has a password or is deactivated; there is no invitation to send.")
     if not user.email:
         raise ValidationError("This account has no email address.")
     user.invited_at = timezone.now()
     user.save(update_fields=["invited_at"])
-    context = {"user": user, "by": by, "facility": user.tenant.name if user.tenant_id else "Cadence CE",
-               "role": user.role.name if user.role_id else "", "url": invitation_url(user), "valid_days": settings.INVITATION_VALID_DAYS}
+    context = {"user": user, "by": by, "facility": user.tenant.name if user.tenant_id else "Cadence CE", "role": _role_name(user),
+               "url": invitation_url(user), "valid_days": settings.INVITATION_VALID_DAYS}
     return emails.send(user.email, "accounts/email/invitation", context)
+
+
+def pending_user_from_uid(uidb64: str):
+    """The account a link's uid names when it is a pending invitation and its facility (if it has one) is active; else None.
+    Garbage in the URL gives None, never an error. The token is checked separately: user_for_link, or the accept view."""
+    try:
+        pk = int(urlsafe_base64_decode(uidb64).decode())
+        user = User._default_manager.select_related("tenant").filter(pk=pk).first()
+    except (TypeError, ValueError, OverflowError, UnicodeDecodeError):
+        return None
+    if user is None or not is_pending(user) or (user.tenant_id and not user.tenant.is_active):
+        return None
+    return user
 
 
 def user_for_link(uidb64: str, token: str):
     """The pending account a link is for, or None when the link is malformed, expired, replaced, or already used."""
-    try:
-        pk = int(urlsafe_base64_decode(uidb64).decode())
-    except (TypeError, ValueError, OverflowError, UnicodeDecodeError):
-        return None
-    user = User.objects.select_related("tenant", "role").filter(pk=pk).first()
-    if user is None or not is_pending(user) or (user.tenant_id and not user.tenant.is_active):
-        return None
-    return user if invitation_tokens.check_token(user, token) else None
+    user = pending_user_from_uid(uidb64)
+    return user if user is not None and invitation_tokens.check_token(user, token) else None

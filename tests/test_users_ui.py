@@ -266,18 +266,20 @@ def test_deactivate_and_reactivate_another_user(client, signed_in, make_user):
     assert client.get(f"/users/{tom.pk}/deactivate/").status_code == 405
 
 
-def test_invite_user_modal_and_creation(client, signed_in, role, dept):
+def test_invite_user_modal_and_creation(client, signed_in, role, dept, mailoutbox):
     signed_in("director")
     modal = client.get("/users/invite/", **HX)
     body = modal.content.decode()
-    assert modal.status_code == 200 and "<html" not in body and "No invitation email is sent yet" in body and "Resend" not in body
+    assert modal.status_code == 200 and "<html" not in body and "Resend" not in body
+    assert "They get an email with a link to set their password. The link works for 7 days." in body and "Send invitation</button>" in body
     assert f'<option value="{role("requester").id}" selected>' in body and 'name="create_technician"' in body
     assert '<option value="Clinical Engineering" selected>' in body and '<option value="ICU">' in body and '<option value="External vendor">' in body
     r = client.post("/users/invite/", {"first_name": "Maria", "last_name": "Santos", "email": "MSantos@riverside.example", "role": str(role("requester").id),
                                        "department": "ICU", "create_technician": "on"}, **HX)
     assert r.status_code == 200 and r.content == b""
-    assert "Account created for msantos@riverside.example" in r["HX-Trigger"] and "users-changed" in r["HX-Trigger"]
+    assert "Invitation sent to msantos@riverside.example" in r["HX-Trigger"] and "users-changed" in r["HX-Trigger"]
     assert "modal-close" in r["HX-Trigger-After-Settle"]
+    assert [m.to for m in mailoutbox] == [["msantos@riverside.example"]]
     u = User.objects.get(username="msantos@riverside.example")
     assert u.is_invited and not u.has_usable_password() and u.department == "ICU" and u.technician.name == "Maria Santos"
     dup = client.post("/users/invite/", {"first_name": "Maria", "last_name": "Santos", "email": "msantos@riverside.example", "role": str(role("requester").id)},
@@ -472,3 +474,37 @@ def test_last_active_wording():
     assert last_active(now).startswith("Today, ")
     assert last_active(now - timedelta(days=1)) == "Yesterday"
     assert last_active(now - timedelta(days=400)).endswith(str((now - timedelta(days=400)).year))
+
+
+# --- invitations (slice 10) ------------------------------------------------------------------------
+
+def _row(body, user):
+    return body.split(f'id="user-{user.pk}"')[1].split("</tr>")[0]
+
+
+def test_resend_invite_shows_only_for_pending_invitations(client, ctx, signed_in, role, make_user):
+    signed_in("director")
+    pending = services.invite_user(ctx, email="p@riverside.example", first_name="Pat", last_name="Pending", role=role("requester"))
+    set_in_admin = services.invite_user(ctx, email="a@riverside.example", first_name="Ada", last_name="Admin", role=role("requester"))
+    set_in_admin.set_password("Test-Pass-2026-x")  # shown as Invited until the first sign-in, but no link can set a password now
+    set_in_admin.save()
+    withdrawn = services.invite_user(ctx, email="w@riverside.example", first_name="Wes", last_name="Withdrawn", role=role("requester"))
+    services.deactivate_user(withdrawn)
+    member = make_user("technician")
+    body = client.get("/users/?status=invited", **hx("users-body")).content.decode()
+    row = _row(body, pending)
+    assert f'hx-post="/users/{pending.pk}/resend-invite/?status=invited" hx-target="#users-body" hx-swap="outerHTML">Resend invite</button>' in row
+    assert row.index("Resend invite") < row.index(">Deactivate<") and "Their invitation link stops working." in row  # Deactivate withdraws it
+    assert '<span class="chip info">Invited</span>' in _row(body, set_in_admin) and "Resend invite" not in _row(body, set_in_admin)
+    everyone = client.get("/users/", **hx("users-body")).content.decode()
+    assert "Resend invite" not in _row(everyone, withdrawn) and "Reactivate" in _row(everyone, withdrawn)
+    assert "Resend invite" not in _row(everyone, member) and ">Deactivate<" in _row(everyone, member)
+    assert everyone.count("Resend invite") == 1
+
+
+def test_resend_invite_is_hidden_from_users_view(client, ctx, signed_in, role):
+    signed_in("manager")
+    pending = services.invite_user(ctx, email="p@riverside.example", first_name="Pat", last_name="Pending", role=role("requester"))
+    body = client.get("/users/").content.decode()
+    assert "Pat Pending" in body and "Resend invite" not in body
+    assert client.post(f"/users/{pending.pk}/resend-invite/", **HX).status_code == 403

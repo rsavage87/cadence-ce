@@ -3,7 +3,8 @@ Users and access: the Users tab and the Roles and permissions tab (slice 5).
 
 User is not tenant-scoped, so every lookup here filters on request.tenant; another tenant's user is a 404, never a leak.
 Row actions return the refreshed row and raise 'users-changed' so the list (and its filters) catch up; the matrix is
-returned whole. State changes go through apps.accounts.services.
+returned whole. State changes go through apps.accounts.services; invitation emails (Invite user, Resend invite, slice 10)
+through apps.accounts.invitations, whose send never raises on a mail failure, so the account change always stands.
 """
 from datetime import date, timedelta
 
@@ -15,7 +16,7 @@ from django.urls import reverse
 from django.views.decorators.http import require_POST
 from django_htmx.http import trigger_client_event
 
-from apps.accounts import services
+from apps.accounts import invitations, services
 from apps.accounts.models import Level, Module, Role, User
 from apps.accounts.services import USER_STATUSES
 from apps.credentials.models import Credential, Technician
@@ -47,7 +48,9 @@ def _rows(request, users) -> list[dict]:
         tech = techs.get(u.pk)
         creds = [c for c in tech.credentials.all() if c.status == Credential.Status.ACTIVE] if tech else []
         rows.append({"u": u, "status": services.user_status(u), "tech": tech, "cred_count": len(creds),
-                     "expiring": sum(1 for c in creds if c.expires_on and c.expires_on <= horizon), "is_self": u.pk == request.user.pk})
+                     "expiring": sum(1 for c in creds if c.expires_on and c.expires_on <= horizon), "is_self": u.pk == request.user.pk,
+                     # Resend invite only where a link could still set the first password (not after a password was set in Admin)
+                     "pending": invitations.is_pending(u)})
     return rows
 
 
@@ -67,7 +70,7 @@ def users(request):
 
 
 def _get_user(request, pk):
-    return get_object_or_404(User.objects.select_related("role"), pk=pk, tenant=request.tenant)
+    return get_object_or_404(User.objects.select_related("role", "tenant"), pk=pk, tenant=request.tenant)
 
 
 def _body_response(request, message: str):
@@ -109,11 +112,18 @@ def user_reactivate(request, pk):
         return _body_response(request, e.messages[0])
 
 
-
 @require_POST
 @web_view(Module.USERS, Level.FULL)
 def user_resend_invite(request, pk):
-    raise NotImplementedError  # scaffold: agent A
+    """A fresh invitation link; the earlier one stops working. Only for accounts still waiting to set their first password."""
+    user = _get_user(request, pk)
+    try:
+        sent = invitations.send_invitation(user, by=request.user)
+    except ValidationError as e:
+        return _body_response(request, e.messages[0])
+    if sent:
+        return _body_response(request, f"Invitation resent to {user.email}")
+    return _body_response(request, f"The invitation email to {user.email} could not be sent. Try again once email is working.")
 
 
 def _modal_done(message: str, event: str):
@@ -123,20 +133,29 @@ def _modal_done(message: str, event: str):
     return trigger_client_event(response, "modal-close", {}, after="settle")
 
 
+def _invite_modal(request, form):
+    return render(request, "web/_user_invite.html", {"form": form, "valid_days": settings.INVITATION_VALID_DAYS})
+
+
 @web_view(Module.USERS, Level.FULL)
 def user_invite(request):
     if request.method != "POST":
-        return render(request, "web/_user_invite.html", {"form": InviteUserForm()})
+        return _invite_modal(request, InviteUserForm())
     form = InviteUserForm(request.POST)
-    if form.is_valid():
-        d = form.cleaned_data
-        try:
-            services.invite_user(request.tenant, email=d["email"], first_name=d["first_name"], last_name=d["last_name"], role=d["role"],
-                                 department=d["department"], create_technician=d["create_technician"], by=request.user)
-            return _modal_done(f"Account created for {d['email']}", "users-changed")
-        except ValidationError as e:
-            form.add_error(None, e.messages[0])
-    return render(request, "web/_user_invite.html", {"form": form})
+    if not form.is_valid():
+        return _invite_modal(request, form)
+    d = form.cleaned_data
+    try:
+        user = services.invite_user(request.tenant, email=d["email"], first_name=d["first_name"], last_name=d["last_name"], role=d["role"],
+                                    department=d["department"], create_technician=d["create_technician"], by=request.user)
+    except ValidationError as e:
+        form.add_error(None, e.messages[0])
+        return _invite_modal(request, form)
+    # The account exists whatever happens to the email; a failed send is reported, and Resend invite tries again.
+    if invitations.send_invitation(user, by=request.user):
+        return _modal_done(f"Invitation sent to {user.email}", "users-changed")
+    return _modal_done(f"Account created for {user.email}, but the invitation email could not be sent. Use Resend invite once email is working.",
+                       "users-changed")
 
 
 # --- Roles tab ------------------------------------------------------------------------------------

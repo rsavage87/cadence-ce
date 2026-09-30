@@ -77,7 +77,8 @@ def _check_role(tenant, role):
 
 @transaction.atomic
 def invite_user(tenant, *, email, first_name, last_name, role, department="", create_technician=False, by=None) -> User:
-    """Create an Invited account. No email is sent yet; an administrator sets the first password in Admin."""
+    """Create an Invited account with no usable password. The caller then sends the invitation email
+    (accounts.invitations.send_invitation) outside this transaction, so a mail failure never undoes the account."""
     email = (email or "").strip().lower()
     first_name, last_name = (first_name or "").strip(), (last_name or "").strip()
     if not email:

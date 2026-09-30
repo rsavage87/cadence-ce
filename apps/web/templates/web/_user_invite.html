@@ -10,6 +10,6 @@
     <label class="full">Department{{ form.department }}</label>
     <label class="full check-row">{{ form.create_technician }} Also create a technician profile so credentials and work can be assigned</label>
   </div>
-  <div class="note" style="margin:0 16px 12px">No invitation email is sent yet (email delivery arrives with integrations); the account is created as Invited and an administrator sets its first password in Admin.</div>
-  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Create account</button></div>
+  <div class="note" style="margin:0 16px 12px">They get an email with a link to set their password. The link works for {{ valid_days }} days.</div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Send invitation</button></div>
 </form>

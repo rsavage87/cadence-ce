@@ -1,0 +1,21 @@
+{% extends "web/auth_base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block card %}
+{% if validlink %}
+  <h1 style="margin-bottom:4px">Set your password</h1>
+  <p class="hint" style="margin-bottom:14px">Welcome, {{ invitee.get_full_name|default:invitee.email }}. Choose a password to finish setting up your account{% if facility %} at {{ facility }}{% endif %}. You will sign in with <b>{{ invitee.email }}</b>.</p>
+  <form method="post" class="form">{% csrf_token %}
+    {% if form.non_field_errors %}<div class="err">{{ form.non_field_errors|striptags }}</div>{% endif %}
+    <input type="text" name="username" value="{{ invitee.email }}" autocomplete="username" hidden>
+    <label>New password<input type="password" name="new_password1" autocomplete="new-password" required autofocus>{% if form.new_password1.errors %}<span class="err">{{ form.new_password1.errors|join:" " }}</span>{% endif %}</label>
+    <label>Confirm password<input type="password" name="new_password2" autocomplete="new-password" required>{% if form.new_password2.errors %}<span class="err">{{ form.new_password2.errors|join:" " }}</span>{% endif %}</label>
+    {% if password_help %}<ul class="hint" style="margin:2px 0 0;padding-left:18px">{% for line in password_help %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}
+    <button class="btn primary" type="submit">Set password and sign in</button>
+  </form>
+{% else %}
+  <h1 style="margin-bottom:4px">This link no longer works</h1>
+  <p class="hint" style="margin-bottom:10px">The invitation link has expired, was replaced by a newer invitation, or was already used. Invitation links work for {{ valid_days }} days and only once.</p>
+  <p class="hint" style="margin-bottom:10px">Ask your administrator to resend it.</p>
+  <p class="hint">Already set your password? <a class="link" href="{% url 'web:login' %}">Sign in</a></p>
+{% endif %}
+{% endblock %}
