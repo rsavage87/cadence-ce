@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 
 import pytest
+from django.core.cache import cache
 
 from apps.accounts.models import Role, User, create_default_roles
 from apps.credentials.models import Credential, Scope, Technician
@@ -8,6 +9,14 @@ from apps.equipment.models import Asset, Department, DeviceModel, RiskClass
 from apps.recalls.models import Alert, AlertMatch
 from apps.tenants.context import tenant_context
 from apps.tenants.models import Tenant
+
+
+@pytest.fixture(autouse=True)
+def _empty_cache():
+    """Sign-in lockouts and the portal's rate limit count in the cache (process memory in tests); start every test at zero."""
+    cache.clear()
+    yield
+    cache.clear()
 
 
 @pytest.fixture
