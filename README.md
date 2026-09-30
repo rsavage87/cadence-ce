@@ -46,6 +46,19 @@ once a day. `run_daily_jobs --force` runs a finished job again today; it never s
 running. A run killed partway (the container stopped, the database dropped) is recorded as stopped, or, if the process died
 outright, taken over by the scheduler six hours after it started.
 
+## Email and sign-in
+Inviting a user from Users and access emails them a link to set their password (valid for 7 days; Resend invite replaces
+it). "Forgot your password?" on the sign-in page emails a reset link (valid for 2 hours), or a fresh invitation to someone
+who never set a password. Signed-in users change their password from the account menu. With `DJANGO_DEBUG=1` the emails
+are printed to the server's console; for real delivery set `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`,
+`EMAIL_HOST_PASSWORD`, `EMAIL_USE_TLS`, and `DEFAULT_FROM_EMAIL`, and set `APP_BASE_URL` to the address people use to reach
+the app (links in emails start with it). Check delivery with `python manage.py sendtestemail you@example.com`. A failed send
+never undoes the invitation: the account stays Invited and the toast says so.
+
+People sign in with their email or username in any letter case. Ten failed sign-ins for one login within 15 minutes lock
+that login for the rest of the window (the lock is on the typed login, so it says nothing about whether the account exists).
+`bootstrap_tenant --invite` emails the first director an invitation instead of printing a password.
+
 ## Security model
 - One tenant per hospital. Every row carries `tenant_id`; the ORM scopes queries through `TenantManager`, and
   PostgreSQL row-level security enforces the same rule at the database (`manage.py enable_rls`) when the app
@@ -53,7 +66,8 @@ outright, taken over by the scheduler six hours after it started.
 - Roles map modules to levels (None/View/Request/Edit/Approve/Full); checks are server-side.
 - django-simple-history records every change to assets, work orders, contracts, credentials, and roles.
 - The portal asks for no patient information and is rate-limited per IP.
+- Invitation and password-reset links are signed, single-use, and expire; the reset request never says whether an address has an account.
 
 ## First things to do in Claude Code
 1. `pip install -r requirements-dev.txt`, then `pytest`.
-2. Pick up a deferred item from `spec/BUILD_PLAN.md` (exports, connectors, invitation email, the ECRI importer).
+2. Pick up a deferred item from `spec/BUILD_PLAN.md` (exports and printing, connectors, the ECRI importer).

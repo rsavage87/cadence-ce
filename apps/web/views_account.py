@@ -1,7 +1,7 @@
 """
 Signing in and passwords (slice 10): the sign-in page, password reset by email, and the signed-in password change.
 
-The signed-out pages extend web/auth_base.html (no app shell, no referrer). None of them says whether an account exists:
+The signed-out pages extend web/auth_base.html (no app shell, no Referer to other sites). None of them says whether an account exists:
 a reset request always lands on the same "if an account uses that address" page, and lockouts (apps.accounts.signin) are
 keyed on the typed login, not on an account. Reset links carry their token only until the first request, which moves it
 into the session and redirects to a ".../set-password/" URL (Django's PasswordResetConfirmView).

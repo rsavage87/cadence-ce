@@ -255,7 +255,7 @@ def test_the_reset_link_sets_a_new_password_once(client, settings, outbox, kim):
     assert r.status_code == 302 and r["Location"].endswith("/set-password/") and token not in r["Location"]
     set_url = r["Location"]
     r = client.get(set_url)
-    assert r.status_code == 200 and b"Set new password" in r.content and b'content="no-referrer"' in r.content
+    assert r.status_code == 200 and b"Set new password" in r.content and b'content="same-origin"' in r.content
     assert b"at least 12 characters" in r.content
     r = client.post(set_url, {"new_password1": NEW_PW, "new_password2": NEW_PW})
     assert r.status_code == 302 and r["Location"] == reverse("web:password_reset_complete")
@@ -444,3 +444,23 @@ def test_wrong_current_passwords_count_toward_the_lockout(client, settings, kim)
     assert r.status_code == 200 and LOCKED in r.content.decode()
     kim.refresh_from_db()
     assert kim.check_password(PW)
+
+
+def test_signed_out_forms_pass_csrf_with_a_browser_origin(client, tenant, make_user):
+    """Browsers send an Origin header with form posts; with the referrer policy the pages declare it is the site's own
+    origin (no-referrer would make it "null", which Django's CSRF check refuses). Sign in with CSRF checks on."""
+    from django.test import Client
+
+    make_user("director", username="kim@riverside.example")
+    browser = Client(enforce_csrf_checks=True)
+    page = browser.get("/login/")
+    assert b'<meta name="referrer" content="same-origin">' in page.content
+    token = page.cookies["csrftoken"].value
+    r = browser.post("/login/", {"username": "kim@riverside.example", "password": "Test-Pass-2026-x", "csrfmiddlewaretoken": token},
+                     HTTP_ORIGIN="http://testserver")
+    assert r.status_code == 302
+    refused = Client(enforce_csrf_checks=True)
+    refused.get("/login/")
+    r = refused.post("/login/", {"username": "kim@riverside.example", "password": "x", "csrfmiddlewaretoken": refused.cookies["csrftoken"].value},
+                     HTTP_ORIGIN="null")
+    assert r.status_code == 403  # what no-referrer would have caused in a real browser

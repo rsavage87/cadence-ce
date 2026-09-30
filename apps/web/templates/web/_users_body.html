@@ -1,6 +1,6 @@
 {% load web %}
-{# Row actions return this whole body (with the current filters) so a deactivated user drops out of an "Active" list at once;
-   an invite fires users-changed and the body re-fetches itself. Partial responses also refresh the summary line out of band. #}
+{% comment %}Row actions return this whole body (with the current filters) so a deactivated user drops out of an "Active" list at once;
+   an invite fires users-changed and the body re-fetches itself. Partial responses also refresh the summary line out of band.{% endcomment %}
 <div id="users-body" hx-get="{{ list_url }}{% query request.GET %}" hx-trigger="users-changed from:body" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap">
   <div class="tbl-wrap">
     <table>

@@ -110,7 +110,7 @@ def test_invitation_link_sets_the_password_signs_in_and_is_then_used_up(client, 
     body = page.content.decode()
     assert page.status_code == 200 and "Maria Santos" in body and "maria.santos@riverside.example" in body and "Riverside Regional" in body
     assert 'name="new_password1" autocomplete="new-password"' in body and "Set password and sign in</button>" in body
-    assert "at least 12 characters" in body and 'content="no-referrer"' in body
+    assert "at least 12 characters" in body and 'content="same-origin"' in body
     r = client.post(form_url, {"new_password1": PASSWORD, "new_password2": PASSWORD})
     assert r.status_code == 302 and r["Location"] == "/"
     invitee.refresh_from_db()
@@ -327,3 +327,18 @@ def test_send_invitation_rotates_invited_at(invitee, mailoutbox):
     invitations.send_invitation(invitee)
     invitee.refresh_from_db()
     assert invitee.invited_at >= before
+
+
+def test_a_withdrawn_invitation_stays_dead_after_reactivation(ctx, role):
+    """Deactivating a pending invitation withdraws it for good: reactivating the account does not revive the old link."""
+    user = services.invite_user(ctx, email="wrong@riverside.example", first_name="W", last_name="R", role=role("requester"))
+    invitations.send_invitation(user)
+    uidb64, token = invitations.invitation_url(user).rstrip("/").split("/")[-2:]
+    assert invitations.user_for_link(uidb64, token) == user
+    services.deactivate_user(user)
+    services.reactivate_user(user)
+    user.refresh_from_db()
+    assert invitations.is_pending(user)
+    assert invitations.user_for_link(uidb64, token) is None
+    invitations.send_invitation(user)  # Resend invite still works
+    assert invitations.user_for_link(*invitations.invitation_url(user).rstrip("/").split("/")[-2:]) == user

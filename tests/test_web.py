@@ -354,3 +354,17 @@ def test_nav_shows_recalls_with_the_needs_action_badge(client, signed_in, pump_r
     assert "Recalls and alerts" in r.content.decode()
     signed_in("requester")  # recalls: None
     assert "recalls" not in [i["key"] for i in client.get("/equipment/").context["shell"]["nav"]]
+
+
+def test_template_comments_are_single_line():
+    """Django's {# #} comment ends at the line break: one that spans lines is printed on the page. Use {% comment %}."""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent / "apps"
+    offenders = []
+    for path in [*root.glob("*/templates/**/*.html"), *root.glob("*/templates/**/*.txt")]:
+        for n, line in enumerate(path.read_text().splitlines(), 1):
+            if re.search(r"\{#(?!.*#\})", line):
+                offenders.append(f"{path.relative_to(root)}:{n}")
+    assert offenders == []

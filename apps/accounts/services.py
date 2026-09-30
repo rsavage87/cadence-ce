@@ -119,7 +119,13 @@ def deactivate_user(user, by=None) -> User:
     if user.is_superuser:
         raise ValidationError("Superusers are managed in Admin.")
     user.is_active = False
-    user.save(update_fields=["is_active"])
+    fields = ["is_active"]
+    if not user.has_usable_password():
+        # A withdrawn invitation stays withdrawn: a fresh unusable password changes what invitation links hash, so an
+        # earlier link does not come back to life if the account is reactivated (Resend invite sends a new one).
+        user.set_unusable_password()
+        fields.append("password")
+    user.save(update_fields=fields)
     return user
 
 

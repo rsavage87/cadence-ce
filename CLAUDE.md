@@ -31,6 +31,7 @@ HTMX for the web UI (`apps/web`, via django-htmx), pytest. Tests run on SQLite a
 ```
 python manage.py makemigrations && python manage.py migrate        # first run creates all migrations
 python manage.py bootstrap_tenant --name "Riverside" --slug riverside --admin-email you@example.com
+python manage.py bootstrap_tenant --name "Riverside" --slug riverside --admin-email you@example.com --invite   # email the director a set-password link
 python manage.py seed_demo                                         # small fictional dataset, login kim@riverside.example / DemoPass-2026
 python manage.py generate_pm                                       # PM work-order generation; the scheduler runs it daily
 python manage.py import_assets --tenant riverside inventory.csv --dry-run
@@ -53,7 +54,11 @@ pytest
 - `apps/tenants` tenant model, context var, middleware, `enable_rls`; `tenant_context()` sets both the ORM scope and the Postgres
   `app.tenant_id` that RLS reads, so the public portal and management commands see the same rows under RLS
 - `apps/core` TenantModel, TenantManager, Sequence, TenantModelAdmin
-- `apps/accounts` User, Role, RolePermission, default roles, `require_level`; `services.py` for invites, role changes, (de)activation, role matrix edits
+- `apps/accounts` User, Role, RolePermission, default roles, `require_level`; `services.py` for invites, role changes, (de)activation, role matrix edits;
+  `invitations.py` (signed set-password links: `send_invitation`, `is_pending`; a resend replaces the link), `signin.py` (sign-in lockouts and
+  password-reset requests, never revealing whether an address has an account), `backends.py` (username or email in any case; a deactivated
+  facility cannot sign in), `emails.py` (the one place account emails are sent; a failure returns False, never raises). Links in emails start
+  with `APP_BASE_URL`, never the request's Host
 - `apps/equipment` Department, DeviceModel, Asset (tags carry no spaces or slashes: they are URL segments), CSV importer
 - `apps/contracts` Contract with add/remove device operations and cost allocation; `services.py` for create/update/renew/delete, status, filters, KPI summary
 - `apps/workorders` WorkOrder and lines, ServiceRequest, lifecycle services
@@ -71,7 +76,7 @@ pytest
 - `apps/reports` overview KPIs, the Overview bundle (`overview_page`), attention list, nav counts, `cost_of_service`; the eight Reports
   (`REPORTS` catalog and `run_report` in `services.py`; the numbers in `cost.py`, `fleet.py`, `operations.py`, read-only, `today` passed in)
 - `apps/web` HTMX UI: one views/urls/forms module per screen (`views.py` Overview, Equipment, Work orders; `views_contracts.py`;
-  `views_users.py` Users and Roles tabs; `views_credentials.py`; `views_recalls.py`; `views_reports.py` with the CSV download; `views_settings.py`; `views_pm.py` with `pm_panels.py` for its lower panels), templates,
+  `views_users.py` Users and Roles tabs; `views_account.py` sign-in, password reset and change; `views_invite.py` accepting an invitation; `views_credentials.py`; `views_recalls.py`; `views_reports.py` with the CSV download; `views_settings.py`; `views_pm.py` with `pm_panels.py` for its lower panels), templates,
   `charts.py` (SVG geometry: line, stacked bars, hbars with a benchmark marker, donut), `overview.py` and `reports_*.py` (chart geometry
   and display values for the Overview and the Reports; services never import them), `htmx.py` helpers, shell
   context processor. Drawers and modals are partials swapped into `#drawer` / `#modal-card`; the same URLs render a full page

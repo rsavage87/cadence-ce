@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="referrer" content="no-referrer">
+{# same-origin, not no-referrer: under no-referrer browsers send "Origin: null" with form posts and Django's CSRF check refuses them #}
+<meta name="referrer" content="same-origin">
 <title>{% block title %}Sign in{% endblock %} · Cadence CE</title>
 <script>try{var t=localStorage.getItem('cadence-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
 <link rel="stylesheet" href="{% static 'web/cadence.css' %}">
