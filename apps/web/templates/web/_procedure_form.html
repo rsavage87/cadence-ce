@@ -1,0 +1,23 @@
+{% load web %}
+{# New procedure and Edit procedure (slice 14, part D). Context from apps.web.views_procedures._modal: form, dm (the drawer a save answers into), and for Edit procedure, users, used_by, open_pm. #}
+<div class="modal-h"><h2>{% if procedure %}Edit {{ procedure.code }}{% else %}New PM procedure{% endif %}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{# novalidate: the server checks every field and puts each error on it. #}
+<form id="pr-form" class="pr-form" hx-post="{% if procedure %}{% url 'web:pm_procedure_edit' procedure.pk %}{% else %}{% url 'web:pm_procedure_new' %}{% endif %}?model={{ dm.pk }}" hx-target="#modal-card" novalidate>
+  <div class="form">
+    {% if procedure %}
+    <div class="full"><div class="note{% if used_by > 1 %} warn{% endif %}">{% if used_by > 1 %}Used by {{ used_by }} models: {% for u in users|slice:":5" %}{{ u.manufacturer }} {{ u.model }}{% if not forloop.last %}, {% endif %}{% endfor %}{% if used_by > 5 %}, and {{ used_by|add:"-5" }} more{% endif %}. A change applies to all of them.{% elif used_by == 1 %}Used by {{ users.0.manufacturer }} {{ users.0.model }} only.{% else %}No model uses this procedure.{% endif %} New hours apply to PM work orders created from now on. Printed PM work orders show the checklist as it is when printed{% if open_pm %}, including the {{ open_pm }} open now{% endif %}.</div></div>
+    {% else %}
+    <div class="full"><div class="note">Saving makes it the PM procedure for {{ dm.manufacturer }} {{ dm.model }}{% if dm.pm_procedure %} in place of {{ dm.pm_procedure.code }}{% endif %}. Other models can then choose it from the library.</div></div>
+    {% endif %}
+    {% if form.non_field_errors %}<div class="full"><span class="err">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    {% include "web/_asset_field.html" with field=form.code %}
+    {% include "web/_asset_field.html" with field=form.revision %}
+    {% include "web/_asset_field.html" with field=form.name cls="full" %}
+    {% include "web/_asset_field.html" with field=form.source_kind %}
+    {% include "web/_asset_field.html" with field=form.estimated_hours %}
+    {% include "web/_asset_field.html" with field=form.source_reference cls="full" %}
+    {% include "web/_asset_field.html" with field=form.source_url cls="full" %}
+    {% include "web/_asset_field.html" with field=form.checklist cls="full" %}
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">{% if procedure %}Save changes{% else %}Add procedure{% endif %}</button></div>
+</form>
