@@ -1,0 +1,4 @@
+{% load web %}
+{# The risk modal's running total (slice 14): preview from RiskScoreForm.preview, None until all four parts are chosen. #}
+{% if preview %}<div class="stats"><div class="stat"><div class="v">{{ preview.score }}</div><div class="l">total score</div></div><div class="stat"><div class="v">{% risk_chip preview.risk %}</div><div class="l">{% if preview.risk != dm.risk_class %}new risk class, was {{ dm.get_risk_class_display }}{% else %}risk class, unchanged{% endif %}</div></div></div>
+{% else %}<div class="hint">Choose all four parts to see the total and its class.</div>{% endif %}

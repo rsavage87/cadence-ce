@@ -1,0 +1,21 @@
+{% load web %}
+{# The risk score modal (slice 14): the Settings rubric's four parts. Context from apps.web.views_models._risk_modal. #}
+<div class="modal-h"><h2>Risk score · {{ dm.manufacturer }} {{ dm.model }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+<form id="rk-form" hx-post="{% url 'web:pm_model_risk' dm.pk %}" hx-target="#modal-card" novalidate>
+  {% comment %}Changing a select asks the server for the running total (#rk-total) with every choice so far; the selects keep their
+     focus because only the total is swapped.{% endcomment %}
+  <div class="form" hx-get="{% url 'web:pm_model_risk' dm.pk %}" hx-trigger="change" hx-include="#rk-form" hx-target="#rk-total" hx-swap="innerHTML">
+    <div class="full note">{{ rubric }}.{% if dm.risk_score is not None %} Scored {{ dm.risk_score }} ({{ dm.get_risk_class_display }}), reviewed {{ dm.risk_reviewed_on|date:"M j, Y" }}{% if due %}: the yearly review is due{% else %}; next review by {{ due_on|date:"M j, Y" }}{% endif %}.{% else %} Not scored yet: the {{ dm.get_risk_class_display|lower }} class was set by hand.{% endif %}</div>
+    {% if form.non_field_errors %}<div class="full"><span class="err">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    {% include "web/_asset_field.html" with field=form.function cls="full" %}
+    {% include "web/_asset_field.html" with field=form.physical cls="full" %}
+    {% include "web/_asset_field.html" with field=form.maintenance cls="full" %}
+    {% include "web/_asset_field.html" with field=form.incidents cls="full" %}
+    <div class="full" id="rk-total" aria-live="polite">{% include "web/_model_risk_total.html" %}</div>
+    <div class="full hint">Bands: {% for band, label in bands %}{{ band }} {{ label|lower }}{% if not forloop.last %} · {% endif %}{% endfor %}. Saving the same score again records this year's review. Life-support models never go on AEM.</div>
+  </div>
+  <div class="modal-f">
+    {% if dm.risk_score is not None %}<button class="btn danger" type="button" hx-post="{% url 'web:pm_model_risk' dm.pk %}" hx-vals='{"clear": "1"}' hx-confirm="Clear the risk score for {{ dm }}? Its risk class stays {{ dm.get_risk_class_display }} until it is scored again." style="margin-right:auto">Clear score</button>{% endif %}
+    <button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Save score</button>
+  </div>
+</form>
