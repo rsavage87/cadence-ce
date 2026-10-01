@@ -1,0 +1,21 @@
+{% load web %}
+{% comment %}Propose an AEM interval (slice 14, views_aem.aem_propose): a new PM interval for the model and the case for it, under the
+   facility's AEM policy (Settings), with the failure history the committee will see. A model that cannot be proposed (life
+   support, a proposal already open, not enough history) gets the reason instead of the form.{% endcomment %}
+<div class="modal-h"><h2>Propose an AEM interval</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="aem-form" hx-post="{% url 'web:pm_aem_propose' dm.pk %}" hx-target="#modal-card">
+  <div class="form">
+    <p class="full" style="margin:0;font-size:13px;color:var(--ink)"><strong>{{ dm.manufacturer }} {{ dm.model }}</strong> · {{ dm.description }}<br><span class="muted">OEM interval {{ dm.oem_pm_interval_months }} month{{ dm.oem_pm_interval_months|pluralize }}{% if dm.aem_interval_months %} · {{ dm.aem_interval_months }}-month AEM interval in use{% endif %}</span></p>
+    {% if form.non_field_errors %}<div class="full"><span class="err">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    <label>{{ form.interval_months.label }}{{ form.interval_months }}{% if form.interval_months.errors %}<span class="err">{{ form.interval_months.errors|striptags }}</span>{% endif %}</label>
+    <label class="full">{{ form.rationale.label }}{{ form.rationale }}{% if form.rationale.errors %}<span class="err">{{ form.rationale.errors|striptags }}</span>{% endif %}</label>
+  </div>
+  <div class="note" style="margin:0 16px 12px">Facility AEM policy: {{ policy }}. Life-support devices are excluded from AEM by policy. The Equipment Management Committee decides on this case with the failure history below, which is kept with the proposal.</div>
+  <div style="padding:0 16px 14px"><div class="hint" style="margin-bottom:6px">Failure history, last {{ history_years }} years</div>{% include "web/_aem_evidence.html" with ev=evidence %}</div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Propose</button></div>
+</form>
+{% endif %}

@@ -1,0 +1,29 @@
+{% load web %}
+{% comment %}The committee's decision on an AEM proposal (slice 14, views_aem.aem_decide): approve or reject, the meeting date, and the
+   minutes reference, with the case and the failure history it was proposed on. The proposer never records the decision on their
+   own case; a proposal no longer open says so instead of the form.{% endcomment %}
+<div class="modal-h"><h2>{% if form.choice == "reject" %}Reject{% else %}Approve{% endif %} AEM proposal</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="aem-form" hx-post="{% url 'web:pm_aem_decide' decision.pk %}" hx-target="#modal-card">
+  {{ form.decision }}
+  <div class="form">
+    <p class="full" style="margin:0;font-size:13px;color:var(--ink)"><strong>{{ dm.manufacturer }} {{ dm.model }}</strong>: every {{ decision.interval_months }} months instead of the OEM's {{ decision.oem_interval_months }}<br><span class="muted">Proposed {{ decision.proposed_on|date:"M j, Y" }} by {{ decision.proposed_by|default:"a former user" }}</span></p>
+    {% if form.non_field_errors or form.decision.errors %}<div class="full"><span class="err">{{ form.non_field_errors|striptags }}{{ form.decision.errors|striptags }}</span></div>{% endif %}
+    <label>{{ form.decided_on.label }}{{ form.decided_on }}{% if form.decided_on.errors %}<span class="err">{{ form.decided_on.errors|striptags }}</span>{% endif %}</label>
+    <label class="full">{% if form.choice == "reject" %}The committee's reason or minutes reference{% else %}{{ form.note.label }}{% endif %}{{ form.note }}{% if form.note.errors %}<span class="err">{{ form.note.errors|striptags }}</span>{% endif %}</label>
+  </div>
+  {% if moves %}<div class="note warn" style="margin:0 16px 12px">This interval is shorter than the one in use: {{ moves }} device{{ moves|pluralize:"'s,s'" }} next PM will move earlier, and {{ moves|pluralize:"its,their" }} open PM work order{{ moves|pluralize }} with {{ moves|pluralize:"it,them" }}.</div>
+  {% elif shorter %}<div class="hint" style="padding:0 16px 12px">This interval is shorter than the one in use, and every device's next PM is already within it.</div>
+  {% elif form.choice != "reject" %}<div class="hint" style="padding:0 16px 12px">A longer interval moves no device's next PM: it applies from each device's next PM.</div>{% endif %}
+  <div style="padding:0 16px 14px">
+    <div class="hint" style="margin-bottom:6px">The case</div>
+    <div class="note" style="white-space:pre-line">{{ decision.rationale }}</div>
+    {% if evidence %}<div class="hint" style="margin:10px 0 6px">Failure history when proposed</div>{% include "web/_aem_evidence.html" with ev=evidence %}{% endif %}
+    <div class="hint" style="margin-top:8px">Facility AEM policy: {{ policy }}.</div>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn {% if form.choice == 'reject' %}danger{% else %}primary{% endif %}" type="submit">{% if form.choice == "reject" %}Reject proposal{% else %}Approve{% endif %}</button></div>
+</form>
+{% endif %}

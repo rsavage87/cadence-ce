@@ -1,0 +1,17 @@
+{% load web %}
+{# End AEM (slice 14, views_aem.aem_end): back to the OEM interval, with a reason, saying how many devices' next PM will move. #}
+<div class="modal-h"><h2>End AEM</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="aem-form" hx-post="{% url 'web:pm_aem_end' pk %}" hx-target="#modal-card">
+  <div class="form">
+    <p class="full" style="margin:0;font-size:13px;color:var(--ink)"><strong>{{ dm.manufacturer }} {{ dm.model }}</strong>: from every {{ from_months }} months back to the OEM's {{ dm.oem_pm_interval_months }}<br><span class="muted">{% if approved %}Approved by the Equipment Management Committee on {{ approved.decided_on|date:"M j, Y" }}{% else %}On file without a recorded approval{% endif %}</span></p>
+    {% if form.non_field_errors %}<div class="full"><span class="err">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    <label class="full">{{ form.reason.label }}{{ form.reason }}{% if form.reason.errors %}<span class="err">{{ form.reason.errors|striptags }}</span>{% endif %}</label>
+  </div>
+  <div class="note{% if moves %} warn{% endif %}" style="margin:0 16px 12px">{% if moves %}{{ moves }} device{{ moves|pluralize:"'s,s'" }} next PM will move earlier to fit the OEM interval, and {{ moves|pluralize:"its,their" }} open PM work order{{ moves|pluralize }} with {{ moves|pluralize:"it,them" }}.{% else %}No device's next PM needs to move: each is within the OEM interval of its last PM.{% endif %}</div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn danger" type="submit">End AEM</button></div>
+</form>
+{% endif %}

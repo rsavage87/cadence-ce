@@ -4,8 +4,8 @@ return into the drawer's context when that tab is open: pm_tab under "pm" and co
 the drawer's own keys. The drawer decides who sees which tab (PM View, Work orders View); the templates link work orders only for
 viewers with Work orders View (the drawer's can_view_wo).
 
-Real data only. Where the mock invents figures (an AEM approval story, a synced OEM library, past years' costs, a hashed
-technician), these show what is on file or say plainly that there is none.
+Real data only. Where the mock invents figures (a synced OEM library, past years' costs, a hashed technician), these show what is
+on file or say plainly that there is none; the AEM note names the committee's date only when an approval is recorded (slice 14).
 
 The read models below (pm_upcoming, pm_history, cost_by_year, replacement_outlook) are plain ORM reads with no web concerns. They
 belong in apps/pm/schedule.py (the first two), apps/reports/cost.py, and apps/reports/fleet.py, and sit here only because this
@@ -19,6 +19,7 @@ from django.db.models.functions import Coalesce, ExtractYear
 
 from apps.equipment.models import AssetStatus, RiskClass
 from apps.pm.dates import add_months
+from apps.pm.models import AemDecision, AemStatus
 from apps.pm.schedule import DEFAULT_PM_HOURS, planned_technicians
 from apps.reports.fleet import REPLACEMENT_MARKUP, _repairs_in_window, replacement_score
 from apps.workorders.models import OPEN_STATUSES, LaborLine, PartLine, WorkOrder, WoType
@@ -47,13 +48,18 @@ def _safe_url(url: str) -> str:
 # --- PM schedule tab ------------------------------------------------------------------------------------------------------
 
 
-def strategy_note(device_model, procedure=None) -> str:
+def strategy_note(device_model, procedure=None, approved=None) -> str:
     """Whether this model follows the OEM interval or an approved AEM one. DeviceModel.pm_interval_months already keeps life support
-    on the OEM interval whatever is on file; the note says so when an AEM interval is on file for a life-support model."""
+    on the OEM interval whatever is on file; the note says so when an AEM interval is on file for a life-support model. `approved`
+    is the AemDecision in force (slice 14): the note names the committee's date. An interval on file without a recorded approval
+    (set before slice 14) reads as before; the model's AEM tab says it has no approval on record."""
     oem, months = device_model.oem_pm_interval_months, device_model.pm_interval_months
     if months != oem:
         direction = "extended" if months > oem else "shortened"
-        return (f"AEM program: the PM interval for this model is {direction} from the OEM's {_months(oem)} to {_months(months)}. "
+        committee = ""
+        if approved is not None and approved.decided_on and approved.interval_months == months:
+            committee = f", approved by the Equipment Management Committee on {approved.decided_on:%b} {approved.decided_on.day}, {approved.decided_on.year}"
+        return (f"AEM program: the PM interval for this model is {direction} from the OEM's {_months(oem)} to {_months(months)}{committee}. "
                 "Life-support devices are excluded from AEM by policy.")
     note = f"Following the OEM schedule: every {_months(oem)}" + (f" per {procedure.code}." if procedure else ".")
     aem = device_model.aem_interval_months
@@ -129,8 +135,10 @@ def pm_tab(asset, today: date | None = None) -> dict:
     open_pm = min((w for w in history if w.status in OPEN_STATUSES), key=lambda w: (w.opened_on, w.number), default=None)
     rows = [{"wo": w, "who": _done_by(w), "result": w.resolution.strip() or w.get_status_display(), "has_resolution": bool(w.resolution.strip()),
              "hours": w.labor_hours} for w in history[:HISTORY_LIMIT]]
+    # The committee's date only for a model on AEM (one query then; none for the OEM schedule)
+    approved = AemDecision.objects.filter(device_model=dm, status=AemStatus.APPROVED).first() if dm.pm_interval_months != dm.oem_pm_interval_months else None
     return {"pm": {
-        "strategy": strategy_note(dm, procedure),
+        "strategy": strategy_note(dm, procedure, approved),
         "procedure": procedure, "steps": checklist_steps(procedure), "source_url": _safe_url(procedure.source_url) if procedure else "",
         "default_hours": DEFAULT_PM_HOURS,
         "upcoming": pm_upcoming(asset, open_pm, today),
