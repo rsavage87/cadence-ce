@@ -59,6 +59,14 @@ class DeviceModel(TenantModel):
     expected_life_years = models.PositiveSmallIntegerField(default=8)
     list_cost = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     pm_procedure = models.ForeignKey("pm.PmProcedure", on_delete=models.SET_NULL, null=True, blank=True, related_name="device_models")
+    # Risk scoring (slice 14), the Settings rubric: clinical function (1 to 10) + physical risk of failure (1 to 5) + maintenance
+    # requirement (1 to 5) + incident history (0 to 2). All four or none; a scored model's risk class follows its score's band
+    # (apps.facility.services.RISK_BANDS). Reviewed yearly: risk_reviewed_on is when the score was last set or confirmed.
+    risk_function = models.PositiveSmallIntegerField(null=True, blank=True, help_text="Clinical function, 1 to 10")
+    risk_physical = models.PositiveSmallIntegerField(null=True, blank=True, help_text="Physical risk of failure, 1 to 5")
+    risk_maintenance = models.PositiveSmallIntegerField(null=True, blank=True, help_text="Maintenance requirement, 1 to 5")
+    risk_incidents = models.PositiveSmallIntegerField(null=True, blank=True, help_text="Incident history, 0 to 2")
+    risk_reviewed_on = models.DateField(null=True, blank=True)
     history = HistoricalRecords()
 
     class Meta:
@@ -67,6 +75,12 @@ class DeviceModel(TenantModel):
 
     def __str__(self):
         return f"{self.manufacturer} {self.model}"
+
+    @property
+    def risk_score(self) -> int | None:
+        """The rubric's total, or None while the model is unscored (any part missing)."""
+        parts = (self.risk_function, self.risk_physical, self.risk_maintenance, self.risk_incidents)
+        return None if any(p is None for p in parts) else sum(parts)
 
     @property
     def pm_interval_months(self) -> int:

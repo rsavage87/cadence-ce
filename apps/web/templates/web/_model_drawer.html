@@ -1,0 +1,16 @@
+{% load web %}
+{# A device model's drawer (slice 14). Context from apps.web.views_models.model_drawer_context: dm, tab, tabs, and the tab's own keys. #}
+<div class="dr-h">
+  <div>
+    <h2>{{ dm.manufacturer }} {{ dm.model }}</h2>
+    <div class="sub">{{ dm.description }} · {{ dm.category }}</div>
+    <div class="chips">{% risk_chip dm.risk_class %}{% if dm.pm_interval_months != dm.oem_pm_interval_months %}<span class="chip acc">AEM {{ dm.pm_interval_months }} mo</span>{% else %}<span class="chip">OEM {{ dm.oem_pm_interval_months }} mo</span>{% endif %}</div>
+  </div>
+  <button class="iconbtn" type="button" data-act="close-drawer" aria-label="Close">{% icon "x" %}</button>
+</div>
+<div class="tabs" role="tablist">
+  {% for key, label in tabs %}<button class="tab{% if tab == key %} active{% endif %}" role="tab" aria-selected="{% if tab == key %}true{% else %}false{% endif %}" hx-get="{% url 'web:pm_model' dm.pk %}?tab={{ key }}" hx-target="#drawer">{{ label }}</button>{% endfor %}
+</div>
+<div class="dr-b">
+{% if tab == "program" %}{% include "web/_model_tab_program.html" %}{% elif tab == "procedure" %}{% include "web/_model_tab_procedure.html" %}{% else %}{% include "web/_model_tab_aem.html" %}{% endif %}
+</div>

@@ -22,7 +22,7 @@
   {% if can_edit_device %}<div class="sec-actions"><button class="link" type="button" hx-get="{% url 'web:asset_edit' asset.tag %}" hx-target="#modal-card">Edit details</button></div>{% endif %}
   <div class="sec"><dl class="dl">
     <div><dt>Category</dt><dd>{{ dm.category }}</dd></div><div><dt>Serial number</dt><dd>{{ asset.serial|default:"—" }}</dd></div>
-    <div><dt>Manufacturer</dt><dd>{{ dm.manufacturer }}</dd></div><div><dt>Model</dt><dd>{{ dm.model }}</dd></div>
+    <div><dt>Manufacturer</dt><dd>{{ dm.manufacturer }}</dd></div><div><dt>Model</dt><dd>{% if 'pm' in tabs %}<button class="link" type="button" hx-get="{% url 'web:pm_model' dm.pk %}" hx-target="#drawer" title="This model's PM program">{{ dm.model }}</button>{% else %}{{ dm.model }}{% endif %}</dd></div>
     <div><dt>Location</dt><dd>{{ asset.department }}{% if asset.room %}, room {{ asset.room }}{% endif %}</dd></div><div><dt>Risk class</dt><dd>{{ dm.get_risk_class_display }}</dd></div>
     <div><dt>Installed</dt><dd>{% if asset.installed_on %}{{ asset.installed_on|date:"M j, Y" }} ({{ asset.age_years|floatformat:1 }} yr){% else %}—{% endif %}</dd></div>
     <div><dt>Expected life</dt><dd>{{ dm.expected_life_years }} yr</dd></div>

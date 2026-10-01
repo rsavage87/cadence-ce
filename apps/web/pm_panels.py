@@ -4,6 +4,7 @@
 apps.pm.schedule; this module adds the chart geometry and the display values (bar widths) the template cannot compute.
 The page includes the panels once, and they re-fetch themselves (HX-Target `pm-panels`) when the page fires `pm-changed`.
 """
+from apps.equipment import permissions as eq_perms
 from apps.pm import schedule as sch
 
 from . import charts
@@ -27,4 +28,6 @@ def _library() -> dict:
 
 
 def panels_context(request, today) -> dict:
-    return {"outlook": _outlook(today), "workload": _workload(today), "library": _library()}
+    # Each library row opens the model's drawer (slice 14); Add model needs Equipment Edit.
+    return {"outlook": _outlook(today), "workload": _workload(today), "library": _library(),
+            "can_add_model": request is not None and eq_perms.can_edit_model(request.user)}

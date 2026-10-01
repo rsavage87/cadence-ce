@@ -125,6 +125,10 @@ class DeviceModelViewSet(EquipmentWrites, TenantViewSet):
 
     def perform_update(self, serializer):
         # Through update_device_model: create's rules (intervals, cost, a name unique in any letter case) hold on every change too.
+        # A new risk class needs the risk level (Approve), as on the screen; sending back the current one is fine.
+        risk = serializer.validated_data.get("risk_class")
+        if risk is not None and risk != serializer.instance.risk_class and not eq_perms.can_set_risk(self.request.user):
+            raise PermissionDenied("Changing a model's risk class needs Equipment Approve.")
         _via_service(eq_services.update_device_model, serializer.instance, by=self.request.user,
                      **{f: v for f, v in serializer.validated_data.items() if f in eq_services.MODEL_FIELDS})
 

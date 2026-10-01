@@ -1,7 +1,7 @@
 {% load web %}
 {# The PM schedule's lower panels. Context from apps.web.pm_panels.panels_context: outlook, workload, library. #}
 {# Re-fetches itself when the page fires pm-changed (after a day's PM work orders are created), so the workload and outlook follow. #}
-<div id="pm-panels" hx-get="{% url 'web:pm' %}" hx-trigger="pm-changed from:body, devices-changed from:body" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap hx-target">
+<div id="pm-panels" hx-get="{% url 'web:pm' %}" hx-trigger="pm-changed from:body, devices-changed from:body, models-changed from:body" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap hx-target">
 <div class="grid g-2 mt">
   <div class="panel"><div class="panel-h"><h2>Next 30 days</h2><span class="sub">What is coming due, by category</span></div><div class="panel-b">
     <div class="stats" style="margin-bottom:12px">
@@ -24,12 +24,12 @@
     {% if workload %}<div class="hint">Each PM due in the next 7 days counts for the technician its open work order is assigned to; otherwise, including the unassigned work orders the nightly PM job creates, for the technician the schedule suggests (credentialed, least loaded, day by day), the same one the day list shows and Create assigns. Vendor PMs and devices nobody is credentialed for are on nobody's plate. Other open work is repairs, recalls, and inspections.</div>{% endif %}
   </div></div>
 </div>
-<div class="panel mt"><div class="panel-h"><h2>PM library</h2><span class="sub">{{ library.with_procedure }} of {{ library.models }} model{{ library.models|pluralize }} {{ library.with_procedure|pluralize:"has,have" }} a PM procedure · from OEM service manuals, ECRI, or written in-house</span></div>
+<div class="panel mt"><div class="panel-h"><h2>PM library</h2><span class="sub">{{ library.with_procedure }} of {{ library.models }} model{{ library.models|pluralize }} {{ library.with_procedure|pluralize:"has,have" }} a PM procedure · from OEM service manuals, ECRI, or written in-house</span>{% if can_add_model %}<button class="btn sm" type="button" hx-get="{% url 'web:pm_model_new' %}" hx-target="#modal-card">{% icon "plus" %} Add model</button>{% endif %}</div>
   {% if library.rows %}
   <div class="tbl-wrap flat" style="margin-top:8px"><table>
     <thead><tr><th>Model</th><th>Risk class</th><th>OEM interval</th><th>Program interval</th><th>Procedure</th><th class="num">Est. hours</th><th>Checklist</th><th class="num">Devices</th></tr></thead>
     <tbody>{% for r in library.rows %}
-      <tr><td class="two">{{ r.device_model.manufacturer }} {{ r.device_model.model }}<small>{{ r.device_model.description }}</small></td>
+      <tr class="row" hx-get="{% url 'web:pm_model' r.device_model.pk %}" hx-target="#drawer"><td class="two">{{ r.device_model.manufacturer }} {{ r.device_model.model }}<small>{{ r.device_model.description }}</small></td>
         <td>{% risk_chip r.device_model.risk_class %}</td>
         <td>{{ r.oem_months }} mo</td>
         <td>{% if r.aem %}<span class="chip acc">AEM {{ r.program_months }} mo</span>{% else %}<span class="muted">OEM interval</span>{% endif %}</td>

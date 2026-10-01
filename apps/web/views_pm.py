@@ -123,16 +123,23 @@ def _body_context(request, today: date, year: int, month: int, day: date) -> dic
             "can_view_asset": request.user.has_level(Module.EQUIPMENT, Level.VIEW), "can_create": pm_perms.can_create(request.user)}
 
 
+def pm_page_context(request, today: date | None = None) -> dict:
+    """Everything web/pm.html needs: the page head, the body for the month and day in the address, and the lower panels. Also
+    what a model drawer opened directly renders behind it (views_models)."""
+    today = today or _today()
+    ctx = _body_context(request, today, *_selection(request.GET, today))
+    # The body's keys win over the panels' so a name the panels happen to share cannot break the calendar.
+    return {**panels_context(request, today), **ctx, "head": sch.schedule_summary(today)}
+
+
 @web_view(pm_perms.MODULE, pm_perms.VIEW_LEVEL)
 def pm_schedule(request):
     today = _today()
     if is_partial(request, "pm-panels"):
         return render(request, "web/_pm_panels.html", panels_context(request, today))
-    ctx = _body_context(request, today, *_selection(request.GET, today))
     if is_partial(request, "pm-body"):
-        return render(request, "web/_pm_body.html", ctx)
-    # The body's keys win over the panels' so a name the panels happen to share cannot break the calendar.
-    return render(request, "web/pm.html", {**panels_context(request, today), **ctx, "head": sch.schedule_summary(today)})
+        return render(request, "web/_pm_body.html", _body_context(request, today, *_selection(request.GET, today)))
+    return render(request, "web/pm.html", pm_page_context(request, today))
 
 
 def _created_message(batch, may_assign: bool) -> str:

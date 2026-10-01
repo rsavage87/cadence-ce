@@ -368,6 +368,9 @@ def update_device_model(device_model: DeviceModel, *, by=None, **fields) -> Devi
     if unknown:
         raise ValidationError(f"These cannot be changed here: {', '.join(sorted(unknown))}.")
     cleaned = _model_fields(fields)
+    if "aem_interval_months" in cleaned and cleaned["aem_interval_months"] != device_model.aem_interval_months:
+        # Only an approved AEM case sets it (apps.pm.aem); sending back the current value is fine.
+        raise ValidationError({"aem_interval_months": "An AEM interval is set by approving an AEM proposal (PM schedule, PM library)."})
     if "manufacturer" in cleaned or "model" in cleaned:
         _check_model_unique(cleaned.get("manufacturer", device_model.manufacturer), cleaned.get("model", device_model.model), exclude=device_model)
     changed = [f for f, v in cleaned.items() if getattr(device_model, f) != v]
@@ -375,6 +378,10 @@ def update_device_model(device_model: DeviceModel, *, by=None, **fields) -> Devi
         setattr(device_model, f, cleaned[f])
     if changed:
         device_model.save()
+    if {"risk_class", "oem_pm_interval_months"} & set(changed):
+        from apps.pm import aem  # pm imports equipment; imported here to keep the two apps' modules loadable in any order
+
+        aem.model_changed(device_model, changed=changed, by=by)
     return device_model
 
 
