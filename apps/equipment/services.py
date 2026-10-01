@@ -373,6 +373,7 @@ def update_device_model(device_model: DeviceModel, *, by=None, **fields) -> Devi
     if "aem_interval_months" in cleaned and cleaned["aem_interval_months"] != device_model.aem_interval_months:
         # Only an approved AEM case sets it (apps.pm.aem); sending back the current value is fine.
         raise ValidationError({"aem_interval_months": "An AEM interval is set by approving an AEM proposal (PM schedule, PM library)."})
+    cleaned.pop("aem_interval_months", None)  # never written here, so a value sent back from a stale read cannot undo an approval
     score = device_model.risk_score
     if "risk_class" in cleaned and cleaned["risk_class"] != device_model.risk_class and score is not None and cleaned["risk_class"] != risk_band(score):
         # Sending back the current class is fine, as is moving a stray class onto the score's band.
@@ -387,17 +388,21 @@ def update_device_model(device_model: DeviceModel, *, by=None, **fields) -> Devi
 def _save_model(device_model: DeviceModel, values: dict, *, by=None, reason: str = "") -> list[str]:
     """Set the values that differ and save once; then tell apps.pm.aem when the risk class or the OEM interval changed (a model
     that became life support leaves AEM). The one path every model change takes. Returns the fields that changed."""
-    changed = [f for f, v in values.items() if getattr(device_model, f) != v]
+    # Onto the row as it is now, locked: the caller's copy may predate another change (an AEM approval sets aem_interval_months),
+    # and saving that copy whole would write the old value back. The caller's copy is refreshed afterwards.
+    fresh = DeviceModel.objects.select_for_update().get(pk=device_model.pk)
+    changed = [f for f, v in values.items() if getattr(fresh, f) != v]
     for f in changed:
-        setattr(device_model, f, values[f])
+        setattr(fresh, f, values[f])
     if changed:
         if reason:
-            device_model._change_reason = reason
-        device_model.save()
+            fresh._change_reason = reason
+        fresh.save()
     if {"risk_class", "oem_pm_interval_months"} & set(changed):
         from apps.pm import aem  # pm imports equipment; imported here to keep the two apps' modules loadable in any order
 
-        aem.model_changed(device_model, changed=changed, by=by)
+        aem.model_changed(fresh, changed=changed, by=by)
+    device_model.refresh_from_db()
     return changed
 
 

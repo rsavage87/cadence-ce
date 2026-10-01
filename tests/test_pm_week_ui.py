@@ -198,7 +198,8 @@ def test_post_assigns_toasts_refreshes_and_closes_the_modal(client, signed_in, f
 def test_the_body_refetches_on_pm_assigned_and_names_the_new_assignees(client, signed_in, fleet, techs, monitor):
     signed_in("director")
     page = client.get("/pm/?y=2026&m=9&day=2026-09-30").content.decode()
-    span = '<span hidden hx-get="/pm/?y=2026&amp;m=9&amp;day=2026-09-30" hx-trigger="devices-changed from:body, pm-assigned from:body" hx-target="#pm-body"'
+    span = ('<span hidden hx-get="/pm/?y=2026&amp;m=9&amp;day=2026-09-30" '
+            'hx-trigger="devices-changed from:body, pm-assigned from:body, models-changed from:body" hx-target="#pm-body"')
     assert span in page
     client.post(URL, **MODAL)
     body = client.get("/pm/?y=2026&m=9&day=2026-09-30", **BODY).content.decode()  # what the span fetches
