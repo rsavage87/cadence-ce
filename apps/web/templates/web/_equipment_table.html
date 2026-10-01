@@ -1,6 +1,6 @@
 {% load web %}
-{# Re-fetches itself when a drawer action changes what a row shows (support type, contract, status). #}
-<div id="eq-table" hx-get="{{ list_url }}{% query request.GET %}" hx-trigger="contracts-changed from:body, wo-changed from:body" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap">
+{# Re-fetches itself when a drawer action changes what a row shows (support type, contract, status, a new or edited device). #}
+<div id="eq-table" hx-get="{{ list_url }}{% query request.GET %}" hx-trigger="contracts-changed from:body, wo-changed from:body, devices-changed from:body" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap">
   {# Sort lives with the table so header clicks and filter changes both keep it; form= ties these to the toolbar form. #}
   <input type="hidden" name="sort" value="{{ f.sort }}" form="eq-filters">
   <input type="hidden" name="dir" value="{% if f.descending %}desc{% else %}asc{% endif %}" form="eq-filters">

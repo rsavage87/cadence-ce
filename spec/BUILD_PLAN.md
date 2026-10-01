@@ -18,6 +18,7 @@ export and print. What each slice deferred is noted in its row and below.
 | 9 | PM schedule UI | PM schedule (calendar, create work orders for a day) | `pm` + `web` | done (Auto-assign week, Route sheets, and OEM library sync deferred) |
 | 10 | Sign-in and invitations | Users and access (Invite user, Resend invite), sign-in page | `accounts` + `web` | done (shared lockout counters across workers need Redis; email is sent in the request) |
 | 11 | Exports and printing | Export (CSV) on Equipment, Work orders, Contracts, a contract's Device list; Label, Print, Route sheets, report PDF, Response log, Overview Export | `web` | done (PDFs come from the browser's print dialog; Scan tag, Add device, Auto-assign week, Check feeds, Custom report, and Schedule still deferred) |
+| 12 | Device management | Equipment (Add device), device drawer (Edit, Tag out of service, Return to service, PM schedule and Costs tabs) | `equipment` + `web` + `api` | in progress |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.

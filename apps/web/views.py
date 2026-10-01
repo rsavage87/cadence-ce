@@ -19,6 +19,8 @@ from django_htmx.http import retarget, trigger_client_event
 from apps.accounts.models import Level, Module
 from apps.credentials.models import Technician
 from apps.credentials.services import qualification, qualified_technicians
+from apps.equipment import permissions as eq_perms
+from apps.equipment import services as eq_services
 from apps.equipment.models import Asset
 from apps.equipment.services import FleetBucket, asset_service_summary, filter_assets, fleet_summary, search_assets
 from apps.facility.services import asset_request_url, get_settings
@@ -28,6 +30,7 @@ from apps.workorders import permissions as wo_perms
 from apps.workorders import services as wo_services
 from apps.workorders.models import ALLOWED_TRANSITIONS, OPEN_STATUSES, Source, WorkOrder, WoStatus, WoType
 
+from . import asset_tabs
 from . import overview as ov
 from .context_processors import NAV
 from .decorators import web_view
@@ -94,7 +97,7 @@ def _equipment_context(request) -> dict:
     page = Paginator(filter_assets(f), PAGE_SIZE).get_page(request.GET.get("page"))
     bucket_label = FleetBucket(f.bucket).label if f.bucket else ""
     return {"nav_active": "equipment", "list_url": reverse("web:equipment"), "f": f, "options": options, "page": page, "bucket_label": bucket_label,
-            "summary": fleet_summary(), "sort_columns": EQUIPMENT_COLUMNS}
+            "summary": fleet_summary(), "sort_columns": EQUIPMENT_COLUMNS, "can_add_device": eq_perms.can_add(request.user)}
 
 
 @web_view(Module.EQUIPMENT, Level.VIEW)
@@ -113,15 +116,21 @@ def _model_recalls(device_model_id) -> list:
 def asset_drawer_context(request, asset) -> dict:
     """Also used by the contracts screen to re-render the device drawer after its support editor saves."""
     can_view_recalls = request.user.has_level(Module.RECALLS, Level.VIEW)
-    tabs = ("overview", "wo", "recalls") if can_view_recalls else ("overview", "wo")  # the Recalls tab does not exist for roles without recalls View
+    # Tabs a role cannot use do not exist for it: PM schedule needs PM View, Costs needs Work orders View (its figures are
+    # work-order costs), Recalls needs recalls View. The mock's order: Overview, PM schedule, Work orders, Costs, Recalls.
+    tabs = [t for t, ok in (("overview", True), ("pm", request.user.has_level(Module.PM, Level.VIEW)), ("wo", True),
+                            ("costs", request.user.has_level(Module.WORKORDERS, Level.VIEW)), ("recalls", can_view_recalls)) if ok]
     tab = request.GET.get("tab") if request.GET.get("tab") in tabs else "overview"
     summary = asset_service_summary(asset)
     recalls = _model_recalls(asset.device_model_id) if can_view_recalls else []
     return {"asset": asset, "tab": tab, "summary": summary, "recent": summary["work_orders"][:4], "qualified": qualified_technicians(asset),
             "portal_url": asset_request_url(asset), "can_create_wo": request.user.has_level(wo_perms.MODULE, wo_perms.CREATE_LEVEL),
             "can_view_wo": request.user.has_level(Module.WORKORDERS, Level.VIEW),
-            "can_view_recalls": can_view_recalls, "recalls": recalls,
-            "open_recall": any(m.status == AlertMatch.Status.NEEDS_ACTION for m in recalls)}
+            "can_view_recalls": can_view_recalls, "recalls": recalls, "tabs": tabs,
+            "open_recall": any(m.status == AlertMatch.Status.NEEDS_ACTION for m in recalls),
+            # slice 12: editing the device and its status buttons; the PM schedule and Costs tabs (apps/web/asset_tabs.py)
+            "can_edit_device": eq_perms.can_edit(request.user), "status_actions": eq_services.status_actions(asset, request.user),
+            **(asset_tabs.pm_tab(asset) if tab == "pm" else asset_tabs.costs_tab(asset) if tab == "costs" else {})}
 
 
 @web_view(Module.EQUIPMENT, Level.VIEW)

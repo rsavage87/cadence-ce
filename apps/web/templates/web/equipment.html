@@ -6,10 +6,11 @@
   <div><h1>Equipment</h1><p class="sub">{{ summary.total }} devices on record · {{ summary.active }} active · {{ summary.under_contract }} under a service contract</p></div>
   <div class="actions">
     {% comment %}Both carry the list's current filters (data-act="with-filters" reads them from the address at click time). The
-       mock's "Scan tag" (the mobile app's camera) and "Add device" (not built in the mock either) are left out.{% endcomment %}
+       mock's "Scan tag" (the mobile app's camera) is left out; Add device is slice 12.{% endcomment %}
     {% query request.GET page=None as eq_q %}
     <a class="btn" href="{% url 'web:labels' %}{{ eq_q }}" data-act="with-filters" data-base="{% url 'web:labels' %}" target="_blank" rel="noopener" title="Print asset labels, with their request QR codes, for the devices in this list">{% icon "print" %} Labels</a>
     <a class="btn" href="{% url 'web:equipment_csv' %}{{ eq_q }}" data-act="with-filters" data-base="{% url 'web:equipment_csv' %}" download title="Download the devices in this list as CSV">{% icon "dl" %} Export</a>
+    {% if can_add_device %}<button class="btn primary" type="button" hx-get="{% url 'web:asset_new' %}" hx-target="#modal-card">{% icon "plus" %} Add device</button>{% endif %}
   </div>
 </div>
 <form class="toolbar" id="eq-filters" method="get" action="{% url 'web:equipment' %}"

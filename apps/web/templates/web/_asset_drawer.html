@@ -11,12 +11,15 @@
 </div>
 <div class="tabs" role="tablist">
   <button class="tab{% if tab == 'overview' %} active{% endif %}" role="tab" aria-selected="{% if tab == 'overview' %}true{% else %}false{% endif %}" hx-get="{% url 'web:asset' asset.tag %}?tab=overview" hx-target="#drawer">Overview</button>
+  {% if 'pm' in tabs %}<button class="tab{% if tab == 'pm' %} active{% endif %}" role="tab" aria-selected="{% if tab == 'pm' %}true{% else %}false{% endif %}" hx-get="{% url 'web:asset' asset.tag %}?tab=pm" hx-target="#drawer">PM schedule</button>{% endif %}
   <button class="tab{% if tab == 'wo' %} active{% endif %}" role="tab" aria-selected="{% if tab == 'wo' %}true{% else %}false{% endif %}" hx-get="{% url 'web:asset' asset.tag %}?tab=wo" hx-target="#drawer">Work orders ({{ summary.work_orders|length }})</button>
+  {% if 'costs' in tabs %}<button class="tab{% if tab == 'costs' %} active{% endif %}" role="tab" aria-selected="{% if tab == 'costs' %}true{% else %}false{% endif %}" hx-get="{% url 'web:asset' asset.tag %}?tab=costs" hx-target="#drawer">Costs</button>{% endif %}
   {% if can_view_recalls %}<button class="tab{% if tab == 'recalls' %} active{% endif %}" role="tab" aria-selected="{% if tab == 'recalls' %}true{% else %}false{% endif %}" hx-get="{% url 'web:asset' asset.tag %}?tab=recalls" hx-target="#drawer">Recalls{% if recalls %} ({{ recalls|length }}){% endif %}</button>{% endif %}
 </div>
 <div class="dr-b">
 {% if tab == "overview" %}
   <div id="sp-host"></div>
+  {% if can_edit_device %}<div class="sec-actions"><button class="link" type="button" hx-get="{% url 'web:asset_edit' asset.tag %}" hx-target="#modal-card">Edit details</button></div>{% endif %}
   <div class="sec"><dl class="dl">
     <div><dt>Category</dt><dd>{{ dm.category }}</dd></div><div><dt>Serial number</dt><dd>{{ asset.serial|default:"—" }}</dd></div>
     <div><dt>Manufacturer</dt><dd>{{ dm.manufacturer }}</dd></div><div><dt>Model</dt><dd>{{ dm.model }}</dd></div>
@@ -51,6 +54,10 @@
   {% if can_view_wo %}<div class="sec"><h3>Recent work orders</h3><div class="list">
     {% for w in recent %}{% include "web/_wo_li.html" %}{% empty %}<div class="empty">No work orders in the last 6 months.</div>{% endfor %}
   </div></div>{% endif %}
+{% elif tab == "pm" %}
+  {% include "web/_asset_tab_pm.html" %}
+{% elif tab == "costs" %}
+  {% include "web/_asset_tab_costs.html" %}
 {% elif tab == "recalls" %}
   {# The Recalls screen is a page, not a drawer, so these are plain links that expand the matching card. #}
   <div class="sec"><div class="list">
@@ -68,5 +75,6 @@
   <button class="btn" type="button" data-act="copy" data-copy="{{ portal_url }}" title="Copy the service request link for this device">{% icon "link" %} Request link</button>
   <a class="btn" href="{{ portal_url }}" target="_blank" rel="noopener" title="Open the request form as unit staff would see it">Preview</a>
   <a class="btn" href="{% url 'web:labels' %}?tag={{ asset.tag|urlencode }}" target="_blank" rel="noopener" title="Print this device's asset label with its request QR code">{% icon "print" %} Label</a>
+  {% for s in status_actions %}<button class="btn{% if s.style %} {{ s.style }}{% endif %}" type="button" hx-post="{% url 'web:asset_status' asset.tag %}" hx-vals='{"to": "{{ s.to }}"}' hx-target="#drawer"{% if s.confirm %} hx-confirm="{{ s.confirm }}"{% endif %}>{{ s.label }}</button>{% endfor %}
 </div>
 {% endwith %}

@@ -503,3 +503,6 @@ button.link{background:none;border:0;padding:0;font:inherit;font-size:12px;font-
   .page-head,.panel-h,h1,h2,h3{break-after:avoid}
   .panel,.kpis,.kpi,.stat,.strip,.legend,.chart,.cal,.alert,.kcard,.note,.li,tr{break-inside:avoid}
 }
+
+/* Slice 12: the device drawer's Edit details link sits above the overview list */
+.sec-actions{display:flex;justify-content:flex-end;margin:0 0 -6px}

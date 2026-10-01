@@ -1,7 +1,7 @@
 from django.contrib.auth import views as auth_views
 from django.urls import include, path
 
-from . import views, views_account, views_invite
+from . import views, views_account, views_equipment, views_invite
 
 app_name = "web"
 
@@ -19,7 +19,10 @@ urlpatterns = [
     path("search/", views.search, name="search"),
     path("search/assets/", views.asset_search, name="asset_search"),
     path("equipment/", views.equipment, name="equipment"),
+    path("equipment/new/", views_equipment.asset_new, name="asset_new"),  # before the tag route; "new" is a reserved tag
     path("equipment/<str:tag>/", views.asset_detail, name="asset"),
+    path("equipment/<str:tag>/edit/", views_equipment.asset_edit, name="asset_edit"),
+    path("equipment/<str:tag>/status/", views_equipment.asset_status, name="asset_status"),
     path("work-orders/", views.workorders, name="workorders"),
     path("work-orders/new/", views.wo_new, name="wo_new"),
     path("work-orders/<str:number>/", views.wo_detail, name="wo"),
