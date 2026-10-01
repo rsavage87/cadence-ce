@@ -475,3 +475,31 @@ button.link{background:none;border:0;padding:0;font:inherit;font-size:12px;font-
 .pw-panel{max-width:520px}
 .note.pw-panel{margin-bottom:14px}
 .note.ok{background:var(--ok-soft);border-color:transparent;color:var(--ok)}
+
+/* Slice 11: printing app pages */
+/* What the browser prints of an app page (the Overview's Export button calls window.print(); any other screen prints from the
+   browser's menu): the page's content on white, in the light theme whatever the screen shows, with chart and chip colours kept.
+   The shell, filters, buttons, drawers, and dialogs stay on screen; the active filter pill or page tab stays as a label.
+   Report PDFs (web/print_report.html) load this file too, and these rules suit them. */
+@media print{
+  :root,:root:not([data-theme="light"]),:root[data-theme="dark"]{
+    --bg:#FFFFFF;--surface:#FFFFFF;--surface-2:#F5F7F9;--line:#D8DFE6;--line-2:#BFC9D3;
+    --ink:#14212B;--ink-2:#4A5966;--ink-3:#77858F;
+    --accent:#0B6F86;--accent-ink:#FFFFFF;--accent-soft:#DCEFF3;--accent-line:#8DC5D2;
+    --ok:#1E7A3F;--ok-soft:#DCF2E3;--warn:#A85F00;--warn-soft:#FFEFD0;--crit:#B0202E;--crit-soft:#FCE1E4;
+    --info:#2F5FB3;--info-soft:#E3EAF8;--violet:#6D4FC2;--violet-soft:#EBE5FA;
+    --shadow:none;color-scheme:light;
+  }
+  *,*::before,*::after{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  html,body,.app{height:auto;background:#fff}
+  .topbar,.nav,.toolbar,.page-head .actions,.panel-h .actions,.seg-ctl,.btn,.iconbtn,.drawer,.modal,.scrim,.toast{display:none!important}
+  .pills .pill:not(.active),.tabs .tab:not(.active){display:none}
+  .body{display:block}
+  .view{overflow:visible;padding:0}
+  .tbl-wrap,.kanban,.tabs{overflow:visible}
+  td{white-space:normal}
+  .kanban{grid-template-columns:repeat(5,minmax(0,1fr))}
+  .stats{grid-template-columns:repeat(3,1fr)}
+  .page-head,.panel-h,h1,h2,h3{break-after:avoid}
+  .panel,.kpis,.kpi,.stat,.strip,.legend,.chart,.cal,.alert,.kcard,.note,.li,tr{break-inside:avoid}
+}

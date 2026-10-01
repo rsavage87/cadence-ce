@@ -1,0 +1,68 @@
+{% extends "web/print_base.html" %}
+{% load web %}
+{% comment %}PM route sheets (slice 11, views_print_sheets.route_sheets): one sheet per technician, then the vendor's, then devices nobody
+   is credentialed for. Initials and Time are blank for the technician to fill in on the round.{% endcomment %}
+{% block title %}Route sheets · {% if week %}{{ start|date:"M j" }} to {{ end|date:"M j, Y" }}{% else %}{{ day|date:"M j, Y" }}{% endif %}{% endblock %}
+{% block page_style %}<style>
+.rs-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:6px 16px;padding-bottom:8px;margin-bottom:10px;border-bottom:1.5px solid var(--ink)}
+.rs-head p{margin:0}
+.rs-sum{text-align:right}
+.rs-sum b{font-size:14px}
+.rs-wrap{overflow-x:auto}
+table.route{font-size:11px}
+table.route th{font-size:9.5px;padding:4px;white-space:nowrap}
+table.route td{padding:8px 4px}
+table.route td small{display:block;color:var(--muted);font-size:10px}
+table.route td.write{min-width:58px;border-left:1px solid var(--line-2)}
+table.route .tag,table.route .day,table.route .code,table.route .chip{white-space:nowrap}
+table.route .tag{font-weight:600}
+.rs .note{margin-top:0}
+@media print{.rs-wrap{overflow:visible}}
+</style>{% endblock %}
+{% block bar_title %}PM route sheets{% endblock %}
+{% block bar_hint %}{% if week %}{{ start|date:"M j" }} to {{ end|date:"M j, Y" }}{% else %}{{ day|date:"M j, Y" }}{% endif %} · {{ devices }} device{{ devices|pluralize }}{% if sheets %} on {{ sheets|length }} sheet{{ sheets|length|pluralize }}{% endif %}. Print them, or choose Save as PDF in the print dialog.{% endblock %}
+{% block bar_actions %}{% url 'web:route_sheets' as base %}<a class="pbtn{% if not week %} active{% endif %}" href="{{ base }}?day={{ day|date:'Y-m-d' }}"{% if not week %} aria-current="true"{% endif %}>Day</a><a class="pbtn{% if week %} active{% endif %}" href="{{ base }}?scope=week&amp;day={{ day|date:'Y-m-d' }}"{% if week %} aria-current="true"{% endif %} title="Today and the next 6 days">Week</a>{% endblock %}
+{% block sheets %}
+{% for s in sheets %}
+<section class="sheet rs">
+  <header class="rs-head">
+    <div>
+      <h1>{{ s.name }}</h1>
+      <p class="muted">PM route · {% if week %}{{ start|date:"D, M j" }} to {{ end|date:"D, M j, Y" }}{% else %}{{ day|date:"l, F j, Y" }}{% endif %}</p>
+    </div>
+    <div class="rs-sum"><b>{{ s.count }} device{{ s.count|pluralize }} · {{ s.hours }} h</b>{% if overdue %} <span class="chip bad">Overdue</span>{% endif %}<br><span class="muted">{{ request.tenant.name }}</span></div>
+  </header>
+  {% if overdue %}<p class="note">{% if s.count == 1 %}This device is{% else %}These devices are{% endif %} overdue: the PM fell due on {{ day|date:"M j" }}.</p>{% endif %}
+  {% if s.kind == "vendor" %}<p class="note">These PM work orders are with the vendor.</p>
+  {% elif s.kind == "nobody" %}<p class="note">No active technician is credentialed for these devices.</p>{% endif %}
+  <div class="rs-wrap"><table class="route">
+    <thead><tr><th aria-label="Done"></th>{% if week %}<th>Date</th>{% endif %}<th>Tag</th><th>Device</th><th>Risk</th><th>Department</th><th>Room</th><th>Procedure</th><th class="num">Est. h</th><th>Work order</th><th>Initials</th><th>Time</th></tr></thead>
+    <tbody>{% for r in s.rows %}{% with a=r.asset %}
+      <tr>
+        <td><span class="box"></span></td>
+        {% if week %}<td class="day">{{ r.day|date:"D M j" }}</td>{% endif %}
+        <td class="tag">{{ a.tag }}</td>
+        <td>{{ a.device_model.manufacturer }} {{ a.device_model.model }}<small>{{ a.device_model.description }}</small></td>
+        <td>{% if r.risk_css %}<span class="chip {{ r.risk_css }}">{{ r.risk }}</span>{% else %}{{ r.risk }}{% endif %}</td>
+        <td>{{ r.department }}</td>
+        <td>{{ r.room|default:"—" }}</td>
+        <td class="code">{% if r.procedure %}{{ r.procedure.code }}{% else %}<span class="muted">No procedure</span>{% endif %}</td>
+        <td class="num">{{ r.hours_label }}</td>
+        <td>{% if r.wo %}<span class="mono">{{ r.wo }}</span>{% if r.wo_note %}<small>{{ r.wo_note }}</small>{% endif %}{% else %}<span class="muted">None yet</span>{% endif %}</td>
+        <td class="write"></td>
+        <td class="write"></td>
+      </tr>
+    {% endwith %}{% endfor %}</tbody>
+  </table></div>
+  <div class="sign"><div>Technician signature</div><div>Date</div><div>Reviewed by</div></div>
+</section>
+{% empty %}
+<section class="sheet rs">
+  <header class="rs-head">
+    <div><h1>PM route sheets</h1><p class="muted">{% if week %}{{ start|date:"D, M j" }} to {{ end|date:"D, M j, Y" }}{% else %}{{ day|date:"l, F j, Y" }}{% endif %}</p></div>
+    <div class="rs-sum"><span class="muted">{{ request.tenant.name }}</span></div>
+  </header>
+  <p>{% if week %}No PMs are due from {{ start|date:"M j" }} to {{ end|date:"M j, Y" }}.{% else %}No PMs are due on {{ day|date:"M j, Y" }}.{% endif %}</p>
+</section>
+{% endfor %}
+{% endblock %}
