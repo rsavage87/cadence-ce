@@ -22,7 +22,7 @@ HTMX for the web UI (`apps/web`, via django-htmx), pytest. Tests run on SQLite a
    Per-action levels live next to the services (`apps/workorders/permissions.py`, `apps/recalls/permissions.py`). Hiding a button
    is not access control.
 5. **State changes go through services** (`apps/workorders/services.py`, `apps/pm/services.py`, `apps/contracts/services.py`,
-   `apps/accounts/services.py`, `apps/credentials/services.py`, `apps/recalls/services.py`, `apps/facility/services.py`), never by setting fields in a
+   `apps/accounts/services.py`, `apps/credentials/services.py`, `apps/recalls/services.py`, `apps/facility/services.py`, `apps/equipment/services.py`), never by setting fields in a
    view or calling model helpers like
    `Contract.add_assets` directly. Services validate, write status history, and keep the asset in sync.
 6. **No PHI by design.** The portal never asks for patient identifiers. Don't add free-text fields that invite them.
@@ -66,7 +66,9 @@ pytest
   password-reset requests, never revealing whether an address has an account), `backends.py` (username or email in any case; a deactivated
   facility cannot sign in), `emails.py` (the one place account emails are sent; a failure returns False, never raises). Links in emails start
   with `APP_BASE_URL`, never the request's Host
-- `apps/equipment` Department, DeviceModel, Asset (tags carry no spaces or slashes: they are URL segments), CSV importer
+- `apps/equipment` Department, DeviceModel, Asset (tags carry no spaces or slashes: they are URL segments, and never change once a device is
+  added), CSV importer; `services.py` fleet queries plus adding devices, models, and departments, editing, and status changes
+  (`STATUS_CHANGES`; retiring cancels open PMs), `permissions.py` (Edit to add, edit, tag out; Approve to retire or reinstate)
 - `apps/contracts` Contract with add/remove device operations and cost allocation; `services.py` for create/update/renew/delete, status, filters, KPI summary
 - `apps/workorders` WorkOrder and lines, ServiceRequest, lifecycle services
 - `apps/pm` PmProcedure, PM generation, on-time math, month helpers; `schedule.py` the PM schedule's read models (month calendar,

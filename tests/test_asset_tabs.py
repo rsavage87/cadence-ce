@@ -100,8 +100,8 @@ def test_pm_view_alone_gives_the_pm_tab_without_costs_or_work_order_links(client
     assert r.context["tab"] == "overview" and "Service cost by year" not in r.content.decode() and "costs" not in r.context
 
 
-def test_work_orders_view_alone_gives_costs_without_the_pm_tab(client, tenant, ctx, vent):
-    client.force_login(custom_user(tenant, {Module.EQUIPMENT: Level.VIEW, Module.WORKORDERS: Level.VIEW}))
+def test_reports_view_alone_gives_costs_without_the_pm_tab(client, tenant, ctx, vent):
+    client.force_login(custom_user(tenant, {Module.EQUIPMENT: Level.VIEW, Module.REPORTS: Level.VIEW}))
     overview = client.get(f"/equipment/{vent.tag}/", **HX).content.decode()
     assert "?tab=costs" in overview and "?tab=pm" not in overview
     assert "Service cost by year" in tab(client, vent, "costs").content.decode()
@@ -109,8 +109,16 @@ def test_work_orders_view_alone_gives_costs_without_the_pm_tab(client, tenant, c
     assert r.context["tab"] == "overview" and "Maintenance strategy" not in r.content.decode() and "pm" not in r.context
 
 
-def test_neither_tab_without_pm_or_work_orders_view(client, tenant, ctx, vent):
-    client.force_login(custom_user(tenant, {Module.EQUIPMENT: Level.VIEW}))
+@pytest.mark.parametrize("role", ["vendor", "requester"])
+def test_vendor_and_requester_roles_see_no_costs_tab(client, make_user, ctx, vent, role):
+    """Their Work orders access does not open the facility's service spend, contract share, or replacement outlook."""
+    client.force_login(make_user(role))
+    assert "?tab=costs" not in client.get(f"/equipment/{vent.tag}/", **HX).content.decode()
+    assert tab(client, vent, "costs").context["tab"] == "overview"
+
+
+def test_neither_tab_without_pm_or_reports_view(client, tenant, ctx, vent):
+    client.force_login(custom_user(tenant, {Module.EQUIPMENT: Level.VIEW, Module.WORKORDERS: Level.EDIT}))
     body = client.get(f"/equipment/{vent.tag}/", **HX).content.decode()
     assert "?tab=pm" not in body and "?tab=costs" not in body
     for name in ("pm", "costs"):

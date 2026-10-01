@@ -75,6 +75,6 @@
   <button class="btn" type="button" data-act="copy" data-copy="{{ portal_url }}" title="Copy the service request link for this device">{% icon "link" %} Request link</button>
   <a class="btn" href="{{ portal_url }}" target="_blank" rel="noopener" title="Open the request form as unit staff would see it">Preview</a>
   <a class="btn" href="{% url 'web:labels' %}?tag={{ asset.tag|urlencode }}" target="_blank" rel="noopener" title="Print this device's asset label with its request QR code">{% icon "print" %} Label</a>
-  {% for s in status_actions %}<button class="btn{% if s.style %} {{ s.style }}{% endif %}" type="button" hx-post="{% url 'web:asset_status' asset.tag %}" hx-vals='{"to": "{{ s.to }}"}' hx-target="#drawer"{% if s.confirm %} hx-confirm="{{ s.confirm }}"{% endif %}>{{ s.label }}</button>{% endfor %}
+  {% for s in status_actions %}<button class="btn{% if s.style %} {{ s.style }}{% endif %}" type="button" hx-post="{% url 'web:asset_status' asset.tag %}?tab={{ tab }}" hx-vals='{"to": "{{ s.to }}"}' hx-target="#drawer"{% if s.confirm %} hx-confirm="{{ s.confirm }}"{% endif %}>{{ s.label }}</button>{% endfor %}
 </div>
 {% endwith %}

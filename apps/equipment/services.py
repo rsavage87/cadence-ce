@@ -7,6 +7,7 @@ The bucket is a SQL annotation so the strip counts and the `?bucket=` filter alw
 """
 from dataclasses import dataclass
 from datetime import date, timedelta
+from decimal import Decimal, InvalidOperation
 
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
@@ -168,7 +169,9 @@ def asset_service_summary(asset, today: date | None = None) -> dict:
 # Who may do what is in apps/equipment/permissions.py.
 
 NEW_DEVICE_STATUSES = (AssetStatus.IN_SERVICE, AssetStatus.OUT_OF_SERVICE)  # a new device is in use, or waiting for incoming inspection
-RESERVED_TAGS = {"new"}  # /equipment/new/ adds a device, so no device can be tagged "new"
+# /equipment/new/ adds a device, so no device can be tagged "new"; "." and ".." are path segments browsers rewrite, so a device
+# tagged that way could never be opened.
+RESERVED_TAGS = {"new", ".", ".."}
 
 # Status changes the drawer and API allow, from -> to. "In repair" is reached through work orders, never set by hand; retiring
 # and reinstating need more (permissions.RETIRE_LEVEL) because retiring cancels the device's open PM work orders.
@@ -224,14 +227,32 @@ def _check_dates(*, installed_on=None, warranty_end=None, last_pm_on=None, today
         raise ValidationError(errors)
 
 
-def _check_numbers(*, acquisition_cost=None, condition=None) -> None:
+_UNSET = object()
+
+
+def _check_numbers(*, acquisition_cost=_UNSET, condition=_UNSET) -> None:
+    """Only the values passed are checked; a value passed as None is missing (both columns are required)."""
     errors = {}
-    if acquisition_cost is not None and acquisition_cost < 0:
+    if acquisition_cost is None:
+        errors["acquisition_cost"] = "Enter the acquisition cost (0 if unknown)."
+    elif acquisition_cost is not _UNSET and acquisition_cost < 0:
         errors["acquisition_cost"] = "The acquisition cost cannot be negative."
-    if condition is not None and not 1 <= condition <= 5:
+    if condition is None:
+        errors["condition"] = "Choose a condition from 1 (poor) to 5 (excellent)."
+    elif condition is not _UNSET and not (isinstance(condition, int) and 1 <= condition <= 5):
         errors["condition"] = "Condition is 1 (poor) to 5 (excellent)."
     if errors:
         raise ValidationError(errors)
+
+
+def _whole(value, field: str, low: int, high: int, message: str) -> int:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        raise ValidationError({field: message})
+    if not low <= n <= high or str(value).strip() not in (str(n), f"{n}.0"):
+        raise ValidationError({field: message})
+    return n
 
 
 def first_pm_due(device_model, *, installed_on=None, last_pm_on=None, today: date) -> date:
@@ -265,18 +286,23 @@ def create_device_model(*, manufacturer, model, description, category, risk_clas
     errors = {k: "This is required." for k, v in fields.items() if not v}
     if risk_class not in RiskClass.values:
         errors["risk_class"] = "Choose a risk class."
-    if not 1 <= int(oem_pm_interval_months or 0) <= 120:
-        errors["oem_pm_interval_months"] = "The PM interval is 1 to 120 months."
-    if not 1 <= int(expected_life_years or 0) <= 50:
-        errors["expected_life_years"] = "Expected life is 1 to 50 years."
-    if list_cost is not None and list_cost < 0:
-        errors["list_cost"] = "The list cost cannot be negative."
+    for name, value, high, message in (("oem_pm_interval_months", oem_pm_interval_months, 120, "The PM interval is 1 to 120 months."),
+                                       ("expected_life_years", expected_life_years, 50, "Expected life is 1 to 50 years.")):
+        try:
+            fields[name] = _whole(value, name, 1, high, message)
+        except ValidationError as e:
+            errors.update(e.message_dict)
+    try:
+        list_cost = Decimal(str(list_cost if list_cost not in (None, "") else 0))
+    except (InvalidOperation, ValueError):
+        list_cost = None
+    if list_cost is None or not list_cost.is_finite() or list_cost < 0:
+        errors["list_cost"] = "The list cost is a number, 0 or more."
     if errors:
         raise ValidationError(errors)
     if DeviceModel.objects.filter(manufacturer__iexact=fields["manufacturer"], model__iexact=fields["model"]).exists():
         raise ValidationError({"model": f"{fields['manufacturer']} {fields['model']} is already in the catalog; choose it from the list."})
-    return DeviceModel.objects.create(risk_class=risk_class, oem_pm_interval_months=int(oem_pm_interval_months),
-                                      expected_life_years=int(expected_life_years), list_cost=list_cost or 0, **fields)
+    return DeviceModel.objects.create(risk_class=risk_class, list_cost=list_cost, **fields)
 
 
 @transaction.atomic
@@ -333,8 +359,13 @@ def update_asset(asset: Asset, *, by=None, today: date | None = None, **fields) 
     if "next_pm_on" in fields and fields["next_pm_on"] is None and asset.status != AssetStatus.RETIRED:
         raise ValidationError({"next_pm_on": "A device in use needs a next PM date."})
     merged = {f: fields.get(f, getattr(asset, f)) for f in ("installed_on", "warranty_end")}
-    _check_dates(**merged, last_pm_on=asset.last_pm_on, today=today)
-    _check_numbers(acquisition_cost=fields.get("acquisition_cost"), condition=fields.get("condition"))
+    _check_dates(**merged, today=today)
+    # The last PM against the install date only when the install date changes, and on the field the form has: a device added
+    # before this rule (import, the demo) may have an older PM on record, and must stay editable.
+    new_install = fields.get("installed_on")
+    if new_install and new_install != asset.installed_on and asset.last_pm_on and asset.last_pm_on < new_install:
+        raise ValidationError({"installed_on": f"The install date cannot be after the last PM on record ({asset.last_pm_on:%b %-d, %Y})."})
+    _check_numbers(**{k: fields[k] for k in ("acquisition_cost", "condition") if k in fields})
     for name in ("serial", "room"):
         if name in fields:
             fields[name] = _clean_text(fields[name], 80 if name == "serial" else 40)
@@ -358,6 +389,8 @@ def set_status(asset: Asset, to_status: str, *, by=None, note: str = "", today: 
     from apps.workorders.services import change_status
 
     today = today or date.today()
+    if to_status not in AssetStatus.values:
+        raise ValidationError("Choose a device status.")
     if to_status not in STATUS_CHANGES.get(asset.status, set()):
         raise ValidationError(f"{asset.tag} cannot go from {asset.get_status_display().lower()} to {AssetStatus(to_status).label.lower()}.")
     if to_status == AssetStatus.RETIRED:
@@ -365,7 +398,8 @@ def set_status(asset: Asset, to_status: str, *, by=None, note: str = "", today: 
         blocking = [w for w in open_wos if not (w.type == WoType.PM and w.status in (WoStatus.OPEN, WoStatus.AWAITING_PARTS))]
         if blocking:
             numbers = ", ".join(w.number for w in blocking)
-            raise ValidationError(f"{asset.tag} has open work: {numbers}. Finish or cancel it before retiring the device.")
+            raise ValidationError(f"{asset.tag} has open work: {numbers}. Complete it, or cancel it (an in-progress work order goes "
+                                  f"back to open first), before retiring the device.")
         for w in open_wos:
             change_status(w, WoStatus.CANCELLED, by=by, note="Device retired")
         asset.next_pm_on = None
@@ -381,10 +415,14 @@ def status_actions(asset: Asset, user) -> list[dict]:
     """The status buttons the drawer shows this user for this device: [{to, label, style, confirm}], most likely first."""
     from . import permissions as perms
 
-    order = [AssetStatus.OUT_OF_SERVICE, AssetStatus.IN_SERVICE, AssetStatus.ON_LOAN, AssetStatus.MISSING, AssetStatus.RETIRED]
+    level = user.level_for(perms.MODULE)  # once, not once per button
+    # A device in use is most likely being tagged out; one that is not is most likely coming back (the mock's single button).
+    in_use = asset.status in (AssetStatus.IN_SERVICE, AssetStatus.ON_LOAN)
+    order = ([AssetStatus.OUT_OF_SERVICE, AssetStatus.IN_SERVICE] if in_use else [AssetStatus.IN_SERVICE, AssetStatus.OUT_OF_SERVICE]) + [
+        AssetStatus.ON_LOAN, AssetStatus.MISSING, AssetStatus.RETIRED]
     out = []
     for to in order:
-        if to not in STATUS_CHANGES.get(asset.status, set()) or not perms.can_set_status(user, asset.status, to):
+        if to not in STATUS_CHANGES.get(asset.status, set()) or level < perms.status_level(asset.status, to):
             continue
         label, style = status_action_label(asset.status, to)
         confirm = ""

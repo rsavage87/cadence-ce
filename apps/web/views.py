@@ -116,10 +116,11 @@ def _model_recalls(device_model_id) -> list:
 def asset_drawer_context(request, asset) -> dict:
     """Also used by the contracts screen to re-render the device drawer after its support editor saves."""
     can_view_recalls = request.user.has_level(Module.RECALLS, Level.VIEW)
-    # Tabs a role cannot use do not exist for it: PM schedule needs PM View, Costs needs Work orders View (its figures are
-    # work-order costs), Recalls needs recalls View. The mock's order: Overview, PM schedule, Work orders, Costs, Recalls.
+    # Tabs a role cannot use do not exist for it: PM schedule needs PM View, Costs needs Reports View (service spend, contract
+    # share, and replacement outlook are the Reports' figures; a vendor technician or clinical requester has no business with
+    # them), Recalls needs recalls View. The mock's order: Overview, PM schedule, Work orders, Costs, Recalls.
     tabs = [t for t, ok in (("overview", True), ("pm", request.user.has_level(Module.PM, Level.VIEW)), ("wo", True),
-                            ("costs", request.user.has_level(Module.WORKORDERS, Level.VIEW)), ("recalls", can_view_recalls)) if ok]
+                            ("costs", request.user.has_level(Module.REPORTS, Level.VIEW)), ("recalls", can_view_recalls)) if ok]
     tab = request.GET.get("tab") if request.GET.get("tab") in tabs else "overview"
     summary = asset_service_summary(asset)
     recalls = _model_recalls(asset.device_model_id) if can_view_recalls else []

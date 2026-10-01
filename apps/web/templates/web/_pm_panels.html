@@ -1,7 +1,7 @@
 {% load web %}
 {# The PM schedule's lower panels. Context from apps.web.pm_panels.panels_context: outlook, workload, library. #}
 {# Re-fetches itself when the page fires pm-changed (after a day's PM work orders are created), so the workload and outlook follow. #}
-<div id="pm-panels" hx-get="{% url 'web:pm' %}" hx-trigger="pm-changed from:body" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap hx-target">
+<div id="pm-panels" hx-get="{% url 'web:pm' %}" hx-trigger="pm-changed from:body, devices-changed from:body" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap hx-target">
 <div class="grid g-2 mt">
   <div class="panel"><div class="panel-h"><h2>Next 30 days</h2><span class="sub">What is coming due, by category</span></div><div class="panel-b">
     <div class="stats" style="margin-bottom:12px">

@@ -341,15 +341,17 @@ def test_a_retired_device_can_be_saved_without_a_next_pm(client, signed_in, vent
     assert vent.notes == "Kept for parts" and vent.next_pm_on is None
 
 
-def test_a_last_pm_rule_shows_on_the_install_date_not_as_a_crash(client, signed_in, vent):
-    """The last PM is not on the form, but update_asset checks it against the install date (imported data can break that rule).
-    Its error goes on the field that can fix it rather than raising for a field the form does not have."""
+def test_a_device_with_an_older_pm_than_its_install_date_stays_editable(client, signed_in, vent):
+    """Imported and demo devices can have a last PM before their install date. Editing anything else still saves; moving the
+    install date later than that PM is refused on the install date (the form has no last PM field), not as a crash."""
     Asset.objects.filter(pk=vent.pk).update(last_pm_on=vent.installed_on - timedelta(days=30))
+    vent.refresh_from_db()
     signed_in("technician")
     r = client.post(f"/equipment/{vent.tag}/edit/", edit_post(vent, room="3"), **HX)
-    assert r.status_code == 200 and field_error(r.content.decode(), "installed_on") == "The last PM cannot be before the device was installed."
-    r = client.post(f"/equipment/{vent.tag}/edit/", edit_post(vent, room="3", installed_on=(vent.installed_on - timedelta(days=60)).isoformat()), **HX)
     assert r["HX-Retarget"] == "#drawer"
+    later = vent.installed_on + timedelta(days=10)
+    r = client.post(f"/equipment/{vent.tag}/edit/", edit_post(vent, room="3", installed_on=later.isoformat()), **HX)
+    assert r.status_code == 200 and field_error(r.content.decode(), "installed_on").startswith("The install date cannot be after the last PM on record")
 
 
 def test_edit_needs_equipment_edit(client, signed_in, vent):
@@ -491,7 +493,7 @@ def test_retiring_with_open_repair_work_shows_why_and_changes_nothing(client, si
     r = client.post(status_url(vent), {"to": AssetStatus.RETIRED}, **HX)
     assert r.status_code == 200
     t = triggers(r)
-    assert t["toast"] == {"value": f"CE-10001 has open work: {repair.number}. Finish or cancel it before retiring the device."}
+    assert t["toast"] == {"value": f"CE-10001 has open work: {repair.number}. Complete it, or cancel it (an in-progress work order goes back to open first), before retiring the device."}
     assert "devices-changed" not in t and "wo-changed" not in t
     vent.refresh_from_db(), pm.refresh_from_db()
     assert vent.status == AssetStatus.IN_SERVICE and vent.next_pm_on is not None and pm.status == WoStatus.OPEN

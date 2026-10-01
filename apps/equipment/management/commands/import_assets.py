@@ -15,6 +15,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from apps.equipment.models import TAG_VALIDATOR, Asset, AssetStatus, Department, DeviceModel, RiskClass
+from apps.equipment.services import RESERVED_TAGS
 from apps.tenants.context import tenant_context
 from apps.tenants.models import Tenant
 
@@ -111,6 +112,10 @@ class Command(BaseCommand):
                     self.stderr.write(f"Skipped {tag!r}: {TAG_VALIDATOR.message}")
                     skipped += 1
                     continue
+                if tag.lower() in RESERVED_TAGS:  # the same tags Add device refuses: they collide with the app's own links
+                    self.stderr.write(f"Skipped {tag!r}: it cannot be used as an asset tag.")
+                    skipped += 1
+                    continue
                 dept, _ = Department.objects.get_or_create(name=get(row, "department") or "Unassigned", defaults={"tenant": tenant})
                 dm, _ = DeviceModel.objects.get_or_create(
                     manufacturer=get(row, "manufacturer") or "Unknown", model=get(row, "model") or "Unknown",
@@ -125,7 +130,7 @@ class Command(BaseCommand):
                     "last_pm_on": parse_date(get(row, "last_pm")), "next_pm_on": parse_date(get(row, "next_pm")),
                     "warranty_end": parse_date(get(row, "warranty")),
                 }
-                asset = Asset.objects.filter(tag=tag).first()
+                asset = Asset.objects.filter(tag__iexact=tag).first()  # tags are unique in any letter case (devices added on screen keep theirs)
                 if asset:
                     for k, v in fields.items():
                         if v not in (None, "", Decimal("0")) or k in ("device_model", "department", "status"):

@@ -61,6 +61,14 @@ that login for the rest of the window (the lock is on the typed login, so it say
 rate-limit counters live in each web process's memory, so with several gunicorn workers each counts on its own and a
 restart clears them; a shared cache (Redis) would make them exact.
 
+## Adding and changing devices
+Add device on the Equipment screen adds a device, with a new model or department in the same form when the catalog lacks
+them; its first PM is one interval after its last PM or install date (or today, if that has passed with no PM on record).
+The device drawer edits its details (not the tag, which is on the label and in links), tags it out of service and returns it,
+lends it out, marks it missing or found, and retires or reinstates it. Retiring cancels its open PM work orders and is refused
+while repair or recall work is open; it needs Equipment Approve (the director by default). The drawer's PM schedule tab shows
+the device's maintenance strategy, procedure, next PMs, and PM history, and its Costs tab the service cost by year.
+
 ## Exports and printing
 Equipment, Work orders, and Contracts download as CSV with the filters on screen (Export), and a contract's covered devices
 from its drawer (Device list); every report downloads as CSV too. The files open cleanly in Excel (UTF-8, ISO dates, plain

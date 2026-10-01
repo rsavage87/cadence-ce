@@ -476,6 +476,25 @@ button.link{background:none;border:0;padding:0;font:inherit;font-size:12px;font-
 .note.pw-panel{margin-bottom:14px}
 .note.ok{background:var(--ok-soft);border-color:transparent;color:var(--ok)}
 
+/* Slice 12: the device drawer's Edit details link sits above the overview list */
+.sec-actions{display:flex;justify-content:flex-end;margin:0 0 -6px}
+
+/* Slice 12: device forms */
+.form .fld{display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--ink-2);min-width:0}
+.form input[readonly]{background:var(--surface-2);color:var(--ink-2)}
+.dv-sub{margin:0;padding:8px 12px 12px;border:1px solid var(--line);border-radius:8px;min-width:0}
+.dv-sub legend{padding:0 4px;font-size:12.5px;font-weight:600;color:var(--ink-2)}
+.dv-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+/* "Add a new model" / "Add a new department" in the select reveals their fields; without :has they simply stay visible */
+@supports selector(:has(*)){
+  .form .dv-new{display:none}
+  .dv-form:has(select[name="device_model"] option[value="new"]:checked) .dv-new-model{display:block}
+  .dv-form:has(select[name="department"] option[value="new"]:checked) .dv-new-dept{display:flex}
+}
+@media (max-width:760px){
+  .dv-grid{grid-template-columns:1fr}
+}
+
 /* Slice 11: printing app pages */
 /* What the browser prints of an app page (the Overview's Export button calls window.print(); any other screen prints from the
    browser's menu): the page's content on white, in the light theme whatever the screen shows, with chart and chip colours kept.
@@ -502,23 +521,4 @@ button.link{background:none;border:0;padding:0;font:inherit;font-size:12px;font-
   .stats{grid-template-columns:repeat(3,1fr)}
   .page-head,.panel-h,h1,h2,h3{break-after:avoid}
   .panel,.kpis,.kpi,.stat,.strip,.legend,.chart,.cal,.alert,.kcard,.note,.li,tr{break-inside:avoid}
-}
-
-/* Slice 12: the device drawer's Edit details link sits above the overview list */
-.sec-actions{display:flex;justify-content:flex-end;margin:0 0 -6px}
-
-/* Slice 12: device forms */
-.form .fld{display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--ink-2);min-width:0}
-.form input[readonly]{background:var(--surface-2);color:var(--ink-2)}
-.dv-sub{margin:0;padding:8px 12px 12px;border:1px solid var(--line);border-radius:8px;min-width:0}
-.dv-sub legend{padding:0 4px;font-size:12.5px;font-weight:600;color:var(--ink-2)}
-.dv-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-/* "Add a new model" / "Add a new department" in the select reveals their fields; without :has they simply stay visible */
-@supports selector(:has(*)){
-  .form .dv-new{display:none}
-  .dv-form:has(select[name="device_model"] option[value="new"]:checked) .dv-new-model{display:block}
-  .dv-form:has(select[name="department"] option[value="new"]:checked) .dv-new-dept{display:flex}
-}
-@media (max-width:760px){
-  .dv-grid{grid-template-columns:1fr}
 }

@@ -1,13 +1,12 @@
 """Device services (slice 12), tested as a skeptic: every rule in apps/equipment/services.py's "adding and changing devices" section
 (create_asset, create_device_model, create_department, update_asset, set_status, status_actions) and apps/equipment/permissions.py,
-plus tenant isolation for each new path. Tests marked xfail(strict=True) pin bugs found in the scaffold's services; they start
-passing (and so fail the suite, strict) once the service is fixed, at which point the marker comes off."""
+plus tenant isolation for each new path. Bugs the first run of these tests found in the scaffold's services (an unknown status, the "." and ".." tags,
+an install-date error on the wrong field, a missing cost or condition) were fixed before merging; the tests keep them fixed."""
 from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError
 
 from apps.accounts.models import Level, Module, Role, User
 from apps.equipment import permissions as perms
@@ -440,8 +439,6 @@ def test_update_asset_checks_numbers(ctx, vent):
     assert set(field_errors(e)) == {"acquisition_cost", "condition"}
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="scaffold bug: update_asset keys the 'last PM before install' error to last_pm_on, "
-                   "which the edit form does not have (it is not in EDITABLE_FIELDS); it should be keyed to installed_on, the field the user changed")
 def test_moving_the_install_date_past_the_last_pm_is_an_install_date_error(ctx, vent):
     vent.last_pm_on = TODAY - timedelta(days=30)
     vent.save()
@@ -450,8 +447,6 @@ def test_moving_the_install_date_past_the_last_pm_is_an_install_date_error(ctx, 
     assert list(field_errors(e)) == ["installed_on"]
 
 
-@pytest.mark.xfail(strict=True, raises=IntegrityError, reason="scaffold bug: a None condition or acquisition cost (an empty optional form field) "
-                   "skips the number checks and fails at the database (NOT NULL) instead of raising a ValidationError")
 @pytest.mark.parametrize("call", ["create_condition", "update_condition", "update_cost"])
 def test_missing_numbers_are_validation_errors(ctx, vent, dept, vent_model, call):
     with pytest.raises(ValidationError):
@@ -502,8 +497,6 @@ def test_every_refused_status_change(ctx, dept, vent_model, from_, to):
     assert a.status == from_ and len(history(a)) == rows
 
 
-@pytest.mark.xfail(strict=True, raises=ValueError, reason="scaffold bug: set_status builds its refusal message with AssetStatus(to_status), "
-                   "so an unknown status (a tampered form post) raises ValueError (a 500) instead of a ValidationError")
 @pytest.mark.parametrize("to", ["bogus", "", None])
 def test_an_unknown_status_is_a_validation_error(ctx, vent, to):
     with pytest.raises(ValidationError):
@@ -519,7 +512,7 @@ def test_retiring_refuses_while_other_work_is_open(ctx, vent, type_, steps):
     cancellable = wo(vent, WoType.PM)
     with pytest.raises(ValidationError) as e:
         svc.set_status(vent, S.RETIRED, today=TODAY)
-    assert e.value.messages == [f"CE-10001 has open work: {blocking.number}. Finish or cancel it before retiring the device."]
+    assert e.value.messages == [f"CE-10001 has open work: {blocking.number}. Complete it, or cancel it (an in-progress work order goes back to open first), before retiring the device."]
     vent.refresh_from_db()
     cancellable.refresh_from_db()
     assert vent.status == S.IN_SERVICE and vent.next_pm_on is not None
@@ -622,7 +615,7 @@ TECH_ACTIONS = {
     S.IN_SERVICE: [(S.OUT_OF_SERVICE, "Tag out of service", "danger"), (S.ON_LOAN, "Lend out", ""), (S.MISSING, "Mark missing", "")],
     S.ON_LOAN: [(S.OUT_OF_SERVICE, "Tag out of service", "danger"), (S.IN_SERVICE, "Back from loan", ""), (S.MISSING, "Mark missing", "")],
     S.OUT_OF_SERVICE: [(S.IN_SERVICE, "Return to service", ""), (S.MISSING, "Mark missing", "")],
-    S.IN_REPAIR: [(S.OUT_OF_SERVICE, "Tag out of service", "danger"), (S.IN_SERVICE, "Return to service", ""), (S.MISSING, "Mark missing", "")],
+    S.IN_REPAIR: [(S.IN_SERVICE, "Return to service", ""), (S.OUT_OF_SERVICE, "Tag out of service", "danger"), (S.MISSING, "Mark missing", "")],
     S.MISSING: [(S.IN_SERVICE, "Found", "")],
     S.RETIRED: [],
 }
@@ -702,9 +695,6 @@ def test_approve_in_the_roles_matrix_lets_a_manager_retire(ctx):
 
 # --- bugs at the edges of tags ----------------------------------------------------------------------------------------------
 
-@pytest.mark.xfail(strict=True, reason="scaffold bug: '.' and '..' pass TAG_VALIDATOR and RESERVED_TAGS, but they are dot segments in "
-                   "/equipment/<tag>/: browsers resolve /equipment/./ to the Equipment list and /equipment/../ to the home page, and "
-                   "/equipment/./edit/ to the device tagged 'edit', so such a device can never be opened, edited, or retired")
 @pytest.mark.parametrize("tag", [".", ".."])
 def test_dot_segment_tags_are_refused(ctx, dept, vent_model, tag):
     with pytest.raises(ValidationError) as e:
