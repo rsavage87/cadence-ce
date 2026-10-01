@@ -1,2 +1,52 @@
-{# Device drawer, PM schedule tab (slice 12). Scaffold: agent B builds it from apps/web/asset_tabs.pm_tab. #}
-<div class="sec"><div class="empty">Not built yet.</div></div>
+{% load web %}
+{# Device drawer, PM schedule tab (slice 12; the mock's drawerAsset). Context: pm, from apps/web/asset_tabs.pm_tab; the drawer's can_view_wo links work orders. #}
+{% with p=pm.procedure up=pm.upcoming %}
+  <div class="sec"><h3>Maintenance strategy</h3><div class="note">{{ pm.strategy }}</div></div>
+
+  <div class="sec">
+  {% if p %}
+    <h3>PM procedure <span>{{ p.code }} · {{ p.estimated_hours|floatformat:"-2" }} h estimated</span></h3>
+    <div style="font-weight:500;margin:-2px 0 6px">{{ p.name }}</div>
+    {% if pm.steps %}<ul class="check">{% for s in pm.steps %}<li>{{ s.text }}{% if s.measured %} <span class="muted">· record {% if s.measure %}{{ s.measure }}{% else %}a reading{% endif %}</span>{% endif %}</li>{% endfor %}</ul>
+    {% else %}<div class="note">This procedure has no steps on file.</div>{% endif %}
+    <div class="hint" style="margin-top:8px">Source: {{ p.get_source_kind_display }}{% if p.source_reference %} · {{ p.source_reference }}{% endif %}{% if p.revision %} · revision {{ p.revision }}{% endif %}{% if pm.source_url %} · <a class="link" href="{{ pm.source_url }}" target="_blank" rel="noopener noreferrer">Open the source document</a>{% endif %}</div>
+  {% else %}
+    <h3>PM procedure</h3>
+    <div class="note">No PM procedure on file for this model.</div>
+    <div class="hint" style="margin-top:8px">Its PMs are estimated at {{ pm.default_hours|floatformat:"-2" }} hour{{ pm.default_hours|pluralize }}, and the printed work order leaves lines to write down the steps and readings.</div>
+  {% endif %}
+  </div>
+
+  <div class="sec"><h3>Upcoming{% if up.rows %} <span>every {{ up.interval }}</span>{% endif %}</h3>
+    <div class="list">
+    {% for u in up.rows %}
+      <div class="li static"><span class="rail{% if u.overdue %} crit{% elif u.next %} ok{% endif %}"></span>
+        <div class="bd"><div class="t{% if u.overdue %} down{% endif %}">{{ u.on|date:"M j, Y" }}</div>
+          <div class="s">{% if u.next %}Next due{% else %}Projected{% endif %} · {% if up.who.kind == "vendor" %}Vendor: {{ up.who.name }}{% elif up.who.kind == "suggested" %}{{ up.who.name }}, suggested{% elif up.who.kind == "assigned" %}{{ up.who.name }}{% else %}No credentialed technician{% endif %}</div></div>
+        <div class="r">{% if u.next %}{% pm_sticker asset %}{% if up.open_pm %}<br>{% if can_view_wo %}<a class="link" href="{% url 'web:wo' up.open_pm.number %}" hx-get="{% url 'web:wo' up.open_pm.number %}" hx-target="#drawer">{{ up.open_pm.number }}</a>{% else %}{{ up.open_pm.number }}{% endif %}{% endif %}{% endif %}</div>
+      </div>
+    {% empty %}
+      <div class="empty">{{ up.unscheduled }}</div>
+    {% endfor %}
+    </div>
+    {% if up.rows %}<div class="hint" style="margin-top:8px">Projected dates assume each PM is done when due{% if up.rows.0.overdue %}, the overdue one today{% endif %}. {% if up.who.kind == "suggested" %}The technician is the one the PM schedule suggests: credentialed for this device and least loaded.{% elif up.who.kind == "none" %}No active technician is credentialed for this device{% if asset.under_contract %}; {{ asset.contract.vendor }} covers it under {{ asset.contract.reference }}{% endif %}.{% else %}The next PM is on {{ up.open_pm.number }}.{% endif %}</div>{% endif %}
+  </div>
+
+  <div class="sec"><h3>History <span>{{ pm.history_total }} PM work order{{ pm.history_total|pluralize }}</span></h3>
+  {% if pm.history %}
+    <div class="tbl-wrap"><table class="mini-tbl">
+      <thead><tr><th>Completed</th><th>Work order</th><th>Technician</th><th>Result</th><th class="num">Hours</th></tr></thead>
+      <tbody>{% for h in pm.history %}
+        <tr><td>{% if h.wo.completed_on %}{{ h.wo.completed_on|date:"M j, Y" }}{% else %}{% wo_status_chip h.wo.status %}{% endif %}</td>
+          <td>{% if can_view_wo %}<a class="link" href="{% url 'web:wo' h.wo.number %}" hx-get="{% url 'web:wo' h.wo.number %}" hx-target="#drawer">{{ h.wo.number }}</a>{% else %}{{ h.wo.number }}{% endif %}</td>
+          <td>{% if h.who %}{{ h.who }}{% if h.wo.vendor_service %} <span class="muted">· vendor</span>{% endif %}{% else %}<span class="muted">Unassigned</span>{% endif %}</td>
+          <td{% if not h.has_resolution %} class="muted"{% endif %} style="white-space:normal;min-width:140px">{{ h.result|truncatechars:140 }}</td>
+          <td class="num">{% if h.hours is not None %}{{ h.hours|floatformat:2 }}{% else %}<span class="muted">—</span>{% endif %}</td></tr>
+      {% endfor %}</tbody>
+    </table></div>
+    {% if pm.history_more %}<div class="hint" style="margin-top:8px">The {{ pm.history|length }} most recent. The Work orders tab lists everything opened in the last 6 months.</div>{% endif %}
+  {% else %}
+    <div class="empty">No PM work orders on file for this device.</div>
+  {% endif %}
+  </div>
+{% endwith %}
