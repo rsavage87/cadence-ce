@@ -16,6 +16,7 @@ from apps.contracts.models import Contract, ContractType, Coverage
 from apps.credentials.models import Credential, Scope, Technician
 from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, RiskClass
 from apps.facility.services import update_settings
+from apps.pm import aem
 from apps.pm.dates import add_months
 from apps.pm.models import PmProcedure
 from apps.recalls.models import Alert, AlertMatch
@@ -204,4 +205,18 @@ class Command(BaseCommand):
                 elif status_ == AlertMatch.Status.CLOSED:
                     set_status(match, AlertMatch.Status.IN_PROGRESS, today=today - timedelta(days=closed_days_ago + 7))
                     set_status(match, AlertMatch.Status.CLOSED, note=note, today=today - timedelta(days=closed_days_ago))
+            self._approved_aem(domain, today)
         self.stdout.write(self.style.SUCCESS(f"Seeded {tenant.name}: {len(assets)} devices, {len(techs)} technicians. Sign in as {kim} / DemoPass-2026"))
+
+    def _approved_aem(self, domain: str, today: date) -> None:
+        """One AEM interval in force, as the mock's PM library shows for the patient monitors: proposed by a technician with the
+        model's failure history (computed from the records above as of the proposal date), approved for the Equipment Management
+        Committee by the CE manager, through apps.pm.aem like any other."""
+        monitor = DeviceModel.objects.get(manufacturer="Philips", model="IntelliVue MX750")
+        proposer = User.objects.get(username=f"dwhitfield@{domain}")  # technician: PM Edit
+        approver = User.objects.get(username=f"rfeldman@{domain}")  # CE manager: PM Approve
+        proposed_on, decided_on = today - timedelta(days=75), today - timedelta(days=61)
+        decision = aem.propose(monitor, interval_months=24, by=proposer, today=proposed_on,
+                               rationale="The monitors run a self-test at every power-on. Proposing a 24-month interval for this model "
+                                         "on the failure history attached.")
+        aem.approve(decision, by=approver, decided_on=decided_on, note=f"EMC minutes, {decided_on:%B %Y} meeting, item 4", today=today)
