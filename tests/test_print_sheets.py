@@ -174,16 +174,21 @@ def test_a_vendor_pm_assigned_back_in_house_goes_to_the_technician(client, signe
 
 # --- route sheets: the day ----------------------------------------------------------------------------------------------
 
-def test_the_day_defaults_to_today_and_ignores_the_pm_screens_other_parameters(client, signed_in, ctx, dept, pump_model, crew):
+def test_the_day_is_the_one_the_pm_screens_day_panel_shows(client, signed_in, ctx, dept, pump_model, crew):
     dev("CE-TODAY", pump_model, dept, TODAY)
     dev("CE-SEP30", pump_model, dept, SEP30)
     signed_in("technician")
-    for query in ("", "?day=", "?day=2026-13-40", "?day=20260930", "?day=2026-9-30", "?day=abc", "?day=1999-09-30", "?y=2026&m=11", "?page=2&mode=board"):
+    for query in ("", "?day=", "?day=2026-13-40", "?day=20260930", "?day=2026-9-30", "?day=abc", "?day=1999-09-30", "?page=2&mode=board",
+                  f"?y={TODAY.year}&m={TODAY.month}"):
         r = client.get(URL + query)
         assert r.status_code == 200 and r.context["day"] == TODAY, query
         assert [t for _, tags, _ in sheets(r.content.decode()) for t in tags] == ["CE-TODAY"], query
-    r = client.get(URL + "?y=2026&m=11&day=2026-09-30")  # the PM screen's month is ignored; its selected day is what prints
+    r = client.get(URL + "?y=2026&m=11&day=2026-09-30")  # a selected day wins over the shown month, as on the PM screen
     assert r.context["day"] == SEP30 and [t for _, tags, _ in sheets(r.content.decode()) for t in tags] == ["CE-SEP30"]
+    r = client.get(URL + "?y=2026&m=11")  # another month with no day picked: its 1st, the day the PM screen's panel shows
+    assert r.context["day"] == date(2026, 11, 1)
+    pm_panel = client.get("/pm/?y=2026&m=11")
+    assert pm_panel.status_code == 200 and "Nov 1" in pm_panel.content.decode()
 
 
 def test_a_past_day_prints_its_overdue_devices_marked_overdue(client, signed_in, ctx, dept, pump_model, crew):

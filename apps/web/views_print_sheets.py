@@ -1,8 +1,9 @@
 """
 PM route sheets and report PDFs (slice 11): printable pages on web/print_base.html, opened in a new tab.
 
-Route sheets (PM View) put the PM schedule's plan on paper, one sheet per person doing the work. ?day=YYYY-MM-DD (today when
-missing or malformed; the PM screen's other parameters, such as y and m, are ignored) prints the devices the day panel shows
+Route sheets (PM View) put the PM schedule's plan on paper, one sheet per person doing the work. The day is the one the PM
+screen's day panel shows for the same address (?day=, else today in the current month or the 1st of another ?y=&m= month),
+and the sheets print the devices that panel shows
 (apps.pm.schedule.day_plan), and a past day prints its overdue devices, marked overdue. ?scope=week prints the week plan instead
 (today through today + 6, apps.pm.schedule.week_plan), a technician's days on one sheet. A device goes to:
   1. the technician holding its open PM work order;
@@ -127,7 +128,7 @@ def week_sheets(today: date) -> list[dict]:
 @web_view(pm_perms.MODULE, pm_perms.VIEW_LEVEL)
 def route_sheets(request):
     today = views_pm._today()  # the PM screen's clock, so the sheets and the screen agree on what today is
-    day = views_pm._parse_day(request.GET.get("day")) or today
+    _y, _m, day = views_pm._selection(request.GET, today)  # the day the PM screen's panel shows for the same address
     week = request.GET.get("scope") == "week"
     if week:
         start, end = today, today + timedelta(days=sch.WEEK_DAYS - 1)

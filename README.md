@@ -61,6 +61,15 @@ that login for the rest of the window (the lock is on the typed login, so it say
 rate-limit counters live in each web process's memory, so with several gunicorn workers each counts on its own and a
 restart clears them; a shared cache (Redis) would make them exact.
 
+## Exports and printing
+Equipment, Work orders, and Contracts download as CSV with the filters on screen (Export), and a contract's covered devices
+from its drawer (Device list); every report downloads as CSV too. The files open cleanly in Excel (UTF-8, ISO dates, plain
+numbers), and text that a spreadsheet would run as a formula is kept as text. Printable pages open in a new tab and print, or
+save as PDF from the browser's print dialog: a work order with its PM checklist (Print in its drawer), asset labels with a QR
+code that opens the device's request form (Label in the device drawer, or Labels on Equipment for the filtered list, on a
+thermal label printer or US Letter label sheets), each technician's PM route for a day or the week (Route sheets), every
+report (PDF), and the recall response log (Recalls). The Overview prints as it is (Export).
+
 ## Security model
 - One tenant per hospital. Every row carries `tenant_id`; the ORM scopes queries through `TenantManager`, and
   PostgreSQL row-level security enforces the same rule at the database (`manage.py enable_rls`) when the app

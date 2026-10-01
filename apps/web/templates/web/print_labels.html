@@ -40,7 +40,9 @@
 .layout-sheet .lb-url{font-size:7pt}
 .lb-none{max-width:6in}
 @media screen{
-  .lb-pages{display:flex;flex-wrap:wrap;gap:16px;justify-content:center;margin:16px auto;padding:0 16px}
+  /* safe center: a Letter sheet wider than a phone screen starts at the left edge and scrolls, instead of being centred
+     past the edge where nobody can scroll to it (browsers without `safe` keep the plain centre) */
+  .lb-pages{display:flex;flex-wrap:wrap;gap:16px;justify-content:center;justify-content:safe center;margin:16px auto;padding:0 16px}
   .lb-page{box-shadow:0 1px 4px rgba(20,24,31,.14);zoom:1.75}  /* the small label is hard to read at actual size on a screen */
   .lb-sheet.sheet{width:8.5in;max-width:none;min-height:11in;padding:.5in .15625in}
   .layout-sheet .lb{outline:1px dashed var(--line)}
