@@ -129,7 +129,7 @@ def pm_page_context(request, today: date | None = None) -> dict:
     today = today or _today()
     ctx = _body_context(request, today, *_selection(request.GET, today))
     # The body's keys win over the panels' so a name the panels happen to share cannot break the calendar.
-    return {**panels_context(request, today), **ctx, "head": sch.schedule_summary(today)}
+    return {**panels_context(request, today), **ctx, "head": sch.schedule_summary(today), "can_assign_week": pm_perms.can_assign_week(request.user)}
 
 
 @web_view(pm_perms.MODULE, pm_perms.VIEW_LEVEL)

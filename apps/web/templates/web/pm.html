@@ -8,8 +8,9 @@
     <p class="sub">{{ head.due_30 }} PM{{ head.due_30|pluralize }} due in the next 30 days ({{ head.hours_30|floatformat:0 }} h) · {{ head.overdue }} overdue · intervals from each model's PM program, AEM where approved</p>
   </div>
   <div class="actions">
-    {% comment %}The mock's "Auto-assign week" only toasts and is left out: assignment happens per day in "Create N PM work orders"
-       (the least-loaded credentialed technician). Route sheets print the selected day's plan (the address carries ?day=).{% endcomment %}
+    {% comment %}Auto-assign week (slice 14, views_pm_week) puts every PM due in the next 7 days on the plate of the technician the day
+       list names; PM Approve and work-order assign. Route sheets print the selected day's plan (the address carries ?day=).{% endcomment %}
+    {% if can_assign_week %}<button class="btn" type="button" hx-get="{% url 'web:pm_week_assign' %}" hx-target="#modal-card" title="Give every PM due in the next 7 days to the least-loaded credentialed technician">{% icon "sync" %} Auto-assign week</button>{% endif %}
     <a class="btn" href="{% url 'web:route_sheets' %}{% query request.GET %}" data-act="with-filters" data-base="{% url 'web:route_sheets' %}" target="_blank" rel="noopener" title="Print each technician's PM route for the selected day">{% icon "print" %} Route sheets</a>
   </div>
 </div>

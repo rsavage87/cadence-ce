@@ -2,7 +2,9 @@
 PM engine: generate work orders from schedules and compute completion-rate KPIs.
 The math matches the mock's Overview so the product and the demo agree.
 """
+from dataclasses import dataclass, field
 from datetime import date, timedelta
+from decimal import Decimal
 from typing import NamedTuple
 
 from django.conf import settings
@@ -14,7 +16,7 @@ from apps.workorders.models import OPEN_STATUSES, Priority, Source, WorkOrder, W
 from apps.workorders.services import create_work_order
 
 from .dates import month_bounds
-from .schedule import DEFAULT_PM_HOURS
+from .schedule import DEFAULT_PM_HOURS, WEEK_DAYS, _planned, week_plan
 
 
 def _create_pm(asset, as_of: date, by=None):
@@ -58,12 +60,14 @@ def create_pm_work_orders_for_day(day: date, by=None, assign_to_technicians: boo
     that has no open PM work order yet. With `assign_to_technicians`, each goes to the technician the schedule suggests
     (credentialed, least loaded; the same pick the day panel and the workload show, see schedule.suggestions_for_day),
     recorded like any assignment; devices nobody is
-    credentialed for, or every device when the caller may not assign, are left unassigned for a manager."""
+    credentialed for, or every device when the caller may not assign, are left unassigned for a manager. The day's devices are
+    locked first, so a double click, or Auto-assign week running at the same moment, cannot give a device two PM work orders."""
     from apps.workorders.services import assign
 
     from .schedule import day_devices, suggestions_for_day
 
     today = today or date.today()
+    _lock_devices(Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES, next_pm_on=day))
     devices = list(day_devices(day))
     needing = [a for a in devices if not a.has_open_pm]
     suggested = suggestions_for_day(day, needing, today) if assign_to_technicians else {}
@@ -75,6 +79,152 @@ def create_pm_work_orders_for_day(day: date, by=None, assign_to_technicians: boo
             assign(wo, technician=tech, by=by)
             assigned += 1
     return PmBatch(len(needing), assigned, len(devices) - len(needing))
+
+
+def _lock_devices(assets) -> None:
+    """Lock the device rows (in id order, so two batches never wait on each other in a circle) until the transaction ends. A second
+    request for the same devices waits here, then reads what the first one committed and finds nothing left to do. SQLite ignores
+    the lock and runs one writer at a time anyway."""
+    list(assets.select_for_update().order_by("pk").values_list("pk", flat=True))
+
+
+# --- Auto-assign week (slice 14) --------------------------------------------------------------------------------------------
+
+@dataclass
+class TechnicianShare:
+    """What Auto-assign week gives one technician: new PM work orders, open ones already on file, and their estimated hours."""
+    technician: object
+    new: int = 0
+    existing: int = 0
+    hours: Decimal = Decimal("0")
+
+    @property
+    def count(self) -> int:
+        return self.new + self.existing
+
+
+@dataclass
+class WeekAssignment:
+    """Auto-assign week over start..end (today through today + 6), from the week plan: the preview, or what was done.
+
+    `shares` are the technicians who get PMs, by name. `uncovered` are the devices nobody is credentialed for, each
+    {"asset", "has_open_pm"}: a work order is created for those without one, and every one of them stays unassigned. `held` counts
+    the devices whose open PM work order is already with an active technician or the vendor (left as they are). `overdue` counts
+    active devices whose next PM is before `start`: they are not in the week plan, so Auto-assign week does not touch them."""
+    start: date
+    end: date
+    shares: list = field(default_factory=list)
+    uncovered: list = field(default_factory=list)
+    held: int = 0
+    overdue: int = 0
+
+    @property
+    def assigned_new(self) -> int:
+        return sum(s.new for s in self.shares)
+
+    @property
+    def assigned_existing(self) -> int:
+        return sum(s.existing for s in self.shares)
+
+    @property
+    def assigned(self) -> int:
+        """PMs that go to a technician: new work orders and open ones on nobody's plate."""
+        return self.assigned_new + self.assigned_existing
+
+    @property
+    def hours(self) -> Decimal:
+        return sum((s.hours for s in self.shares), Decimal("0"))
+
+    @property
+    def technicians(self) -> int:
+        return len(self.shares)
+
+    @property
+    def unassigned(self) -> int:
+        """Devices left on nobody's plate because nobody is credentialed for them."""
+        return len(self.uncovered)
+
+    @property
+    def unassigned_new(self) -> int:
+        """Of those, the devices with no open PM work order: one is created, unassigned, for a manager."""
+        return sum(1 for u in self.uncovered if not u["has_open_pm"])
+
+    @property
+    def created(self) -> int:
+        """New PM work orders, assigned or not."""
+        return self.assigned_new + self.unassigned_new
+
+    @property
+    def nothing_to_do(self) -> bool:
+        return self.created == 0 and self.assigned == 0
+
+
+def _week_steps(today: date) -> tuple[WeekAssignment, list]:
+    """(the summary, the steps): for each device in the week plan whose PM is on nobody's plate, in the plan's order,
+    (asset, its open PM work order as week_plan read it or None, the technician the plan suggests or None). Devices whose open PM is
+    with the vendor or an active technician have no step. Read-only."""
+    plan = week_plan(today)
+    out = WeekAssignment(start=today, end=today + timedelta(days=WEEK_DAYS - 1), overdue=overdue_assets(today).count())
+    shares: dict = {}
+    steps = []
+    for asset in plan["devices"]:
+        w = plan["open_pm"].get(asset.id)
+        if _planned(w, plan["active_ids"]):
+            out.held += 1
+            continue
+        tech = plan["suggested"].get(asset.id)
+        steps.append((asset, w, tech))
+        if tech is None:
+            out.uncovered.append({"asset": asset, "has_open_pm": w is not None})
+            continue
+        share = shares.setdefault(tech.id, TechnicianShare(tech))
+        if w is None:
+            share.new += 1
+        else:
+            share.existing += 1
+        share.hours += plan["hours_of"](asset)
+    out.shares = sorted(shares.values(), key=lambda s: s.technician.name)
+    return out, steps
+
+
+def week_assignment_preview(today: date | None = None) -> WeekAssignment:
+    """What Auto-assign week would do now. Changes nothing."""
+    return _week_steps(today or date.today())[0]
+
+
+@transaction.atomic
+def assign_week(*, by=None, today: date | None = None) -> WeekAssignment:
+    """The PM schedule's "Auto-assign week": put every PM due today through today + 6 on a technician's plate, as the week plan
+    (schedule.week_plan, the one the day panel, Create, and the workload show) suggests. A device with no open PM work order gets one
+    (as Create does) assigned to the suggested technician; an open PM work order on nobody's plate (unassigned, like those the nightly
+    generate_pm creates, or with a deactivated technician) is assigned to the suggested technician; one with the vendor or an active
+    technician is left alone. Nobody credentialed: the work order is created if missing and left unassigned. Assignments are recorded
+    like any other (workorders.services.assign). The devices are locked first, so a second request (a double click) waits, then
+    finds everything on someone's plate and does nothing. Returns what was done."""
+    from apps.workorders.services import assign
+
+    today = today or date.today()
+    _lock_devices(Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES, next_pm_on__gte=today,
+                                       next_pm_on__lt=today + timedelta(days=WEEK_DAYS)))
+    result, steps = _week_steps(today)
+    waiting = _first_open_pms([asset.id for asset, w, tech in steps if w is not None and tech is not None])
+    for asset, w, tech in steps:
+        if w is None:
+            wo = _create_pm(asset, today, by=by)
+        else:
+            wo = waiting.get(asset.id)  # None only if it was closed a moment ago, after the plan was read
+        if wo is not None and tech is not None:
+            assign(wo, technician=tech, by=by)
+    return result
+
+
+def _first_open_pms(asset_ids: list) -> dict:
+    """{asset id: its open PM work order}, the earliest opened when there are several: the one week_plan reads."""
+    out: dict = {}
+    for wo in (WorkOrder.objects.filter(asset_id__in=asset_ids, type=WoType.PM, status__in=OPEN_STATUSES)
+               .select_related("asset__device_model", "tenant").order_by("opened_on", "number")):
+        out.setdefault(wo.asset_id, wo)
+    return out
 
 
 # A PM cancelled on a device that is now retired (retiring cancels them, equipment.services.set_status) is not a missed PM: the
