@@ -495,6 +495,11 @@ button.link{background:none;border:0;padding:0;font:inherit;font-size:12px;font-
   .dv-grid{grid-template-columns:1fr}
 }
 
+/* Slice 13: the Reports panel's Schedule button shows a report is emailed; its modal picks how often */
+.btn.sched-on{border-color:var(--accent-line);background:var(--accent-soft);color:var(--accent)}
+.rs-title{margin:0;font-size:13px;color:var(--ink)}
+.rs-form .radio input{padding:0;border:0}
+
 /* Slice 11: printing app pages */
 /* What the browser prints of an app page (the Overview's Export button calls window.print(); any other screen prints from the
    browser's menu): the page's content on white, in the light theme whatever the screen shows, with chart and chip colours kept.

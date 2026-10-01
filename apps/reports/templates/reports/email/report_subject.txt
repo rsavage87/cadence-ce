@@ -1,0 +1,1 @@
+{% autoescape off %}{{ report.title }} · {{ facility }} · {{ today|date:"M j, Y" }}{% endautoescape %}

@@ -1,0 +1,18 @@
+{% autoescape off %}Hello {{ user.first_name|default:user.email }},
+
+Here is the report you scheduled in Cadence CE.
+
+{{ report.title }}
+{{ report.subtitle }}
+{{ facility }} · as of {{ today|date:"F j, Y" }}
+
+Its table is attached as {{ filename }} ({{ rows }} row{{ rows|pluralize }}). It opens in Excel or any spreadsheet.
+
+To see the latest figures with the charts, or to print the report or save it as a PDF, open it here (you may be asked to sign in):
+{{ print_url }}
+
+You get this report {% if frequency == "monthly" %}on the first Monday of each month{% else %}every Monday{% endif %}; the next one is due {{ next_on|date:"l, F j" }}. It is sent only to you, and only while you can view Reports in Cadence CE.
+
+To stop it, open the report, choose Schedule, then Off:
+{{ report_url }}
+{% endautoescape %}

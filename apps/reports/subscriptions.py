@@ -1,0 +1,240 @@
+"""
+Report emails (slice 13): the Reports screen's Schedule button. A user asks for one report by email every Monday or on the
+first Monday of each month, and the daily jobs (apps.jobs, the `send_report_emails` command) send what is due.
+
+Self-service only. A subscription always goes to its own user's account email, and only while that user is active, belongs to
+the facility, the facility is active, and the user can still view Reports; nothing here takes another recipient. Turning one
+off always works.
+
+Each email carries the report's table as an attachment, byte for byte the CSV the screen downloads (apps.web.exports), and a
+link to the printable report, which asks the reader to sign in. Links start with settings.APP_BASE_URL, never a request's Host.
+Reports hold device, cost, and staff figures, never the free text a requester typed, so the email cannot repeat patient details.
+
+send_due starts with no tenant (the daily job): it reads only the Tenant table (a system table) before it enters each facility's
+tenant_context, which is what row-level security on PostgreSQL requires.
+"""
+import logging
+from collections import Counter
+from datetime import date, timedelta
+
+from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.db.models import Q
+from django.urls import reverse
+from django.utils import timezone
+
+from apps.accounts import emails
+from apps.accounts.models import Level, Module
+from apps.jobs.models import JobRun
+from apps.tenants.context import get_current_tenant, tenant_context
+from apps.tenants.models import Tenant
+from apps.web.exports import csv_line
+
+from .models import ReportSubscription
+from .services import report_meta, run_report
+
+log = logging.getLogger(__name__)
+
+Frequency = ReportSubscription.Frequency
+JOB = "report_emails"  # the key of this job in apps.jobs.services.DAILY_JOBS
+TEMPLATE = "reports/email/report"
+# How often, as the toast and the email say it ("Scheduled: <report>, every Monday to ...").
+WHEN = {Frequency.WEEKLY: "every Monday", Frequency.MONTHLY: "first Monday of each month"}
+SHORT = {Frequency.WEEKLY: "weekly", Frequency.MONTHLY: "monthly"}  # the Schedule button: "Scheduled weekly"
+# Why a due subscription was not sent: the stable key in send_due's summary, and the words the command prints.
+SKIP_REASONS = {
+    "inactive": "account deactivated",
+    "no_email": "no email address",
+    "no_access": "no Reports View",
+    "other_facility": "not in this facility",
+    "unknown_report": "report no longer offered",
+}
+
+
+def local_today() -> date:
+    """Today in TIME_ZONE: the day the daily jobs run for (apps.jobs uses the same clock)."""
+    return timezone.localdate()
+
+
+# --- who may have a report emailed, and setting it ---------------------------------------------------------------------
+
+def _refusal(user) -> str | None:
+    """Why `user` cannot have reports emailed in the current facility, in plain words; None when they can."""
+    tenant = get_current_tenant()
+    if tenant is None or user.tenant_id != tenant.id:
+        return "Only people in this facility can have its reports emailed."
+    if not user.is_active:
+        return "This account is deactivated."
+    if not user.email:
+        return "Your account has no email address, so there is nowhere to send the report."
+    if not user.has_level(Module.REPORTS, Level.VIEW):
+        return "You need Reports View to have reports emailed to you."
+    return None
+
+
+def can_schedule(user) -> bool:
+    """Whether the Reports screen offers `user` the Schedule button (the service checks again on save)."""
+    return user.is_authenticated and _refusal(user) is None
+
+
+def subscription_for(user, report_key: str) -> ReportSubscription | None:
+    """`user`'s subscription to one report in the current facility, or None."""
+    return ReportSubscription.objects.filter(user=user, report=report_key).first()
+
+
+def set_subscription(user, report_key: str, frequency: str | None) -> ReportSubscription | None:
+    """Email `report_key` to `user` weekly or monthly, or stop it (None or ""). Returns the subscription, or None once it is off.
+    Raises ValidationError for an unknown report or frequency, and (when turning one on) for a user who cannot receive it: not in
+    this facility, deactivated, without an email address, or without Reports View. A changed frequency keeps last_sent_on, so a
+    report already sent today is not sent again."""
+    if report_meta(report_key) is None:
+        raise ValidationError("There is no such report.")
+    frequency = frequency or ""
+    if frequency and frequency not in Frequency.values:
+        raise ValidationError("Choose Off, Every Monday, or First Monday of each month.")
+    if not frequency:
+        ReportSubscription.objects.filter(user=user, report=report_key).delete()
+        return None
+    refusal = _refusal(user)
+    if refusal:
+        raise ValidationError(refusal)
+    sub, _created = ReportSubscription.objects.update_or_create(user=user, report=report_key, defaults={"frequency": frequency})
+    return sub
+
+
+# --- when ---------------------------------------------------------------------------------------------------------------
+
+def is_due_on(frequency: str, day: date) -> bool:
+    """Weekly: every Monday. Monthly: the first Monday of the month (a Monday in the month's first seven days)."""
+    if day.weekday() != 0:
+        return False
+    return frequency == Frequency.WEEKLY or (frequency == Frequency.MONTHLY and day.day <= 7)
+
+
+def is_due(sub: ReportSubscription, today: date) -> bool:
+    """Due `today` and not sent yet. Never twice on one day, and never for a day before the last one sent (an operator's catch-up
+    run for a missed day sends nothing that a later email already replaced)."""
+    if sub.last_sent_on is not None and sub.last_sent_on >= today:
+        return False
+    return is_due_on(sub.frequency, today)
+
+
+def next_due_on(frequency: str, start: date) -> date:
+    """The first day on or after `start` that `frequency` sends on."""
+    day = start
+    while not is_due_on(frequency, day):  # at most five weeks: the first Monday of the next month
+        day += timedelta(days=1)
+    return day
+
+
+def first_send_on(frequency: str, today: date, last_sent_on: date | None = None) -> date:
+    """When the next email for `frequency` arrives: today if today is a sending day and today's run has not happened yet (and it
+    was not sent today already), otherwise the next sending day."""
+    sent_today = last_sent_on is not None and last_sent_on >= today
+    ran_today = JobRun.objects.filter(job=JOB, run_on=today).exists()  # a system table: no tenant needed
+    return next_due_on(frequency, today + timedelta(days=1) if sent_today or ran_today else today)
+
+
+# --- sending ------------------------------------------------------------------------------------------------------------
+
+def report_csv(data: dict) -> bytes:
+    """A report's table as the screen's CSV download streams it (web:report_csv): UTF-8 with the byte-order mark, CRLF lines."""
+    return ("\ufeff" + csv_line(data["columns"]) + "".join(csv_line(row) for row in data["rows"])).encode("utf-8")
+
+
+def csv_filename(report_key: str, day: date) -> str:
+    return f"cadence-{report_key}-{day:%Y-%m-%d}.csv"
+
+
+def skip_reason(sub: ReportSubscription, tenant) -> str | None:
+    """Why `sub` must not be sent in `tenant` now (a key of SKIP_REASONS), or None. Run inside the tenant's context: Reports View
+    is read from the user's role, a tenant-scoped row."""
+    user = sub.user
+    if report_meta(sub.report) is None:
+        return "unknown_report"
+    if user.tenant_id != tenant.id:
+        return "other_facility"
+    if not user.is_active:
+        return "inactive"
+    if not user.email:
+        return "no_email"
+    if not user.has_level(Module.REPORTS, Level.VIEW):
+        return "no_access"
+    return None
+
+
+def _send(sub: ReportSubscription, tenant, today: date, data: dict) -> bool:
+    """Email one report (already computed as of `today`) to its subscriber and stamp the day. True once the mail backend took it."""
+    meta = report_meta(sub.report)
+    filename = csv_filename(sub.report, today)
+    context = {
+        "user": sub.user, "facility": tenant.name, "report": meta, "today": today, "rows": len(data["rows"]), "filename": filename,
+        "frequency": sub.frequency, "next_on": next_due_on(sub.frequency, today + timedelta(days=1)),
+        "print_url": settings.APP_BASE_URL + reverse("web:report_print", args=[sub.report]),
+        "report_url": settings.APP_BASE_URL + reverse("web:report", args=[sub.report]),
+    }
+    if not emails.send(sub.user.email, TEMPLATE, context, attachments=[(filename, report_csv(data), "text/csv")]):
+        return False  # emails.send logged why; the day stays unsent, so a rerun of the job tries again
+    ReportSubscription.objects.filter(pk=sub.pk).update(last_sent_on=today)
+    sub.last_sent_on = today
+    return True
+
+
+def send_report_email(sub: ReportSubscription, today: date) -> bool:
+    """Email `sub`'s report as of `today` to its user now, inside the subscription's facility, computed the way the Reports
+    screen computes it. Stamps last_sent_on only when the email was sent. Raises ValidationError when the user may not receive
+    it (see SKIP_REASONS); False when the email could not be sent."""
+    tenant = Tenant.objects.get(pk=sub.tenant_id)  # a system table, readable before the tenant is set
+    if not tenant.is_active:
+        raise ValidationError("Not sent: the facility is inactive.")
+    with tenant_context(tenant):
+        reason = skip_reason(sub, tenant)
+        if reason:
+            raise ValidationError(f"Not sent: {SKIP_REASONS[reason]}.")
+        return _send(sub, tenant, today, run_report(sub.report, today))
+
+
+def _send_facility(tenant, today: date, counts: dict) -> None:
+    """Send `tenant`'s subscriptions due `today`, counting into `counts`. Inside the tenant's context. One subscription failing
+    (a report error, a mail outage) is logged and counted, and the rest still go."""
+    frequencies = [f for f in Frequency.values if is_due_on(f, today)]
+    subs = (ReportSubscription.objects.filter(frequency__in=frequencies).filter(Q(last_sent_on__isnull=True) | Q(last_sent_on__lt=today))
+            .select_related("user").order_by("report", "user__username"))
+    reports = {}  # every subscriber gets the same table: compute each report once per facility and day
+    for sub in subs:
+        if not is_due(sub, today):
+            continue
+        counts["due"] += 1
+        reason = skip_reason(sub, tenant)
+        if reason:
+            counts["skipped"][reason] += 1
+            continue
+        try:
+            if sub.report not in reports:
+                reports[sub.report] = run_report(sub.report, today)
+            sent = _send(sub, tenant, today, reports[sub.report])
+        except Exception:  # a report that cannot be computed, or a database error, fails this email only
+            log.exception("Report email %s for user %s at %s failed", sub.report, sub.user_id, tenant.slug)
+            sent = False
+        counts["sent" if sent else "failed"] += 1
+
+
+def send_due(today: date) -> dict:
+    """Send every report email due `today`, facility by facility (active facilities only). Returns what happened:
+    {"day", "sent", "failed", "skipped", "tenants": [{"slug", "name", "due", "sent", "failed", "skipped": Counter of SKIP_REASONS
+    keys, "error"}]}; "error" is set when a facility could not be worked through at all (its emails count as one failure)."""
+    summary = {"day": today, "sent": 0, "failed": 0, "skipped": 0, "tenants": []}
+    for tenant in Tenant.objects.filter(is_active=True).order_by("slug"):  # a system table: read before any tenant is set
+        counts = {"slug": tenant.slug, "name": tenant.name, "due": 0, "sent": 0, "failed": 0, "skipped": Counter(), "error": ""}
+        try:
+            with tenant_context(tenant):
+                _send_facility(tenant, today, counts)
+        except Exception as e:  # e.g. the database went away mid-run: the next facility still gets its emails
+            log.exception("Report emails for %s failed", tenant.slug)
+            counts["error"] = f"{type(e).__name__}: {e}"
+            counts["failed"] += 1
+        summary["tenants"].append(counts)
+        summary["sent"] += counts["sent"]
+        summary["failed"] += counts["failed"]
+        summary["skipped"] += sum(counts["skipped"].values())
+    return summary
