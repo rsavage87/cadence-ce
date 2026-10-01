@@ -66,6 +66,10 @@ def change_status(wo: WorkOrder, to_status: str, by=None, note: str = "", as_of=
         _on_completed(wo, as_of)
     wo.save()
     WorkOrderStatusHistory.objects.create(tenant=wo.tenant, work_order=wo, from_status=from_status, to_status=to_status, changed_by=by, note=note)
+    if to_status == WoStatus.COMPLETED and wo.source == Source.PORTAL:
+        from apps.portal.notifications import request_done_after_commit  # the portal imports this module
+
+        request_done_after_commit(wo)  # emails the requester once the completion is saved, at most once per request; never raises
     return wo
 
 
@@ -102,13 +106,22 @@ def assign(wo: WorkOrder, technician=None, vendor_name: str = "", by=None) -> Wo
 
 
 @transaction.atomic
-def create_service_request(*, asset, department, problem, urgency, requester_name="", callback="", room="", tagged_out=False, ip=None) -> ServiceRequest:
+def create_service_request(*, asset, department, problem, urgency, requester_name="", callback="", room="", tagged_out=False, ip=None,
+                           requester_email="") -> ServiceRequest:
+    """`requester_email` (optional, lowercased) gets a confirmation once the request is saved, and a notice when its work order is
+    completed, each only while the facility confirms by email and the address is at one of its domains (apps.portal.notifications)."""
     priority = URGENCY_TO_PRIORITY[urgency]
     wo = create_work_order(asset=asset, type=WoType.REPAIR, priority=priority, problem=problem,
                            requester=f"{requester_name or 'Unit staff'}, {department.name}", source=Source.PORTAL, callback=callback,
                            reported_location=f"{department.name} {room}".strip(), tag_out=tagged_out)
-    return ServiceRequest.objects.create(tenant=asset.tenant, asset=asset, department=department, room=room, requester_name=requester_name, callback=callback,
-                                         problem=problem, urgency=urgency, tagged_out=tagged_out, work_order=wo, submitted_ip=ip)
+    sr = ServiceRequest.objects.create(tenant=asset.tenant, asset=asset, department=department, room=room, requester_name=requester_name, callback=callback,
+                                       requester_email=(requester_email or "").strip().lower(), problem=problem, urgency=urgency, tagged_out=tagged_out,
+                                       work_order=wo, submitted_ip=ip)
+    if sr.requester_email:
+        from apps.portal.notifications import request_received_after_commit  # the portal imports this module
+
+        request_received_after_commit(sr)
+    return sr
 
 
 def open_work_orders():

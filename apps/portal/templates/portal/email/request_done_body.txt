@@ -1,0 +1,15 @@
+{% autoescape off %}Hello,
+
+The work on your service request {{ number }} at {{ facility }} is done.
+
+Request number: {{ number }}
+Device: {{ tag }} · {{ description }}
+Location: {{ department }}{% if room %}, {{ room }}{% endif %}
+Urgency: {{ urgency }}
+Completed: {{ completed_on|date:"M j, Y" }}
+
+If the problem is back, submit a new request or call {% if hotline %}{{ hotline }}{% else %}the Clinical Engineering shop{% endif %}:
+{{ new_request_url }}
+
+This email does not repeat the problem you described. Please keep patient information out of any reply.
+{% endautoescape %}

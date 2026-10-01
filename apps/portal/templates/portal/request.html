@@ -9,7 +9,8 @@
     {% else %}
       <label for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}
     {% endif %}
-    {% if field.errors %}<div class="err">{{ field.errors|striptags }}</div>{% endif %}
+    {% if field.help_text %}<div class="help" id="{{ field.auto_id }}_helptext">{{ field.help_text }}</div>{% endif %}
+    {% if field.errors %}<div class="err" id="{{ field.auto_id }}_error">{{ field.errors|striptags }}</div>{% endif %}
   {% endfor %}
   <button class="btn" type="submit">Submit request</button>
 </form>
