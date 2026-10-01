@@ -59,8 +59,9 @@ def portal_fields(post) -> dict:
     if "portal_require_callback" in post:
         raw = post.get("portal_require_callback")
         fields["portal_require_callback"] = {"1": True, "0": False}.get(raw, raw)
-    if "portal_hotline" in post:
-        fields["portal_hotline"] = post.get("portal_hotline", "")
+    for field in ("portal_hotline", "portal_confirmation", "portal_email_domains"):
+        if field in post:
+            fields[field] = post.get(field, "")
     return fields
 
 

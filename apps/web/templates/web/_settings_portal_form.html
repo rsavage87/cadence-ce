@@ -11,7 +11,7 @@
     <span class="lbl">Hotline shown to requesters</span>
     <input class="perm" id="set-portal-hotline" name="portal_hotline" value="{{ s.portal_hotline }}" maxlength="{{ hotline_max }}" placeholder="e.g. ext. 4400" autocomplete="off"{% if not can_edit %} disabled{% endif %}>
   </label>
-  {# The mock's other rows, shown honestly: none of them can work yet. #}
+  {# Two of the mock's rows, shown honestly: neither can work yet. #}
   <div class="set-row off">
     <span class="lbl">Page on-call for critical requests, around the clock<span class="why">Needs the notifications integration</span></span>
     <label class="tog"><input type="checkbox" disabled aria-label="Page on-call for critical requests"><span class="sw"></span>Off</label>
@@ -20,8 +20,16 @@
     <span class="lbl">Allow photo upload with a request<span class="why">Not offered: photos can capture patients</span></span>
     <label class="tog"><input type="checkbox" disabled aria-label="Allow photo upload with a request"><span class="sw"></span>Off</label>
   </div>
-  <div class="set-row off last">
-    <span class="lbl">Confirmation to the requester<span class="why">Email and text need the notifications integration</span></span>
-    <select class="perm" disabled aria-label="Confirmation to the requester"><option>On screen</option></select>
-  </div>
+  {# Email goes only to the work email domains below. The mock's text option stays in the list but cannot be chosen. #}
+  <label class="set-row">
+    <span class="lbl">Confirmation to the requester<span class="why">Text messages need the notifications integration</span></span>
+    <select class="perm" id="set-portal-confirmation" name="portal_confirmation" aria-label="Confirmation to the requester"{% if not can_edit %} disabled{% endif %}>
+      {% for value, label in confirmation_choices %}<option value="{{ value }}"{% if value == s.portal_confirmation %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      <option disabled>On screen, email, and text</option>
+    </select>
+  </label>
+  <label class="set-row last">
+    <span class="lbl">Work email domains<span class="why" id="set-portal-domains-help">Requesters can get email only at these domains, comma-separated</span>{% if domains_error %}<span class="err" id="set-portal-domains-err">{{ domains_error }}</span>{% endif %}</span>
+    <input class="perm" id="set-portal-domains" name="portal_email_domains" value="{{ domains_value }}" maxlength="{{ domains_max }}" placeholder="e.g. riverside-health.org, rrmc.org" autocomplete="off" spellcheck="false" aria-label="Work email domains" aria-describedby="{% if domains_error %}set-portal-domains-err {% endif %}set-portal-domains-help"{% if domains_error %} aria-invalid="true"{% endif %}{% if not can_edit %} disabled{% endif %}>
+  </label>
 </form>

@@ -4,7 +4,13 @@ and the risk-scoring summary the Settings screen shows. Views and the API call t
 
 Reads never write: get_settings() returns unsaved defaults until someone saves. Every save records who made it
 (django-simple-history), because a change to policy or targets changes what surveyors and managers are shown.
+
+Portal emails (slice 13): with the confirmation set to "On screen and by email", the portal may email a requester, but only at one
+of the facility's own work email domains, so the public form can never be used to send mail anywhere else. at_domains() is the
+one check: the portal form refuses another domain, and apps.portal.notifications asks email_allowed() again at sending time,
+because the setting or the domains may have changed since the request came in.
 """
+import re
 from decimal import Decimal, InvalidOperation
 from urllib.parse import urlencode
 
@@ -20,7 +26,7 @@ from apps.tenants.context import get_current_tenant
 
 from .models import POLICY, POLICY_DEFAULTS, POLICY_MAX_LENGTH, FacilitySettings
 
-PORTAL_FIELDS = ("portal_require_callback", "portal_hotline")
+PORTAL_FIELDS = ("portal_require_callback", "portal_hotline", "portal_confirmation", "portal_email_domains")
 POLICY_FIELDS = tuple(field for field, _label, _default in POLICY)
 TARGET_FIELDS = ("target_pm_pct", "target_uptime_pct", "target_mttr_days", "repair_budget_monthly")
 EDITABLE = PORTAL_FIELDS + POLICY_FIELDS + TARGET_FIELDS
@@ -32,6 +38,15 @@ TARGET_RANGES = [("target_pm_pct", "PM completion target", Decimal("50"), Decima
 LIFE_SUPPORT_PM_TARGET = 100.0
 HOTLINE_MAX_LENGTH = 40
 BUDGET_MAX = Decimal("9999999999.99")  # the largest value the DecimalField(12, 2) column holds
+
+# Confirmation to the requester: on screen always, and by email when the facility turns it on. Text messages are not offered.
+CONFIRM_SCREEN, CONFIRM_EMAIL = "screen", "email"
+CONFIRMATION_CHOICES = list(FacilitySettings._meta.get_field("portal_confirmation").choices)
+EMAIL_DOMAINS_MAX = 10
+EMAIL_DOMAINS_MAX_LENGTH = FacilitySettings._meta.get_field("portal_email_domains").max_length
+# A plain domain: dot-separated labels of letters, digits, and inner hyphens, ending in a label that starts with a letter.
+_LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+_DOMAIN = re.compile(rf"(?:{_LABEL}\.)+[a-z][a-z0-9-]{{0,61}}[a-z0-9]")
 
 
 def _places(field: str) -> int:
@@ -74,6 +89,42 @@ def _text(value, field: str, errors: dict) -> str:
     return text
 
 
+def _domain_problem(item: str) -> str:
+    """Why `item` (lowercased, trimmed) is not a plain domain, or "" when it is one."""
+    if "@" in item:
+        return "Enter the part after the @ only, like riverside-health.org."
+    if "/" in item or ":" in item:
+        return "Enter the domain only, like riverside-health.org, without https:// or a slash."
+    if any(c.isspace() for c in item):
+        return "Separate domains with commas, like riverside-health.org, rrmc.org."
+    if len(item) > 253 or not _DOMAIN.fullmatch(item):
+        shown = f"{item} is" if len(item) <= 60 and item.isprintable() else "That is"
+        return f"{shown} not a domain. Use letters, digits, dots, and hyphens, like riverside-health.org."
+    return ""
+
+
+def _domains(value, field: str, errors: dict) -> str:
+    """Comma-separated work email domains: each a plain domain, lowercased, without repeats, at most EMAIL_DOMAINS_MAX.
+    Stored as "a.org, b.org"; blank is allowed (the email option then cannot be chosen)."""
+    found = []
+    for part in str(value or "").split(","):
+        item = part.strip().lower()
+        if not item:
+            continue
+        problem = _domain_problem(item)
+        if problem:
+            errors[field] = problem
+            return ""
+        if item not in found:
+            found.append(item)
+    text = ", ".join(found)
+    if len(found) > EMAIL_DOMAINS_MAX:
+        errors[field] = f"List at most {EMAIL_DOMAINS_MAX} domains."
+    elif len(text) > EMAIL_DOMAINS_MAX_LENGTH:
+        errors[field] = f"Keep the domains to {EMAIL_DOMAINS_MAX_LENGTH} characters in all."
+    return text
+
+
 def _clean(fields: dict) -> dict:
     """Validate and normalize `fields`; returns the cleaned values or raises ValidationError (field -> message)."""
     errors, cleaned = {}, {}
@@ -90,6 +141,12 @@ def _clean(fields: dict) -> dict:
             if field not in errors and len(text) > HOTLINE_MAX_LENGTH:
                 errors[field] = f"Keep the hotline to {HOTLINE_MAX_LENGTH} characters, e.g. ext. 4400."
             cleaned[field] = text
+        elif field == "portal_confirmation":
+            if value not in (CONFIRM_SCREEN, CONFIRM_EMAIL):
+                errors[field] = "Choose On screen, or On screen and by email."
+            cleaned[field] = value
+        elif field == "portal_email_domains":
+            cleaned[field] = _domains(value, field, errors)
         elif field in POLICY_FIELDS:
             text = _text(value, field, errors)
             if field in errors:
@@ -124,6 +181,22 @@ def _locked_row():
     return FacilitySettings.objects.select_for_update().first()
 
 
+def _check_portal_email(cleaned: dict, s: FacilitySettings | None) -> None:
+    """Email confirmations need at least one work email domain, judged on the saved row with this change applied, so neither
+    turning email on nor clearing the domains can leave the portal set to email with nowhere it may send."""
+    if "portal_confirmation" not in cleaned and "portal_email_domains" not in cleaned:
+        return
+    current = s or FacilitySettings()
+    confirmation = cleaned.get("portal_confirmation", current.portal_confirmation)
+    domains = cleaned.get("portal_email_domains", current.portal_email_domains)
+    if confirmation == CONFIRM_EMAIL and not domains:
+        if current.portal_confirmation == CONFIRM_EMAIL:
+            message = "Email confirmations need a work email domain. Choose On screen before removing the last one."
+        else:
+            message = "Add a work email domain before turning on email confirmations."
+        raise ValidationError({"portal_confirmation": message})
+
+
 def update_settings(by=None, **fields) -> FacilitySettings:
     """Change any of EDITABLE. All or nothing: one invalid field rejects the whole change and writes nothing. The row is
     locked while it changes, and two first saves racing each other both land on the one row (the second retries)."""
@@ -131,6 +204,7 @@ def update_settings(by=None, **fields) -> FacilitySettings:
     with transaction.atomic():
         s = _locked_row()
         if s is None:
+            _check_portal_email(cleaned, None)
             s = FacilitySettings(**cleaned)
             if by is not None:
                 s._history_user = by
@@ -140,6 +214,7 @@ def update_settings(by=None, **fields) -> FacilitySettings:
                 return s
             except IntegrityError:
                 s = FacilitySettings.objects.select_for_update().get()
+        _check_portal_email(cleaned, s)
         for field, value in cleaned.items():
             setattr(s, field, value)
         if by is not None:
@@ -171,6 +246,37 @@ def compliance_targets(s: FacilitySettings | None = None) -> dict:
     """PM compliance targets by risk class: 100% for life support and high risk (survey rule), the policy target otherwise."""
     pm = float((s or get_settings()).target_pm_pct)
     return {RiskClass.LIFE_SUPPORT: LIFE_SUPPORT_PM_TARGET, RiskClass.HIGH: LIFE_SUPPORT_PM_TARGET, RiskClass.MEDIUM: pm, RiskClass.LOW: pm}
+
+
+def email_domains(s: FacilitySettings | None = None) -> list[str]:
+    """The work email domains the portal may email, as saved (lowercase, in the order entered)."""
+    s = s or get_settings()
+    return [d for d in (part.strip().lower() for part in s.portal_email_domains.split(",")) if d]
+
+
+def portal_emails_on(s: FacilitySettings | None = None) -> bool:
+    """Whether the portal emails requesters now: the email option is chosen and there is a domain it may send to."""
+    s = s or get_settings()
+    return s.portal_confirmation == CONFIRM_EMAIL and bool(email_domains(s))
+
+
+def at_domains(address: str, domains: list[str]) -> bool:
+    """True when `address` is at one of `domains`, exactly (a subdomain is a different domain), in any letter case."""
+    local, at, domain = (address or "").strip().lower().rpartition("@")
+    return bool(local and at and domain in domains)
+
+
+def email_allowed(address: str, s: FacilitySettings | None = None) -> bool:
+    """True when the portal may email `address` now: emails are on and the address is at one of the facility's domains."""
+    s = s or get_settings()
+    return portal_emails_on(s) and at_domains(address, email_domains(s))
+
+
+def domains_text(domains: list[str]) -> str:
+    """["a.org"] -> "a.org"; two -> "a.org or b.org"; more -> "a.org, b.org, or c.org"."""
+    if len(domains) <= 2:
+        return " or ".join(domains)
+    return f"{', '.join(domains[:-1])}, or {domains[-1]}"
 
 
 def portal_url(tenant, department: str | None = None) -> str:

@@ -27,8 +27,11 @@ DEPT_LINK_BOX = "share-dept-box"
 
 # --- panel contexts ---------------------------------------------------------------------------------
 
-def _portal_ctx(request, s) -> dict:
-    return {"s": s, "portal_url": fs.portal_url(request.tenant), "hotline_max": fs.HOTLINE_MAX_LENGTH, "can_edit": fac_perms.can_edit(request.user)}
+def _portal_ctx(request, s, typed_domains: str | None = None, domains_error: str = "") -> dict:
+    """The portal rows. After a refused domain list, `typed_domains` keeps what the user typed so a typo is fixed, not retyped."""
+    return {"s": s, "portal_url": fs.portal_url(request.tenant), "hotline_max": fs.HOTLINE_MAX_LENGTH, "can_edit": fac_perms.can_edit(request.user),
+            "confirmation_choices": fs.CONFIRMATION_CHOICES, "domains_max": fs.EMAIL_DOMAINS_MAX_LENGTH, "domains_error": domains_error,
+            "domains_value": s.portal_email_domains if typed_domains is None else typed_domains}
 
 
 def _policy_ctx(request, s, typed: dict | None = None, errors: dict | None = None) -> dict:
@@ -74,18 +77,23 @@ def settings_page(request):
 
 # --- service request portal -----------------------------------------------------------------------------
 
-def _portal_response(request, message: str):
+def _portal_response(request, message: str, **typed):
     """The auto-saving form only (it swaps itself), so the link box and its buttons are never replaced under the user's pointer."""
-    return toast(render(request, "web/_settings_portal_form.html", _portal_ctx(request, fs.get_settings())), message)
+    return toast(render(request, "web/_settings_portal_form.html", _portal_ctx(request, fs.get_settings(), **typed)), message)
 
 
 @require_POST
 @web_view(fac_perms.MODULE, fac_perms.EDIT_LEVEL)
 def settings_portal(request):
+    fields = portal_fields(request.POST)
     try:
-        fs.update_settings(by=request.user, **portal_fields(request.POST))
+        fs.update_settings(by=request.user, **fields)
     except ValidationError as e:
-        return _portal_response(request, _first(error_dict(e)))  # nothing was saved; the panel shows the saved values
+        errors = error_dict(e)
+        if "portal_email_domains" in errors:  # a refused domain list stays as typed, marked, so the typo can be fixed in place
+            return _portal_response(request, errors["portal_email_domains"], typed_domains=fields["portal_email_domains"],
+                                    domains_error=errors["portal_email_domains"])
+        return _portal_response(request, _first(errors))  # nothing was saved; the panel shows the saved values
     return _portal_response(request, "Portal setting saved")
 
 

@@ -6,6 +6,9 @@
 Priority assigned: {{ sr.work_order.get_priority_display }}<br>
 Response target: {{ target }}<br>
 We will call: {{ sr.callback|default:"the unit" }}</p>
+{# The address only for the browser that sent the request (email_shown); anyone else opening this page learns only that one was sent. #}
+{% if emailed %}<p>A confirmation was emailed to {{ email_shown|default:"the address given with the request" }}. We will email again when the work is done.</p>
+{% elif email_shown %}<p>We could not email a confirmation to {{ email_shown }}. Keep your request number.</p>{% endif %}
 <div class="hint">Clinical Engineering has been notified. If the situation changes, call the shop{% if hotline %} at {{ hotline }}{% endif %} and give your request number.</div>
 <p><a href="{% url 'portal:request' tenant.slug %}">Submit another request</a></p>
 {% endblock %}

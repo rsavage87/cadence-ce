@@ -70,8 +70,11 @@ def test_director_sees_every_panel_with_defaults(client, signed_in, ctx, vent, p
     assert 'name="portal_hotline" value="" maxlength="40" placeholder="e.g. ext. 4400"' in body
     for row, why in [("Page on-call for critical requests, around the clock", "Needs the notifications integration"),
                      ("Allow photo upload with a request", "Not offered: photos can capture patients"),
-                     ("Confirmation to the requester", "Email and text need the notifications integration")]:
+                     ("Confirmation to the requester", "Text messages need the notifications integration")]:
         assert f"{row}<span class=\"why\">{why}</span>" in body
+    # slice 13: the confirmation is a real choice (on screen by default); text stays visible but cannot be chosen
+    assert '<option value="screen" selected>On screen</option><option value="email">On screen and by email</option>' in body
+    assert "<option disabled>On screen, email, and text</option>" in body and 'name="portal_email_domains" value=""' in body
     assert "Changes save as you make them." in body
     # policy defaults, in the mock's order
     positions = [body.index(f'name="{field}" value="{default}" maxlength="300"') for field, _label, default in POLICY]
