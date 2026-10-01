@@ -1,0 +1,50 @@
+{% extends "web/print_base.html" %}
+{% load static web %}
+{% comment %}One report for paper (slice 11, views_print_sheets.report_print): the Reports screen's partial with the same data and
+   permission flags. Its charts and chips are styled by the app's tokens (var(--accent), var(--ok), ...), which print.css does not
+   define, so cadence.css loads here too; the style below then keeps the page light and undoes the app rules that fight the print
+   layout. Links stay as plain text: the page has no app shell to open them in.{% endcomment %}
+{% block title %}{{ report.title }}{% endblock %}
+{% block page_style %}<link rel="stylesheet" href="{% static 'web/cadence.css' %}">
+<style>
+/* Paper is light whatever the system or app theme: the light tokens again, under the same selectors cadence.css uses for dark, later. */
+:root,:root:not([data-theme="light"]),:root[data-theme="dark"]{
+  --bg:#EEF0F3;--surface:#FFFFFF;--surface-2:#F5F7F9;--line:#D8DFE6;--line-2:#BFC9D3;
+  --ink:#14212B;--ink-2:#4A5966;--ink-3:#77858F;
+  --accent:#0B6F86;--accent-ink:#FFFFFF;--accent-soft:#DCEFF3;--accent-line:#8DC5D2;
+  --ok:#1E7A3F;--ok-soft:#DCF2E3;--warn:#A85F00;--warn-soft:#FFEFD0;--crit:#B0202E;--crit-soft:#FCE1E4;
+  --info:#2F5FB3;--info-soft:#E3EAF8;--violet:#6D4FC2;--violet-soft:#EBE5FA;
+  --shadow:none;color-scheme:light;
+}
+/* cadence.css sizes the app shell to the window and sets its own type; the printable page flows and uses print.css's. */
+html,body{height:auto;background:var(--bg);color:var(--ink);font:12.5px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-variant-numeric:tabular-nums}
+.rp-head{padding-bottom:10px;margin-bottom:14px;border-bottom:1.5px solid var(--ink)}
+.rp-head h1{font-size:19px;margin:0 0 2px}
+.rp-head p{margin:0}
+.rp-head .rp-sub{color:var(--ink-2)}
+.rp-body{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.rp-body a,.rp-body a.link,.rp-body a.tag{color:inherit;text-decoration:none}
+.rp-body tr.row{cursor:default}
+.rp-body tr.row:hover td{background:none}
+.rp-body table{font-size:12px}
+.rp-body th{font-size:11px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--ink-3);padding:6px 8px;white-space:normal}
+.rp-body td{padding:6px 8px;white-space:normal}
+.rp-body td.num,.rp-body .chip{white-space:nowrap}
+.rp-body .chip{display:inline-flex;padding:1px 8px 1px 7px;border:1px solid transparent;font-size:11.5px}
+.rp-body .chip.neutral{border-color:var(--line)}
+.rp-body .stat,.rp-body .chart,.rp-body .note,.rp-body .clg,.rp-body tr{break-inside:avoid}
+@media print{
+  html,body{background:#fff}
+  .rp-body .tbl-wrap{overflow:visible}
+  .rp-body .stats{grid-template-columns:repeat(3,1fr)}
+}
+</style>{% endblock %}
+{% block bar_title %}{{ report.title }}{% endblock %}
+{% block content %}
+<header class="rp-head">
+  <h1>{{ report.title }}</h1>
+  <p class="rp-sub">{{ report.subtitle }}</p>
+  <p class="muted">{{ request.tenant.name }} · As of {{ today|date:"M j, Y" }}</p>
+</header>
+<div class="rp-body">{% include report.template %}</div>
+{% endblock %}
