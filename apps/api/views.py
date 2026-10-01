@@ -99,6 +99,16 @@ class DepartmentViewSet(EquipmentWrites, TenantViewSet):
         created = Department.objects.count() > before
         return Response(self.get_serializer(dept).data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
+    def perform_update(self, serializer):
+        """A rename through rename_department (unique in any letter case); the cost center is a plain field."""
+        d = serializer.validated_data
+        dept = serializer.instance
+        if "name" in d:
+            _via_service(eq_services.rename_department, dept, d["name"])
+        if "cost_center" in d and d["cost_center"] != dept.cost_center:
+            dept.cost_center = d["cost_center"]
+            dept.save(update_fields=["cost_center"])
+
 
 class DeviceModelViewSet(EquipmentWrites, TenantViewSet):
     model, module, serializer_class = DeviceModel, "equipment", s.DeviceModelSerializer
@@ -112,6 +122,11 @@ class DeviceModelViewSet(EquipmentWrites, TenantViewSet):
         _refuse_on_create(d, ("aem_interval_months", "pm_procedure"), "model")
         serializer.instance = _via_service(eq_services.create_device_model, risk_class=d.get("risk_class"), by=self.request.user,
                                            **{f: d[f] for f in self.CREATE_FIELDS if f in d})
+
+    def perform_update(self, serializer):
+        # Through update_device_model: create's rules (intervals, cost, a name unique in any letter case) hold on every change too.
+        _via_service(eq_services.update_device_model, serializer.instance, by=self.request.user,
+                     **{f: v for f, v in serializer.validated_data.items() if f in eq_services.MODEL_FIELDS})
 
 
 class AssetViewSet(EquipmentWrites, TenantViewSet):

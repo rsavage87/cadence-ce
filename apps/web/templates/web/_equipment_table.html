@@ -33,3 +33,4 @@
     {% include "web/_pager.html" with noun="devices" target="#eq-table" %}
   </div>
 </div>
+{% if oob_summary %}{% include "web/_equipment_summary.html" with oob=True %}{% endif %}

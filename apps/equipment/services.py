@@ -255,6 +255,20 @@ def _whole(value, field: str, low: int, high: int, message: str) -> int:
     return n
 
 
+NEXT_PM_YEARS = 10  # a next PM further out is a typo or a "never" placeholder, and breaks the projections that add intervals to it
+
+
+def _check_next_pm(next_pm_on, today: date) -> None:
+    from apps.pm.dates import add_months
+
+    if not next_pm_on:
+        return
+    if next_pm_on.year < 2000:
+        raise ValidationError({"next_pm_on": "Enter the next PM date in full (the year looks wrong)."})
+    if next_pm_on > add_months(today, NEXT_PM_YEARS * 12):
+        raise ValidationError({"next_pm_on": f"The next PM must be within {NEXT_PM_YEARS} years."})
+
+
 def first_pm_due(device_model, *, installed_on=None, last_pm_on=None, today: date) -> date:
     """When a new device's first PM falls due: one interval after its last PM, or after its install date; a device with no PM on
     record whose interval since install has already passed is due today (it has never had one here)."""
@@ -281,28 +295,100 @@ def create_department(name: str) -> Department:
 def create_device_model(*, manufacturer, model, description, category, risk_class, oem_pm_interval_months=12, expected_life_years=8,
                         list_cost=0, by=None) -> DeviceModel:
     """Add a model to the facility's catalog. Life support never goes on AEM (DeviceModel.pm_interval_months), so no AEM here."""
-    fields = {"manufacturer": _clean_text(manufacturer, 120), "model": _clean_text(model, 120), "description": _clean_text(description, 200),
-              "category": _clean_text(category, 80)}
-    errors = {k: "This is required." for k, v in fields.items() if not v}
-    if risk_class not in RiskClass.values:
-        errors["risk_class"] = "Choose a risk class."
-    for name, value, high, message in (("oem_pm_interval_months", oem_pm_interval_months, 120, "The PM interval is 1 to 120 months."),
-                                       ("expected_life_years", expected_life_years, 50, "Expected life is 1 to 50 years.")):
+    fields = _model_fields({"manufacturer": manufacturer, "model": model, "description": description, "category": category,
+                            "risk_class": risk_class, "oem_pm_interval_months": oem_pm_interval_months, "expected_life_years": expected_life_years,
+                            "list_cost": list_cost})
+    _check_model_unique(fields["manufacturer"], fields["model"])
+    return DeviceModel.objects.create(**fields)
+
+
+MODEL_FIELDS = ("manufacturer", "model", "description", "category", "risk_class", "oem_pm_interval_months", "aem_interval_months",
+                "expected_life_years", "list_cost", "pm_procedure")
+_MODEL_TEXT = {"manufacturer": 120, "model": 120, "description": 200, "category": 80}
+
+
+def _model_fields(raw: dict) -> dict:
+    """Clean and check the model fields present in `raw` (the same rules on create and on change). Raises one ValidationError
+    with every problem, keyed by field."""
+    out, errors = {}, {}
+    for name, limit in _MODEL_TEXT.items():
+        if name in raw:
+            out[name] = _clean_text(raw[name], limit)
+            if not out[name]:
+                errors[name] = "This is required."
+    if "risk_class" in raw:
+        if raw["risk_class"] not in RiskClass.values:
+            errors["risk_class"] = "Choose a risk class."
+        out["risk_class"] = raw["risk_class"]
+    for name, high, message in (("oem_pm_interval_months", 120, "The PM interval is 1 to 120 months."),
+                                ("expected_life_years", 50, "Expected life is 1 to 50 years."),
+                                ("aem_interval_months", 120, "The AEM interval is 1 to 120 months, or none.")):
+        if name not in raw:
+            continue
+        if name == "aem_interval_months" and raw[name] in (None, ""):
+            out[name] = None
+            continue
         try:
-            fields[name] = _whole(value, name, 1, high, message)
+            out[name] = _whole(raw[name], name, 1, high, message)
         except ValidationError as e:
             errors.update(e.message_dict)
-    try:
-        list_cost = Decimal(str(list_cost if list_cost not in (None, "") else 0))
-    except (InvalidOperation, ValueError):
-        list_cost = None
-    if list_cost is None or not list_cost.is_finite() or list_cost < 0:
-        errors["list_cost"] = "The list cost is a number, 0 or more."
+    if "list_cost" in raw:
+        try:
+            cost = Decimal(str(raw["list_cost"] if raw["list_cost"] not in (None, "") else 0))
+        except (InvalidOperation, ValueError):
+            cost = None
+        if cost is None or not cost.is_finite() or cost < 0:
+            errors["list_cost"] = "The list cost is a number, 0 or more."
+        out["list_cost"] = cost
+    if "pm_procedure" in raw:
+        if raw["pm_procedure"] is not None:
+            try:
+                _check_tenant(raw["pm_procedure"], "pm_procedure")
+            except ValidationError as e:
+                errors.update(e.message_dict)
+        out["pm_procedure"] = raw["pm_procedure"]
     if errors:
         raise ValidationError(errors)
-    if DeviceModel.objects.filter(manufacturer__iexact=fields["manufacturer"], model__iexact=fields["model"]).exists():
-        raise ValidationError({"model": f"{fields['manufacturer']} {fields['model']} is already in the catalog; choose it from the list."})
-    return DeviceModel.objects.create(risk_class=risk_class, list_cost=list_cost, **fields)
+    return out
+
+
+def _check_model_unique(manufacturer: str, model: str, exclude=None) -> None:
+    qs = DeviceModel.objects.filter(manufacturer__iexact=manufacturer, model__iexact=model)
+    if exclude is not None:
+        qs = qs.exclude(pk=exclude.pk)
+    if qs.exists():
+        raise ValidationError({"model": f"{manufacturer} {model} is already in the catalog; choose it from the list."})
+
+
+@transaction.atomic
+def update_device_model(device_model: DeviceModel, *, by=None, **fields) -> DeviceModel:
+    """Change a catalog model with create_device_model's rules (and an AEM interval, which life-support models ignore). The name
+    stays unique in any letter case. A new interval moves no device's next PM by itself: it applies from each device's next PM."""
+    unknown = set(fields) - set(MODEL_FIELDS)
+    if unknown:
+        raise ValidationError(f"These cannot be changed here: {', '.join(sorted(unknown))}.")
+    cleaned = _model_fields(fields)
+    if "manufacturer" in cleaned or "model" in cleaned:
+        _check_model_unique(cleaned.get("manufacturer", device_model.manufacturer), cleaned.get("model", device_model.model), exclude=device_model)
+    changed = [f for f, v in cleaned.items() if getattr(device_model, f) != v]
+    for f in changed:
+        setattr(device_model, f, cleaned[f])
+    if changed:
+        device_model.save()
+    return device_model
+
+
+def rename_department(department: Department, name: str) -> Department:
+    """Rename a department; the name stays unique in the facility in any letter case."""
+    name = _clean_text(name, 80)
+    if not name:
+        raise ValidationError({"name": "Enter the department's name."})
+    if Department.objects.filter(name__iexact=name).exclude(pk=department.pk).exists():
+        raise ValidationError({"name": f"{name} is already a department here."})
+    if name != department.name:
+        department.name = name
+        department.save(update_fields=["name"])
+    return department
 
 
 @transaction.atomic
@@ -330,6 +416,7 @@ def create_asset(*, tag, device_model, department, serial="", room="", installed
         acquisition_cost = device_model.list_cost
     _check_dates(installed_on=installed_on, warranty_end=warranty_end, last_pm_on=last_pm_on, today=today)
     _check_numbers(acquisition_cost=acquisition_cost, condition=condition)
+    _check_next_pm(next_pm_on, today)
     if Asset.objects.filter(tag__iexact=tag).exists():
         raise ValidationError({"tag": f"{tag} is already on another device."})
     asset = Asset(tag=tag, device_model=device_model, department=department, serial=_clean_text(serial, 80), room=_clean_text(room, 40),
@@ -358,8 +445,11 @@ def update_asset(asset: Asset, *, by=None, today: date | None = None, **fields) 
         _check_tenant(fields["department"], "department")
     if "next_pm_on" in fields and fields["next_pm_on"] is None and asset.status != AssetStatus.RETIRED:
         raise ValidationError({"next_pm_on": "A device in use needs a next PM date."})
-    merged = {f: fields.get(f, getattr(asset, f)) for f in ("installed_on", "warranty_end")}
-    _check_dates(**merged, today=today)
+    _check_next_pm(fields.get("next_pm_on"), today)
+    # The install and warranty dates only when one of them changes: a stored pair that breaks the rule (imported data) must not
+    # block an edit of the room or the notes.
+    if any(f in fields and fields[f] != getattr(asset, f) for f in ("installed_on", "warranty_end")):
+        _check_dates(**{f: fields.get(f, getattr(asset, f)) for f in ("installed_on", "warranty_end")}, today=today)
     # The last PM against the install date only when the install date changes, and on the field the form has: a device added
     # before this rule (import, the demo) may have an older PM on record, and must stay editable.
     new_install = fields.get("installed_on")
@@ -377,7 +467,21 @@ def update_asset(asset: Asset, *, by=None, today: date | None = None, **fields) 
     if changed:
         asset._change_reason = "Edited"
         asset.save()
+    if "next_pm_on" in changed and asset.next_pm_on:
+        _move_open_pm(asset, by=by)
     return asset
+
+
+def _move_open_pm(asset: Asset, by=None) -> None:
+    """A rescheduled PM moves the device's open PM work order with it, so the PM is not counted as missed on the old date."""
+    from apps.workorders.models import OPEN_STATUSES, WorkOrderStatusHistory, WoType
+
+    for wo in asset.work_orders.filter(type=WoType.PM, status__in=OPEN_STATUSES).exclude(due_on=asset.next_pm_on):
+        old = wo.due_on
+        wo.due_on = asset.next_pm_on
+        wo.save(update_fields=["due_on", "updated_at"])
+        WorkOrderStatusHistory.objects.create(tenant=wo.tenant, work_order=wo, from_status=wo.status, to_status=wo.status, changed_by=by,
+                                              note=f"Due date moved from {old:%b %-d, %Y} to {wo.due_on:%b %-d, %Y} with the device's next PM")
 
 
 @transaction.atomic

@@ -1,6 +1,6 @@
 {% load web %}
 <div class="modal-h"><h2>Edit {{ asset.tag }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
-<form id="dv-form" class="dv-form" hx-post="{% url 'web:asset_edit' asset.tag %}" hx-target="#modal-card">
+<form id="dv-form" class="dv-form" hx-post="{% url 'web:asset_edit' asset.tag %}" hx-target="#modal-card" novalidate>
   {% include "web/_asset_fields.html" %}
   <div class="hint" style="padding:0 16px 12px">Status and support are changed from the device's drawer.</div>
   <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Save changes</button></div>

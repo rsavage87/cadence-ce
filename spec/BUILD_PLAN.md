@@ -1,8 +1,8 @@
 # Build plan
 
 The mock (`cadence-ce-cmms-mock.html`) is the spec. Each slice below is shippable on its own and ends with green tests.
-Slices 0 to 11 are built: every screen in the mock exists, people can be invited and sign in on their own, and the lists
-export and print. What each slice deferred is noted in its row and below.
+Slices 0 to 12 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
+export and print, and devices are added and changed in the product. What each slice deferred is noted in its row and below.
 
 | # | Slice | Mock screen(s) | Code | Status |
 |---|-------|----------------|------|--------|
@@ -18,7 +18,7 @@ export and print. What each slice deferred is noted in its row and below.
 | 9 | PM schedule UI | PM schedule (calendar, create work orders for a day) | `pm` + `web` | done (Auto-assign week, Route sheets, and OEM library sync deferred) |
 | 10 | Sign-in and invitations | Users and access (Invite user, Resend invite), sign-in page | `accounts` + `web` | done (shared lockout counters across workers need Redis; email is sent in the request) |
 | 11 | Exports and printing | Export (CSV) on Equipment, Work orders, Contracts, a contract's Device list; Label, Print, Route sheets, report PDF, Response log, Overview Export | `web` | done (PDFs come from the browser's print dialog; Scan tag, Add device, Auto-assign week, Check feeds, Custom report, and Schedule still deferred) |
-| 12 | Device management | Equipment (Add device), device drawer (Edit, Tag out of service, Return to service, PM schedule and Costs tabs) | `equipment` + `web` + `api` | in progress |
+| 12 | Device management | Equipment (Add device), device drawer (Edit details, Tag out of service, Return to service, PM schedule and Costs tabs) | `equipment` + `web` + `api` | done (a model catalog screen and AEM approval are still deferred; models are added with a device or through the API) |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.
@@ -33,9 +33,9 @@ export and print. What each slice deferred is noted in its row and below.
 Operations: `apps/jobs` runs `generate_pm` and `import_openfda` once a day (the docker-compose `scheduler` service, at
 `SCHEDULER_DAILY_AT`), each at most once per local day and recorded in Admin under Scheduled jobs.
 
-The mock's export and print buttons work since slice 11; its Scan tag (a mobile app's camera) and Add device (not in the mock either) are still left out.
+The mock's export and print buttons work since slice 11, and Add device since slice 12; its Scan tag (a mobile app's camera) is still left out.
 
-## Screen → view map (slices 4 to 11)
+## Screen → view map (slices 4 to 12)
 - Overview: `reports.services.overview_kpis(year, month)` + `pm.services.pm_on_time_series` for the 12-month chart; attention list = life-support overdue PMs, alerts needing action, unassigned portal requests, expired/expiring contracts, critical open WOs, WOs awaiting parts > 7 days.
 - Equipment: `Asset.objects.select_related(...)` with the same filters as the mock's toolbar (category, status, risk, department, support, overdue-only, bucket). Fleet buckets: retired / out of service / in repair / open recall / PM overdue / PM due ≤ 30 d / compliant, each device counted once in that order.
 - Work orders: list and board; status buttons call `workorders.services.change_status`; assignment dropdown lists `credentials.services.qualified_technicians(asset)` first.
@@ -123,3 +123,17 @@ The mock's export and print buttons work since slice 11; its Scan tag (a mobile 
   with its charts (`/print/reports/<key>/`; Recalls' Response log prints the recall report). The Overview's Export prints the page
   itself (a print section in cadence.css hides the shell and keeps the light theme). Export and print links carry the list's
   filters: cadence.js keeps their href equal to the address as HTMX changes it, so a middle-click or saved link gets them too.
+- Device management (slice 12): Add device on Equipment (`/equipment/new/`, Equipment Edit) adds a device, with a new model or
+  department in the same form; the first PM is one interval after the last PM or install date, or today when that has passed
+  with no PM on record; tags are unique in any letter case, never change, and "new", ".", ".." are reserved. The drawer edits
+  details (`update_asset`: not the tag, status, or contract; a moved next PM takes the open PM work order with it; the next PM
+  stays within 10 years) and changes status along `STATUS_CHANGES` (the mock's Tag out of service and Return to service, plus
+  lend, missing and found, retire and reinstate). Retiring and reinstating need Equipment Approve; retiring refuses while repair,
+  recall, or in-progress work is open, cancels open PMs (which then do not count as missed PMs), and clears the next PM;
+  reinstating puts a PM due today. A completed repair returns a device to service only when that repair tagged it out (or it
+  was in repair). The drawer's PM schedule tab (PM View) shows the strategy, procedure, next PMs with the technician the PM
+  screen plans (`pm.schedule.planned_technicians`, shared with the route sheets), and the PM history (work-order details only
+  with Work orders View); its Costs tab (Reports View) shows service cost by year, the share of acquisition cost, the contract
+  share (the contract's price only with Contracts View), and the replacement outlook. The API's device, model, and department
+  writes go through the same services (`update_device_model`, `rename_department` keep names unique in any case), and the CSV
+  importer matches tags in any case, skips reserved tags, and changes an existing device's status only through `set_status`.

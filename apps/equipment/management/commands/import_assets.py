@@ -7,7 +7,7 @@ Columns are matched by name, case-insensitively, using the aliases below. Add al
 Unknown device models and departments are created on the fly; existing tags are updated, not duplicated.
 """
 import csv
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
 from django.core.exceptions import ValidationError
@@ -15,7 +15,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from apps.equipment.models import TAG_VALIDATOR, Asset, AssetStatus, Department, DeviceModel, RiskClass
-from apps.equipment.services import RESERVED_TAGS
+from apps.equipment.services import RESERVED_TAGS, first_pm_due, set_status
 from apps.tenants.context import tenant_context
 from apps.tenants.models import Tenant
 
@@ -123,9 +123,9 @@ class Command(BaseCommand):
                               "category": get(row, "category") or "Uncategorized",
                               "risk_class": RISK_MAP.get(get(row, "risk").lower(), RiskClass.MEDIUM),
                               "oem_pm_interval_months": int(get(row, "pm_interval") or 12) if get(row, "pm_interval").isdigit() else 12})
+                status = STATUS_MAP.get(get(row, "status").lower())  # None: no status in the file, or one it does not know
                 fields = {
                     "device_model": dm, "department": dept, "serial": get(row, "serial"), "room": get(row, "room"),
-                    "status": STATUS_MAP.get(get(row, "status").lower(), AssetStatus.IN_SERVICE),
                     "installed_on": parse_date(get(row, "installed")), "acquisition_cost": parse_money(get(row, "cost")),
                     "last_pm_on": parse_date(get(row, "last_pm")), "next_pm_on": parse_date(get(row, "next_pm")),
                     "warranty_end": parse_date(get(row, "warranty")),
@@ -133,12 +133,23 @@ class Command(BaseCommand):
                 asset = Asset.objects.filter(tag__iexact=tag).first()  # tags are unique in any letter case (devices added on screen keep theirs)
                 if asset:
                     for k, v in fields.items():
-                        if v not in (None, "", Decimal("0")) or k in ("device_model", "department", "status"):
+                        if v not in (None, "", Decimal("0")) or k in ("device_model", "department"):
                             setattr(asset, k, v)
                     asset.save()
+                    # A status change goes through the drawer's rules (retiring cancels open PMs and needs the open work done,
+                    # coming back from retired puts a PM due today); a file without a status leaves the device's alone.
+                    if status and status != asset.status:
+                        try:
+                            set_status(asset, status, note="Imported")
+                        except ValidationError as e:
+                            self.stderr.write(f"Kept {asset.tag} {asset.get_status_display().lower()}: {e.messages[0]}")
                     updated += 1
                 else:
-                    Asset.objects.create(tenant=tenant, tag=tag, **fields)
+                    status = status or AssetStatus.IN_SERVICE
+                    if fields["next_pm_on"] is None and status != AssetStatus.RETIRED:
+                        # As Add device does: one interval after the last PM or install, or today if that has passed
+                        fields["next_pm_on"] = first_pm_due(dm, installed_on=fields["installed_on"], last_pm_on=fields["last_pm_on"], today=date.today())
+                    Asset.objects.create(tenant=tenant, tag=tag, status=status, **fields)
                     created += 1
             if opts["dry_run"]:
                 transaction.set_rollback(True)

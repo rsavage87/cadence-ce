@@ -62,7 +62,8 @@ def fleet(ctx, dept, vent_model, pump_model):
 def test_panels_root_refetches_itself_on_pm_changed_without_leaking_its_swap(ctx):
     html = panels()
     root = re.search(r"<div id=\"pm-panels\"[^>]*>", html).group(0)
-    for attr in ('hx-get="/pm/"', 'hx-trigger="pm-changed from:body, devices-changed from:body"', 'hx-target="this"', 'hx-swap="outerHTML"', 'hx-disinherit="hx-swap hx-target"'):
+    for attr in ('hx-get="/pm/"', 'hx-trigger="pm-changed from:body, devices-changed from:body"', 'hx-target="this"', 'hx-swap="outerHTML"',
+                 'hx-disinherit="hx-swap hx-target"'):
         assert attr in root
     assert html.count('id="pm-panels"') == 1
 
@@ -79,7 +80,8 @@ def test_panels_render_alone_for_their_own_refresh(client, signed_in, fleet, tec
     r = client.get("/pm/", **HX)
     body = r.content.decode().strip()
     assert r.status_code == 200 and body.startswith('<div id="pm-panels"') and "<html" not in body and 'id="pm-body"' not in body
-    assert 'hx-trigger="pm-changed from:body, devices-changed from:body"' in body and 'hx-disinherit="hx-swap hx-target"' in body and "Technician workload" in body
+    assert 'hx-trigger="pm-changed from:body, devices-changed from:body"' in body and 'hx-disinherit="hx-swap hx-target"' in body
+    assert "Technician workload" in body
 
 
 @pytest.mark.parametrize("role", ["requester", "vendor"])

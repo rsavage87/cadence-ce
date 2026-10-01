@@ -493,7 +493,8 @@ def test_retiring_with_open_repair_work_shows_why_and_changes_nothing(client, si
     r = client.post(status_url(vent), {"to": AssetStatus.RETIRED}, **HX)
     assert r.status_code == 200
     t = triggers(r)
-    assert t["toast"] == {"value": f"CE-10001 has open work: {repair.number}. Complete it, or cancel it (an in-progress work order goes back to open first), before retiring the device."}
+    assert t["toast"] == {"value": f"CE-10001 has open work: {repair.number}. Complete it, or cancel it (an in-progress work order goes "
+                                     "back to open first), before retiring the device."}
     assert "devices-changed" not in t and "wo-changed" not in t
     vent.refresh_from_db(), pm.refresh_from_db()
     assert vent.status == AssetStatus.IN_SERVICE and vent.next_pm_on is not None and pm.status == WoStatus.OPEN

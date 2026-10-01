@@ -9,8 +9,8 @@ from django.conf import settings
 from django.db import transaction
 from django.db.models import F, Q
 
-from apps.equipment.models import Asset, RiskClass
-from apps.workorders.models import OPEN_STATUSES, Priority, Source, WorkOrder, WoType
+from apps.equipment.models import Asset, AssetStatus, RiskClass
+from apps.workorders.models import OPEN_STATUSES, Priority, Source, WorkOrder, WoStatus, WoType
 from apps.workorders.services import create_work_order
 
 from .dates import month_bounds
@@ -77,13 +77,19 @@ def create_pm_work_orders_for_day(day: date, by=None, assign_to_technicians: boo
     return PmBatch(len(needing), assigned, len(devices) - len(needing))
 
 
+# A PM cancelled on a device that is now retired (retiring cancels them, equipment.services.set_status) is not a missed PM: the
+# device left the fleet before the PM was due. A cancelled PM on a device still in use is missed, and stays counted.
+RETIRED_AND_CANCELLED = Q(status=WoStatus.CANCELLED, asset__status=AssetStatus.RETIRED)
+
+
 def pm_due_queryset(start: date, end: date, as_of: date | None = None, life_support_only: bool = False):
     """
     PM work orders that count toward on-time completion for a period:
     due inside [start, end] and, for the current period, already due or already completed.
     """
     as_of = min(end, as_of or date.today())
-    qs = WorkOrder.objects.filter(type=WoType.PM, due_on__gte=start, due_on__lte=as_of).filter(Q(due_on__lt=as_of) | Q(completed_on__isnull=False))
+    qs = (WorkOrder.objects.filter(type=WoType.PM, due_on__gte=start, due_on__lte=as_of).filter(Q(due_on__lt=as_of) | Q(completed_on__isnull=False))
+          .exclude(RETIRED_AND_CANCELLED))
     if life_support_only:
         qs = qs.filter(asset__device_model__risk_class=RiskClass.LIFE_SUPPORT)
     return qs
@@ -110,7 +116,7 @@ def pm_on_time_series(year: int, month: int, months: int = 12, life_support_only
             y, m = y - 1, 12
     points.reverse()
     first, last = month_bounds(*points[0])[0], month_bounds(*points[-1])[1]
-    qs = WorkOrder.objects.filter(type=WoType.PM, due_on__gte=first, due_on__lte=last)
+    qs = WorkOrder.objects.filter(type=WoType.PM, due_on__gte=first, due_on__lte=last).exclude(RETIRED_AND_CANCELLED)
     if life_support_only:
         qs = qs.filter(asset__device_model__risk_class=RiskClass.LIFE_SUPPORT)
     by_month: dict = {}

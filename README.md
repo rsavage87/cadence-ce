@@ -66,7 +66,8 @@ Add device on the Equipment screen adds a device, with a new model or department
 them; its first PM is one interval after its last PM or install date (or today, if that has passed with no PM on record).
 The device drawer edits its details (not the tag, which is on the label and in links), tags it out of service and returns it,
 lends it out, marks it missing or found, and retires or reinstates it. Retiring cancels its open PM work orders and is refused
-while repair or recall work is open; it needs Equipment Approve (the director by default). The drawer's PM schedule tab shows
+while repair or recall work is open; it needs Equipment Approve (the director by default). A completed repair returns a device
+to service only when that repair tagged it out. The drawer's PM schedule tab shows
 the device's maintenance strategy, procedure, next PMs, and PM history, and its Costs tab the service cost by year.
 
 ## Exports and printing

@@ -93,9 +93,12 @@ def test_pm_view_alone_gives_the_pm_tab_without_costs_or_work_order_links(client
     client.force_login(custom_user(tenant, {Module.EQUIPMENT: Level.VIEW, Module.PM: Level.VIEW}))
     overview = client.get(f"/equipment/{vent.tag}/", **HX).content.decode()
     assert "?tab=pm" in overview and "?tab=costs" not in overview
+    wo.resolution = "Replaced flow sensor"
+    wo.save(update_fields=["resolution"])
     body = tab(client, vent, "pm").content.decode()
-    assert "Maintenance strategy" in body and wo.number in body
-    assert f"/work-orders/{wo.number}/" not in body  # listed, but not a link without Work orders View
+    # Work-order details stay behind Work orders View, as on the drawer's Work orders tab: the dates the device carries are shown
+    assert "Maintenance strategy" in body and "PM work order details need access to work orders" in body
+    assert wo.number not in body and "Replaced flow sensor" not in body and f"/work-orders/{wo.number}/" not in body
     r = tab(client, vent, "costs")  # typed by hand: the tab does not exist for this role
     assert r.context["tab"] == "overview" and "Service cost by year" not in r.content.decode() and "costs" not in r.context
 
@@ -505,7 +508,7 @@ def test_the_pm_tab_runs_the_same_queries_for_one_pm_or_many(client, signed_in, 
     with CaptureQueriesContext(connection) as q:
         asset_tabs.pm_tab(Asset.objects.select_related("device_model").get(pk=vent.pk))
     # the procedure, the PM work orders, their labor hours, and the week plan's technicians, credentials, devices, open PMs, open hours
-    assert len(q.captured_queries) <= 8
+    assert len(q.captured_queries) <= 14  # the day plan the PM screen uses (its technicians, credentials, open work), once
 
 
 def test_the_costs_tab_runs_the_same_queries_for_one_work_order_or_many(client, signed_in, vent, pump):
@@ -550,3 +553,51 @@ def test_another_tenants_work_orders_are_never_counted(ctx, tenant, other_tenant
     assert c["total"] == 100.0 and c["by_year"][today.year] == 100.0 and c["outlook"]["repairs"] == 0
     history = asset_tabs.pm_tab(vent)["pm"]["history"]
     assert [h["wo"].number for h in history] == [ours.number] and history[0]["hours"] == Decimal("1.00")
+
+
+# --- review fixes -----------------------------------------------------------------------------------------------------------
+
+def test_the_costs_tab_shows_the_contract_price_only_with_contracts_view(client, tenant, ctx, vent):
+    from apps.contracts.models import Contract
+
+    c = Contract.objects.create(reference="SC-SECRET", vendor="Hamilton", annual_cost=Decimal("123456"), start_on=date.today() - timedelta(days=30),
+                                end_on=date.today() + timedelta(days=300))
+    c.add_assets([vent])
+    client.force_login(custom_user(tenant, {Module.EQUIPMENT: Level.VIEW, Module.REPORTS: Level.VIEW}, slug="analyst2"))
+    body = tab(client, vent, "costs").content.decode()
+    assert "SC-SECRET" in body and "123,456" not in body
+    client.force_login(custom_user(tenant, {Module.EQUIPMENT: Level.VIEW, Module.REPORTS: Level.VIEW, Module.CONTRACTS: Level.VIEW}, slug="buyer"))
+    assert "123,456" in tab(client, vent, "costs").content.decode()
+
+
+def test_no_acquisition_cost_means_no_contract_share_rather_than_zero(client, signed_in, ctx, vent):
+    from apps.contracts.models import Contract
+
+    c = Contract.objects.create(reference="SC-1", vendor="Hamilton", annual_cost=Decimal("10000"), start_on=date.today() - timedelta(days=30),
+                                end_on=date.today() + timedelta(days=300))
+    c.add_assets([vent])
+    Asset.objects.filter(pk=vent.pk).update(acquisition_cost=0)
+    signed_in("director")
+    r = tab(client, vent, "costs")
+    assert r.context["costs"]["share"] is None and "its share of the contract cannot be worked out" in r.content.decode()
+
+
+def test_the_pm_tab_names_the_technician_the_pm_screen_plans(client, signed_in, ctx, dept, pump_model, techs):
+    """Beyond the week, and for an open PM held by a deactivated technician, the tab names whom the day panel plans for that day."""
+    from apps.pm import schedule as sch
+
+    day = date.today() + timedelta(days=40)
+    first = Asset.objects.create(tag="CE-81001", device_model=pump_model, department=dept, next_pm_on=day)
+    second = Asset.objects.create(tag="CE-81002", device_model=pump_model, department=dept, next_pm_on=day)
+    signed_in("director")
+    planned, _ = sch.planned_technicians(day, date.today())
+    for a in (first, second):
+        assert tab(client, a, "pm").context["pm"]["upcoming"]["who"]["name"] == planned[a.id].name
+    assert planned[first.id] != planned[second.id]  # two free technicians: the day is shared out, not piled on one
+    soon = date.today() + timedelta(days=1)
+    set_next_pm(first, soon)
+    wo = work_order(first, opened=date.today(), technician=techs["dana"])
+    techs["dana"].is_active = False
+    techs["dana"].save(update_fields=["is_active"])
+    who = tab(client, first, "pm").context["pm"]["upcoming"]["who"]
+    assert who["kind"] == "suggested" and who["name"] == sch.planned_technicians(soon, date.today())[0][first.id].name and wo.number

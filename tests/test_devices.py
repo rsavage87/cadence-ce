@@ -35,6 +35,15 @@ def history(asset):
 
 
 @pytest.fixture
+def vent(vent):
+    """conftest's ventilator, its dates moved onto TODAY: conftest dates it from the real calendar, which would drift past the
+    fixed TODAY these tests pass to the services (an install date after TODAY from late 2028)."""
+    vent.installed_on, vent.next_pm_on = TODAY - timedelta(days=800), TODAY + timedelta(days=10)
+    vent.save(update_fields=["installed_on", "next_pm_on"])
+    return vent
+
+
+@pytest.fixture
 def theirs(other_tenant):
     """Another facility with a department, a model, and a device named like ours."""
     with tenant_context(other_tenant):
@@ -512,7 +521,8 @@ def test_retiring_refuses_while_other_work_is_open(ctx, vent, type_, steps):
     cancellable = wo(vent, WoType.PM)
     with pytest.raises(ValidationError) as e:
         svc.set_status(vent, S.RETIRED, today=TODAY)
-    assert e.value.messages == [f"CE-10001 has open work: {blocking.number}. Complete it, or cancel it (an in-progress work order goes back to open first), before retiring the device."]
+    assert e.value.messages == [f"CE-10001 has open work: {blocking.number}. Complete it, or cancel it (an in-progress work order goes "
+                                "back to open first), before retiring the device."]
     vent.refresh_from_db()
     cancellable.refresh_from_db()
     assert vent.status == S.IN_SERVICE and vent.next_pm_on is not None
@@ -700,3 +710,68 @@ def test_dot_segment_tags_are_refused(ctx, dept, vent_model, tag):
     with pytest.raises(ValidationError) as e:
         add(vent_model, dept, tag=tag)
     assert list(field_errors(e)) == ["tag"]
+
+
+# --- review fixes -----------------------------------------------------------------------------------------------------------
+
+def test_a_completed_repair_returns_a_device_only_when_it_took_it_out(ctx, dept, pump_model):
+    """A repair that was opened with the device tagged out brings it back; a device out of service for another reason (incoming
+    inspection, a hand tag-out) stays out when an unrelated repair completes."""
+    waiting = svc.create_asset(tag="CE-80001", device_model=pump_model, department=dept, status=S.OUT_OF_SERVICE, today=TODAY)
+    repair = create_work_order(asset=waiting, type=WoType.REPAIR, priority="normal", problem="Damaged cord", opened_on=TODAY)
+    change_status(repair, WoStatus.IN_PROGRESS, as_of=TODAY)
+    change_status(repair, WoStatus.COMPLETED, as_of=TODAY)
+    waiting.refresh_from_db()
+    assert waiting.status == S.OUT_OF_SERVICE
+    tagged = svc.create_asset(tag="CE-80002", device_model=pump_model, department=dept, today=TODAY)
+    repair = create_work_order(asset=tagged, type=WoType.REPAIR, priority="normal", problem="Alarm", opened_on=TODAY, tag_out=True)
+    tagged.refresh_from_db()
+    assert tagged.status == S.OUT_OF_SERVICE
+    change_status(repair, WoStatus.IN_PROGRESS, as_of=TODAY)
+    change_status(repair, WoStatus.COMPLETED, as_of=TODAY)
+    tagged.refresh_from_db()
+    assert tagged.status == S.IN_SERVICE
+
+
+def test_moving_the_next_pm_moves_the_open_pm_work_order(ctx, vent):
+    pm = create_work_order(asset=vent, type=WoType.PM, priority="normal", problem="PM", opened_on=TODAY, due_on=vent.next_pm_on)
+    later = TODAY + timedelta(days=45)
+    svc.update_asset(vent, next_pm_on=later, today=TODAY)
+    pm.refresh_from_db()
+    assert pm.due_on == later
+    assert pm.status_history.filter(note__startswith="Due date moved from").exists()
+
+
+@pytest.mark.parametrize("day", [date(9999, 12, 31), add_months(TODAY, 121), date(1999, 1, 1)])
+def test_the_next_pm_must_be_a_real_date_within_ten_years(ctx, dept, pump_model, vent, day):
+    with pytest.raises(ValidationError) as e:
+        svc.create_asset(tag="CE-80003", device_model=pump_model, department=dept, next_pm_on=day, today=TODAY)
+    assert "next_pm_on" in e.value.message_dict
+    with pytest.raises(ValidationError) as e:
+        svc.update_asset(vent, next_pm_on=day, today=TODAY)
+    assert "next_pm_on" in e.value.message_dict
+    svc.update_asset(vent, next_pm_on=add_months(TODAY, 120), today=TODAY)  # ten years is fine
+
+
+def test_a_pm_cancelled_by_retirement_is_not_a_missed_pm(ctx, dept, vent_model):
+    from apps.pm.services import pm_on_time_rate
+
+    a = svc.create_asset(tag="CE-80004", device_model=vent_model, department=dept, today=TODAY)
+    due = TODAY + timedelta(days=5)
+    create_work_order(asset=a, type=WoType.PM, priority="normal", problem="PM", opened_on=TODAY, due_on=due)
+    svc.set_status(a, S.RETIRED, today=TODAY)
+    period = (due - timedelta(days=1), due + timedelta(days=1), due + timedelta(days=10))  # the PM fell due inside it, uncompleted
+    assert pm_on_time_rate(*period)["due"] == 0
+    kept = svc.create_asset(tag="CE-80005", device_model=vent_model, department=dept, today=TODAY)
+    missed = create_work_order(asset=kept, type=WoType.PM, priority="normal", problem="PM", opened_on=TODAY, due_on=due)
+    change_status(missed, WoStatus.CANCELLED)
+    assert pm_on_time_rate(*period) == {"due": 1, "on_time": 0, "rate": 0.0}  # a device in use: still a missed PM
+
+
+def test_a_device_with_an_odd_stored_warranty_stays_editable(ctx, vent):
+    Asset.objects.filter(pk=vent.pk).update(warranty_end=vent.installed_on - timedelta(days=30))
+    vent.refresh_from_db()
+    svc.update_asset(vent, room="5 East", today=TODAY)  # the stored pair is not re-checked when neither date changes
+    with pytest.raises(ValidationError) as e:
+        svc.update_asset(vent, warranty_end=vent.installed_on - timedelta(days=1), today=TODAY)
+    assert "warranty_end" in e.value.message_dict

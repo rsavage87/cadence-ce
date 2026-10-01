@@ -186,6 +186,49 @@ def day_plan(day: date, today: date) -> dict:
             "overdue": day < today}
 
 
+def open_pm_orders(asset_ids: list) -> dict:
+    """{asset id: its open PM work order as a dict} in one query, the earliest opened when there are several (the one the day
+    panel reads), with what pm_held() and the route sheets need."""
+    out: dict = {}
+    rows = (WorkOrder.objects.filter(asset_id__in=asset_ids, type=WoType.PM, status__in=OPEN_STATUSES).order_by("opened_on", "number")
+            .values("asset_id", "number", "vendor_service", "vendor_name", "assigned_to_id", "assigned_to__name", "assigned_to__is_active"))
+    for w in rows:
+        out.setdefault(w["asset_id"], w)
+    return out
+
+
+def pm_held(w: dict | None) -> bool:
+    """Whether an open PM work order (open_pm_orders) is on someone's plate: with the vendor, or with an active technician."""
+    return bool(w) and (w["vendor_service"] or bool(w["assigned_to_id"] and w["assigned_to__is_active"]))
+
+
+def suggest_waiting(day: date, today: date, waiting: list, rows: list[dict]) -> dict:
+    """Technicians for `waiting`: devices due on `day` whose open PM work order is on nobody's plate (unassigned, or with a
+    deactivated technician). Inside the week the week plan already counts the day's other devices (suggestions_for_day). Outside
+    it the schedule picks for the day alone, so start from the hours day_plan's `rows` just gave the devices needing a work order:
+    the waiting ones are balanced against them, not piled on whoever sorts first by name."""
+    if today <= day < today + timedelta(days=WEEK_DAYS):
+        return suggestions_for_day(day, waiting, today)
+    load = open_hours_by_technician()
+    for r in rows:
+        if r["technician"] is not None and not r["has_open_pm"]:
+            load[r["technician"].id] = load.get(r["technician"].id, Decimal("0")) + r["hours"]
+    return suggest_technicians(waiting, today, load=load)
+
+
+def planned_technicians(day: date, today: date, plan: dict | None = None) -> tuple[dict, dict]:
+    """(who does each device due on `day`: {asset id: Technician or None}, the day's open PM work orders): the day panel's pick for a
+    device needing a work order, suggest_waiting's for one whose open PM is on nobody's plate. A device whose open PM is held
+    (vendor, active technician) has no entry: the work order says who. The route sheets and the device drawer's PM tab read this,
+    so both name the technician the PM screen does."""
+    plan = plan or day_plan(day, today)
+    open_pm = open_pm_orders([r["asset"].id for r in plan["rows"]])
+    waiting = [r["asset"] for r in plan["rows"] if r["asset"].id in open_pm and not pm_held(open_pm[r["asset"].id])]
+    picks = {r["asset"].id: r["technician"] for r in plan["rows"] if r["asset"].id not in open_pm}
+    picks.update(suggest_waiting(day, today, waiting, plan["rows"]) if waiting else {})
+    return picks, open_pm
+
+
 # --- next 30 days and the week's workload ------------------------------------------------------------------
 
 def next_30_days(today: date) -> dict:

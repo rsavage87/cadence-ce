@@ -67,12 +67,14 @@ pytest
   facility cannot sign in), `emails.py` (the one place account emails are sent; a failure returns False, never raises). Links in emails start
   with `APP_BASE_URL`, never the request's Host
 - `apps/equipment` Department, DeviceModel, Asset (tags carry no spaces or slashes: they are URL segments, and never change once a device is
-  added), CSV importer; `services.py` fleet queries plus adding devices, models, and departments, editing, and status changes
+  added), CSV importer; `services.py` fleet queries plus adding devices, models, and departments, editing (`update_asset`,
+  `update_device_model`, `rename_department`: names unique in any letter case), and status changes
   (`STATUS_CHANGES`; retiring cancels open PMs), `permissions.py` (Edit to add, edit, tag out; Approve to retire or reinstate)
 - `apps/contracts` Contract with add/remove device operations and cost allocation; `services.py` for create/update/renew/delete, status, filters, KPI summary
 - `apps/workorders` WorkOrder and lines, ServiceRequest, lifecycle services
 - `apps/pm` PmProcedure, PM generation, on-time math, month helpers; `schedule.py` the PM schedule's read models (month calendar,
-  a day's devices, suggested technicians, 30-day outlook, 7-day workload, PM library); `services.create_pm_work_orders_for_day`;
+  a day's devices, suggested technicians, `planned_technicians` (who does each device due on a day: the day panel, route sheets, and
+  the device drawer's PM tab share it), 30-day outlook, 7-day workload, PM library); `services.create_pm_work_orders_for_day`;
   `permissions.py` (View to see, Approve to create a day's work orders)
 - `apps/recalls` Alert (global), AlertMatch (per tenant), matching, openFDA importer; `services.py` dispositions and recall work-order batches,
   `permissions.py` (review at Edit, close/reopen at Approve). ECRI import is deferred (license).

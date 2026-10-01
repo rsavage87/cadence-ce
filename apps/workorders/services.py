@@ -75,7 +75,10 @@ def _on_completed(wo: WorkOrder, as_of):
         asset.last_pm_on = as_of
         asset.next_pm_on = add_months(as_of, asset.pm_interval_months)
         asset.save(update_fields=["last_pm_on", "next_pm_on", "updated_at"])
-    elif wo.type == WoType.REPAIR and asset.status in (AssetStatus.IN_REPAIR, AssetStatus.OUT_OF_SERVICE):
+    elif wo.type == WoType.REPAIR and (asset.status == AssetStatus.IN_REPAIR or (asset.status == AssetStatus.OUT_OF_SERVICE and wo.tagged_out)):
+        # Back in service only when this repair is why it was out: tagged out with the request (the portal's checkbox), or marked in
+        # repair. A device out of service for another reason (awaiting incoming inspection, quarantined by hand) stays out until
+        # someone returns it from its drawer.
         asset.status = AssetStatus.IN_SERVICE
         asset.save(update_fields=["status", "updated_at"])
 

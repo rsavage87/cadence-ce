@@ -116,7 +116,7 @@ def _body_context(request, today: date, year: int, month: int, day: date) -> dic
     confirm = f"Create {n} PM work order{'' if n == 1 else 's'} for {day:%b} {day.day}, {day.year}?"
     if plan["overdue"]:
         confirm += " It will be due today." if n == 1 else " They will be due today."
-    return {"nav_active": "pm", "today": today, "cal": cal, "day": day, "plan": plan,
+    return {"nav_active": "pm", "today": today, "cal": cal, "day": day, "plan": plan, "self_url": _url(year, month, day),
             "day_rows": [_row(r) for r in plan["rows"][:sch.DAY_LIST_LIMIT]], "day_more": max(0, plan["count"] - sch.DAY_LIST_LIMIT),
             "day_skipped": plan["count"] - n, "prev_url": _url(*prev) if prev else "", "next_url": _url(*nxt) if nxt else "",
             "create_url": reverse("web:pm_create", args=[day.isoformat()]) + f"?y={year}&m={month}", "create_confirm": confirm,

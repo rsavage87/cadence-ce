@@ -28,7 +28,6 @@ from apps.equipment.models import RiskClass
 from apps.pm import permissions as pm_perms
 from apps.pm import schedule as sch
 from apps.reports import services as rs
-from apps.workorders.models import OPEN_STATUSES, WorkOrder, WoType
 
 from . import views_pm, views_reports
 from .decorators import web_view
@@ -43,23 +42,8 @@ RISK_CSS = {RiskClass.LIFE_SUPPORT: "bad", RiskClass.HIGH: "warn"}
 
 # --- route sheets ----------------------------------------------------------------------------------------------------
 
-def _open_pms(asset_ids: list) -> dict:
-    """{asset id: its open PM work order} in one query, the earliest opened when there are several (the one the day panel reads)."""
-    out: dict = {}
-    rows = (WorkOrder.objects.filter(asset_id__in=asset_ids, type=WoType.PM, status__in=OPEN_STATUSES).order_by("opened_on", "number")
-            .values("asset_id", "number", "vendor_service", "assigned_to_id", "assigned_to__name", "assigned_to__is_active"))
-    for w in rows:
-        out.setdefault(w["asset_id"], w)
-    return out
-
-
-def _held(w: dict | None) -> bool:
-    """Whether the open PM work order is on someone's plate: with the vendor, or with an active technician."""
-    return bool(w) and (w["vendor_service"] or bool(w["assigned_to_id"] and w["assigned_to__is_active"]))
-
-
 def _sheet_key(w: dict | None, suggested) -> tuple:
-    if _held(w):
+    if sch.pm_held(w):
         return VENDOR_KEY if w["vendor_service"] else (TECH, w["assigned_to__name"], w["assigned_to_id"])
     if suggested is not None:
         return (TECH, suggested.name, suggested.id)
@@ -68,7 +52,7 @@ def _sheet_key(w: dict | None, suggested) -> tuple:
 
 def _wo_note(w: dict | None) -> str:
     """Under the work order number, when the work order is not with the sheet's technician or the vendor."""
-    if not w or _held(w):
+    if not w or sch.pm_held(w):
         return ""
     return f"with {w['assigned_to__name']}, inactive" if w["assigned_to_id"] else "unassigned"
 
@@ -100,27 +84,11 @@ def _sheets(items: list[tuple[tuple, dict]], with_day: bool) -> list[dict]:
     return sheets
 
 
-def _suggest_waiting(day: date, today: date, waiting: list, rows: list[dict]) -> dict:
-    """Technicians for devices whose open PM work order is on nobody's plate. Inside the week the week plan already counts the
-    day's other devices (sch.suggestions_for_day). Outside it the schedule picks for the day alone, so start from the hours the
-    day panel just gave the devices needing a work order: the waiting ones are balanced against them, not piled on whoever
-    sorts first by name."""
-    if today <= day < today + timedelta(days=sch.WEEK_DAYS):
-        return sch.suggestions_for_day(day, waiting, today)
-    load = sch.open_hours_by_technician()
-    for r in rows:
-        if r["technician"] is not None and not r["has_open_pm"]:
-            load[r["technician"].id] = load.get(r["technician"].id, Decimal("0")) + r["hours"]
-    return sch.suggest_technicians(waiting, today, load=load)
-
-
 def day_sheets(day: date, today: date) -> list[dict]:
     """The day panel's devices (sch.day_plan) on sheets. The plan suggests a technician only for devices with no open PM work order,
     so the devices whose open one is on nobody's plate ask the schedule the same way (bounded: one more plan, not one per device)."""
     plan = sch.day_plan(day, today)
-    open_pm = _open_pms([r["asset"].id for r in plan["rows"]])
-    waiting = [r["asset"] for r in plan["rows"] if r["asset"].id in open_pm and not _held(open_pm[r["asset"].id])]
-    more = _suggest_waiting(day, today, waiting, plan["rows"]) if waiting else {}
+    more, open_pm = sch.planned_technicians(day, today, plan)
     items = []
     for r in plan["rows"]:
         a = r["asset"]
@@ -134,7 +102,7 @@ def week_sheets(today: date) -> list[dict]:
     plan = sch.week_plan(today)
     devices = plan["devices"]
     prefetch_related_objects(devices, "department")  # the plan's query does not join departments: one query, not one per device
-    open_pm = _open_pms([a.id for a in devices])
+    open_pm = sch.open_pm_orders([a.id for a in devices])
     items = [(_sheet_key(open_pm.get(a.id), plan["suggested"].get(a.id)), _row(a, open_pm.get(a.id))) for a in devices]
     return _sheets(items, with_day=True)
 

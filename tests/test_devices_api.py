@@ -425,3 +425,38 @@ def test_acquisition_cost_round_trips_as_a_decimal(client, signed_in, ctx, vent)
     assert patch(client, one(vent), {"acquisition_cost": "36500.25"}).json()["acquisition_cost"] == "36500.25"
     vent.refresh_from_db()
     assert vent.acquisition_cost == Decimal("36500.25")
+
+
+# --- review fixes: model and department changes keep the create rules -----------------------------------------------------
+
+@pytest.mark.parametrize("body, field", [({"oem_pm_interval_months": 0}, "oem_pm_interval_months"), ({"oem_pm_interval_months": 121}, "oem_pm_interval_months"),
+                                         ({"list_cost": "-5.00"}, "list_cost"), ({"aem_interval_months": 0}, "aem_interval_months"),
+                                         ({"manufacturer": "   "}, "manufacturer")])
+def test_a_device_model_change_keeps_the_create_rules(client, signed_in, ctx, vent_model, body, field):
+    signed_in("technician")
+    r = patch(client, f"/api/v1/device-models/{vent_model.pk}/", body)
+    assert r.status_code == 400 and field in r.json()
+    vent_model.refresh_from_db()
+    assert vent_model.oem_pm_interval_months == 6 and vent_model.list_cost == 38000
+
+
+def test_a_device_model_rename_cannot_duplicate_another_in_any_case(client, signed_in, ctx, vent_model, pump_model):
+    signed_in("technician")
+    r = patch(client, f"/api/v1/device-models/{pump_model.pk}/", {"manufacturer": "hamilton medical", "model": "HAMILTON-G5"})
+    assert r.status_code == 400 and "model" in r.json()
+    r = patch(client, f"/api/v1/device-models/{pump_model.pk}/", {"manufacturer": "Hamilton Medical", "model": "Hamilton-G5"})
+    assert r.status_code == 400  # the exact spelling too: a 400, not the database's 500
+    r = patch(client, f"/api/v1/device-models/{pump_model.pk}/", {"model": "Alaris 8015 PCU v2", "aem_interval_months": 18})
+    assert r.status_code == 200 and r.json()["model"] == "Alaris 8015 PCU v2"
+
+
+def test_a_department_rename_cannot_duplicate_another_in_any_case(client, signed_in, ctx, dept):
+    signed_in("technician")
+    from apps.equipment.models import Department
+
+    other = Department.objects.create(name="Oncology")
+    for name in ("icu", "ICU"):
+        r = patch(client, f"/api/v1/departments/{other.pk}/", {"name": name})
+        assert r.status_code == 400 and "name" in r.json(), name
+    r = patch(client, f"/api/v1/departments/{other.pk}/", {"name": " Oncology  East ", "cost_center": "4410"})
+    assert r.status_code == 200 and r.json()["name"] == "Oncology East" and r.json()["cost_center"] == "4410"

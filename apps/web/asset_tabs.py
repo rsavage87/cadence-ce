@@ -19,7 +19,7 @@ from django.db.models.functions import Coalesce, ExtractYear
 
 from apps.equipment.models import AssetStatus, RiskClass
 from apps.pm.dates import add_months
-from apps.pm.schedule import DEFAULT_PM_HOURS, suggestions_for_day
+from apps.pm.schedule import DEFAULT_PM_HOURS, planned_technicians
 from apps.reports.fleet import REPLACEMENT_MARKUP, _repairs_in_window, replacement_score
 from apps.workorders.models import OPEN_STATUSES, LaborLine, PartLine, WorkOrder, WoType
 
@@ -74,11 +74,17 @@ def pm_history(asset) -> list[WorkOrder]:
     return wos
 
 
+def _held(open_pm) -> bool:
+    """The open PM work order is on someone's plate: with the vendor, or with an active technician (as pm.schedule.pm_held)."""
+    return open_pm is not None and (open_pm.vendor_service or bool(open_pm.assigned_to_id and open_pm.assigned_to.is_active))
+
+
 def _who(open_pm, suggested) -> dict:
-    """Who does the next PM: the open PM work order's vendor or technician, else the schedule's suggestion."""
-    if open_pm is not None and open_pm.vendor_service:
+    """Who does the next PM: the open PM work order's vendor or (active) technician, else the schedule's pick. An open PM with a
+    deactivated technician is on nobody's plate, as the PM schedule treats it, so the pick is shown."""
+    if _held(open_pm) and open_pm.vendor_service:
         return {"kind": "vendor", "name": open_pm.vendor_name or "Vendor"}
-    if open_pm is not None and open_pm.assigned_to_id:
+    if _held(open_pm):
         return {"kind": "assigned", "name": open_pm.assigned_to.name}
     if suggested is not None:
         return {"kind": "suggested", "name": suggested.name}
@@ -88,8 +94,8 @@ def _who(open_pm, suggested) -> dict:
 def pm_upcoming(asset, open_pm, today: date) -> dict:
     """The next PM and the PROJECTED ones after it, and who does them. The projections chain add_months from the next date, as
     completing a PM on its due date would (workorders.services._on_completed); an overdue PM counts as done today, so no projected
-    date is already past. The technician is the one the PM schedule shows for that day (pm.schedule.suggestions_for_day: the week
-    plan inside the next 7 days, else the least-loaded credentialed technician), or the open PM work order's assignee."""
+    date is already past. The technician is the one the PM schedule plans for that day (pm.schedule.planned_technicians, the same
+    as the day panel and the route sheets), or the open PM work order's vendor or active technician."""
     if asset.status == AssetStatus.RETIRED:
         return {"rows": [], "unscheduled": "Retired devices are not scheduled."}
     if not asset.next_pm_on:
@@ -97,8 +103,9 @@ def pm_upcoming(asset, open_pm, today: date) -> dict:
     interval = asset.pm_interval_months
     nxt = asset.next_pm_on
     suggested = None
-    if open_pm is None or not (open_pm.vendor_service or open_pm.assigned_to_id):
-        suggested = suggestions_for_day(nxt, [asset], today).get(asset.id)
+    if not _held(open_pm):
+        # The PM screen's own pick for that day (its day panel, create action, and route sheets), whatever the date
+        suggested = planned_technicians(nxt, today)[0].get(asset.id)
     who = _who(open_pm, suggested)
     rows = [{"on": nxt, "next": True, "overdue": nxt < today}]
     d = max(nxt, today)
@@ -165,6 +172,8 @@ def contract_share(asset) -> float | None:
     contract = asset.contract if asset.contract_id else None
     if contract is None or contract.is_expired or asset.status == AssetStatus.RETIRED:
         return None
+    if not asset.acquisition_cost:
+        return None  # nothing to allocate by: the tab says the share cannot be worked out rather than showing $0
     return contract.cost_share_for(asset)
 
 

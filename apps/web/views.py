@@ -103,8 +103,8 @@ def _equipment_context(request) -> dict:
 @web_view(Module.EQUIPMENT, Level.VIEW)
 def equipment(request):
     ctx = _equipment_context(request)
-    if is_partial(request, "eq-table"):
-        return render(request, "web/_equipment_table.html", ctx)
+    if is_partial(request, "eq-table"):  # the page head's counts come along, so a device added or retired shows there too
+        return render(request, "web/_equipment_table.html", {**ctx, "oob_summary": True})
     return render(request, "web/equipment.html", ctx)
 
 
