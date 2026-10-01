@@ -1,0 +1,44 @@
+{% comment %}
+The device's details, shared by Add device (new=True) and Edit details. Add device's model and department selects end with "Add a
+new model" and "Add a new department"; choosing one reveals the fields below it (CSS :has, so keyboard and screen reader users get
+it the moment the select changes; browsers without :has show them always, and the server ignores them unless that choice is made).
+{% endcomment %}
+<div class="form">
+  {% if form.non_field_errors %}<div class="full"><span class="err">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+  {% if new %}{% include "web/_asset_field.html" with field=form.tag %}{% else %}
+  <div class="fld"><label for="dv-tag-ro">Asset tag</label><input id="dv-tag-ro" type="text" value="{{ asset.tag }}" readonly aria-describedby="dv-tag-ro-hint"><span class="hint" id="dv-tag-ro-hint">Cannot be changed: it is on the label and in links.</span></div>
+  {% endif %}
+  {% include "web/_asset_field.html" with field=form.serial %}
+  {% include "web/_asset_field.html" with field=form.device_model cls="full" %}
+  {% if new %}
+  <fieldset class="full dv-sub dv-new dv-new-model">
+    <legend>New model</legend>
+    <div class="dv-grid">
+      {% include "web/_asset_field.html" with field=form.manufacturer %}
+      {% include "web/_asset_field.html" with field=form.model %}
+      {% include "web/_asset_field.html" with field=form.description %}
+      {% include "web/_asset_field.html" with field=form.category %}
+      {% include "web/_asset_field.html" with field=form.risk_class %}
+      {% include "web/_asset_field.html" with field=form.oem_pm_interval_months %}
+      {% include "web/_asset_field.html" with field=form.expected_life_years %}
+      {% include "web/_asset_field.html" with field=form.list_cost %}
+    </div>
+    <datalist id="dv-categories">{% for c in form.categories %}<option value="{{ c }}"></option>{% endfor %}</datalist>
+  </fieldset>
+  {% endif %}
+  {% include "web/_asset_field.html" with field=form.department %}
+  {% include "web/_asset_field.html" with field=form.room %}
+  {% if new %}{% include "web/_asset_field.html" with field=form.new_department cls="full dv-new dv-new-dept" %}{% endif %}
+  {% include "web/_asset_field.html" with field=form.installed_on %}
+  {% include "web/_asset_field.html" with field=form.warranty_end %}
+  {% include "web/_asset_field.html" with field=form.acquisition_cost %}
+  {% include "web/_asset_field.html" with field=form.condition %}
+  {% if new %}
+  {% include "web/_asset_field.html" with field=form.last_pm_on %}
+  {% include "web/_asset_field.html" with field=form.next_pm_on %}
+  {% include "web/_asset_field.html" with field=form.status cls="full" %}
+  {% else %}
+  {% include "web/_asset_field.html" with field=form.next_pm_on cls="full" %}
+  {% endif %}
+  {% include "web/_asset_field.html" with field=form.notes cls="full" %}
+</div>

@@ -1,0 +1,6 @@
+{% load web %}
+<div class="modal-h"><h2>Add device</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+<form id="dv-form" class="dv-form" hx-post="{% url 'web:asset_new' %}" hx-target="#modal-card">
+  {% include "web/_asset_fields.html" with new=True %}
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Add device</button></div>
+</form>

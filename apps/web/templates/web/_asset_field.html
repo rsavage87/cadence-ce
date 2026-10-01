@@ -1,0 +1,2 @@
+{# One field of the device forms: its label, the input, a hint, and any error. Django points aria-describedby at the hint and error ids. #}
+<div class="fld{% if cls %} {{ cls }}{% endif %}"><label for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% if field.help_text %}<span class="hint" id="{{ field.auto_id }}_helptext">{{ field.help_text }}</span>{% endif %}{% if field.errors %}<span class="err" id="{{ field.auto_id }}_error">{{ field.errors|striptags }}</span>{% endif %}</div>
