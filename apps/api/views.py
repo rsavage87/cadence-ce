@@ -7,6 +7,7 @@ import re
 from datetime import date
 
 from django.core.exceptions import ValidationError
+from django.db.models import ProtectedError
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import MethodNotAllowed, NotFound, PermissionDenied
@@ -19,7 +20,9 @@ from apps.accounts.models import Level
 from apps.contracts.models import Contract
 from apps.credentials.models import Credential, Technician
 from apps.credentials.services import qualified_technicians
-from apps.equipment.models import Asset, Department, DeviceModel
+from apps.equipment import permissions as eq_perms
+from apps.equipment import services as eq_services
+from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel
 from apps.facility import services as fac_services
 from apps.pm import permissions as pm_perms
 from apps.pm import schedule as pm_schedule
@@ -49,23 +52,115 @@ class TenantViewSet(viewsets.ModelViewSet):
         serializer.save(tenant=get_current_tenant())
 
 
-class DepartmentViewSet(TenantViewSet):
+def _via_service(fn, *args, **kwargs):
+    """Call a service; its ValidationError becomes a 400, field errors keyed by field (as a form shows them), anything else as detail."""
+    try:
+        return fn(*args, **kwargs)
+    except ValidationError as e:
+        raise DRFValidationError(e.message_dict if hasattr(e, "error_dict") else {"detail": " ".join(e.messages)}) from e
+
+
+def _refuse_on_create(data, fields, what):
+    """Fields the create service does not take: refused when given rather than dropped, so a client never thinks they were saved."""
+    errors = {f: [f"Set this with PATCH once the {what} is added."] for f in fields if data.get(f) not in (None, "")}
+    if errors:
+        raise DRFValidationError(errors)
+
+
+class EquipmentWrites:
+    """Equipment writes need the levels in apps.equipment.permissions, the same doors as the Equipment screen. Deleting a row that
+    work orders, requests, or devices still point at is a 400 saying so, not a 500."""
+
+    in_use = "{} is in use, so it cannot be deleted."
+
+    @property
+    def write_level(self):
+        return {"create": eq_perms.ADD_LEVEL, "change_status": eq_perms.STATUS_LEVEL}.get(self.action, eq_perms.EDIT_LEVEL)
+
+    def perform_destroy(self, instance):
+        try:
+            instance.delete()
+        except ProtectedError:
+            raise DRFValidationError({"detail": self.in_use.format(instance)}) from None
+
+
+class DepartmentViewSet(EquipmentWrites, TenantViewSet):
     model, module, serializer_class = Department, "equipment", s.DepartmentSerializer
     search_fields = ["name"]
+    in_use = "{} has devices or service requests, so it cannot be deleted."
+
+    def create(self, request, *args, **kwargs):
+        """Through create_department: a name the facility already has, in any letter case, returns that department (200, not 201)."""
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        _refuse_on_create(serializer.validated_data, ("cost_center",), "department")
+        before = Department.objects.count()
+        dept = _via_service(eq_services.create_department, serializer.validated_data["name"])
+        created = Department.objects.count() > before
+        return Response(self.get_serializer(dept).data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
 
-class DeviceModelViewSet(TenantViewSet):
+class DeviceModelViewSet(EquipmentWrites, TenantViewSet):
     model, module, serializer_class = DeviceModel, "equipment", s.DeviceModelSerializer
     search_fields = ["manufacturer", "model", "description", "category"]
+    in_use = "{} has devices, so it cannot be deleted."
+    CREATE_FIELDS = ("manufacturer", "model", "description", "category", "oem_pm_interval_months", "expected_life_years", "list_cost")
+
+    def perform_create(self, serializer):
+        # Through create_device_model, which needs a risk class and never takes an AEM interval (an approved exception, set afterwards).
+        d = serializer.validated_data
+        _refuse_on_create(d, ("aem_interval_months", "pm_procedure"), "model")
+        serializer.instance = _via_service(eq_services.create_device_model, risk_class=d.get("risk_class"), by=self.request.user,
+                                           **{f: d[f] for f in self.CREATE_FIELDS if f in d})
 
 
-class AssetViewSet(TenantViewSet):
+class AssetViewSet(EquipmentWrites, TenantViewSet):
+    """Adding and editing go through apps.equipment.services (create_asset, update_asset), status changes through POST {id}/status/
+    (set_status). An edit never changes the fields in FIXED_ON_UPDATE: a PUT or PATCH that changes one is refused with a 400 saying
+    where it changes instead, while sending back the value a GET returned is fine."""
+
     model, module, serializer_class = Asset, "equipment", s.AssetSerializer
     search_fields = ["tag", "serial", "device_model__model", "device_model__manufacturer", "department__name", "contract__reference"]
     ordering_fields = ["tag", "next_pm_on", "installed_on", "acquisition_cost"]
+    in_use = "{0.tag} has work orders or service requests, so it cannot be deleted; retire it instead."
+    FIXED_ON_UPDATE = {
+        "tag": "Asset tags never change: they are on the sticker and in links.",
+        "status": "Use POST /api/v1/assets/{id}/status/ to change the status.",
+        "contract": "Use POST /api/v1/contracts/{id}/add_assets/ or remove_asset/ to change the contract.",
+        "last_pm_on": "The last PM date comes from completed PM work orders.",
+    }
 
     def get_queryset(self):
         return Asset.objects.select_related("device_model", "department", "contract")
+
+    def perform_create(self, serializer):
+        d = dict(serializer.validated_data)
+        if d.pop("contract", None) is not None:
+            raise DRFValidationError({"contract": ["Add the device first, then use POST /api/v1/contracts/{id}/add_assets/."]})
+        serializer.instance = _via_service(eq_services.create_asset, by=self.request.user, **d)
+
+    def perform_update(self, serializer):
+        asset, d = serializer.instance, dict(serializer.validated_data)
+        errors = {}
+        for field, message in self.FIXED_ON_UPDATE.items():
+            if field in d and d.pop(field) != getattr(asset, field):
+                errors[field] = [message]
+        if errors:
+            raise DRFValidationError(errors)
+        serializer.instance = _via_service(eq_services.update_asset, asset, by=self.request.user, **d)
+
+    @action(detail=True, methods=["post"], url_path="status", url_name="status")
+    def change_status(self, request, pk=None):
+        """Body: {"to": "<status>", "note": "..."}. The drawer's status buttons: Equipment Edit, and Approve to retire or reinstate."""
+        asset = self.get_object()
+        body = request.data if hasattr(request.data, "get") else {}  # a JSON list or scalar body has no fields
+        to = body.get("to")
+        if to not in AssetStatus.values:
+            raise DRFValidationError({"to": [f"Required; one of {', '.join(AssetStatus.values)}."]})
+        if not eq_perms.can_set_status(request.user, asset.status, to):
+            raise PermissionDenied("Retiring or reinstating a device needs Approve access.")
+        _via_service(eq_services.set_status, asset, to, by=request.user, note=str(body.get("note") or ""))
+        return Response(self.get_serializer(asset).data)
 
     @action(detail=True, methods=["get"])
     def qualified_technicians(self, request, pk=None):
