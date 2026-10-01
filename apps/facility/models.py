@@ -27,6 +27,10 @@ class FacilitySettings(TenantModel):
     # Service request portal
     portal_require_callback = models.BooleanField(default=True, help_text="Requesters must give a callback number")
     portal_hotline = models.CharField(max_length=40, blank=True, help_text="Shown to requesters on the portal, e.g. ext. 4400")
+    # Slice 13: the portal can email the requester (a confirmation, and a notice when the work is done), only at the facility's
+    # own email domains, so the public form cannot be used to send mail anywhere else.
+    portal_confirmation = models.CharField(max_length=10, choices=[("screen", "On screen"), ("email", "On screen and by email")], default="screen")
+    portal_email_domains = models.CharField(max_length=200, blank=True, help_text="Work email domains the portal may email, comma-separated")
 
     # Maintenance policy text
     policy_life_support = models.CharField(max_length=POLICY_MAX_LENGTH, default=POLICY_DEFAULTS["policy_life_support"])

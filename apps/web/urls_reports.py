@@ -8,4 +8,5 @@ urlpatterns = [
     path("", v.reports, name="reports"),
     path("<slug:key>.csv", v.report_csv, name="report_csv"),
     path("<slug:key>/", v.reports, name="report"),
+    path("<slug:key>/schedule/", v.report_schedule, name="report_schedule"),  # slice 13: email me this report
 ]

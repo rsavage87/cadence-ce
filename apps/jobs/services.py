@@ -25,6 +25,8 @@ DAILY_JOBS = [
     ("generate_pm", "generate_pm", {}),
     # A 30-day window re-reads the last month each day, so a missed day or a late FDA posting is caught up; records are upserted.
     ("import_openfda", "import_openfda", {"days": 30, "limit": 1000}),
+    # Slice 13: report emails due today (weekly on Mondays, monthly on the first Monday); each subscription at most once a day.
+    ("report_emails", "send_report_emails", {}),
 ]
 OUTPUT_LIMIT = 20_000
 log = logging.getLogger("cadence.scheduler")

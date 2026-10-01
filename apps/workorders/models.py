@@ -178,6 +178,7 @@ class ServiceRequest(TenantModel):
     room = models.CharField(max_length=40, blank=True)
     requester_name = models.CharField(max_length=120, blank=True)
     callback = models.CharField(max_length=60, blank=True)
+    requester_email = models.EmailField(blank=True, help_text="Work email for a confirmation and a done notice (slice 13), at an allowed domain")
     problem = models.TextField()
     urgency = models.CharField(max_length=10, choices=Urgency.choices, default=Urgency.NORMAL)
     tagged_out = models.BooleanField(default=False)

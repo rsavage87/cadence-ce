@@ -50,3 +50,7 @@ def report_csv(request, key):
     today = _today()
     data = rs.run_report(meta["key"], today)
     return csv_response(f"cadence-{meta['key']}-{today:%Y-%m-%d}.csv", data["columns"], data["rows"])
+
+
+def report_schedule(request, key):
+    raise Http404  # scaffold (slice 13): agent A builds the Schedule modal

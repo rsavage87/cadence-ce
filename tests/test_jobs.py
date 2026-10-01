@@ -50,6 +50,20 @@ def fda(monkeypatch):
     return calls
 
 
+@pytest.fixture(autouse=True)
+def two_jobs(monkeypatch):
+    """These tests are about the runner (the lock, takeover, failures), written against the first two daily jobs; slice 13's
+    report emails have their own tests (tests/test_report_emails.py)."""
+    monkeypatch.setattr(jobs, "DAILY_JOBS", [j for j in jobs.DAILY_JOBS if j[0] in ("generate_pm", "import_openfda")])
+
+
+ALL_JOBS = list(jobs.DAILY_JOBS)  # read when this file is imported, before the fixture above pins the list
+
+
+def test_the_daily_jobs_include_the_report_emails():
+    assert [key for key, _cmd, _opts in ALL_JOBS] == ["generate_pm", "import_openfda", "report_emails"]
+
+
 @pytest.fixture
 def due_pump(tenant, dept, pump_model):
     """A pump due in five days: inside generate_pm's 21-day lead."""
