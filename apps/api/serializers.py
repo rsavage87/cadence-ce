@@ -9,12 +9,16 @@ from apps.workorders.models import LaborLine, PartLine, WorkOrder
 
 
 class DepartmentSerializer(serializers.ModelSerializer):
+    """Adding one goes through apps.equipment.services.create_department (DepartmentViewSet.create); this parses and shows."""
+
     class Meta:
         model = Department
         fields = ["id", "name", "cost_center"]
 
 
 class DeviceModelSerializer(serializers.ModelSerializer):
+    """Adding one goes through apps.equipment.services.create_device_model (DeviceModelViewSet.perform_create); this parses and shows."""
+
     pm_interval_months = serializers.IntegerField(read_only=True)
 
     class Meta:
@@ -24,6 +28,9 @@ class DeviceModelSerializer(serializers.ModelSerializer):
 
 
 class AssetSerializer(serializers.ModelSerializer):
+    """Parses and shows devices. Writes never save through it: AssetViewSet hands the parsed fields to create_asset, update_asset,
+    and set_status (apps.equipment.services), which validate and record the history."""
+
     device_model_detail = DeviceModelSerializer(source="device_model", read_only=True)
     department_name = serializers.CharField(source="department.name", read_only=True)
     contract_reference = serializers.CharField(source="contract.reference", read_only=True, default=None)
