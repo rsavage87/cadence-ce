@@ -4,7 +4,7 @@ The work on your service request {{ number }} at {{ facility }} is done.
 
 Request number: {{ number }}
 Device: {{ tag }} · {{ description }}
-Location: {{ department }}{% if room %}, {{ room }}{% endif %}
+Department: {{ department }}
 Urgency: {{ urgency }}
 Completed: {{ completed_on|date:"M j, Y" }}
 

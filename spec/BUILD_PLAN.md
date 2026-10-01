@@ -1,8 +1,8 @@
 # Build plan
 
 The mock (`cadence-ce-cmms-mock.html`) is the spec. Each slice below is shippable on its own and ends with green tests.
-Slices 0 to 12 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
-export and print, and devices are added and changed in the product. What each slice deferred is noted in its row and below.
+Slices 0 to 13 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
+export and print, devices are added and changed in the product, and reports and request confirmations go out by email. What each slice deferred is noted in its row and below.
 
 | # | Slice | Mock screen(s) | Code | Status |
 |---|-------|----------------|------|--------|
@@ -19,7 +19,7 @@ export and print, and devices are added and changed in the product. What each sl
 | 10 | Sign-in and invitations | Users and access (Invite user, Resend invite), sign-in page | `accounts` + `web` | done (shared lockout counters across workers need Redis; email is sent in the request) |
 | 11 | Exports and printing | Export (CSV) on Equipment, Work orders, Contracts, a contract's Device list; Label, Print, Route sheets, report PDF, Response log, Overview Export | `web` | done (PDFs come from the browser's print dialog; Scan tag, Add device, Auto-assign week, Check feeds, Custom report, and Schedule still deferred) |
 | 12 | Device management | Equipment (Add device), device drawer (Edit details, Tag out of service, Return to service, PM schedule and Costs tabs) | `equipment` + `web` + `api` | done (a model catalog screen and AEM approval are still deferred; models are added with a device or through the API) |
-| 13 | Email notifications | Reports (Schedule), Settings (portal confirmation to the requester), the request portal | `reports` + `facility` + `portal` + `web` | in progress |
+| 13 | Email notifications | Reports (Schedule), Settings (portal confirmation to the requester), the request portal | `reports` + `facility` + `portal` + `web` | done (report emails are self-service; text messages and paging still need a provider) |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.
@@ -36,7 +36,7 @@ Operations: `apps/jobs` runs `generate_pm` and `import_openfda` once a day (the 
 
 The mock's export and print buttons work since slice 11, and Add device since slice 12; its Scan tag (a mobile app's camera) is still left out.
 
-## Screen → view map (slices 4 to 12)
+## Screen → view map (slices 4 to 13)
 - Overview: `reports.services.overview_kpis(year, month)` + `pm.services.pm_on_time_series` for the 12-month chart; attention list = life-support overdue PMs, alerts needing action, unassigned portal requests, expired/expiring contracts, critical open WOs, WOs awaiting parts > 7 days.
 - Equipment: `Asset.objects.select_related(...)` with the same filters as the mock's toolbar (category, status, risk, department, support, overdue-only, bucket). Fleet buckets: retired / out of service / in repair / open recall / PM overdue / PM due ≤ 30 d / compliant, each device counted once in that order.
 - Work orders: list and board; status buttons call `workorders.services.change_status`; assignment dropdown lists `credentials.services.qualified_technicians(asset)` first.
@@ -138,3 +138,14 @@ The mock's export and print buttons work since slice 11, and Add device since sl
   share (the contract's price only with Contracts View), and the replacement outlook. The API's device, model, and department
   writes go through the same services (`update_device_model`, `rename_department` keep names unique in any case), and the CSV
   importer matches tags in any case, skips reserved tags, and changes an existing device's status only through `set_status`.
+- Email notifications (slice 13): each report's Schedule button (Reports View, an email address) emails that report to the user
+  themselves every Monday or on the first Monday of each month (`reports.subscriptions`, `ReportSubscription`), with its CSV
+  attached byte for byte and a link to its printable page; the daily job `send_report_emails` sends what is due inside each
+  facility, re-checks access at sending time, catches up a Monday whose run failed or never happened on the next daily run,
+  claims each email before sending (two runs at once send it once), and a schedule turned on after a Monday's run starts with
+  the next sending day. Settings' "Confirmation to the requester" offers "On screen and by email" once the facility lists its
+  work email domains; the portal then takes an optional work email at those domains only and sends a confirmation and a done
+  notice (`portal.notifications`, after commit, inside the request's facility, once each, recorded as status-history notes),
+  never with anything the requester typed (not the problem, nor the room), capped per address and per facility each hour (the
+  form's per-IP limit can be forged). The confirmation page names the address only to the browser that sent that request at
+  that facility. Each Settings portal control saves only itself, so a typo or a stale tab never writes another row.

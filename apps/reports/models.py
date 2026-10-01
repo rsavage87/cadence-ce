@@ -19,6 +19,7 @@ class ReportSubscription(TenantModel):
     report = models.CharField(max_length=20, help_text="A key of apps.reports.services.REPORTS")
     frequency = models.CharField(max_length=10, choices=Frequency.choices)
     last_sent_on = models.DateField(null=True, blank=True, help_text="The local day it was last emailed; a day is never sent twice")
+    start_on = models.DateField(null=True, blank=True, help_text="The first sending day it may send for (set when it is turned on)")
 
     class Meta:
         ordering = ["report"]

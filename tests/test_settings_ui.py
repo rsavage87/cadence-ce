@@ -66,7 +66,7 @@ def test_director_sees_every_panel_with_defaults(client, signed_in, ctx, vent, p
     assert f'<input readonly value="{PORTAL}" aria-label="Portal link">' in body and f'data-copy="{PORTAL}"' in body
     assert f'href="{PORTAL}" target="_blank" rel="noopener">Preview</a>' in body
     assert 'hx-get="/settings/portal/links/" hx-target="#modal-card"' in body
-    assert 'id="set-portal-callback" name="portal_require_callback" value="1" aria-label="Requester must give a callback number" checked>' in body
+    assert 'id="set-portal-callback" name="portal_require_callback" value="1" aria-label="Requester must give a callback number" checked hx-post=' in body
     assert 'name="portal_hotline" value="" maxlength="40" placeholder="e.g. ext. 4400"' in body
     for row, why in [("Page on-call for critical requests, around the clock", "Needs the notifications integration"),
                      ("Allow photo upload with a request", "Not offered: photos can capture patients"),
@@ -98,7 +98,7 @@ def test_seeded_values_show_plainly(client, signed_in, ctx):
     body = client.get("/settings/").content.decode()
     assert 'name="portal_hotline" value="ext. 4400"' in body and 'name="repair_budget_monthly" value="52000"' in body
     assert 'name="target_uptime_pct" value="99.5"' in body
-    assert 'aria-label="Requester must give a callback number"><span class="sw"></span>Off' in body
+    assert 'aria-label="Requester must give a callback number" hx-post="/settings/portal/"' in body
 
 
 def test_no_fda_import_means_nothing_connected(client, signed_in, ctx):
@@ -185,12 +185,14 @@ def test_portal_toggle_turns_off_and_back_on(client, signed_in, ctx):
     assert fs.get_settings().portal_require_callback is False
     body = r.content.decode()
     # the auto-save swaps only its own form, so the link box and Department links are never replaced under the pointer
-    assert body.lstrip().startswith('<form class="set-rows" id="set-portal-form"') and "<html" not in body and "Department links" not in body
-    assert 'hx-target="this" hx-swap="outerHTML"' in body and 'id="set-portal-hotline"' in body
-    assert 'aria-label="Requester must give a callback number"><span class="sw"></span>Off' in body
-    # a checked box posts the hidden 0 and then 1; the last value wins
-    r = client.post("/settings/portal/", {"portal_require_callback": ["0", "1"], "portal_hotline": ""}, **HX)
-    assert fs.get_settings().portal_require_callback is True and "checked><span class=\"sw\"></span>On" in r.content.decode()
+    assert body.lstrip().startswith('<div class="set-rows" id="set-portal-form"') and "<html" not in body and "Department links" not in body
+    assert 'hx-target="#set-portal-form" hx-swap="outerHTML"' in body and 'id="set-portal-hotline"' in body
+    assert 'aria-label="Requester must give a callback number" hx-post="/settings/portal/"' in body
+    # a ticked box posts its 1 with the hidden 0 (in either order): on whenever a 1 is there
+    for values in (["0", "1"], ["1", "0"]):
+        fs.update_settings(portal_require_callback=False)
+        r = client.post("/settings/portal/", {"portal_require_callback": values}, **HX)
+        assert fs.get_settings().portal_require_callback is True and "</span>On" in r.content.decode()
     assert fs.get_settings().history.first().history_user == kim
 
 
@@ -220,12 +222,22 @@ def test_a_garbage_toggle_value_is_refused(client, signed_in, ctx):
 def test_the_autosave_form_wraps_only_the_setting_rows(client, signed_in, ctx):
     signed_in("director")
     body = client.get("/settings/").content.decode()
-    form = body[body.index('<form class="set-rows"'):]
-    form = form[:form.index("</form>")]
-    assert 'hx-post="/settings/portal/"' in form and 'hx-disinherit="hx-swap hx-target"' in form
+    form = body[body.index('<div class="set-rows" id="set-portal-form">'):]
+    form = form[:form.index('id="set-portal-domains"') + 400]
+    # each control saves only itself (its own hx-post): four of them, each swapping the rows as one
+    assert form.count('hx-post="/settings/portal/"') == 4 and form.count('hx-target="#set-portal-form"') == 4 and "<form" not in form
     assert "#modal-card" not in form and "Department links" not in form and "Portal link" not in form
-    hidden, box = 'type="hidden" name="portal_require_callback" value="0"', 'type="checkbox" id="set-portal-callback" name="portal_require_callback" value="1"'
-    assert form.index(hidden) < form.index(box)
+    assert 'hx-include="#set-portal-callback-off"' in form and 'id="set-portal-callback-off" name="portal_require_callback" value="0"' in form
+
+
+def test_a_bad_domain_list_never_blocks_turning_email_off(client, signed_in, ctx):
+    """Each row saves alone: a typo left in the domains box does not ride along when the confirmation is switched."""
+    signed_in("director")
+    fs.update_settings(portal_email_domains="rrmc.org", portal_confirmation="email")
+    r = client.post("/settings/portal/", {"portal_email_domains": "rrmc"}, **HX)
+    assert "rrmc" in r.content.decode() and fs.get_settings().portal_email_domains == "rrmc.org"  # refused, shown as typed
+    r = client.post("/settings/portal/", {"portal_confirmation": "screen"}, **HX)  # what the select posts on its own
+    assert _toast(r) == "Portal setting saved" and fs.get_settings().portal_confirmation == "screen"
 
 
 # --- maintenance policy ------------------------------------------------------------------------------------

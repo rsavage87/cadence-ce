@@ -162,7 +162,7 @@ def test_the_screen_saves_the_choice_and_the_domains(client, signed_in, ctx):
     s = fs.get_settings()
     assert (s.portal_confirmation, s.portal_email_domains, s.history.first().history_user) == ("email", "rrmc.org, riverside-health.org", kim)
     body = r.content.decode()
-    assert body.lstrip().startswith('<form class="set-rows" id="set-portal-form"')  # the auto-save still swaps only its own form
+    assert body.lstrip().startswith('<div class="set-rows" id="set-portal-form"')  # the auto-save still swaps only its own form
     assert '<option value="screen">On screen</option><option value="email" selected>On screen and by email</option>' in body
     assert 'name="portal_email_domains" value="rrmc.org, riverside-health.org"' in body and 'aria-invalid' not in body
 
@@ -239,13 +239,13 @@ def test_the_confirmation_email(client, email_on, vent, mailoutbox, django_captu
     assert len(mailoutbox) == 1
     m = mailoutbox[0]
     assert m.to == [EMAIL] and m.subject == f"Request {sr.number} received: CE-10001, ICU ventilator"
-    for line in [f"Request number: {sr.number}", "Device: CE-10001 · ICU ventilator", "Location: ICU, Bed 4",
+    for line in [f"Request number: {sr.number}", "Device: CE-10001 · ICU ventilator", "Department: ICU",
                  "Urgency: Device unusable, a backup is in use", "Response target: Within 4 hours",
                  "call the Clinical Engineering shop at ext. 4400 and give your request number",
                  "Clinical Engineering at Riverside Regional has your service request."]:
         assert line in m.body, line
     assert "Alarm" not in m.body and "bed 4 moved" not in m.body and "Alarm" not in m.subject  # never the problem text
-    assert "Kim" not in m.body  # nor the free-text name: only fields the requester picked or the facility set
+    assert "Kim" not in m.body and "Bed 4" not in m.body  # nor the free-text name or room: only fields picked from lists or set by the facility
     assert all(link.startswith(APP) for link in _links(m.body))
     assert _notes(sr.work_order, notifications.RECEIVED_NOTE) == 1
     # the confirmation page names the address to the browser that sent the request, and to no one else
@@ -303,7 +303,7 @@ def test_the_done_notice_from_the_web_ui(client, signed_in, email_on, vent, mail
     m, today = mailoutbox[0], date.today()
     assert m.to == [EMAIL] and m.subject == f"Request {sr.number} done: CE-10001, ICU ventilator"
     for line in [f"The work on your service request {sr.number} at Riverside Regional is done.", "Device: CE-10001 · ICU ventilator",
-                 "Location: ICU, Bed 4", f"Completed: {today:%b} {today.day}, {today.year}",
+                 "Department: ICU", f"Completed: {today:%b} {today.day}, {today.year}",
                  "If the problem is back, submit a new request or call ext. 4400:", f"{APP}/r/riverside/?asset=CE-10001"]:
         assert line in m.body, line
     assert "Alarm" not in m.body and "bed 4 moved" not in m.body and all(link.startswith(APP) for link in _links(m.body))
@@ -413,9 +413,10 @@ def test_emails_use_the_requests_own_facility(ctx, vent, other_tenant, mailoutbo
     with tenant_context(other_tenant):
         assert notifications.send_request_done(sr.work_order) is True
     assert "call ext. 4400" in mailoutbox[0].body and "9999" not in mailoutbox[0].body
-    # and the other facility's settings never allow this one's mail
+    # and the other facility's settings never allow this one's mail, even when they would (email on, rrmc.org listed there)
     fs.update_settings(portal_confirmation="screen")
     with tenant_context(other_tenant):
+        fs.update_settings(portal_email_domains="other.example, rrmc.org")
         assert notifications.send_request_received(sr) is False
     assert len(mailoutbox) == 1
 
@@ -488,3 +489,39 @@ def test_the_settings_api_reads_and_changes_the_portal_email_settings(client, si
     assert got["portal_confirmation"] == "email" and got["portal_email_domains"] == "riverside-health.org, rrmc.org"
     r = client.patch("/api/v1/settings/", {"portal_email_domains": ""}, content_type="application/json")
     assert r.status_code == 400  # email confirmations need a domain, through the API as on the screen
+
+
+# --- review fixes -------------------------------------------------------------------------------------------
+
+def test_the_done_page_names_the_address_only_for_the_request_this_browser_sent(client, ctx, email_on, vent, other_tenant, mailoutbox):
+    """The cookie names the facility and the request: not another request here, nor the same number at another facility."""
+    from apps.accounts.models import create_default_roles
+    from apps.equipment.models import Asset, Department, DeviceModel
+
+    r = _post(client, vent)
+    mine = ServiceRequest.objects.get(number=r["Location"].rstrip("/").split("/")[-1])
+    other_here = _request(vent, email="dana.o@rrmc.org")
+    assert EMAIL in client.get(f"/r/riverside/done/{mine.number}/").content.decode()
+    assert "dana.o@rrmc.org" not in client.get(f"/r/riverside/done/{other_here.number}/").content.decode()
+    create_default_roles(other_tenant)
+    with tenant_context(other_tenant):
+        fs.update_settings(portal_confirmation="email", portal_email_domains="other.example")
+        dept = Department.objects.create(name="ICU")
+        dm = DeviceModel.objects.create(manufacturer="BD", model="Alaris", description="Infusion pump", category="Pumps")
+        theirs = create_service_request(asset=Asset.objects.create(tag="CE-1", device_model=dm, department=dept), department=dept, problem="x",
+                                        urgency="normal", requester_email="victim@other.example")
+    assert theirs.number == mine.number  # numbers repeat across facilities
+    cookie = client.cookies["portal_sent"].value
+    client.cookies["portal_sent"] = cookie
+    client.cookies["portal_sent"]["path"] = "/r/other/"
+    assert "victim@other.example" not in client.get(f"/r/other/done/{theirs.number}/").content.decode()
+
+
+def test_confirmations_are_capped_per_address_and_per_facility(ctx, email_on, vent, mailoutbox, settings):
+    settings.PORTAL_EMAILS_PER_ADDRESS_PER_HOUR = 2
+    settings.PORTAL_EMAILS_PER_FACILITY_PER_HOUR = 3
+    sent = [notifications.send_request_received(_request(vent)) for _ in range(3)]
+    assert sent == [True, True, False] and len(mailoutbox) == 2  # the third to the same address this hour is not sent
+    assert notifications.send_request_received(_request(vent, email="dana.o@rrmc.org")) is True
+    assert notifications.send_request_received(_request(vent, email="lee.p@rrmc.org")) is False  # the facility's cap
+    assert ServiceRequest.objects.count() == 5  # every request is saved; only the mail is held back

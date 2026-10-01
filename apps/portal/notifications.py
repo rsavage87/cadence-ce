@@ -4,8 +4,11 @@ notice when its work order is completed.
 
 - Only while the facility confirms requests by email (Settings) and only to an address at one of its work email domains, both
   checked again at sending time: a request made before email was turned off, or at a domain since removed, gets nothing.
-- Never the problem text: a requester may have written about a patient. The templates get the plain values from _context(),
-  never the request itself, so they cannot show it by accident.
+- Nothing the requester typed: not the problem (it can mention a patient), not the room or bed (free text, which would let anyone
+  put a line of their own into the hospital's email). The templates get the plain values from _context(), never the request
+  itself, so they cannot show it by accident.
+- Confirmations are capped per address and per facility each hour (settings.PORTAL_EMAILS_PER_ADDRESS_PER_HOUR, ..._PER_FACILITY_
+  PER_HOUR): the per-IP limit on the form can be dodged with a forged X-Forwarded-For, so the mail itself has its own limits.
 - Sent after the transaction commits, inside the request's own tenant whatever context completed the work order (the web UI, the
   API, a management command, or none at all), reading only that tenant's rows.
 - A sent email is noted in the work order's status history (a note with no status change), which the work order's timeline
@@ -44,13 +47,33 @@ def request_done_after_commit(work_order) -> None:
     transaction.on_commit(lambda: send_request_done(work_order), robust=True)
 
 
+def _within_caps(sr) -> bool:
+    """Count this confirmation against the hour's caps; False (and nothing counted further) once either is reached."""
+    from django.core.cache import caches
+
+    cache = caches["limits"]
+    for key, limit in ((f"portal-mail:addr:{sr.tenant_id}:{sr.requester_email.lower()}", settings.PORTAL_EMAILS_PER_ADDRESS_PER_HOUR),
+                       (f"portal-mail:facility:{sr.tenant_id}", settings.PORTAL_EMAILS_PER_FACILITY_PER_HOUR)):
+        cache.add(key, 0, 60 * 60)
+        try:
+            n = cache.incr(key)
+        except ValueError:  # the hour ended between add and incr
+            cache.set(key, 1, 60 * 60)
+            n = 1
+        if n > limit:
+            log.warning("Portal confirmation not emailed for %s: hourly cap reached", sr.number)
+            return False
+    return True
+
+
 def send_request_received(service_request) -> bool:
-    """Email the requester the request number, the device, where it is, the urgency, and the response target. False when nothing
-    was sent: no address, email confirmations off, the address's domain no longer allowed, or the send failed."""
+    """Email the requester the request number, the device, its department, the urgency, and the response target. False when
+    nothing was sent: no address, email confirmations off, the address's domain no longer allowed, an hourly cap reached, or the
+    send failed."""
     try:
         with tenant_context(service_request.tenant):
             sr = _request(pk=service_request.pk)
-            return sr is not None and _send(sr, RECEIVED_TEMPLATE, RECEIVED_NOTE)
+            return sr is not None and _send(sr, RECEIVED_TEMPLATE, RECEIVED_NOTE, capped=True)
     except Exception:  # a database error must not reach the portal's response or the caller's status change
         log.exception("Could not email the confirmation for service request %s", service_request.pk)
         return False
@@ -84,9 +107,12 @@ def _request(**lookup) -> ServiceRequest | None:
     return ServiceRequest.objects.select_related("tenant", "asset__device_model", "department", "work_order").filter(**lookup).first()
 
 
-def _send(sr: ServiceRequest, template: str, note: str) -> bool:
+def _send(sr: ServiceRequest, template: str, note: str, capped: bool = False) -> bool:
+    """`capped`: count against the hourly caps (the confirmation, which anyone can cause); counted only for an email that would go."""
     s = fs.get_settings()
     if not fs.email_allowed(sr.requester_email, s):
+        return False
+    if capped and not _within_caps(sr):
         return False
     if not emails.send(sr.requester_email, template, _context(sr, s)):
         return False
@@ -102,7 +128,7 @@ def _context(sr: ServiceRequest, s) -> dict:
     model = sr.asset.device_model
     new_request = reverse("portal:request", args=[sr.tenant.slug])
     return {"facility": sr.tenant.name, "number": sr.number, "name": sr.requester_name, "tag": sr.asset.tag,
-            "description": model.description or str(model), "department": sr.department.name, "room": sr.room,
+            "description": model.description or str(model), "department": sr.department.name,
             "urgency": sr.get_urgency_display(), "target": RESPONSE_TARGETS.get(sr.urgency, ""), "hotline": s.portal_hotline,
             "completed_on": sr.work_order.completed_on,
             "new_request_url": f"{settings.APP_BASE_URL}{new_request}?{urlencode({'asset': sr.asset.tag})}"}

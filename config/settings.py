@@ -167,6 +167,8 @@ if not DEBUG and not TESTING:
 # --- Product settings -------------------------------------------------------
 PORTAL_BASE_URL = os.environ.get("PORTAL_BASE_URL", "http://localhost:8000")
 PORTAL_RATE_LIMIT_PER_HOUR = int(os.environ.get("PORTAL_RATE_LIMIT_PER_HOUR", "20"))
+PORTAL_EMAILS_PER_ADDRESS_PER_HOUR = 3     # portal confirmations to one address, whatever the sender's network address
+PORTAL_EMAILS_PER_FACILITY_PER_HOUR = 60   # and from one facility's portal in all
 PM_LEAD_DAYS = int(os.environ.get("PM_LEAD_DAYS", "21"))  # generate PM work orders this many days before due
 SCHEDULER_DAILY_AT = os.environ.get("SCHEDULER_DAILY_AT", "02:30")  # local time (TIME_ZONE) the scheduler runs the daily jobs
 CREDENTIAL_EXPIRY_WARNING_DAYS = 60

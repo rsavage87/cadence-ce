@@ -53,12 +53,12 @@ def _number(field: str, value: str) -> str:
 
 
 def portal_fields(post) -> dict:
-    """The portal rows. The toggle posts a hidden 0 ahead of the checkbox's 1, and QueryDict.get returns the last value,
-    so an unchecked box still arrives as 0. Anything else is passed through for the service to reject."""
+    """The portal rows present in the post (each control saves only itself). The toggle posts a hidden 0 with the checkbox's 1
+    when it is ticked, so on means a 1 is among the values, whatever their order. Anything else goes to the service to reject."""
     fields = {}
     if "portal_require_callback" in post:
-        raw = post.get("portal_require_callback")
-        fields["portal_require_callback"] = {"1": True, "0": False}.get(raw, raw)
+        values = post.getlist("portal_require_callback") if hasattr(post, "getlist") else [post["portal_require_callback"]]
+        fields["portal_require_callback"] = True if "1" in values else False if values == ["0"] else post.get("portal_require_callback")
     for field in ("portal_hotline", "portal_confirmation", "portal_email_domains"):
         if field in post:
             fields[field] = post.get(field, "")

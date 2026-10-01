@@ -1,15 +1,17 @@
-{# The portal settings rows. Auto-saves for editors and swaps only itself; the ids let htmx put focus back after the swap. #}
-<form class="set-rows" id="set-portal-form"{% if can_edit %} hx-post="{% url 'web:settings_portal' %}" hx-trigger="change, submit" hx-sync="this:replace" hx-target="this" hx-swap="outerHTML"{% endif %} hx-disinherit="hx-swap hx-target">
+{% comment %}The portal settings rows. Auto-save for editors, and each control saves only itself (its own hx-post): a typo in the
+   domains never blocks another change, and a tab opened earlier never writes back rows nobody touched in it. The rows swap as one
+   (#set-portal-form); the ids let htmx put focus back after the swap.{% endcomment %}
+<div class="set-rows" id="set-portal-form">
   <div class="set-row">
     <span class="lbl">Requester must give a callback number</span>
     <label class="tog">
       {# hidden 0 first: an unchecked box still posts a value, and QueryDict.get returns the last one #}
-      <input type="hidden" name="portal_require_callback" value="0"><input type="checkbox" id="set-portal-callback" name="portal_require_callback" value="1" aria-label="Requester must give a callback number"{% if s.portal_require_callback %} checked{% endif %}{% if not can_edit %} disabled{% endif %}><span class="sw"></span>{% if s.portal_require_callback %}On{% else %}Off{% endif %}
+      <input type="hidden" id="set-portal-callback-off" name="portal_require_callback" value="0"><input type="checkbox" id="set-portal-callback" name="portal_require_callback" value="1" aria-label="Requester must give a callback number"{% if s.portal_require_callback %} checked{% endif %}{% if can_edit %} hx-post="{% url 'web:settings_portal' %}" hx-trigger="change" hx-include="#set-portal-callback-off" hx-target="#set-portal-form" hx-swap="outerHTML" hx-sync="#set-portal-form:replace"{% else %} disabled{% endif %}><span class="sw"></span>{% if s.portal_require_callback %}On{% else %}Off{% endif %}
     </label>
   </div>
   <label class="set-row">
     <span class="lbl">Hotline shown to requesters</span>
-    <input class="perm" id="set-portal-hotline" name="portal_hotline" value="{{ s.portal_hotline }}" maxlength="{{ hotline_max }}" placeholder="e.g. ext. 4400" autocomplete="off"{% if not can_edit %} disabled{% endif %}>
+    <input class="perm" id="set-portal-hotline" name="portal_hotline" value="{{ s.portal_hotline }}" maxlength="{{ hotline_max }}" placeholder="e.g. ext. 4400" autocomplete="off"{% if can_edit %} hx-post="{% url 'web:settings_portal' %}" hx-trigger="change" hx-target="#set-portal-form" hx-swap="outerHTML" hx-sync="#set-portal-form:replace"{% else %} disabled{% endif %}>
   </label>
   {# Two of the mock's rows, shown honestly: neither can work yet. #}
   <div class="set-row off">
@@ -23,13 +25,13 @@
   {# Email goes only to the work email domains below. The mock's text option stays in the list but cannot be chosen. #}
   <label class="set-row">
     <span class="lbl">Confirmation to the requester<span class="why">Text messages need the notifications integration</span></span>
-    <select class="perm" id="set-portal-confirmation" name="portal_confirmation" aria-label="Confirmation to the requester"{% if not can_edit %} disabled{% endif %}>
+    <select class="perm" id="set-portal-confirmation" name="portal_confirmation" aria-label="Confirmation to the requester"{% if can_edit %} hx-post="{% url 'web:settings_portal' %}" hx-trigger="change" hx-target="#set-portal-form" hx-swap="outerHTML" hx-sync="#set-portal-form:replace"{% else %} disabled{% endif %}>
       {% for value, label in confirmation_choices %}<option value="{{ value }}"{% if value == s.portal_confirmation %} selected{% endif %}>{{ label }}</option>{% endfor %}
       <option disabled>On screen, email, and text</option>
     </select>
   </label>
   <label class="set-row last">
     <span class="lbl">Work email domains<span class="why" id="set-portal-domains-help">Requesters can get email only at these domains, comma-separated</span>{% if domains_error %}<span class="err" id="set-portal-domains-err">{{ domains_error }}</span>{% endif %}</span>
-    <input class="perm" id="set-portal-domains" name="portal_email_domains" value="{{ domains_value }}" maxlength="{{ domains_max }}" placeholder="e.g. riverside-health.org, rrmc.org" autocomplete="off" spellcheck="false" aria-label="Work email domains" aria-describedby="{% if domains_error %}set-portal-domains-err {% endif %}set-portal-domains-help"{% if domains_error %} aria-invalid="true"{% endif %}{% if not can_edit %} disabled{% endif %}>
+    <input class="perm" id="set-portal-domains" name="portal_email_domains" value="{{ domains_value }}" maxlength="{{ domains_max }}" placeholder="e.g. riverside-health.org, rrmc.org" autocomplete="off" spellcheck="false" aria-label="Work email domains" aria-describedby="{% if domains_error %}set-portal-domains-err {% endif %}set-portal-domains-help"{% if domains_error %} aria-invalid="true"{% endif %}{% if can_edit %} hx-post="{% url 'web:settings_portal' %}" hx-trigger="change" hx-target="#set-portal-form" hx-swap="outerHTML" hx-sync="#set-portal-form:replace"{% else %} disabled{% endif %}>
   </label>
-</form>
+</div>

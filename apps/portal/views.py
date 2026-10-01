@@ -69,7 +69,8 @@ def request_form(request, tenant_slug):
                                             tagged_out=form.cleaned_data["tagged_out"], ip=ip,
                                             requester_email=form.cleaned_data.get("requester_email", ""))
                 response = redirect("portal:done", tenant_slug=tenant.slug, number=sr.number)
-                response.set_signed_cookie(SENT_COOKIE, sr.number, salt=SENT_SALT, max_age=SENT_MAX_AGE, path=f"/r/{tenant.slug}/",
+                # The facility and the number: request numbers repeat across facilities, so a cookie from one must not open another's
+                response.set_signed_cookie(SENT_COOKIE, _sent_value(tenant, sr), salt=SENT_SALT, max_age=SENT_MAX_AGE, path=f"/r/{tenant.slug}/",
                                            secure=request.is_secure(), httponly=True, samesite="Lax")
                 return response
         else:
@@ -77,11 +78,15 @@ def request_form(request, tenant_slug):
         return render(request, "portal/request.html", {"tenant": tenant, "form": form, "asset": asset, "hotline": facility.portal_hotline})
 
 
+def _sent_value(tenant, sr) -> str:
+    return f"{tenant.pk}:{sr.number}"
+
+
 def request_done(request, tenant_slug, number):
     tenant = get_object_or_404(Tenant, slug=tenant_slug, is_active=True)
     with tenant_context(tenant):
         sr = get_object_or_404(ServiceRequest.objects.select_related("asset", "asset__device_model"), number=number)
-        sent_here = request.get_signed_cookie(SENT_COOKIE, default=None, salt=SENT_SALT, max_age=SENT_MAX_AGE) == sr.number
+        sent_here = request.get_signed_cookie(SENT_COOKIE, default=None, salt=SENT_SALT, max_age=SENT_MAX_AGE) == _sent_value(tenant, sr)
         return render(request, "portal/done.html", {"tenant": tenant, "sr": sr, "target": RESPONSE_TARGETS[sr.urgency],
                                                     "hotline": fs.get_settings().portal_hotline,
                                                     "emailed": bool(sr.requester_email) and confirmation_sent(sr),

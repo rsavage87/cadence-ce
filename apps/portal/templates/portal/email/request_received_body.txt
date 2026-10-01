@@ -4,7 +4,7 @@ Clinical Engineering at {{ facility }} has your service request.
 
 Request number: {{ number }}
 Device: {{ tag }} · {{ description }}
-Location: {{ department }}{% if room %}, {{ room }}{% endif %}
+Department: {{ department }}
 Urgency: {{ urgency }}
 Response target: {{ target }}
 

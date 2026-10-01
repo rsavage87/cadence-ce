@@ -64,11 +64,13 @@ restart clears them; a shared cache (Redis) would make them exact.
 ## Report emails and request confirmations
 Anyone who can view Reports can have a report emailed to themselves every Monday or on the first Monday of each month
 (Schedule, on the report). The email carries the report's CSV and a link to its printable page; it goes only to the user's
-own address and stops if they lose access to Reports. The daily jobs send them (`send_report_emails`, at `SCHEDULER_DAILY_AT`).
+own address and stops if they lose access to Reports. The daily jobs send them (`send_report_emails`, at `SCHEDULER_DAILY_AT`);
+a Monday that failed or was missed is caught up by the next day's run, and no report is sent twice for one Monday.
 
 In Settings, the request portal can confirm requests by email: requesters give an optional work email and get a confirmation,
 then a notice when the work is done. Only addresses at the facility's listed work email domains are accepted, so the public
-form cannot send mail anywhere else, and the emails never repeat what the requester typed about the problem.
+form cannot send mail anywhere else, at most 3 an hour to one address and 60 an hour from one facility's portal, and the
+emails never repeat anything the requester typed.
 
 ## Adding and changing devices
 Add device on the Equipment screen adds a device, with a new model or department in the same form when the catalog lacks

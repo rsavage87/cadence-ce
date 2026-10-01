@@ -48,13 +48,15 @@ def person(make_user):
     return _make
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def clock(monkeypatch):
-    """Pin the daily job's clock (subscriptions.local_today), which the command and the Schedule modal read."""
+    """Pin the daily job's clock (subscriptions.local_today), which the command, the Schedule modal, and turning a schedule on
+    (its start day) read: Thursday, October 1, 2026 unless a test moves it, so the fixed dates here hold on any real day."""
 
     def _at(day):
         monkeypatch.setattr(subs, "local_today", lambda: day)
 
+    _at(THU)
     return _at
 
 
@@ -147,9 +149,9 @@ def test_turning_off_works_after_access_is_lost(ctx, tenant, person):
 
 # --- when a report is due ----------------------------------------------------------------------------------------------
 
-def _due_days(frequency, first, last, last_sent_on=None):
-    sub = ReportSubscription(frequency=frequency, last_sent_on=last_sent_on)
-    return [first + timedelta(days=i) for i in range((last - first).days + 1) if subs.is_due(sub, first + timedelta(days=i))]
+def _due_days(frequency, first, last):
+    """The sending days themselves (is_due_on); is_due adds catching up a missed one, tested below."""
+    return [first + timedelta(days=i) for i in range((last - first).days + 1) if subs.is_due_on(frequency, first + timedelta(days=i))]
 
 
 def test_weekly_is_every_monday_and_monthly_the_first_monday():
@@ -292,8 +294,13 @@ def test_send_due_skips_who_may_not_receive_and_keeps_going_after_a_failure(tena
     assert _sent_to(mailoutbox) == [("bad@riverside.example", "cadence-compliance-2026-10-05.csv")] and again["sent"] == 1
 
 
-def test_only_mondays_send_and_the_first_monday_adds_the_monthly_ones(tenant, two_facilities, mailoutbox):
-    assert subs.send_due(date(2026, 10, 6))["sent"] == 0 and mailoutbox == []
+def test_a_missed_monday_is_caught_up_the_next_day_and_only_once(tenant, two_facilities, mailoutbox):
+    """Monday's run failed or never happened: Tuesday's run sends Monday's emails, Wednesday's sends nothing, the next Monday
+    sends the weekly ones only."""
+    caught_up = subs.send_due(date(2026, 10, 6))
+    assert caught_up["sent"] == 4 and caught_up["failed"] == 0  # kim cosr and replace, nia cosr, bad compliance; the rest skipped
+    assert subs.send_due(date(2026, 10, 7))["sent"] == 0
+    mailoutbox.clear()
     summary = subs.send_due(MON2)  # weekly only
     assert _sent_to(mailoutbox) == [("bad@riverside.example", "cadence-compliance-2026-10-12.csv"), ("kim@riverside.example", "cadence-cosr-2026-10-12.csv")]
     assert summary["failed"] == 0
@@ -485,3 +492,31 @@ def test_the_schedule_needs_reports_view_and_an_email_address(client, ctx, perso
     assert "Your account has no email address" in body and 'name="frequency"' not in body
     r = client.post("/reports/cosr/schedule/", {"frequency": "weekly"}, **HX)
     assert r.status_code == 200 and "HX-Trigger" not in r and ReportSubscription.objects.count() == 0
+
+
+# --- review fixes -------------------------------------------------------------------------------------------
+
+def test_a_schedule_turned_on_after_todays_run_starts_next_time(tenant, person, mailoutbox, clock):
+    """Off and on again on a Monday after its run (or on for the first time then) waits for the next sending day: a same-day
+    rerun of the job must not send the report a second time, nor send one the user was told comes next week."""
+    kim = person("analyst", username="kim@riverside.example")
+    clock(MON)
+    _subscribe(tenant, kim, "cosr", "weekly")
+    assert subs.send_due(MON)["sent"] == 1
+    JobRun.objects.create(job=subs.JOB, run_on=MON)
+    _subscribe(tenant, kim, "cosr", None)
+    _subscribe(tenant, kim, "cosr", "weekly")
+    assert subs.send_due(MON)["sent"] == 0 and subs.send_due(date(2026, 10, 6))["sent"] == 0 and len(mailoutbox) == 1
+    assert subs.send_due(MON2)["sent"] == 1
+
+
+def test_two_runs_at_once_send_each_email_once(tenant, person, mailoutbox, monkeypatch):
+    """The scheduler and an operator's run both load Kim's subscription before either sends: only the first claim sends."""
+    kim = person("analyst", username="kim@riverside.example")
+    _subscribe(tenant, kim, "cosr", "weekly")
+    with tenant_context(tenant):
+        stale = ReportSubscription.objects.select_related("user").get(user=kim)  # what the second run loaded
+        assert subs.send_report_email(stale, MON) is True
+        with pytest.raises(subs.AlreadySent):
+            subs._send(stale, tenant, MON, subs.run_report("cosr", MON))
+    assert len(mailoutbox) == 1

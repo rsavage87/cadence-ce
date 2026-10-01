@@ -98,7 +98,15 @@ def set_subscription(user, report_key: str, frequency: str | None) -> ReportSubs
     refusal = _refusal(user)
     if refusal:
         raise ValidationError(refusal)
-    sub, _created = ReportSubscription.objects.update_or_create(user=user, report=report_key, defaults={"frequency": frequency})
+    sub = ReportSubscription.objects.filter(user=user, report=report_key).first()
+    if sub is not None and sub.frequency == frequency:
+        return sub  # nothing changes: keep its start day and what it has sent
+    today = local_today()
+    start_on = first_send_on(frequency, today, sub.last_sent_on if sub else None)
+    if sub is None:
+        return ReportSubscription.objects.create(user=user, report=report_key, frequency=frequency, start_on=start_on)
+    sub.frequency, sub.start_on = frequency, start_on
+    sub.save(update_fields=["frequency", "start_on"])
     return sub
 
 
@@ -111,12 +119,22 @@ def is_due_on(frequency: str, day: date) -> bool:
     return frequency == Frequency.WEEKLY or (frequency == Frequency.MONTHLY and day.day <= 7)
 
 
+def latest_sending_day(frequency: str, today: date) -> date:
+    """The most recent day on or before `today` that `frequency` sends on (this Monday, or this month's first Monday)."""
+    day = today
+    while not is_due_on(frequency, day):  # at most five weeks back
+        day -= timedelta(days=1)
+    return day
+
+
 def is_due(sub: ReportSubscription, today: date) -> bool:
-    """Due `today` and not sent yet. Never twice on one day, and never for a day before the last one sent (an operator's catch-up
-    run for a missed day sends nothing that a later email already replaced)."""
-    if sub.last_sent_on is not None and sub.last_sent_on >= today:
+    """Due when its latest sending day has come (on or after the day it was turned on for) and nothing has gone out since. So a
+    Monday whose run failed or never happened (a mail outage, the scheduler down, a run cut short) is caught up by the next daily
+    run, never twice on one day, and a schedule turned on after a Monday's run starts with the next sending day."""
+    due_day = latest_sending_day(sub.frequency, today)
+    if sub.start_on is not None and due_day < sub.start_on:
         return False
-    return is_due_on(sub.frequency, today)
+    return sub.last_sent_on is None or sub.last_sent_on < due_day
 
 
 def next_due_on(frequency: str, start: date) -> date:
@@ -173,11 +191,23 @@ def _send(sub: ReportSubscription, tenant, today: date, data: dict) -> bool:
         "print_url": settings.APP_BASE_URL + reverse("web:report_print", args=[sub.report]),
         "report_url": settings.APP_BASE_URL + reverse("web:report", args=[sub.report]),
     }
+    # Claim it first: two runs at once (the scheduler and an operator) must not both send it. The claim holds only if nothing has
+    # been sent for this sending day yet; a failed send gives it back, so the next run tries again.
+    previous = sub.last_sent_on
+    due_day = latest_sending_day(sub.frequency, today)
+    claimed = (ReportSubscription.objects.filter(pk=sub.pk).filter(Q(last_sent_on__isnull=True) | Q(last_sent_on__lt=due_day))
+               .update(last_sent_on=today))
+    if not claimed:
+        raise AlreadySent
     if not emails.send(sub.user.email, TEMPLATE, context, attachments=[(filename, report_csv(data), "text/csv")]):
-        return False  # emails.send logged why; the day stays unsent, so a rerun of the job tries again
-    ReportSubscription.objects.filter(pk=sub.pk).update(last_sent_on=today)
+        ReportSubscription.objects.filter(pk=sub.pk, last_sent_on=today).update(last_sent_on=previous)  # emails.send logged why
+        return False
     sub.last_sent_on = today
     return True
+
+
+class AlreadySent(Exception):
+    """Another run sent this subscription for its sending day while this one was getting ready."""
 
 
 def send_report_email(sub: ReportSubscription, today: date) -> bool:
@@ -197,9 +227,8 @@ def send_report_email(sub: ReportSubscription, today: date) -> bool:
 def _send_facility(tenant, today: date, counts: dict) -> None:
     """Send `tenant`'s subscriptions due `today`, counting into `counts`. Inside the tenant's context. One subscription failing
     (a report error, a mail outage) is logged and counted, and the rest still go."""
-    frequencies = [f for f in Frequency.values if is_due_on(f, today)]
-    subs = (ReportSubscription.objects.filter(frequency__in=frequencies).filter(Q(last_sent_on__isnull=True) | Q(last_sent_on__lt=today))
-            .select_related("user").order_by("report", "user__username"))
+    subs = (ReportSubscription.objects.filter(Q(last_sent_on__isnull=True) | Q(last_sent_on__lt=today))
+            .select_related("user").order_by("report", "user__username"))  # due-ness (a catch-up any day of the week) is is_due's
     reports = {}  # every subscriber gets the same table: compute each report once per facility and day
     for sub in subs:
         if not is_due(sub, today):
@@ -213,6 +242,9 @@ def _send_facility(tenant, today: date, counts: dict) -> None:
             if sub.report not in reports:
                 reports[sub.report] = run_report(sub.report, today)
             sent = _send(sub, tenant, today, reports[sub.report])
+        except AlreadySent:
+            counts["due"] -= 1  # another run has it: neither sent nor failed here
+            continue
         except Exception:  # a report that cannot be computed, or a database error, fails this email only
             log.exception("Report email %s for user %s at %s failed", sub.report, sub.user_id, tenant.slug)
             sent = False
