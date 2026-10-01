@@ -139,8 +139,8 @@ def test_the_modal_previews_the_week(client, signed_in, fleet, techs, monitor):
             '<tr><td>Tom Okafor</td><td class="num">1</td><td class="num">0</td><td class="num">1</td><td class="num">1.0</td></tr>') in body
     assert ("Nobody is credentialed for 1 device: CE-M1 (Patient monitor, due Sep 30). Its PM stays unassigned; 1 work order is still created "
             "for a manager to assign.") in body
-    assert ("1 overdue device (PM due before Sep 29) is outside this week and not assigned here: open its day on the calendar (the red counts) "
-            "to create its work order.") in body
+    assert ("Overdue PMs (due before Sep 29) are outside this week and not assigned here. 1 device has no PM work order: open its day on "
+            "the calendar (the red counts) to create it.</div>") in body
     assert 'hx-post="/pm/week/assign/" hx-target="#modal-card" hx-disabled-elt="this">' in body and " Assign 3 PMs</button>" in body
     assert not WorkOrder.objects.exists()  # the preview changes nothing
 
@@ -290,3 +290,16 @@ def test_another_facilitys_user_assigns_only_their_own(client, make_user, fleet,
     assert not WorkOrder.objects.exists()  # ours: still nothing
     with tenant_context(other_tenant):
         assert {w.asset.tag: w.assigned_to.name for w in WorkOrder.objects.all()} == {"THEIRS-1": "Aaron Theirs", "THEIRS-2": "Aaron Theirs"}
+
+
+def test_overdue_pms_already_open_on_nobodys_plate_point_to_work_orders(client, signed_in, fleet):
+    """The nightly job opened the overdue pump's PM before it fell due; Create on its day does nothing, so the modal says where to
+    assign it instead of sending the user to the calendar."""
+    from apps.pm.services import generate_pm_work_orders
+
+    generate_pm_work_orders(as_of=date(2026, 9, 1), lead_days=21)
+    signed_in("director")
+    body = client.get(URL, **MODAL).content.decode()
+    assert ("1 open PM work order is on nobody's plate: assign it from "
+            '<a href="/work-orders/?type=pm&amp;assigned=unassigned">Work orders</a>.') in body
+    assert "has no PM work order" not in body

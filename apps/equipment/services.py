@@ -362,8 +362,10 @@ def _check_model_unique(manufacturer: str, model: str, exclude=None) -> None:
 
 @transaction.atomic
 def update_device_model(device_model: DeviceModel, *, by=None, **fields) -> DeviceModel:
-    """Change a catalog model with create_device_model's rules (and an AEM interval, which life-support models ignore). The name
-    stays unique in any letter case. A new interval moves no device's next PM by itself: it applies from each device's next PM.
+    """Change a catalog model with create_device_model's rules. The name stays unique in any letter case. The AEM interval is not
+    changed here (apps.pm.aem: sending back the current value is fine), nor an OEM interval equal to the AEM interval in force (that
+    would end a committee decision: End AEM first). A new interval moves no device's next PM by itself: it applies from each
+    device's next PM.
     A scored model's risk class follows its score (set_risk_score), so a new class that disagrees with the score's band is refused;
     an unscored model's class can change here (the screen and the API ask for Equipment Approve for that)."""
     unknown = set(fields) - set(MODEL_FIELDS)
@@ -374,6 +376,12 @@ def update_device_model(device_model: DeviceModel, *, by=None, **fields) -> Devi
         # Only an approved AEM case sets it (apps.pm.aem); sending back the current value is fine.
         raise ValidationError({"aem_interval_months": "An AEM interval is set by approving an AEM proposal (PM schedule, PM library)."})
     cleaned.pop("aem_interval_months", None)  # never written here, so a value sent back from a stale read cannot undo an approval
+    oem = cleaned.get("oem_pm_interval_months")
+    if (oem is not None and oem != device_model.oem_pm_interval_months and device_model.aem_interval_months == oem
+            and device_model.risk_class != RiskClass.LIFE_SUPPORT):
+        # It would leave the AEM interval nothing to change, which ends a committee decision: that is End AEM's (PM Approve).
+        raise ValidationError({"oem_pm_interval_months": f"This model is on an AEM interval of {oem} months. End the AEM on the model's "
+                                                         "AEM tab first, then change the OEM interval."})
     score = device_model.risk_score
     if "risk_class" in cleaned and cleaned["risk_class"] != device_model.risk_class and score is not None and cleaned["risk_class"] != risk_band(score):
         # Sending back the current class is fine, as is moving a stray class onto the score's band.
@@ -392,17 +400,27 @@ def _save_model(device_model: DeviceModel, values: dict, *, by=None, reason: str
     # and saving that copy whole would write the old value back. The caller's copy is refreshed afterwards.
     fresh = DeviceModel.objects.select_for_update().get(pk=device_model.pk)
     changed = [f for f, v in values.items() if getattr(fresh, f) != v]
+    previous = {f: getattr(fresh, f) for f in changed}
     for f in changed:
         setattr(fresh, f, values[f])
     if changed:
+        # The history entry's reason and user: given here, or set on the caller's copy (apps.pm.procedures does).
+        reason = reason or device_model.__dict__.get("_change_reason", "")
         if reason:
             fresh._change_reason = reason
+        user = by if by is not None else device_model.__dict__.get("_history_user")
+        if user is not None:
+            fresh._history_user = user
         fresh.save()
     if {"risk_class", "oem_pm_interval_months"} & set(changed):
         from apps.pm import aem  # pm imports equipment; imported here to keep the two apps' modules loadable in any order
 
-        aem.model_changed(fresh, changed=changed, by=by)
+        effect = aem.model_changed(fresh, changed=changed, by=by, previous=previous)
+    else:
+        effect = None
     device_model.refresh_from_db()
+    # What the AEM program did about it, for the screen to say (a model scored into life support leaves AEM, its PMs come in).
+    device_model.aem_effect = effect
     return changed
 
 

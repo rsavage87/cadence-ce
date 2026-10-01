@@ -22,7 +22,7 @@ LOW = {"function": 2, "physical": 1, "maintenance": 2, "incidents": 0}  # 5, low
 def heard(monkeypatch):
     """Every call apps.pm.aem.model_changed receives, as (model, changed)."""
     calls = []
-    monkeypatch.setattr("apps.pm.aem.model_changed", lambda dm, changed, by=None: calls.append((dm.pk, sorted(changed))))
+    monkeypatch.setattr("apps.pm.aem.model_changed", lambda dm, changed, by=None, previous=None: calls.append((dm.pk, sorted(changed))))
     return calls
 
 

@@ -1,8 +1,9 @@
 # Build plan
 
 The mock (`cadence-ce-cmms-mock.html`) is the spec. Each slice below is shippable on its own and ends with green tests.
-Slices 0 to 13 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
-export and print, devices are added and changed in the product, and reports and request confirmations go out by email. What each slice deferred is noted in its row and below.
+Slices 0 to 14 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
+export and print, devices are added and changed in the product, reports and request confirmations go out by email, and each
+device model's PM program (risk score, procedure, AEM interval) is kept in the product. What each slice deferred is noted in its row and below.
 
 | # | Slice | Mock screen(s) | Code | Status |
 |---|-------|----------------|------|--------|
@@ -15,11 +16,12 @@ export and print, devices are added and changed in the product, and reports and 
 | 6 | Recalls UI + ECRI importer | Recalls and alerts | `recalls` + `web` | done (openFDA feed; ECRI importer deferred, it needs a license) |
 | 7 | Reports | Reports (COSR, PM compliance, MTBF, replacement, spend, contract vs in-house, technician productivity, recall log) | `reports` + `web` | done (CSV download and JSON API; PDF, Schedule, and Custom report deferred) |
 | 8 | Settings | Integrations, portal settings, editable policy, risk scoring | `facility` + `web` | done (connectors, paging, photo upload, and email or text confirmation deferred) |
-| 9 | PM schedule UI | PM schedule (calendar, create work orders for a day) | `pm` + `web` | done (Auto-assign week, Route sheets, and OEM library sync deferred) |
+| 9 | PM schedule UI | PM schedule (calendar, create work orders for a day) | `pm` + `web` | done (Route sheets came in slice 11 and Auto-assign week in slice 14; OEM library sync deferred) |
 | 10 | Sign-in and invitations | Users and access (Invite user, Resend invite), sign-in page | `accounts` + `web` | done (shared lockout counters across workers need Redis; email is sent in the request) |
-| 11 | Exports and printing | Export (CSV) on Equipment, Work orders, Contracts, a contract's Device list; Label, Print, Route sheets, report PDF, Response log, Overview Export | `web` | done (PDFs come from the browser's print dialog; Scan tag, Add device, Auto-assign week, Check feeds, Custom report, and Schedule still deferred) |
-| 12 | Device management | Equipment (Add device), device drawer (Edit details, Tag out of service, Return to service, PM schedule and Costs tabs) | `equipment` + `web` + `api` | done (a model catalog screen and AEM approval are still deferred; models are added with a device or through the API) |
+| 11 | Exports and printing | Export (CSV) on Equipment, Work orders, Contracts, a contract's Device list; Label, Print, Route sheets, report PDF, Response log, Overview Export | `web` | done (PDFs come from the browser's print dialog; Scan tag, Check feeds, and Custom report still deferred; Add device, Schedule, and Auto-assign week came later) |
+| 12 | Device management | Equipment (Add device), device drawer (Edit details, Tag out of service, Return to service, PM schedule and Costs tabs) | `equipment` + `web` + `api` | done (the model catalog and AEM approval came in slice 14) |
 | 13 | Email notifications | Reports (Schedule), Settings (portal confirmation to the requester), the request portal | `reports` + `facility` + `portal` + `web` | done (report emails are self-service; text messages and paging still need a provider) |
+| 14 | The PM program | PM schedule (Auto-assign week, the PM library), a model's PM program (AEM, procedure, risk score) | `equipment` + `pm` + `web` | done (no API for procedures, AEM cases, or Auto-assign week yet; OEM library sync needs a library) |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.
@@ -54,8 +56,8 @@ The mock's export and print buttons work since slice 11, and Add device since sl
   next-7-day load (today through day 6: PM hours as planned, plus other open work such as repairs and recalls) against weekly
   capacity, and the PM library (AEM only where approved, never for life support). The nav badge counts overdue devices; the
   Overview's PM tile links here only for PM viewers. Every web response varies on HX-Request and HX-Target, because pushed URLs
-  answer with a fragment or a full page. The mock's Auto-assign week, Route sheets, and OEM library Sync
-  only toast and are deferred. `/api/v1/pm/calendar/`, `/api/v1/pm/day/`, `/api/v1/pm/create-for-day/`.
+  answer with a fragment or a full page. Route sheets print since slice 11 and Auto-assign week works since slice 14; the
+  mock's OEM library Sync only toasts and is deferred. `/api/v1/pm/calendar/`, `/api/v1/pm/day/`, `/api/v1/pm/create-for-day/`.
 - Contracts: table from `contracts.services.filter_contracts` + `contracts_summary`; the drawer calls `add_asset` / `add_model` / `remove_asset` /
   `renew_contract` / `delete_contract` (`create_contract` / `update_contract` behind the forms); the device drawer's support editor posts to
   `/contracts/assets/<tag>/support/`.
@@ -92,7 +94,7 @@ The mock's export and print buttons work since slice 11, and Add device since sl
   real notice arrives: the demo's sample alerts do not; ECRI needs a license; the rest are not built), so the mock's Sync and Connect buttons, paging,
   photo upload (photos can capture patients), and email or text confirmation are shown as unavailable with a reason. Risk scoring shows
   the mock's rubric and bands with active device counts, each linking to Equipment's new "Active (not retired)" status filter;
-  per-model scoring waits for a catalog editor. View to see, Edit to change
+  each model is scored in its drawer since slice 14 (the panel counts the models scored and the reviews due). View to see, Edit to change
   (the director by default; the manager sees it read-only). `/api/v1/settings/` (GET, PATCH) and `/api/v1/settings/reset-policy/`.
 - Sign-in and invitations (slice 10): Invite user creates the Invited account (`accounts.services.invite_user`) and emails a link to
   set the first password (`accounts.invitations.send_invitation`): a signed token over the account's state and `invited_at`,
@@ -149,3 +151,20 @@ The mock's export and print buttons work since slice 11, and Add device since sl
   never with anything the requester typed (not the problem, nor the room), capped per address and per facility each hour (the
   form's per-IP limit can be forged). The confirmation page names the address only to the browser that sent that request at
   that facility. Each Settings portal control saves only itself, so a typo or a stale tab never writes another row.
+- The PM program (slice 14): each PM library row opens the device model's drawer (`/pm/models/<id>/`, PM View; also from the
+  device drawer's Model). PM program tab (`views_models`): details, the risk score with its four parts and the yearly review
+  (`equipment.services.set_risk_score` / `clear_risk_score`, Equipment Approve: the class follows the score's band, and a scored
+  model's class cannot be set otherwise), the interval in force, and the devices; Add model and Edit details at Equipment Edit
+  (an OEM interval equal to the AEM interval in force is refused: End AEM first). Procedure tab (`pm.procedures`, PM Edit):
+  write or revise a procedure (code unique in any case, 0.1 to 40 hours, 1 to 60 checklist lines, `text | what to record`) and
+  choose a model's; a printed PM work order shows the current checklist, an open one keeps its hours. AEM tab (`pm.aem`): the
+  failure history of the last three years (devices, device-years, corrective repairs per device-year, PMs on time, recall work),
+  propose (PM Edit; never life support; a device installed three years ago; differs from the OEM and the interval in force,
+  except to ratify one on file without a recorded approval), approve or reject (PM Approve, not the proposer, a committee date
+  and minutes; refused if the OEM interval changed since the proposal), withdraw, and end. A longer interval moves no PM; a
+  shorter one or an end pulls next PMs in (never later, the open PM work order with them); a model scored into life support
+  leaves AEM. Auto-assign week (`pm.services.assign_week`, PM Approve and work-order assign): every PM due today through day 6
+  goes to the week plan's technician, new work orders and open ones on nobody's plate alike; held ones are left, devices
+  nobody is credentialed for stay unassigned, overdue ones are pointed at (Create on their day, or Work orders). Create and
+  Auto-assign take one planner lock per facility, so a double click does nothing twice. The API's model PATCH needs Equipment
+  Approve for a new risk class and PM Edit for a new procedure.

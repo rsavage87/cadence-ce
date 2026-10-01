@@ -95,7 +95,9 @@ def test_program_tab_details_for_an_unscored_model_on_aem(client, signed_in, pum
     assert "<dt>Risk reviewed</dt><dd>Never <span class=\"chip warn\">Review due</span></dd>" in body
     assert "<dt>OEM interval</dt><dd>12 months</dd>" in body and "<dt>Interval in force</dt><dd>18 months, AEM" in body
     assert f'hx-get="{url(pump_model)}?tab=aem" hx-target="#drawer"' in body and "AEM tab</button>" in body
-    assert "On an approved AEM interval of 18 months instead of the OEM's 12 months." in body
+    # The fixture's 18 months were set without an AEM decision: never called approved (the AEM tab says the same).
+    assert "On an AEM interval of 18 months instead of the OEM's 12 months, on file without a recorded approval." in body
+    assert "approved AEM" not in body
     assert '<dt>PM procedure</dt><dd><span class="muted">None</span>' in body and f'hx-get="{url(pump_model)}?tab=procedure"' in body
     assert "<dt>List cost</dt><dd>$3,200</dd>" in body and "<dt>Expected life</dt><dd>8 yr</dd>" in body
     assert "Not scored: the high class was set by hand." in body
@@ -285,7 +287,7 @@ def test_edit_details_modal(client, signed_in, pump_model):
 
 def test_edit_details_saves_through_the_service(client, signed_in, pump, pump_model, monkeypatch):
     heard = []
-    monkeypatch.setattr("apps.pm.aem.model_changed", lambda dm, changed, by=None: heard.append(sorted(changed)))
+    monkeypatch.setattr("apps.pm.aem.model_changed", lambda dm, changed, by=None, previous=None: heard.append(sorted(changed)))
     signed_in("technician")
     next_pm = pump.next_pm_on
     r = client.post(url(pump_model, "edit"), edit_post(pump_model, description=" Large-volume  pump ", oem_pm_interval_months="24", list_cost="3300.50",
@@ -380,7 +382,8 @@ def test_the_running_total(client, signed_in, pump_model):
 def test_scoring_into_another_class_says_so(client, signed_in, pump_model):
     signed_in("director")
     r = client.post(url(pump_model, "risk"), LIFE, **HX)
-    assert_saved(r, "BD Alaris 8015 PCU scored 18: risk class now Life support")
+    # The fixture's 18 months on file end with life support, and the toast says so (no devices here, so no PM moves).
+    assert_saved(r, "BD Alaris 8015 PCU scored 18: risk class now Life support; its AEM interval ended (life support follows the OEM interval)")
     pump_model.refresh_from_db()
     assert pump_model.risk_score == 18 and pump_model.risk_class == RiskClass.LIFE_SUPPORT and pump_model.risk_reviewed_on == TODAY
     assert pump_model.pm_interval_months == 12  # life support: off AEM

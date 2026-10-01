@@ -5,16 +5,16 @@
 {% with a=aem %}
 <div class="sec"><h3>PM interval <span>OEM {{ a.oem }} month{{ a.oem|pluralize }}</span></h3>
 {% if a.life_support %}
-  <div class="note">Life support: every {{ a.oem }} month{{ a.oem|pluralize }}, the OEM interval. Life-support devices are excluded from AEM by policy.{% if a.legacy %} An AEM interval of {{ a.legacy_months }} months is on file, but it is never used.{% endif %}</div>
+  <div class="note">Life support: every {{ a.oem }} month{{ a.oem|pluralize }}, the OEM interval. Life-support devices are excluded from AEM by policy.{% if a.legacy %} An AEM interval of {{ a.legacy_months }} month{{ a.legacy_months|pluralize }} is on file, but it is never used.{% endif %}</div>
 {% elif a.approved %}{% with d=a.approved %}
-  <div class="note ok">AEM in force: every {{ d.interval_months }} months instead of the OEM's {{ a.oem }}, approved by the Equipment Management Committee on {{ d.decided_on|date:"M j, Y" }}.</div>
+  <div class="note ok">AEM in force: every {{ d.interval_months }} month{{ d.interval_months|pluralize }} instead of the OEM's {{ a.oem }}, approved by the Equipment Management Committee on {{ d.decided_on|date:"M j, Y" }}.</div>
   <dl class="dl" style="margin-top:10px">
-    <div><dt>AEM interval</dt><dd>{{ d.interval_months }} months</dd></div><div><dt>OEM interval</dt><dd>{{ a.oem }} month{{ a.oem|pluralize }}</dd></div>
+    <div><dt>AEM interval</dt><dd>{{ d.interval_months }} month{{ d.interval_months|pluralize }}</dd></div><div><dt>OEM interval</dt><dd>{{ a.oem }} month{{ a.oem|pluralize }}</dd></div>
     <div><dt>Committee date</dt><dd>{{ d.decided_on|date:"M j, Y" }}</dd></div><div><dt>Recorded by</dt><dd>{{ d.decided_by|default:"A former user" }}</dd></div>
     <div><dt>Proposed</dt><dd>{{ d.proposed_on|date:"M j, Y" }} by {{ d.proposed_by|default:"a former user" }}</dd></div><div><dt>Minutes</dt><dd style="white-space:normal">{{ d.decision_note }}</dd></div>
   </dl>
 {% endwith %}{% elif a.legacy %}
-  <div class="note warn">An AEM interval of {{ a.legacy_months }} months is on file without a recorded approval: it was set before AEM approvals were recorded here, and the PM schedule uses it. End it to return to the OEM interval, or propose an interval for the committee; once approved, that replaces it.</div>
+  <div class="note warn">An AEM interval of {{ a.legacy_months }} month{{ a.legacy_months|pluralize }} is on file without a recorded approval: it was set before AEM approvals were recorded here, and the PM schedule uses it. End it to return to the OEM interval, or propose an interval for the committee; once approved, that replaces it.</div>
 {% else %}
   <div class="note">Following the OEM interval: every {{ a.oem }} month{{ a.oem|pluralize }}.</div>
 {% endif %}
@@ -22,8 +22,8 @@
 </div>
 
 {% if a.proposal %}{% with p=a.proposal %}
-<div class="sec"><h3>Open proposal <span>{{ p.interval_months }} months · proposed {{ p.proposed_on|date:"M j, Y" }}</span></h3>
-  <div class="hint" style="margin-bottom:6px">{{ p.proposed_by|default:"A former user" }} proposes every {{ p.interval_months }} months instead of the OEM's {{ p.oem_interval_months }}{% if dm.aem_interval_months and not a.life_support %}, replacing the {{ dm.aem_interval_months }}-month interval in use{% endif %}.</div>
+<div class="sec"><h3>Open proposal <span>{{ p.interval_months }} month{{ p.interval_months|pluralize }} · proposed {{ p.proposed_on|date:"M j, Y" }}</span></h3>
+  <div class="hint" style="margin-bottom:6px">{{ p.proposed_by|default:"A former user" }} proposes every {{ p.interval_months }} month{{ p.interval_months|pluralize }} instead of the OEM's {{ p.oem_interval_months }}{% if dm.aem_interval_months and not a.life_support %}, replacing the {{ dm.aem_interval_months }}-month interval in use{% endif %}.</div>
   <div class="note" style="white-space:pre-line">{{ p.rationale }}</div>
   {% if a.proposal_evidence %}<div class="hint" style="margin:10px 0 6px">Failure history when proposed</div>{% include "web/_aem_evidence.html" with ev=a.proposal_evidence %}
   {% else %}<div class="hint" style="margin-top:6px">Proposed on the failure history below, unchanged since.</div>{% endif %}
@@ -45,7 +45,7 @@
 {% if a.history %}<div class="list">
   {% for d in a.history %}
   <div class="li static"><span class="rail{% if d.status == 'approved' %} ok{% elif d.status == 'proposed' %} info{% elif d.status == 'rejected' %} crit{% endif %}"></span>
-    <div class="bd"><div class="t">{{ d.interval_months }} months <span class="muted">(OEM {{ d.oem_interval_months }})</span></div>
+    <div class="bd"><div class="t">{{ d.interval_months }} month{{ d.interval_months|pluralize }} <span class="muted">(OEM {{ d.oem_interval_months }})</span></div>
       <div class="s">Proposed {{ d.proposed_on|date:"M j, Y" }} by {{ d.proposed_by|default:"a former user" }}</div>
       {% if d.decided_on %}<div class="s" style="white-space:normal">{% if d.status == "rejected" %}Rejected{% else %}Approved{% endif %} by the committee on {{ d.decided_on|date:"M j, Y" }}{% if d.decided_by %}, recorded by {{ d.decided_by }}{% endif %}: {{ d.decision_note }}</div>{% endif %}
       {% if d.ended_on %}<div class="s" style="white-space:normal">{% if d.status == "withdrawn" %}Withdrawn{% else %}Ended{% endif %} {{ d.ended_on|date:"M j, Y" }}{% if d.ended_by %} by {{ d.ended_by }}{% endif %}{% if d.end_reason %}: {{ d.end_reason }}{% endif %}</div>{% endif %}

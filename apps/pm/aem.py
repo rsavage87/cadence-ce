@@ -18,7 +18,12 @@ A case goes proposed -> approved (in force) -> ended, or proposed -> rejected or
   later than its last PM (or install date, or today) plus the interval it is back on, through equipment.services.update_asset so
   the open PM work order moves with it.
 - An interval on file with no approved decision (set before this slice through the admin or the API) is "on file without a
-  recorded approval": it can be ended the same way (end() taking the model), and an approved proposal replaces it.
+  recorded approval": it can be ended the same way (end() taking the model), and an approved proposal replaces it, including one
+  for the same interval (the committee ratifies what is in use; no device moves). On a life-support model it was never used, so
+  ending it moves nothing, and a model leaving life support drops it rather than start using it unapproved.
+- The OEM interval is equipment data (Equipment Edit). It cannot be set equal to the AEM interval in force (that would end a
+  committee decision, which is PM Approve's: End AEM first; equipment.services.update_device_model refuses it), and a proposal
+  whose OEM interval changed before the committee decided is refused at approval (propose again with the current figures).
 
 Permissions are the views' business (apps/pm/permissions.py: propose at PM Edit; approve, reject, and end at PM Approve;
 withdraw by the proposer or at PM Approve).
@@ -151,8 +156,8 @@ def history_refusal(ev: dict) -> str:
     lead = f"The facility's AEM policy: {policy}." if policy else f"AEM needs a {AEM_HISTORY_YEARS}-year failure history."
     if ev.get("oldest_install"):
         oldest = date.fromisoformat(ev["oldest_install"])
-        return (f"{lead} The oldest device of this model on record was installed {_day(oldest)} ({ev['history_years']} years of history); "
-                f"a proposal needs {AEM_HISTORY_YEARS} years.")
+        return (f"{lead} The oldest device of this model on record was installed {_day(oldest)}, so the model has "
+                f"{AEM_HISTORY_YEARS} years of history from {_day(add_months(oldest, 12 * AEM_HISTORY_YEARS))}.")
     if ev.get("devices_active") or ev.get("devices_retired"):
         return f"{lead} None of this model's devices has an install date on file, so it has no failure history on record."
     return f"{lead} This model has no devices on record, so it has no failure history."
@@ -190,6 +195,15 @@ def propose_blocker(dm: DeviceModel, today: date | None = None, *, ev: dict | No
 def _open_refusal(open_: AemDecision) -> str:
     return (f"An AEM proposal for this model is open ({_months(open_.interval_months)}, proposed {_day(open_.proposed_on)}). "
             "It is approved, rejected, or withdrawn before another is made.")
+
+
+def oem_changed_refusal(decision: AemDecision, dm: DeviceModel) -> str:
+    """'' unless the model's OEM interval changed since the proposal: then the case the committee would approve is not the one
+    proposed (an extension can have become a shortening), so it is proposed again with the current figures."""
+    if dm.oem_pm_interval_months == decision.oem_interval_months:
+        return ""
+    return (f"The OEM interval changed since this proposal (from {_months(decision.oem_interval_months)} to "
+            f"{_months(dm.oem_pm_interval_months)}). Withdraw it and propose again with the current figures.")
 
 
 def decide_blocker(decision: AemDecision, user) -> str:
@@ -264,7 +278,9 @@ def _text(value, field: str, limit: int, missing: str) -> str:
     return text
 
 
-def _interval(value, dm: DeviceModel) -> int:
+def _interval(value, dm: DeviceModel, *, ratify: bool = False) -> int:
+    """`ratify`: the model's interval is on file without a recorded approval, so a proposal may ask the committee to approve that
+    same interval."""
     message = f"The interval is a whole number of months, 1 to {INTERVAL_MAX}."
     if isinstance(value, bool):
         raise ValidationError({"interval_months": message})
@@ -272,14 +288,15 @@ def _interval(value, dm: DeviceModel) -> int:
         months = value
     else:
         raw = str(value if value is not None else "").strip()
-        if not raw.isdigit():
+        # isdecimal, not isdigit (which takes "²", and int() refuses it), and short (int() refuses 4,300 digits and more).
+        if not (raw.isdecimal() and raw.isascii() and len(raw) <= 4):
             raise ValidationError({"interval_months": "Enter the proposed interval in months." if not raw else message})
         months = int(raw)
     if not 1 <= months <= INTERVAL_MAX:
         raise ValidationError({"interval_months": message})
     if months == dm.oem_pm_interval_months:
         raise ValidationError({"interval_months": f"That is the OEM interval ({_months(months)}). An AEM interval differs from it."})
-    if months == dm.aem_interval_months:
+    if months == dm.aem_interval_months and not ratify:
         raise ValidationError({"interval_months": f"This model already runs on {_months(months)}."})
     return months
 
@@ -320,7 +337,7 @@ def propose(dm: DeviceModel, *, interval_months, rationale, by=None, today: date
     open_ = open_proposal(locked)
     if open_ is not None:
         raise ValidationError(_open_refusal(open_))
-    months = _interval(interval_months, locked)
+    months = _interval(interval_months, locked, ratify=is_legacy(locked, in_force(locked)))
     rationale = _text(rationale, "rationale", RATIONALE_MAX, "Make the case for the new interval: the failure history and why it is safe.")
     ev = _check_history(locked, today)
     decision = AemDecision(device_model=locked, interval_months=months, oem_interval_months=locked.oem_pm_interval_months, rationale=rationale,
@@ -342,6 +359,8 @@ def approve(decision: AemDecision, *, by, decided_on: date, note: str, today: da
     _check_eligible(dm)
     if current.interval_months == dm.oem_pm_interval_months:
         raise ValidationError(f"The OEM interval is now {_months(dm.oem_pm_interval_months)}, the same as this proposal. Withdraw it instead.")
+    if dm.oem_pm_interval_months != current.oem_interval_months:
+        raise ValidationError(oem_changed_refusal(current, dm))
     _check_history(dm, today)
     before = dm.pm_interval_months
     replacing = AemDecision.objects.select_for_update().filter(device_model=dm, status=AemStatus.APPROVED).first()
@@ -389,11 +408,16 @@ def withdraw(decision: AemDecision, *, by=None, today: date | None = None, reaso
     return current
 
 
+def end_moves_devices(dm: DeviceModel) -> bool:
+    """Whether ending the model's AEM interval brings next PMs in: not on a life-support model, which never used it."""
+    return dm.risk_class != RiskClass.LIFE_SUPPORT
+
+
 @transaction.atomic
-def end(target: AemDecision | DeviceModel, *, by=None, reason: str, today: date | None = None) -> int:
+def end(target: AemDecision | DeviceModel, *, by=None, reason: str, today: date | None = None, pull_in: bool | None = None) -> int:
     """End the AEM interval in force: the approved decision given, or the model's (approved, or on file without a recorded
-    approval). The model goes back to the OEM interval and every device whose next PM is now too far out comes in. Returns how
-    many devices' next PM moved."""
+    approval). The model goes back to the OEM interval and every device whose next PM is now too far out comes in (`pull_in`;
+    by default unless the model is life support, whose devices never used the interval). Returns how many devices' next PM moved."""
     today = today or date.today()
     given = target if isinstance(target, AemDecision) else None
     dm = _lock(target.device_model if given else target)
@@ -409,23 +433,34 @@ def end(target: AemDecision | DeviceModel, *, by=None, reason: str, today: date 
         _save(current, by, "Ended")
     label = "AEM ended" if current is not None else "AEM on file without a recorded approval ended"
     _set_interval(dm, None, by, f"{label}: {reason}", target if given is None else given.device_model)
-    return _pull_in(dm, by=by, today=today)
+    if pull_in is None:
+        pull_in = end_moves_devices(dm)
+    return _pull_in(dm, by=by, today=today) if pull_in else 0
 
 
-def model_changed(device_model, changed: list[str], by=None) -> None:
-    """Called by equipment.services.update_device_model, inside its transaction, after a model's risk class or OEM interval
-    changed (`changed` names the fields). A model that became life support leaves AEM: the interval in force ends (its devices'
-    next PMs come in) and an open proposal is withdrawn. A new OEM interval equal to the AEM interval in force ends it (nothing
-    left to approve). Anything else changes nothing."""
+def model_changed(device_model, changed: list[str], by=None, previous: dict | None = None) -> dict:
+    """Called by equipment.services (_save_model), inside its transaction, after a model's risk class or OEM interval changed
+    (`changed` names the fields, `previous` their values before). A model that became life support leaves AEM: the interval in
+    force ends (its devices' next PMs come in) and an open proposal is withdrawn. A model that left life support drops an interval
+    on file without a recorded approval (it never applied there, and must not start applying unapproved). Returns what happened:
+    {"ended", "withdrawn", "cleared": bool, "moved": devices whose next PM came in}. (An OEM interval equal to the AEM interval in
+    force is refused before saving: update_device_model.)"""
+    effect = {"ended": False, "withdrawn": False, "cleared": False, "moved": 0}
+    if "risk_class" not in changed:
+        return effect
     today = date.today()
-    if "risk_class" in changed and device_model.risk_class == RiskClass.LIFE_SUPPORT:
+    was = (previous or {}).get("risk_class")
+    if device_model.risk_class == RiskClass.LIFE_SUPPORT:
         reason = "The model is now life support; life-support devices are excluded from AEM by policy."
         proposal = open_proposal(device_model)
         if proposal is not None:
             withdraw(proposal, by=by, today=today, reason=reason)
+            effect["withdrawn"] = True
         if device_model.aem_interval_months is not None or in_force(device_model) is not None:
-            end(device_model, by=by, reason=reason, today=today)
-        return
-    aem = device_model.aem_interval_months
-    if "oem_pm_interval_months" in changed and aem is not None and aem == device_model.oem_pm_interval_months:
-        end(device_model, by=by, reason=f"The OEM interval is now {_months(aem)}, the same as the AEM interval.", today=today)
+            effect["moved"] = end(device_model, by=by, reason=reason, today=today, pull_in=True)  # it applied until now
+            effect["ended"] = True
+    elif was == RiskClass.LIFE_SUPPORT and is_legacy(device_model, in_force(device_model)):
+        _set_interval(_lock(device_model), None, by, "AEM on file without a recorded approval cleared: the model left life support",
+                      device_model)
+        effect["cleared"] = True
+    return effect

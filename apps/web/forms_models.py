@@ -115,8 +115,8 @@ class RiskScoreForm(ServiceErrorsMixin, forms.Form):
         values = []
         for key, _field, _label, low, high in RISK_PARTS:
             raw = self.data.get(key, "") if self.is_bound else self.initial.get(key, "")
-            # isdecimal, not isdigit: int() refuses some digits ("²") that isdigit accepts
-            if not (isinstance(raw, str) and raw.isdecimal() and low <= int(raw) <= high):
+            # isdecimal, not isdigit: int() refuses some digits ("²") that isdigit accepts; short, as int() refuses 4,300 digits
+            if not (isinstance(raw, str) and raw.isdecimal() and len(raw) <= 2 and low <= int(raw) <= high):
                 return None
             values.append(int(raw))
         score = sum(values)

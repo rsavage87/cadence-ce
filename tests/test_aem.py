@@ -201,10 +201,21 @@ def test_the_interval_is_a_whole_number_that_differs_from_the_oem(fleet, monitor
     refused(propose, monitor, people, value, match=message, field="interval_months")
 
 
-def test_the_interval_differs_from_the_one_in_force(ctx, dept, pump_model, people):
-    device(pump_model, dept, "P-1", installed_on=years_ago(4))
-    refused(propose, pump_model, people, 18, match="This model already runs on 18 months", field="interval_months")
-    assert propose(pump_model, people, 6).interval_months == 6  # shorter than the OEM is allowed too
+def test_the_interval_differs_from_the_one_in_force(fleet, monitor, people):
+    in_force(fleet, monitor, people, 24)
+    refused(propose, monitor, people, 24, match="This model already runs on 24 months", field="interval_months")
+    assert propose(monitor, people, 6).interval_months == 6  # shorter than the OEM is allowed too
+
+
+def test_an_interval_on_file_without_approval_can_be_ratified_as_it_is(ctx, dept, pump_model, people):
+    """The fixture's 18 months were set before approvals were recorded: the committee can approve the interval in use, and nothing moves."""
+    p1 = device(pump_model, dept, "P-1", installed_on=years_ago(4), last_pm_on=months_ago(10), next_pm_on=add_months(months_ago(10), 18))
+    d = approve(propose(pump_model, people, 18), people)
+    pump_model.refresh_from_db()
+    p1.refresh_from_db()
+    assert d.status == AemStatus.APPROVED and d.devices_moved == 0 and pump_model.aem_interval_months == 18
+    assert p1.next_pm_on == add_months(months_ago(10), 18)
+    assert aem.in_force(pump_model) == d
 
 
 def test_the_rationale_is_required_and_bounded(fleet, monitor, people):
@@ -218,7 +229,8 @@ def test_the_policy_needs_three_years_of_history_in_its_own_words(monitor, dept,
     update_settings(policy_aem="EMC sign-off on three years of service records.")
     text = refused(propose, monitor, people)
     assert text.startswith("The facility's AEM policy: EMC sign-off on three years of service records. The oldest device of this model on record")
-    assert "(2.0 years of history); a proposal needs 3 years." in text
+    # A date, not a rounded figure: "3.0 years of history; a proposal needs 3 years" could happen a few days short of three years.
+    assert f"installed {aem._day(years_ago(2))}, so the model has 3 years of history from {aem._day(years_ago(-1))}." in text
     assert aem.propose_blocker(monitor, TODAY) == text
 
 
@@ -433,16 +445,18 @@ def test_a_legacy_interval_leaves_with_life_support_too(ctx, dept, pump_model):
     assert pump_model.aem_interval_months is None
 
 
-def test_an_oem_interval_equal_to_the_aem_ends_it(fleet, monitor, people):
+def test_an_oem_interval_equal_to_the_aem_in_force_is_refused(fleet, monitor, people):
+    """It would end a committee decision, which is End AEM's (PM Approve), while the OEM interval is Equipment Edit's: a technician
+    could otherwise end an AEM by setting the OEM interval to it and back."""
     d = in_force(fleet, monitor, people)
     eq.update_device_model(monitor, oem_pm_interval_months=6)  # different: nothing happens
     d.refresh_from_db()
     assert d.status == AemStatus.APPROVED
-    eq.update_device_model(monitor, oem_pm_interval_months=24)
+    refused(eq.update_device_model, monitor, oem_pm_interval_months=24, field="oem_pm_interval_months",
+            match="This model is on an AEM interval of 24 months. End the AEM on the model's AEM tab first")
     d.refresh_from_db()
-    assert d.status == AemStatus.ENDED and d.end_reason == "The OEM interval is now 24 months, the same as the AEM interval."
     monitor.refresh_from_db()
-    assert monitor.aem_interval_months is None and monitor.pm_interval_months == 24
+    assert d.status == AemStatus.APPROVED and monitor.oem_pm_interval_months == 6 and monitor.aem_interval_months == 24
 
 
 def test_other_model_changes_leave_aem_alone(fleet, monitor, people):

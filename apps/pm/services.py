@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import NamedTuple
 
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import F, Q
 
 from apps.equipment.models import Asset, AssetStatus, RiskClass
@@ -67,7 +67,7 @@ def create_pm_work_orders_for_day(day: date, by=None, assign_to_technicians: boo
     from .schedule import day_devices, suggestions_for_day
 
     today = today or date.today()
-    _lock_devices(Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES, next_pm_on=day))
+    lock_planner()
     devices = list(day_devices(day))
     needing = [a for a in devices if not a.has_open_pm]
     suggested = suggestions_for_day(day, needing, today) if assign_to_technicians else {}
@@ -81,11 +81,25 @@ def create_pm_work_orders_for_day(day: date, by=None, assign_to_technicians: boo
     return PmBatch(len(needing), assigned, len(devices) - len(needing))
 
 
-def _lock_devices(assets) -> None:
-    """Lock the device rows (in id order, so two batches never wait on each other in a circle) until the transaction ends. A second
-    request for the same devices waits here, then reads what the first one committed and finds nothing left to do. SQLite ignores
-    the lock and runs one writer at a time anyway."""
-    list(assets.select_for_update().order_by("pk").values_list("pk", flat=True))
+PLANNER_LOCK = "pm-planner"
+
+
+def lock_planner() -> None:
+    """Hold the facility's PM planner lock until the transaction ends: Create (a day) and Auto-assign week take it before they read
+    the plan, so a second request (a double click, or both buttons at once) waits here, then reads what the first one committed and
+    finds nothing left to do. A row of its own that nothing else locks (a Sequence row that never counts), taken first: locking the
+    devices instead would wait in a circle with writers that lock a work order or the numbering before the device (retiring a
+    device, a tagged-out repair request). SQLite ignores the lock and runs one writer at a time anyway."""
+    from apps.core.models import Sequence
+    from apps.tenants.context import get_current_tenant
+
+    tenant = get_current_tenant()
+    try:
+        with transaction.atomic():  # a savepoint: two first-ever requests may both try to create the row
+            Sequence.unscoped.get_or_create(tenant=tenant, key=PLANNER_LOCK)  # unscoped + explicit tenant, as Sequence.next
+    except IntegrityError:
+        pass
+    Sequence.unscoped.select_for_update().get(tenant=tenant, key=PLANNER_LOCK)
 
 
 # --- Auto-assign week (slice 14) --------------------------------------------------------------------------------------------
@@ -110,13 +124,18 @@ class WeekAssignment:
     `shares` are the technicians who get PMs, by name. `uncovered` are the devices nobody is credentialed for, each
     {"asset", "has_open_pm"}: a work order is created for those without one, and every one of them stays unassigned. `held` counts
     the devices whose open PM work order is already with an active technician or the vendor (left as they are). `overdue` counts
-    active devices whose next PM is before `start`: they are not in the week plan, so Auto-assign week does not touch them."""
+    active devices whose next PM is before `start`: they are not in the week plan, so Auto-assign week does not touch them. Of
+    those, `overdue_to_create` have no open PM work order (Create on their day makes one) and `overdue_waiting` have one on
+    nobody's plate (unassigned, as the nightly generate_pm leaves them, or with a deactivated technician: assign it from Work
+    orders); the rest are with a technician or the vendor."""
     start: date
     end: date
     shares: list = field(default_factory=list)
     uncovered: list = field(default_factory=list)
     held: int = 0
     overdue: int = 0
+    overdue_to_create: int = 0
+    overdue_waiting: int = 0
 
     @property
     def assigned_new(self) -> int:
@@ -163,8 +182,14 @@ def _week_steps(today: date) -> tuple[WeekAssignment, list]:
     """(the summary, the steps): for each device in the week plan whose PM is on nobody's plate, in the plan's order,
     (asset, its open PM work order as week_plan read it or None, the technician the plan suggests or None). Devices whose open PM is
     with the vendor or an active technician have no step. Read-only."""
+    from .schedule import open_pm_orders, pm_held
+
     plan = week_plan(today)
-    out = WeekAssignment(start=today, end=today + timedelta(days=WEEK_DAYS - 1), overdue=overdue_assets(today).count())
+    overdue_ids = list(overdue_assets(today).values_list("pk", flat=True))
+    overdue_open = open_pm_orders(overdue_ids)
+    out = WeekAssignment(start=today, end=today + timedelta(days=WEEK_DAYS - 1), overdue=len(overdue_ids),
+                         overdue_to_create=sum(1 for pk in overdue_ids if pk not in overdue_open),
+                         overdue_waiting=sum(1 for w in overdue_open.values() if not pm_held(w)))
     shares: dict = {}
     steps = []
     for asset in plan["devices"]:
@@ -199,13 +224,12 @@ def assign_week(*, by=None, today: date | None = None) -> WeekAssignment:
     (as Create does) assigned to the suggested technician; an open PM work order on nobody's plate (unassigned, like those the nightly
     generate_pm creates, or with a deactivated technician) is assigned to the suggested technician; one with the vendor or an active
     technician is left alone. Nobody credentialed: the work order is created if missing and left unassigned. Assignments are recorded
-    like any other (workorders.services.assign). The devices are locked first, so a second request (a double click) waits, then
-    finds everything on someone's plate and does nothing. Returns what was done."""
+    like any other (workorders.services.assign). The planner lock is taken first (lock_planner), so a second request (a double click)
+    waits, then finds everything on someone's plate and does nothing. Returns what was done."""
     from apps.workorders.services import assign
 
     today = today or date.today()
-    _lock_devices(Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES, next_pm_on__gte=today,
-                                       next_pm_on__lt=today + timedelta(days=WEEK_DAYS)))
+    lock_planner()
     result, steps = _week_steps(today)
     waiting = _first_open_pms([asset.id for asset, w, tech in steps if w is not None and tech is not None])
     for asset, w, tech in steps:

@@ -81,6 +81,20 @@ while repair or recall work is open; it needs Equipment Approve (the director by
 to service only when that repair tagged it out. The drawer's PM schedule tab shows
 the device's maintenance strategy, procedure, next PMs, and PM history, and its Costs tab the service cost by year.
 
+## The PM program
+Each row of the PM library (PM schedule) opens that device model's PM program; so does a device's model name in its drawer. It
+shows the model's details, its risk score, the interval it is maintained on, its PM procedure, and its devices. Add model and
+Edit details need Equipment Edit. Scoring a model with the Settings rubric needs Equipment Approve (the director by default):
+the score's band sets the risk class, and the score is reviewed yearly. Technicians write and revise PM procedures and their
+checklists, and choose each model's (PM Edit).
+
+A longer maintenance interval than the manufacturer's (AEM) is proposed with the model's three-year failure history, which the
+screen gathers from the facility's own records. The Equipment Management Committee then approves or rejects it, recorded by a
+PM Approve holder who did not propose it (the CE manager by default). Life-support models never go on AEM, and a model scored
+into life support leaves it. Ending an AEM, or approving a shorter interval, brings devices' next PMs in. Auto-assign week puts
+every PM due in the next 7 days on a credentialed technician's plate, as the schedule's plan suggests; it needs PM Approve and
+the right to assign work orders.
+
 ## Exports and printing
 Equipment, Work orders, and Contracts download as CSV with the filters on screen (Export), and a contract's covered devices
 from its drawer (Device list); every report downloads as CSV too. The files open cleanly in Excel (UTF-8, ISO dates, plain

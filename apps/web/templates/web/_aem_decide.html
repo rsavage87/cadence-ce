@@ -10,7 +10,8 @@
 <form id="aem-form" hx-post="{% url 'web:pm_aem_decide' decision.pk %}" hx-target="#modal-card">
   {{ form.decision }}
   <div class="form">
-    <p class="full" style="margin:0;font-size:13px;color:var(--ink)"><strong>{{ dm.manufacturer }} {{ dm.model }}</strong>: every {{ decision.interval_months }} months instead of the OEM's {{ decision.oem_interval_months }}<br><span class="muted">Proposed {{ decision.proposed_on|date:"M j, Y" }} by {{ decision.proposed_by|default:"a former user" }}</span></p>
+    <p class="full" style="margin:0;font-size:13px;color:var(--ink)"><strong>{{ dm.manufacturer }} {{ dm.model }}</strong>: every {{ decision.interval_months }} month{{ decision.interval_months|pluralize }} instead of the OEM's {{ decision.oem_interval_months }}<br><span class="muted">Proposed {{ decision.proposed_on|date:"M j, Y" }} by {{ decision.proposed_by|default:"a former user" }}</span></p>
+    {% if oem_changed and form.choice != "reject" %}<div class="full note warn" role="status">{{ oem_changed }}</div>{% endif %}
     {% if form.non_field_errors or form.decision.errors %}<div class="full"><span class="err">{{ form.non_field_errors|striptags }}{{ form.decision.errors|striptags }}</span></div>{% endif %}
     <label>{{ form.decided_on.label }}{{ form.decided_on }}{% if form.decided_on.errors %}<span class="err">{{ form.decided_on.errors|striptags }}</span>{% endif %}</label>
     <label class="full">{% if form.choice == "reject" %}The committee's reason or minutes reference{% else %}{{ form.note.label }}{% endif %}{{ form.note }}{% if form.note.errors %}<span class="err">{{ form.note.errors|striptags }}</span>{% endif %}</label>

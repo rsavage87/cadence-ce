@@ -257,7 +257,9 @@ def test_a_device_with_an_open_pm_shows_the_chip(client, signed_in, fleet, techs
     signed_in("director")
     body = client.get("/pm/?day=2026-09-30").content.decode()
     rows = body.split('<div class="li"')[1:]
-    assert '<span class="chip warn">PM open, unassigned</span><br>1.5 h' in rows[1] and "PM open" not in rows[0] + rows[2]
+    # On nobody's plate: the day list names who Auto-assign week and the route sheets give it to (Dana, the only one credentialed).
+    assert '<span class="chip warn">PM open, unassigned</span><br><span title="Dana Whitfield">For Dana</span><br>1.5 h' in rows[1]
+    assert "PM open" not in rows[0] + rows[2]
     assert "Create 2 PM work orders</button>" in body and "1 already has an open PM work order" in body
 
 

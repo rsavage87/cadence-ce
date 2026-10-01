@@ -153,7 +153,9 @@ def test_library_rows_intervals_procedures_and_counts(fleet, pump_model, vent_mo
     html = panels()
     assert "1 of 3 models has a PM procedure · from OEM service manuals, ECRI, or written in-house" in html and "Sync now" not in html
     rows = re.findall(r"<tr class=\"row\" hx-get=\"/pm/models/[0-9a-f-]+/\" hx-target=\"#drawer\"><td class=\"two\">(.*?)</tr>", html, re.S)
-    assert [re.match(r"([^<]+)<small>", r).group(1) for r in rows] == ["Hamilton Medical Hamilton-G5", "BD Alaris 8015 PCU", "Welch Allyn Spot 4400"]
+    # The name is a link (keyboard users and a new tab reach the drawer; the full page opens it over the schedule).
+    names = [re.match(r'<a class="tag" href="/pm/models/[0-9a-f-]+/">([^<]+)</a><small>', r).group(1) for r in rows]
+    assert names == ["Hamilton Medical Hamilton-G5", "BD Alaris 8015 PCU", "Welch Allyn Spot 4400"]
     vent, pump, monitor = rows
     assert "<small>ICU ventilator</small>" in vent and "Life support" in vent and "<td>6 mo</td>" in vent
     assert '<span class="muted">OEM interval</span>' in vent and "AEM" not in vent

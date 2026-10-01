@@ -27,7 +27,7 @@
   {% endif %}
 </div>
 
-{% if interval.aem or interval.aem_ignored %}<div class="sec"><div class="note">{% if interval.aem %}On an approved AEM interval of {{ interval.in_force }} instead of the OEM's {{ interval.oem }}.{% else %}An AEM interval is on file, but life-support devices never go on AEM: they follow the OEM's {{ interval.oem }}.{% endif %} The AEM tab has the decision.</div></div>{% endif %}
+{% if interval.aem or interval.aem_ignored %}<div class="sec"><div class="note">{% if interval.aem and interval.unapproved %}On an AEM interval of {{ interval.in_force }} instead of the OEM's {{ interval.oem }}, on file without a recorded approval.{% elif interval.aem %}On an approved AEM interval of {{ interval.in_force }} instead of the OEM's {{ interval.oem }}.{% else %}An AEM interval is on file, but life-support devices never go on AEM: they follow the OEM's {{ interval.oem }}.{% endif %} The AEM tab has the decision.</div></div>{% endif %}
 
 <div class="sec"><h3>Devices <span>{{ devices.active }} active{% if devices.retired %} · {{ devices.retired }} retired{% endif %}</span></h3>
   <div class="list">

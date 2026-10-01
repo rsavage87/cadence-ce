@@ -150,6 +150,7 @@ def _decide_modal(request, decision, form):
     return render(request, "web/_aem_decide.html", {
         "decision": decision, "dm": dm, "form": form, "blocker": aem.decide_blocker(decision, request.user),
         "evidence": evidence_view(decision.evidence), "policy": _policy(), "shorter": shorter,
+        "oem_changed": aem.oem_changed_refusal(decision, dm) if decision.status == AemStatus.PROPOSED else "",
         "moves": len(aem.pull_in_plan(dm, decision.interval_months)) if shorter else 0})
 
 
@@ -217,10 +218,11 @@ def _end_modal(request, pk, decision, dm, form):
         blocker = "This model has no AEM interval in force: it follows the OEM interval."
     else:
         blocker = ""
+    moves_devices = aem.end_moves_devices(dm)  # a life-support model never used the interval: ending it moves nothing
     return render(request, "web/_aem_end.html", {
-        "pk": pk, "dm": dm, "approved": approved, "form": form, "blocker": blocker,
+        "pk": pk, "dm": dm, "approved": approved, "form": form, "blocker": blocker, "unused": not moves_devices,
         "from_months": dm.aem_interval_months or (approved.interval_months if approved is not None else None),
-        "moves": 0 if blocker else len(aem.pull_in_plan(dm, dm.oem_pm_interval_months))})
+        "moves": 0 if blocker or not moves_devices else len(aem.pull_in_plan(dm, dm.oem_pm_interval_months))})
 
 
 @web_view(pm_perms.MODULE, pm_perms.VIEW_LEVEL)

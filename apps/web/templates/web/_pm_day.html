@@ -1,5 +1,5 @@
 {% load web %}
-{# The selected day: most critical first, the technician the create action would assign (credentialed, least loaded), and, for PM Approve, the create button. #}
+{# The selected day: most critical first, the technician Create or Auto-assign week would assign (credentialed, least loaded), and, for PM Approve, the create button. #}
 <div class="panel pm-day">
   <div class="panel-h"><h2>Due {{ day|date:"M j, Y" }}</h2><span class="sub">{{ plan.count }} PM{{ plan.count|pluralize }} · {{ plan.hours|floatformat:1 }} h</span></div>
   <div class="panel-b">
@@ -12,7 +12,7 @@
           <div class="t">{% if can_view_asset %}<a class="tag" href="{% url 'web:asset' a.tag %}">{{ a.tag }}</a>{% else %}{{ a.tag }}{% endif %} · {{ a.device_model.description }}</div>
           <div class="s">{{ a.device_model.manufacturer }} {{ a.device_model.model }} · {{ a.department }} · {% if r.procedure %}{{ r.procedure.code }}{% else %}No PM procedure{% endif %}</div>
         </div>
-        <div class="r">{% if r.has_open_pm %}{% if r.open_pm_vendor %}<span class="chip info">PM open, vendor</span>{% elif r.open_pm_assignee %}<span class="chip info" title="{{ r.open_pm_assignee }}">PM open, {{ r.open_pm_first }}</span>{% else %}<span class="chip warn"{% if r.technician %} title="Suggested: {{ r.technician.name }}"{% endif %}>PM open, unassigned</span>{% endif %}{% elif r.technician %}<span title="{{ r.technician.name }}">{{ r.tech_first }}</span>{% else %}<span class="down">Nobody credentialed</span>{% endif %}<br>{{ r.hours_label }} h</div>
+        <div class="r">{% if r.has_open_pm %}{% if r.open_pm_vendor %}<span class="chip info">PM open, vendor</span>{% elif r.waiting %}<span class="chip warn">{% if r.open_pm_assignee %}PM open, {{ r.open_pm_first }} (inactive){% else %}PM open, unassigned{% endif %}</span><br>{% if r.technician %}<span title="{{ r.technician.name }}">For {{ r.tech_first }}</span>{% else %}<span class="down">Nobody credentialed</span>{% endif %}{% elif r.open_pm_assignee %}<span class="chip info" title="{{ r.open_pm_assignee }}">PM open, {{ r.open_pm_first }}</span>{% else %}<span class="chip warn">PM open, unassigned</span>{% endif %}{% elif r.technician %}<span title="{{ r.technician.name }}">{{ r.tech_first }}</span>{% else %}<span class="down">Nobody credentialed</span>{% endif %}<br>{{ r.hours_label }} h</div>
       </div>
       {% endwith %}{% empty %}
       <div class="empty">No PMs scheduled on this day.</div>

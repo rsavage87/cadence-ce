@@ -104,9 +104,22 @@ def _row(r: dict) -> dict:
             "open_pm_first": held.split()[0] if held.split() else ""}
 
 
+def _waiting_picks(day: date, today: date, plan: dict) -> dict:
+    """{asset id: Technician or None} for the day's devices whose open PM work order is on nobody's plate (unassigned, as the
+    nightly generate_pm leaves them, or with a deactivated technician): who Auto-assign week and the route sheets give it to
+    (schedule.planned_technicians), so the day list names them too. Empty without such devices (no extra queries)."""
+    if not any(r["has_open_pm"] and not r["open_pm_vendor"] for r in plan["rows"]):
+        return {}
+    picks, open_pm = sch.planned_technicians(day, today, plan)
+    return {pk: picks.get(pk) for pk, w in open_pm.items() if not sch.pm_held(w)}
+
+
 def _body_context(request, today: date, year: int, month: int, day: date) -> dict:
     cal = sch.month_calendar(year, month, today)
     plan = sch.day_plan(day, today)
+    waiting = _waiting_picks(day, today, plan)
+    rows = [{**r, "waiting": True, "technician": waiting[r["asset"].id]} if r["asset"].id in waiting else r
+            for r in plan["rows"][:sch.DAY_LIST_LIMIT]]
     for week in cal["weeks"]:
         for cell in week:
             cell["url"] = _url(year, month, cell["date"])
@@ -117,7 +130,7 @@ def _body_context(request, today: date, year: int, month: int, day: date) -> dic
     if plan["overdue"]:
         confirm += " It will be due today." if n == 1 else " They will be due today."
     return {"nav_active": "pm", "today": today, "cal": cal, "day": day, "plan": plan, "self_url": _url(year, month, day),
-            "day_rows": [_row(r) for r in plan["rows"][:sch.DAY_LIST_LIMIT]], "day_more": max(0, plan["count"] - sch.DAY_LIST_LIMIT),
+            "day_rows": [_row(r) for r in rows], "day_more": max(0, plan["count"] - sch.DAY_LIST_LIMIT),
             "day_skipped": plan["count"] - n, "prev_url": _url(*prev) if prev else "", "next_url": _url(*nxt) if nxt else "",
             "create_url": reverse("web:pm_create", args=[day.isoformat()]) + f"?y={year}&m={month}", "create_confirm": confirm,
             "can_view_asset": request.user.has_level(Module.EQUIPMENT, Level.VIEW), "can_create": pm_perms.can_create(request.user)}

@@ -1,7 +1,7 @@
 """Auto-assign week (slice 14, apps.pm.services.week_assignment_preview and assign_week): every device in the week plan ends with the
 technician the plan suggested (new work orders created, open ones on nobody's plate assigned, held ones left alone, nobody credentialed
 left unassigned), the day panel and the workload agree before and after, a second run does nothing, overdue devices are counted and
-left alone, the devices are locked before the plan is read, and another facility is never touched or counted."""
+left alone, the planner lock is taken before the plan is read, and another facility is never touched or counted."""
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -171,6 +171,7 @@ def test_open_pms_on_nobodys_plate_are_assigned_and_held_ones_left_alone(fleet, 
     assert before == {"CE-V1": "Dana Whitfield", "CE-P1": "Tom Okafor"}  # only Dana does vents (1.5 h); Tom's 1 h (p3) is then lighter
     done = assign_week(by=kim, today=TODAY)
     assert (done.created, done.assigned, done.assigned_existing, done.held, done.unassigned, done.overdue) == (0, 2, 2, 2, 0, 1)
+    assert (done.overdue_to_create, done.overdue_waiting) == (0, 1)  # the overdue pump's PM is open, on nobody's plate
     assert shares(done) == {"Dana Whitfield": (0, 1, 1, Decimal("1.5")), "Tom Okafor": (0, 1, 1, Decimal("2.5"))}  # the work orders' own hours
     h = holders()
     assert (h["CE-V1"], h["CE-P1"], h["CE-V2"], h["CE-P3"]) == ("Dana Whitfield", "Tom Okafor", "vendor", "Tom Okafor")
@@ -212,32 +213,35 @@ def test_closed_and_cancelled_pms_do_not_stand_for_this_one(fleet, techs):
 
 # --- double click -----------------------------------------------------------------------------------------------------------------
 
-def test_the_weeks_devices_are_locked_before_the_plan_is_read(fleet, techs, monkeypatch):
+def test_the_planner_lock_is_taken_before_the_plan_is_read(fleet, techs, monkeypatch):
     calls = []
     real_lock, real_plan = QuerySet.select_for_update, services.week_plan
 
     def lock(qs, *args, **kwargs):
-        calls.append(("lock", qs.model.__name__, sorted(qs.values_list("tag", flat=True)) if qs.model is Asset else None))
+        calls.append(("lock", qs.model.__name__))
         return real_lock(qs, *args, **kwargs)
 
     monkeypatch.setattr(QuerySet, "select_for_update", lock)
     monkeypatch.setattr(services, "week_plan", lambda today: calls.append(("plan",)) or real_plan(today))
     assign_week(today=TODAY)
-    assert calls[:2] == [("lock", "Asset", ["CE-P1", "CE-V1", "CE-V2"]), ("plan",)]  # the week's active devices, nothing else
+    # The facility's planner row, nothing else: locking the devices would wait in a circle with retiring one or a tagged-out request.
+    assert calls[:2] == [("lock", "Sequence"), ("plan",)] and ("lock", "Asset") not in calls
 
 
-def test_creating_a_day_locks_that_days_devices_first(fleet, techs, monkeypatch):
+def test_creating_a_day_takes_the_same_planner_lock_first(fleet, techs, monkeypatch):
     calls = []
     real_lock = QuerySet.select_for_update
 
     def lock(qs, *args, **kwargs):
-        if qs.model is Asset:
-            calls.append(sorted(qs.values_list("tag", flat=True)))
+        calls.append(qs.model.__name__)
         return real_lock(qs, *args, **kwargs)
 
     monkeypatch.setattr(QuerySet, "select_for_update", lock)
     assert create_pm_work_orders_for_day(SEP30, today=TODAY) == (3, 3, 0)
-    assert calls == [["CE-P1", "CE-V1", "CE-V2"]]
+    assert calls[0] == "Sequence" and "Asset" not in calls
+    from apps.core.models import Sequence
+
+    assert Sequence.objects.get(key=services.PLANNER_LOCK).value == 0  # a lock row, never a counter
 
 
 # --- tenant isolation -------------------------------------------------------------------------------------------------------------

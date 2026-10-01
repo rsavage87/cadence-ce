@@ -21,6 +21,7 @@ from apps.equipment import permissions as eq_perms
 from apps.equipment import services as eq
 from apps.equipment.models import Asset, AssetStatus, DeviceModel, RiskClass
 from apps.facility.services import RISK_BANDS, RISK_RUBRIC
+from apps.pm import aem
 from apps.pm import permissions as pm_perms
 
 from . import views_aem, views_procedures
@@ -65,6 +66,8 @@ def program_tab(request, dm, today: date | None = None) -> dict:
         "risk": {"score": dm.risk_score, "parts": risk_parts(dm), "reviewed_on": dm.risk_reviewed_on, "due": eq.risk_review_due(dm, today),
                  "due_on": eq.risk_review_due_on(dm)},
         "interval": {"oem": _months(oem), "in_force": _months(months), "aem": months != oem,
+                     # in force without an approved decision (set before slice 14): never called approved (apps.pm.aem.is_legacy)
+                     "unapproved": months != oem and aem.in_force(dm) is None,
                      # an AEM interval on file that life support ignores (DeviceModel.pm_interval_months)
                      "aem_ignored": aem_on_file and months == oem and dm.risk_class == RiskClass.LIFE_SUPPORT},
         "devices": {"shown": shown, "active": active_count, "more": max(active_count - len(shown), 0),
@@ -110,11 +113,33 @@ def _require(allowed: bool):
         raise PermissionDenied
 
 
+def aem_note(effect: dict | None) -> str:
+    """What the AEM program did about a change (equipment.services sets dm.aem_effect): a model scored into life support leaves AEM."""
+    if not effect:
+        return ""
+    parts = []
+    if effect.get("ended"):
+        parts.append("its AEM interval ended (life support follows the OEM interval)")
+    if effect.get("withdrawn"):
+        parts.append("its open AEM proposal was withdrawn")
+    if effect.get("cleared"):
+        parts.append("the AEM interval on file without a recorded approval was cleared")
+    moved = effect.get("moved") or 0
+    if moved:
+        parts.append(f"{'1 device' if moved == 1 else f'{moved} devices'}' next PM moved earlier")
+    return "; " + "; ".join(parts) if parts else ""
+
+
 def _saved(request, dm, message: str):
     """A modal saved: show the model's drawer on PM program, refresh the PM library, toast, then close the modal. After settle:
-    closing it first would detach the form that sent this request, which cancels the swap and loses the other events."""
+    closing it first would detach the form that sent this request, which cancels the swap and loses the other events. When the
+    change moved devices' next PMs (the AEM program, aem_note), the screens listing devices and work orders refresh too."""
+    effect = getattr(dm, "aem_effect", None)
     response = retarget(render_model_drawer(request, dm, tab="program"), "#drawer")
-    toast(trigger_client_event(response, "models-changed", {}), message)
+    events = ["models-changed"] + (["devices-changed", "wo-changed"] if effect and effect.get("moved") else [])
+    for event in events:
+        trigger_client_event(response, event, {})
+    toast(response, message + aem_note(effect))
     return trigger_client_event(response, "modal-close", {}, after="settle")
 
 

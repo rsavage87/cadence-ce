@@ -29,7 +29,7 @@
   <div class="tbl-wrap flat" style="margin-top:8px"><table>
     <thead><tr><th>Model</th><th>Risk class</th><th>OEM interval</th><th>Program interval</th><th>Procedure</th><th class="num">Est. hours</th><th>Checklist</th><th class="num">Devices</th></tr></thead>
     <tbody>{% for r in library.rows %}
-      <tr class="row" hx-get="{% url 'web:pm_model' r.device_model.pk %}" hx-target="#drawer"><td class="two">{{ r.device_model.manufacturer }} {{ r.device_model.model }}<small>{{ r.device_model.description }}</small></td>
+      <tr class="row" hx-get="{% url 'web:pm_model' r.device_model.pk %}" hx-target="#drawer"><td class="two"><a class="tag" href="{% url 'web:pm_model' r.device_model.pk %}">{{ r.device_model.manufacturer }} {{ r.device_model.model }}</a><small>{{ r.device_model.description }}</small></td>
         <td>{% risk_chip r.device_model.risk_class %}</td>
         <td>{{ r.oem_months }} mo</td>
         <td>{% if r.aem %}<span class="chip acc">AEM {{ r.program_months }} mo</span>{% else %}<span class="muted">OEM interval</span>{% endif %}</td>

@@ -201,7 +201,7 @@ def test_a_model_without_enough_history_says_so(client, signed_in, ctx, dept):
     Asset.objects.create(tag="B-1", device_model=dm, department=dept, installed_on=months_ago(12), next_pm_on=TODAY)
     signed_in("technician")
     body = tab(client, dm)
-    assert "Propose an AEM interval" not in body and "The facility&#x27;s AEM policy" in body and "a proposal needs 3 years" in body
+    assert "Propose an AEM interval" not in body and "The facility&#x27;s AEM policy" in body and "so the model has 3 years of history from" in body
 
 
 # --- the committee's decision ---------------------------------------------------------------------------------------------

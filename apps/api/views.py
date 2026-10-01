@@ -7,6 +7,7 @@ import re
 from datetime import date
 
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.db.models import ProtectedError
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -117,20 +118,33 @@ class DeviceModelViewSet(EquipmentWrites, TenantViewSet):
     CREATE_FIELDS = ("manufacturer", "model", "description", "category", "oem_pm_interval_months", "expected_life_years", "list_cost")
 
     def perform_create(self, serializer):
-        # Through create_device_model, which needs a risk class and never takes an AEM interval (an approved exception, set afterwards).
+        # Through create_device_model, which needs a risk class and never takes an AEM interval: that is set only by approving an
+        # AEM proposal on the model's AEM tab (apps.pm.aem), never through the API.
         d = serializer.validated_data
-        _refuse_on_create(d, ("aem_interval_months", "pm_procedure"), "model")
+        if d.get("aem_interval_months") not in (None, ""):
+            raise DRFValidationError({"aem_interval_months": ["An AEM interval is set by approving an AEM proposal (PM schedule, PM library)."]})
+        _refuse_on_create(d, ("pm_procedure",), "model")
         serializer.instance = _via_service(eq_services.create_device_model, risk_class=d.get("risk_class"), by=self.request.user,
                                            **{f: d[f] for f in self.CREATE_FIELDS if f in d})
 
     def perform_update(self, serializer):
         # Through update_device_model: create's rules (intervals, cost, a name unique in any letter case) hold on every change too.
         # A new risk class needs the risk level (Approve), as on the screen; sending back the current one is fine.
-        risk = serializer.validated_data.get("risk_class")
-        if risk is not None and risk != serializer.instance.risk_class and not eq_perms.can_set_risk(self.request.user):
+        d, dm, user = serializer.validated_data, serializer.instance, self.request.user
+        risk = d.get("risk_class")
+        if risk is not None and risk != dm.risk_class and not eq_perms.can_set_risk(user):
             raise PermissionDenied("Changing a model's risk class needs Equipment Approve.")
-        _via_service(eq_services.update_device_model, serializer.instance, by=self.request.user,
-                     **{f: v for f, v in serializer.validated_data.items() if f in eq_services.MODEL_FIELDS})
+        new_procedure = "pm_procedure" in d and (d["pm_procedure"].pk if d["pm_procedure"] else None) != dm.pm_procedure_id
+        if new_procedure and not pm_perms.can_edit_program(user):
+            # Choosing the procedure is the PM program's (PM Edit), as on the model's Procedure tab, and recorded the same way.
+            raise PermissionDenied("Choosing a model's PM procedure needs PM Edit.")
+        with transaction.atomic():  # all of the change or none of it
+            if new_procedure:
+                from apps.pm.procedures import set_model_procedure
+
+                _via_service(set_model_procedure, dm, d["pm_procedure"], by=user)
+            _via_service(eq_services.update_device_model, dm, by=user,
+                         **{f: v for f, v in d.items() if f in eq_services.MODEL_FIELDS and f != "pm_procedure"})
 
 
 class AssetViewSet(EquipmentWrites, TenantViewSet):
