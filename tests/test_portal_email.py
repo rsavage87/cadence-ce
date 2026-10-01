@@ -477,3 +477,14 @@ def test_sending_directly_with_no_tenant_set_under_rls(rls, tenant, mailoutbox):
         assert notifications.send_request_done(wo) is False  # once
     assert rls.violations == []
     assert [m.subject.split(":")[0] for m in mailoutbox] == [f"Request {sr.number} received", f"Request {sr.number} done"]
+
+
+def test_the_settings_api_reads_and_changes_the_portal_email_settings(client, signed_in, ctx):
+    signed_in("director")
+    r = client.patch("/api/v1/settings/", {"portal_email_domains": "Riverside-Health.org, rrmc.org", "portal_confirmation": "email"},
+                     content_type="application/json")
+    assert r.status_code == 200, r.content
+    got = client.get("/api/v1/settings/").json()
+    assert got["portal_confirmation"] == "email" and got["portal_email_domains"] == "riverside-health.org, rrmc.org"
+    r = client.patch("/api/v1/settings/", {"portal_email_domains": ""}, content_type="application/json")
+    assert r.status_code == 400  # email confirmations need a domain, through the API as on the screen

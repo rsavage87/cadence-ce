@@ -128,6 +128,8 @@ class FacilitySettingsSerializer(serializers.Serializer):
 
     portal_require_callback = serializers.BooleanField(required=False)
     portal_hotline = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False)
+    portal_confirmation = serializers.CharField(required=False, allow_blank=True)  # "screen" or "email" (slice 13)
+    portal_email_domains = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False)
     policy_life_support = serializers.CharField(required=False, allow_blank=True)
     policy_medium_low = serializers.CharField(required=False, allow_blank=True)
     policy_aem = serializers.CharField(required=False, allow_blank=True)

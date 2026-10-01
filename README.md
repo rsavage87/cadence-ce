@@ -61,6 +61,15 @@ that login for the rest of the window (the lock is on the typed login, so it say
 rate-limit counters live in each web process's memory, so with several gunicorn workers each counts on its own and a
 restart clears them; a shared cache (Redis) would make them exact.
 
+## Report emails and request confirmations
+Anyone who can view Reports can have a report emailed to themselves every Monday or on the first Monday of each month
+(Schedule, on the report). The email carries the report's CSV and a link to its printable page; it goes only to the user's
+own address and stops if they lose access to Reports. The daily jobs send them (`send_report_emails`, at `SCHEDULER_DAILY_AT`).
+
+In Settings, the request portal can confirm requests by email: requesters give an optional work email and get a confirmation,
+then a notice when the work is done. Only addresses at the facility's listed work email domains are accepted, so the public
+form cannot send mail anywhere else, and the emails never repeat what the requester typed about the problem.
+
 ## Adding and changing devices
 Add device on the Equipment screen adds a device, with a new model or department in the same form when the catalog lacks
 them; its first PM is one interval after its last PM or install date (or today, if that has passed with no PM on record).
