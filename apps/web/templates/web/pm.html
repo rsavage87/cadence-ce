@@ -7,7 +7,11 @@
     <h1>PM schedule</h1>
     <p class="sub">{{ head.due_30 }} PM{{ head.due_30|pluralize }} due in the next 30 days ({{ head.hours_30|floatformat:0 }} h) · {{ head.overdue }} overdue · intervals from each model's PM program, AEM where approved</p>
   </div>
-  {# The mock's "Auto-assign week" and "Route sheets" buttons only toast, so they are left out. Assignment happens per day in "Create N PM work orders" (the least-loaded credentialed technician); route sheets wait for a print service. #}
+  <div class="actions">
+    {% comment %}The mock's "Auto-assign week" only toasts and is left out: assignment happens per day in "Create N PM work orders"
+       (the least-loaded credentialed technician). Route sheets print the selected day's plan (the address carries ?day=).{% endcomment %}
+    <a class="btn" href="{% url 'web:route_sheets' %}{% query request.GET %}" data-act="with-filters" data-base="{% url 'web:route_sheets' %}" target="_blank" rel="noopener" title="Print each technician's PM route for the selected day">{% icon "print" %} Route sheets</a>
+  </div>
 </div>
 {% include "web/_pm_body.html" %}
 {% include "web/_pm_panels.html" %}

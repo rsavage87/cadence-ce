@@ -7,3 +7,4 @@ dj-database-url>=2.2
 gunicorn>=22
 whitenoise>=6.7
 requests>=2.32
+segno>=1.6       # QR codes on asset labels (pure Python, SVG out)

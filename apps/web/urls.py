@@ -33,4 +33,6 @@ urlpatterns = [
     path("recalls/", include("apps.web.urls_recalls")),
     path("reports/", include("apps.web.urls_reports")),
     path("settings/", include("apps.web.urls_settings")),
+    path("export/", include("apps.web.urls_exports")),
+    path("print/", include("apps.web.urls_print")),
 ]

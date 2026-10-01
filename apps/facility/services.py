@@ -179,6 +179,11 @@ def portal_url(tenant, department: str | None = None) -> str:
     return f"{url}?{urlencode({'dept': department})}" if department else url
 
 
+def asset_request_url(asset) -> str:
+    """The request form for one device, which pre-fills it: the device drawer's Request link and its asset label's QR code."""
+    return f"{portal_url(asset.tenant)}?{urlencode({'asset': asset.tag})}"
+
+
 # --- integrations --------------------------------------------------------------------------------------
 
 CONNECTED, NOT_CONNECTED, LICENSE = "connected", "not_connected", "license"

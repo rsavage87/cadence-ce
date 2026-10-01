@@ -73,7 +73,8 @@ def test_page_renders_head_pills_and_a_needs_action_card(client, signed_in, pump
     body = r.content.decode()
     assert "Recalls and alerts" in body and "Alerts are matched to the inventory by manufacturer and model" in body
     assert f"newest FDA notice imported {TODAY:%b} {TODAY.day}, {TODAY.year}" in body and "ECRI alerts need a licensed feed (not connected)" in body
-    assert "Match alerts to inventory" in body and "Check feeds" not in body and "Response log" not in body
+    assert "Match alerts to inventory" in body and "Check feeds" not in body
+    assert 'href="/print/reports/recall/"' in body  # Response log (slice 11) prints the recall report
     assert "All alerts · 1" in body and "Needs action or review · 1" in body and "In progress · 0" in body and "Closed · 0" in body
     assert '<span class="src">FDA</span><span>FDA Z-TEST-1</span>' in body and "Class II" in body
     assert "<h3>Keypad membrane may allow fluid ingress</h3>" in body and "BD Alaris 8015 PCU" in body

@@ -3,6 +3,7 @@ Math, tenant isolation, rendering (page and CSV), and the empty tenant, for each
 from datetime import date, timedelta
 
 import pytest
+from csvutil import csv_text
 
 from apps.contracts.models import Contract, ContractType
 from apps.contracts.services import add_asset
@@ -158,7 +159,7 @@ def test_cosr_categories_with_no_acquisition_value_have_no_ratio(client, signed_
     body = client.get("/reports/cosr/").content.decode()
     assert "<title>Ventilators: 0.0%</title>" in body and "<title>Infusion pumps" not in body
     assert "Infusion pumps: $164 annual service cost on devices with no recorded acquisition value (no ratio)." in body
-    csv = client.get("/reports/cosr.csv").content.decode().splitlines()
+    csv = csv_text(client.get("/reports/cosr.csv")).splitlines()
     assert csv[1] == "Ventilators,1,38000.00,0.00,0.00" and csv[2] == "Infusion pumps,1,0.00,164.45,"
     # No category has a ratio: no chart at all, and the empty state says why.
     Asset.objects.filter(pk=vent.pk).update(acquisition_cost=0)
@@ -202,7 +203,7 @@ def test_cosr_renders_the_stats_chart_and_hints(client, signed_in, freeze_today,
     assert "<title>Benchmark: 6.0%</title>" in body and 'stroke="var(--crit)"' in body
     assert "Red marker: 6% benchmark midpoint." in body and "$1,000 of annual service cost is on contracts that cover no active devices" in body
     assert "no recorded acquisition value" not in body
-    csv = client.get("/reports/cosr.csv").content.decode().splitlines()
+    csv = csv_text(client.get("/reports/cosr.csv")).splitlines()
     assert csv[0] == "Category,Devices,Acquisition value,Annual service cost,Ratio %" and csv[1].startswith("Infusion pumps,2,6200.00,")
 
 
@@ -254,7 +255,7 @@ def test_spend_renders_the_stats_and_chart(client, signed_in, freeze_today, seed
     assert 'aria-label="Repair spend by month"' in body and "Labor</span>" in body and "Parts</span>" in body
     assert "<title>Sep · Parts: $36</title>" in body and "No repairs completed" not in body
     assert "Repair work orders only; PM labor and service contracts are excluded." in body
-    csv = client.get("/reports/spend.csv").content.decode().splitlines()
+    csv = csv_text(client.get("/reports/spend.csv")).splitlines()
     assert csv[0] == "Month,Labor,Parts,Total" and len(csv) == 7 and csv[-1] == "Sep 2026,379.00,36.00,415.00"
 
 
@@ -358,7 +359,7 @@ def test_contract_renders_the_donut_table_and_hint(client, signed_in, freeze_tod
     assert '<td>In-house</td><td class="num">1</td><td class="num">$3,000</td><td class="num">$265</td><td class="num">8.8%</td>' in body
     assert "devices with no contract, or whose contract has ended, count as in-house." in body and "No service cost recorded yet." not in body
     assert "counted as in-house until the contract is renewed" not in body  # no device is on an ended contract in the seed
-    csv = client.get("/reports/contract.csv").content.decode().splitlines()
+    csv = csv_text(client.get("/reports/contract.csv")).splitlines()
     assert csv[0] == "Support model,Devices,Acquisition value,Annual cost,Ratio %" and len(csv) == 4 and csv[1].startswith("In-house,1,3000.00,")
 
 

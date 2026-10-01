@@ -2,6 +2,7 @@
 from datetime import date, timedelta
 
 import pytest
+from csvutil import csv_text
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 
@@ -152,7 +153,7 @@ def test_compliance_renders_with_chips_targets_and_trend(client, signed_in, comp
     assert 'aria-label="PM completion rate by month"' in body and "Target 95%" in body
     chart = r.context["p"]["chart"]
     assert chart["paths"][0]["name"] == "All devices" and chart["xlabels"][0]["label"] == "Oct '25"  # 12 months ending at the report's month
-    csv = client.get("/reports/compliance.csv").content.decode()
+    csv = csv_text(client.get("/reports/compliance.csv"))
     assert csv.startswith("Risk class,Devices,PMs due this month,Completed,On time,Overdue now,Current compliance %,Target %")
 
 
@@ -264,7 +265,7 @@ def test_mtbf_renders_the_table_and_hint(client, signed_in, mtbf_data, freeze_to
     assert '<td class="num">—</td><td class="num">—</td><td class="num">1.0 d</td><td class="num">$82</td>' in body
     assert "Ranked by repairs per device per year; repairs opened since Mar 30, 2026." in body and "showing" not in body
     assert "The yearly rate doubles the six-month count per device in service" in body
-    csv = client.get("/reports/mtbf.csv").content.decode()
+    csv = csv_text(client.get("/reports/mtbf.csv"))
     assert csv.startswith("Manufacturer,Model,Device,In service,\"Repairs, 6 mo\",Repairs per device per year,MTBF days,Avg turnaround days,Avg repair cost")
     assert csv.splitlines()[1] == "Hamilton Medical,Hamilton-G5,ICU ventilator,2,3,3.00,121,4.00,264.00"
 
@@ -328,7 +329,7 @@ def test_replace_clamps_a_future_install_date(ctx, dept, pump_model, client, sig
     body = client.get("/reports/replace/").content.decode()
     assert '<td class="num">0.0 yr</td>' in body and '<td class="num"><b>0</b></td>' in body
     assert "The top 1 is shown; the CSV carries the full ranked list of 1 active device for the capital request." in body
-    assert client.get("/reports/replace.csv").content.decode().splitlines()[1].startswith("CE-10010,Infusion pump,BD,Alaris 8015 PCU,ICU,0.00,")
+    assert csv_text(client.get("/reports/replace.csv")).splitlines()[1].startswith("CE-10010,Infusion pump,BD,Alaris 8015 PCU,ICU,0.00,")
 
 
 def test_replace_shows_twelve_but_exports_everyone(ctx, dept, pump_model):
@@ -358,7 +359,7 @@ def test_replace_renders_rows_that_open_the_drawer(client, signed_in, replace_da
     assert "for these 3: <b style=\"color:var(--ink)\">$44,310</b>" in body and "1 device without a list price" in body
     assert "The top 3 are shown; the CSV carries the full ranked list of 3 active devices for the capital request." in body
     assert "twelve" not in body
-    csv = client.get("/reports/replace.csv").content.decode()
+    csv = csv_text(client.get("/reports/replace.csv"))
     assert csv.startswith('Asset tag,Device,Manufacturer,Model,Location,Age years,Expected life years,"Repairs, 6 mo",Condition,Score,Est. replacement')
     assert csv.splitlines()[1].startswith("CE-10001,ICU ventilator,Hamilton Medical,Hamilton-G5,ICU,")
 

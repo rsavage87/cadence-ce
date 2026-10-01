@@ -1,6 +1,7 @@
 """Reports screen (slice 7): the page shell, its list and partial swap, the CSV download, the API, and server-side permission checks.
 The reports themselves are tested next to their numbers (test_reports_cost.py, test_reports_fleet.py, test_reports_operations.py)."""
 import pytest
+from csvutil import csv_text
 
 from apps.reports.services import REPORT_KEYS, REPORTS
 
@@ -65,7 +66,8 @@ def test_csv_download_carries_the_reports_columns(client, signed_in, monkeypatch
     r = client.get("/reports/mtbf.csv")
     assert r.status_code == 200 and r["Content-Type"].startswith("text/csv")
     assert r["Content-Disposition"].startswith('attachment; filename="cadence-mtbf-') and r["Content-Disposition"].endswith('.csv"')
-    assert r.content.decode().splitlines() == ["Model,Ratio", "G5,1.23", '"Pump, large",']
+    assert csv_text(r).splitlines() == ["Model,Ratio", "G5,1.23", '"Pump, large",']
+    assert b"".join(client.get("/reports/mtbf.csv").streaming_content).startswith("\ufeff".encode())  # Excel reads it as UTF-8
 
 
 @pytest.mark.parametrize("role, status", [("director", 200), ("manager", 200), ("technician", 200), ("analyst", 200), ("requester", 403), ("vendor", 403)])

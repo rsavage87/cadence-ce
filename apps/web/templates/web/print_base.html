@@ -1,0 +1,22 @@
+{% load static web %}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="same-origin">
+<title>{% block title %}Print{% endblock %} · {{ request.tenant.name }}</title>
+<link rel="stylesheet" href="{% static 'web/print.css' %}">
+{% block page_style %}{% endblock %}
+</head>
+<body class="{% block body_class %}{% endblock %}">
+{% comment %}Printable pages (slice 11): work-order prints, asset labels, route sheets, report PDFs. Opened in a new tab from
+   the app; always light, no app shell. The bar is for the screen only; "Save as PDF" in the print dialog makes the PDF.
+   Pages fill block content (one sheet) or block sheets (several, each its own <section class="sheet">).{% endcomment %}
+<div class="print-bar">
+  <div class="print-bar-t"><b>{% block bar_title %}{% endblock %}</b><span>{% block bar_hint %}Print it, or choose Save as PDF in the print dialog.{% endblock %}</span></div>
+  <div class="print-bar-a">{% block bar_actions %}{% endblock %}<button class="pbtn primary" type="button" data-print>{% icon "print" %} Print</button></div>
+</div>
+{% block sheets %}<main class="sheet">{% block content %}{% endblock %}</main>{% endblock %}
+<footer class="print-foot">{{ request.tenant.name }} · Cadence CE · printed {% now "M j, Y g:i A" %} by {{ request.user.get_full_name|default:request.user.username }}</footer>
+<script>document.querySelector("[data-print]").addEventListener("click", function () { window.print(); });</script>
+</body>
+</html>

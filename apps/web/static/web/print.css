@@ -1,0 +1,50 @@
+/* Printable pages (web/print_base.html). Always light: paper is white whatever the app's theme. */
+:root{color-scheme:light;--ink:#14181f;--ink-2:#3d4553;--muted:#6a7280;--line:#c9ced6;--line-2:#e3e6eb;--bg:#eef0f3;--paper:#fff;
+  --accent:#1f6f8b;--ok:#1a7f37;--warn:#9a5b00;--bad:#b42318}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:12.5px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+svg{width:16px;height:16px;flex:none}
+.print-bar{position:sticky;top:0;z-index:2;display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between;
+  padding:10px 16px;background:var(--paper);border-bottom:1px solid var(--line)}
+.print-bar-t{display:flex;flex-direction:column;gap:2px;min-width:0}
+.print-bar-t span{color:var(--muted);font-size:12px}
+.print-bar-a{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.pbtn{display:inline-flex;align-items:center;gap:6px;font:inherit;font-weight:600;padding:7px 12px;border-radius:7px;border:1px solid var(--line);
+  background:var(--paper);color:var(--ink);text-decoration:none;cursor:pointer}
+.pbtn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.pbtn.active{border-color:var(--accent);color:var(--accent)}
+.sheet{display:block;background:var(--paper);width:min(8.5in,100%);margin:16px auto;padding:.5in;box-shadow:0 1px 4px rgba(20,24,31,.14)}
+.print-foot{width:min(8.5in,100%);margin:0 auto 24px;padding:0 4px;color:var(--muted);font-size:11px}
+h1{font-size:19px;line-height:1.25;margin:0 0 2px}
+h2{font-size:14px;margin:16px 0 6px;padding-bottom:3px;border-bottom:1.5px solid var(--ink)}
+h3{font-size:12.5px;margin:12px 0 4px}
+p{margin:0 0 6px}
+.muted{color:var(--muted)}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+table{width:100%;border-collapse:collapse}
+th,td{padding:4px 6px;border-bottom:1px solid var(--line-2);text-align:left;vertical-align:top}
+th{font-size:11px;text-transform:uppercase;letter-spacing:.03em;color:var(--ink-2);border-bottom:1px solid var(--line)}
+tr{break-inside:avoid}
+dl.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:6px 16px;margin:0}
+dl.kv div{min-width:0}
+dl.kv dt{font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)}
+dl.kv dd{margin:0;overflow-wrap:anywhere}
+.box{display:inline-block;width:12px;height:12px;border:1.5px solid var(--ink);border-radius:2px;vertical-align:-2px}
+.blank{display:inline-block;min-width:90px;border-bottom:1px solid var(--ink);height:14px;vertical-align:-3px}
+.sign{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:18px;margin-top:22px}
+.sign div{border-top:1px solid var(--ink);padding-top:3px;font-size:11px;color:var(--ink-2)}
+.chip{display:inline-block;padding:0 6px;border:1px solid var(--line);border-radius:999px;font-size:11px}
+.chip.bad{color:var(--bad);border-color:var(--bad)}
+.chip.warn{color:var(--warn);border-color:var(--warn)}
+.note{padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:#f7f8fa;margin:8px 0}
+.page-break{break-after:page}
+@media (max-width:640px){.sheet{margin:0;padding:16px;box-shadow:none}}
+@media print{
+  html,body{background:#fff}
+  .print-bar{display:none}
+  .sheet{width:auto;margin:0;padding:0;box-shadow:none}
+  .sheet + .sheet{break-before:page}
+  .print-foot{width:auto;margin:10px 0 0;padding:0}
+  a{color:inherit;text-decoration:none}
+}

@@ -17,6 +17,7 @@ slice deferred is noted in its row and below.
 | 8 | Settings | Integrations, portal settings, editable policy, risk scoring | `facility` + `web` | done (connectors, paging, photo upload, and email or text confirmation deferred) |
 | 9 | PM schedule UI | PM schedule (calendar, create work orders for a day) | `pm` + `web` | done (Auto-assign week, Route sheets, and OEM library sync deferred) |
 | 10 | Sign-in and invitations | Users and access (Invite user, Resend invite), sign-in page | `accounts` + `web` | done (shared lockout counters across workers need Redis; email is sent in the request) |
+| 11 | Exports and printing | Export (CSV) on Equipment, Work orders, Contracts, a contract's Device list; Label, Print, Route sheets, report PDF, Response log, Overview Export | `web` | in progress |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.

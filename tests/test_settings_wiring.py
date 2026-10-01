@@ -4,6 +4,7 @@ compliance report's targets. Every test also changes the other tenant's settings
 from datetime import date, timedelta
 
 import pytest
+from csvutil import csv_text
 
 from apps.equipment.models import Asset, DeviceModel, RiskClass
 from apps.facility import services as fs
@@ -244,7 +245,7 @@ def test_compliance_report_renders_the_policy_target(client, signed_in, medium_f
     assert "other equipment follows the hospital policy target of 97.5% with completion within the due month" in body
     assert "Target 97.5%" in body and "Target 80%" not in body and "target of 80%" not in body
     assert r.context["p"]["chart"]["target_label"] == "Target 97.5%"
-    csv = client.get("/reports/compliance.csv").content.decode().splitlines()
+    csv = csv_text(client.get("/reports/compliance.csv")).splitlines()
     assert csv[3].startswith("Medium,10,") and csv[3].endswith(",90.00,97.50") and csv[1].endswith(",100.00")
 
 

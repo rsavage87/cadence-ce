@@ -103,7 +103,8 @@ def _render_body(request):
 def recalls(request):
     if is_partial(request, "rc-body"):
         return _render_body(request)
-    ctx = {**_body_context(request), "feed_at": rc.feed_imported_at(), "can_match": request.user.has_level(rc_perms.MODULE, rc_perms.MATCH_LEVEL)}
+    ctx = {**_body_context(request), "feed_at": rc.feed_imported_at(), "can_match": request.user.has_level(rc_perms.MODULE, rc_perms.MATCH_LEVEL),
+           "can_view_reports": request.user.has_level(Module.REPORTS, Level.VIEW)}  # the Response log button prints the recall report
     return render(request, "web/recalls.html", ctx)
 
 

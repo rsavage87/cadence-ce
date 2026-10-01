@@ -4,6 +4,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
+from csvutil import csv_text
 
 from apps.accounts.models import Level, Role
 from apps.credentials.models import Technician
@@ -119,7 +120,7 @@ def test_tech_page_and_csv(client, signed_in, freeze_today, tech_data):
     assert "<td class=\"num\">3.0 d</td>" in body and "<td class=\"num\">5.5</td>" in body
     assert "Vendor-performed work is excluded." in body and "Last 30 days, Aug 29 to Sep 28, 2026." in body
     assert "No active technicians." not in body
-    csv = client.get("/reports/tech.csv").content.decode()
+    csv = csv_text(client.get("/reports/tech.csv"))
     assert csv.startswith("Technician,Title,Closed,PMs,Repairs,Hours logged,PM on time %,Avg repair turnaround days,Open now")
     assert "Dana Whitfield,Lead BMET,6,3,2,5.50,66.67,3.00,2" in csv
 
@@ -211,7 +212,7 @@ def test_recall_page_links_and_csv(client, signed_in, freeze_today, recall_data)
     assert "1 of 2 devices completed" in body and "Open 2 d" in body and "Firmware updated on all pumps" in body
     assert "This log is what a surveyor asks for" in body and "Sample alerts for demonstration only" not in body
     assert "Each row links to the alert and its work orders on the Recalls screen." in body
-    csv = client.get("/reports/recall.csv").content.decode()
+    csv = csv_text(client.get("/reports/recall.csv"))
     assert csv.startswith("Received,Alert,Source,Class,Manufacturer,Model,Affected devices,Status,Response,Closed on")
     assert "2026-08-01,FDA Z-0001-2026,FDA,Class II,BD,Alaris 8015 PCU,1,Closed,Firmware updated on all pumps,2026-08-20" in csv
 

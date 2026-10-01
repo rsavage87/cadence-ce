@@ -6,16 +6,16 @@ apps.web.reports.present. Views parse the key, call the report, and render.
 The list links swap #rep-body (list and panel together, so the active item follows the selection) and push the URL,
 so /reports/<key>/ renders as a full page too. Each report also downloads as CSV: the same table the API serves.
 """
-import csv
 from datetime import date
 
-from django.http import Http404, HttpResponse
+from django.http import Http404
 from django.shortcuts import render
 
 from apps.accounts.models import Level, Module
 from apps.reports import services as rs
 
 from .decorators import web_view
+from .exports import csv_response
 from .htmx import is_partial
 from .reports import present
 
@@ -44,23 +44,9 @@ def reports(request, key=None):
     return render(request, "web/_reports_body.html" if partial else "web/reports.html", ctx)
 
 
-def _cell(v):
-    if isinstance(v, float):
-        return f"{v:.2f}"
-    if isinstance(v, date):
-        return v.isoformat()
-    return "" if v is None else v
-
-
 @web_view(Module.REPORTS, Level.VIEW)
 def report_csv(request, key):
     meta = _meta(key)
     today = _today()
     data = rs.run_report(meta["key"], today)
-    response = HttpResponse(content_type="text/csv; charset=utf-8")
-    response["Content-Disposition"] = f'attachment; filename="cadence-{meta["key"]}-{today:%Y-%m-%d}.csv"'
-    writer = csv.writer(response)
-    writer.writerow(data["columns"])
-    for row in data["rows"]:
-        writer.writerow([_cell(v) for v in row])
-    return response
+    return csv_response(f"cadence-{meta['key']}-{today:%Y-%m-%d}.csv", data["columns"], data["rows"])

@@ -12,6 +12,7 @@
     <label class="field"><span>Year</span><select name="y" aria-label="Year">{% for v in years %}<option value="{{ v }}"{% if v == year %} selected{% endif %}>{{ v }}</option>{% endfor %}</select></label>
     <noscript><button class="btn" type="submit">Show</button></noscript>
     {% if not k.period.current %}<a class="btn" href="{% url 'web:overview' %}">This month</a>{% endif %}
+    <button class="btn" type="button" data-act="print" title="Print this overview, or save it as a PDF from the print dialog">{% icon "dl" %} Export</button>
   </form>
 </div>
 

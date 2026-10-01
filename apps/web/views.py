@@ -7,7 +7,6 @@ Drawers (device, work order) and the new work order modal are partials swapped i
 from datetime import date, timedelta
 from urllib.parse import urlencode
 
-from django.conf import settings
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.paginator import Paginator
 from django.db.models import Min
@@ -22,7 +21,7 @@ from apps.credentials.models import Technician
 from apps.credentials.services import qualification, qualified_technicians
 from apps.equipment.models import Asset
 from apps.equipment.services import FleetBucket, asset_service_summary, filter_assets, fleet_summary, search_assets
-from apps.facility.services import get_settings
+from apps.facility.services import asset_request_url, get_settings
 from apps.recalls.models import AlertMatch
 from apps.reports.services import overview_page
 from apps.workorders import permissions as wo_perms
@@ -106,10 +105,6 @@ def equipment(request):
     return render(request, "web/equipment.html", ctx)
 
 
-def _portal_url(asset) -> str:
-    return f"{settings.PORTAL_BASE_URL.rstrip('/')}{reverse('portal:request', args=[asset.tenant.slug])}?{urlencode({'asset': asset.tag})}"
-
-
 def _model_recalls(device_model_id) -> list:
     """Alert matches for one device model, newest notice first. Alert is global; the matches are the tenant's."""
     return list(AlertMatch.objects.filter(device_model_id=device_model_id).select_related("alert").order_by("-alert__published_on", "-alert__created_at"))
@@ -123,7 +118,7 @@ def asset_drawer_context(request, asset) -> dict:
     summary = asset_service_summary(asset)
     recalls = _model_recalls(asset.device_model_id) if can_view_recalls else []
     return {"asset": asset, "tab": tab, "summary": summary, "recent": summary["work_orders"][:4], "qualified": qualified_technicians(asset),
-            "portal_url": _portal_url(asset), "can_create_wo": request.user.has_level(wo_perms.MODULE, wo_perms.CREATE_LEVEL),
+            "portal_url": asset_request_url(asset), "can_create_wo": request.user.has_level(wo_perms.MODULE, wo_perms.CREATE_LEVEL),
             "can_view_wo": request.user.has_level(Module.WORKORDERS, Level.VIEW),
             "can_view_recalls": can_view_recalls, "recalls": recalls,
             "open_recall": any(m.status == AlertMatch.Status.NEEDS_ACTION for m in recalls)}

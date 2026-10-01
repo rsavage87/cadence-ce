@@ -73,6 +73,10 @@
       case "close-drawer": closeDrawer(); break;
       case "close-modal": closeModal(); break;
       case "copy": copyText(act.dataset.copy); break;
+      case "print": window.print(); break;
+      // Export and print links carry the list's current filters: the filters change through HTMX and update the address,
+      // not the link, so take them from the address at click time (the click runs before the link is followed).
+      case "with-filters": act.setAttribute("href", act.dataset.base + window.location.search); break;
       case "theme": {
         const next = themeNow() === "dark" ? "light" : "dark";
         document.documentElement.setAttribute("data-theme", next);

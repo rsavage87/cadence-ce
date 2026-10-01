@@ -67,11 +67,10 @@
     {% endif %}
   </div>
 </div>
-{% if actions %}
 <div class="dr-f">
   {% for a in actions %}
   <button class="btn{% if a.primary %} primary{% endif %}" type="button" hx-post="{% url 'web:wo_status' wo.number %}" hx-vals='{"to": "{{ a.to }}"}' hx-target="#drawer">{{ a.label }}</button>
   {% endfor %}
+  <a class="btn" href="{% url 'web:wo_print' wo.number %}" target="_blank" rel="noopener" title="Print this work order with its checklist">{% icon "print" %} Print</a>
 </div>
-{% endif %}
 {% endwith %}

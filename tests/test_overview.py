@@ -121,7 +121,8 @@ def test_donut_arcs_cover_the_circle_in_order():
 # --- recall integration points (slice 6) --------------------------------------------------------
 
 def test_recall_tile_links_only_when_given_a_url(ctx, pump_recall):
-    data = overview_page(TODAY.year, TODAY.month)
+    published = pump_recall.alert.published_on  # three days ago: last month during a month's first three days
+    data = overview_page(published.year, published.month)
     static = next(t for t in kpi_tiles(data) if t["label"] == "Recall alerts received")
     assert "url" not in static and static["value"] == "1" and ("1 need action", "") in static["parts"]
     linked = next(t for t in kpi_tiles(data, recalls_url="/recalls/") if t["label"] == "Recall alerts received")

@@ -60,10 +60,9 @@
     {% include "web/_contract_list.html" %}
   </div>
 </div>
-{% if can_edit %}
 <div class="dr-f">
-  <button class="btn primary" type="button" hx-post="{% url 'web:contract_renew' c.pk %}" hx-target="#drawer">Renew 12 months</button>
+  {% if can_edit %}<button class="btn primary" type="button" hx-post="{% url 'web:contract_renew' c.pk %}" hx-target="#drawer">Renew 12 months</button>{% endif %}
+  <a class="btn" href="{% url 'web:contract_devices_csv' c.pk %}" download title="Download this contract's covered devices as CSV">{% icon "dl" %} Device list</a>
   {% if can_delete %}<button class="btn danger" type="button" hx-post="{% url 'web:contract_delete' c.pk %}" hx-swap="none"
           hx-confirm="Delete {{ c.reference }}? {{ n }} covered device{{ n|pluralize }} will be set to in-house support.">Delete contract</button>{% endif %}
 </div>
-{% endif %}

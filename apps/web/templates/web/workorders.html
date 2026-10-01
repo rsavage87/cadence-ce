@@ -10,6 +10,7 @@
       <a class="{% if mode == 'list' %}active{% endif %}" href="{{ list_url }}{{ list_q }}"{% if mode == 'list' %} aria-current="true"{% endif %}>List</a>
       <a class="{% if mode == 'board' %}active{% endif %}" href="{{ list_url }}{{ board_q }}"{% if mode == 'board' %} aria-current="true"{% endif %}>Board</a>
     </div>
+    {% query request.GET mode=None page=None as wo_q %}<a class="btn" href="{% url 'web:workorders_csv' %}{{ wo_q }}" data-act="with-filters" data-base="{% url 'web:workorders_csv' %}" download title="Download the work orders in this list as CSV">{% icon "dl" %} Export</a>
     {% if can_create %}<button class="btn primary" type="button" hx-get="{% url 'web:wo_new' %}" hx-target="#modal-card">{% icon "plus" %} New work order</button>{% endif %}
   </div>
 </div>

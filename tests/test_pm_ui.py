@@ -109,7 +109,8 @@ def test_page_head_summarises_the_next_30_days(client, signed_in, fleet):
     body = client.get("/pm/").content.decode()
     assert "<h1>PM schedule</h1>" in body
     assert "3 PMs due in the next 30 days (4 h) · 1 overdue · intervals from each model's PM program, AEM where approved" in body
-    assert "Auto-assign week" not in body and "Route sheets" not in body  # the mock's toast-only buttons are left out
+    assert "Auto-assign week" not in body  # the mock's toast-only button is left out
+    assert 'data-base="/print/route-sheets/"' in body and " Route sheets</a>" in body  # slice 11 prints them
 
 
 # --- the calendar --------------------------------------------------------------------------------------------------
