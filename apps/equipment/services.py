@@ -363,7 +363,9 @@ def _check_model_unique(manufacturer: str, model: str, exclude=None) -> None:
 @transaction.atomic
 def update_device_model(device_model: DeviceModel, *, by=None, **fields) -> DeviceModel:
     """Change a catalog model with create_device_model's rules (and an AEM interval, which life-support models ignore). The name
-    stays unique in any letter case. A new interval moves no device's next PM by itself: it applies from each device's next PM."""
+    stays unique in any letter case. A new interval moves no device's next PM by itself: it applies from each device's next PM.
+    A scored model's risk class follows its score (set_risk_score), so a new class that disagrees with the score's band is refused;
+    an unscored model's class can change here (the screen and the API ask for Equipment Approve for that)."""
     unknown = set(fields) - set(MODEL_FIELDS)
     if unknown:
         raise ValidationError(f"These cannot be changed here: {', '.join(sorted(unknown))}.")
@@ -371,17 +373,99 @@ def update_device_model(device_model: DeviceModel, *, by=None, **fields) -> Devi
     if "aem_interval_months" in cleaned and cleaned["aem_interval_months"] != device_model.aem_interval_months:
         # Only an approved AEM case sets it (apps.pm.aem); sending back the current value is fine.
         raise ValidationError({"aem_interval_months": "An AEM interval is set by approving an AEM proposal (PM schedule, PM library)."})
+    score = device_model.risk_score
+    if "risk_class" in cleaned and cleaned["risk_class"] != device_model.risk_class and score is not None and cleaned["risk_class"] != risk_band(score):
+        # Sending back the current class is fine, as is moving a stray class onto the score's band.
+        raise ValidationError({"risk_class": f"This model's risk class follows its risk score ({score}, {RiskClass(risk_band(score)).label}). "
+                                             "Change the risk score to change the class."})
     if "manufacturer" in cleaned or "model" in cleaned:
         _check_model_unique(cleaned.get("manufacturer", device_model.manufacturer), cleaned.get("model", device_model.model), exclude=device_model)
-    changed = [f for f, v in cleaned.items() if getattr(device_model, f) != v]
+    _save_model(device_model, cleaned, by=by)
+    return device_model
+
+
+def _save_model(device_model: DeviceModel, values: dict, *, by=None, reason: str = "") -> list[str]:
+    """Set the values that differ and save once; then tell apps.pm.aem when the risk class or the OEM interval changed (a model
+    that became life support leaves AEM). The one path every model change takes. Returns the fields that changed."""
+    changed = [f for f, v in values.items() if getattr(device_model, f) != v]
     for f in changed:
-        setattr(device_model, f, cleaned[f])
+        setattr(device_model, f, values[f])
     if changed:
+        if reason:
+            device_model._change_reason = reason
         device_model.save()
     if {"risk_class", "oem_pm_interval_months"} & set(changed):
         from apps.pm import aem  # pm imports equipment; imported here to keep the two apps' modules loadable in any order
 
         aem.model_changed(device_model, changed=changed, by=by)
+    return changed
+
+
+# --- risk scoring (slice 14) ---------------------------------------------------------------------------------------------
+#
+# The Settings rubric (apps.facility.services.RISK_RUBRIC): four parts, each a whole number in its range, added up. The total's
+# band is the model's risk class; RISK_SCORE_BANDS is apps.facility.services.RISK_BANDS in numbers (a test keeps the two in
+# step). Assigned at intake, reviewed yearly: risk_reviewed_on is when the score was last set or confirmed. Who may score:
+# apps.equipment.permissions.can_set_risk (Approve).
+
+# (keyword, model field, label, lowest, highest)
+RISK_PARTS = (
+    ("function", "risk_function", "Clinical function", 1, 10),
+    ("physical", "risk_physical", "Physical risk of failure", 1, 5),
+    ("maintenance", "risk_maintenance", "Maintenance requirement", 1, 5),
+    ("incidents", "risk_incidents", "Incident history", 0, 2),
+)
+# (lowest score in the band, class), highest band first: 16 and above, 12 to 15, 9 to 11, 8 and below.
+RISK_SCORE_BANDS = ((16, RiskClass.LIFE_SUPPORT), (12, RiskClass.HIGH), (9, RiskClass.MEDIUM), (0, RiskClass.LOW))
+RISK_REVIEW_MONTHS = 12
+
+
+def risk_band(score: int) -> str:
+    """The risk class a score falls in."""
+    return next(rc for low, rc in RISK_SCORE_BANDS if score >= low).value
+
+
+def risk_review_due_on(device_model: DeviceModel) -> date | None:
+    """When the model's yearly risk review falls due; None when it was never scored (due now)."""
+    from apps.pm.dates import add_months
+
+    reviewed = device_model.risk_reviewed_on
+    return add_months(reviewed, RISK_REVIEW_MONTHS) if reviewed else None
+
+
+def risk_review_due(device_model: DeviceModel, today: date | None = None) -> bool:
+    """Never reviewed, or a year or more since the last review."""
+    due = risk_review_due_on(device_model)
+    return due is None or due <= (today or date.today())
+
+
+@transaction.atomic
+def set_risk_score(device_model: DeviceModel, *, function, physical, maintenance, incidents, by=None, today: date | None = None) -> DeviceModel:
+    """Score a model with the rubric: store the four parts, mark it reviewed today, and set its risk class to the score's band
+    (through _save_model, so apps.pm.aem hears of a new class). Saving the same score again is the yearly review: only the date
+    changes. Errors are keyed by the keyword names."""
+    today = today or date.today()
+    raw = {"function": function, "physical": physical, "maintenance": maintenance, "incidents": incidents}
+    values, errors = {}, {}
+    for key, field, label, low, high in RISK_PARTS:
+        try:
+            values[field] = _whole(raw[key], key, low, high, f"{label} is a whole number from {low} to {high}.")
+        except ValidationError as e:
+            errors.update(e.message_dict)
+    if errors:
+        raise ValidationError(errors)
+    score = sum(values.values())
+    band = risk_band(score)
+    review = device_model.risk_score is not None and all(getattr(device_model, f) == v for f, v in values.items())
+    reason = f"Risk score reviewed: {score}" if review else f"Risk scored {score} ({RiskClass(band).label})"
+    _save_model(device_model, {**values, "risk_reviewed_on": today, "risk_class": band}, by=by, reason=reason)
+    return device_model
+
+
+@transaction.atomic
+def clear_risk_score(device_model: DeviceModel, *, by=None) -> DeviceModel:
+    """Back to unscored: the parts and the review date go; the risk class stays as it is until the model is scored again."""
+    _save_model(device_model, {field: None for _key, field, *_rest in RISK_PARTS} | {"risk_reviewed_on": None}, by=by, reason="Risk score cleared")
     return device_model
 
 

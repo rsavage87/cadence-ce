@@ -1,0 +1,24 @@
+{% load web %}
+{# Add model (no dm) and Edit details (dm) for the device model catalog (slice 14). Context from apps.web.views_models._form_modal. #}
+<div class="modal-h"><h2>{% if dm %}Edit {{ dm.manufacturer }} {{ dm.model }}{% else %}Add model{% endif %}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{# novalidate: the server checks every field and puts each error on it. #}
+<form id="dm-form" hx-post="{% if dm %}{% url 'web:pm_model_edit' dm.pk %}{% else %}{% url 'web:pm_model_new' %}{% endif %}" hx-target="#modal-card" novalidate>
+  <div class="form">
+    {% if form.non_field_errors %}<div class="full"><span class="err">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    {% include "web/_asset_field.html" with field=form.manufacturer %}
+    {% include "web/_asset_field.html" with field=form.model %}
+    {% include "web/_asset_field.html" with field=form.description %}
+    {% include "web/_asset_field.html" with field=form.category %}
+    {% if dm %}
+    <div class="fld"><label for="dm-risk-ro">Risk class</label><input id="dm-risk-ro" type="text" value="{% if score is not None %}{{ score }} · {% endif %}{{ dm.get_risk_class_display }}" readonly aria-describedby="dm-risk-ro-hint"><span class="hint" id="dm-risk-ro-hint">Set by the risk score (Equipment Approve), not here.</span></div>
+    {% else %}
+    {% include "web/_asset_field.html" with field=form.risk_class %}
+    {% endif %}
+    {% include "web/_asset_field.html" with field=form.oem_pm_interval_months %}
+    {% include "web/_asset_field.html" with field=form.expected_life_years %}
+    {% include "web/_asset_field.html" with field=form.list_cost %}
+    <datalist id="dm-categories">{% for c in form.categories %}<option value="{{ c }}"></option>{% endfor %}</datalist>
+  </div>
+  {% if dm %}<div class="hint" style="padding:0 16px 12px">An AEM interval is changed on the AEM tab, and the PM procedure on the Procedure tab.</div>{% endif %}
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">{% if dm %}Save changes{% else %}Add model{% endif %}</button></div>
+</form>

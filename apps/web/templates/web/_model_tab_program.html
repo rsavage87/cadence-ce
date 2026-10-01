@@ -1,2 +1,47 @@
-{# The model drawer's program tab (slice 14). TODO: filled in by its part. #}
-<div class="empty">Coming soon.</div>
+{% load web %}
+{# The model drawer's PM program tab (slice 14). Context: program, from apps.web.views_models.program_tab (risk, interval, devices, can_* flags). #}
+{% with risk=program.risk interval=program.interval devices=program.devices can_view_asset=program.can_view_asset can_edit_model=program.can_edit_model can_set_risk=program.can_set_risk %}
+{% if can_edit_model or can_set_risk %}<div class="sec-actions" style="gap:14px">
+  {% if can_set_risk %}<button class="link" type="button" hx-get="{% url 'web:pm_model_risk' dm.pk %}" hx-target="#modal-card">{% if risk.score is None %}Score risk{% else %}Risk score{% endif %}</button>{% endif %}
+  {% if can_edit_model %}<button class="link" type="button" hx-get="{% url 'web:pm_model_edit' dm.pk %}" hx-target="#modal-card">Edit details</button>{% endif %}
+</div>{% endif %}
+<div class="sec"><dl class="dl">
+  <div><dt>Manufacturer</dt><dd>{{ dm.manufacturer }}</dd></div><div><dt>Model</dt><dd>{{ dm.model }}</dd></div>
+  <div><dt>Description</dt><dd>{{ dm.description }}</dd></div><div><dt>Category</dt><dd>{{ dm.category }}</dd></div>
+  <div><dt>Risk {% if risk.score is None %}class{% else %}score{% endif %}</dt><dd>{% if risk.score is not None %}{{ risk.score }} · {% endif %}{{ dm.get_risk_class_display }}{% if risk.score is None %} <span class="muted">· not scored</span>{% endif %}</dd></div>
+  <div><dt>Risk reviewed</dt><dd>{% if risk.reviewed_on %}{{ risk.reviewed_on|date:"M j, Y" }}{% else %}Never{% endif %}{% if risk.due %} <span class="chip warn">Review due</span>{% endif %}</dd></div>
+  <div><dt>OEM interval</dt><dd>{{ interval.oem }}</dd></div>
+  <div><dt>Interval in force</dt><dd>{{ interval.in_force }}, {% if interval.aem %}AEM{% else %}OEM{% endif %} · <button class="link" type="button" hx-get="{% url 'web:pm_model' dm.pk %}?tab=aem" hx-target="#drawer" title="The AEM decision and its history">AEM tab</button></dd></div>
+  <div><dt>Expected life</dt><dd>{{ dm.expected_life_years }} yr</dd></div><div><dt>List cost</dt><dd>{{ dm.list_cost|money }}</dd></div>
+  <div><dt>PM procedure</dt><dd>{% if dm.pm_procedure %}{{ dm.pm_procedure.code }}{% else %}<span class="muted">None</span>{% endif %} · <button class="link" type="button" hx-get="{% url 'web:pm_model' dm.pk %}?tab=procedure" hx-target="#drawer" title="This model's PM procedure">Procedure tab</button></dd></div>
+</dl></div>
+
+<div class="sec"><h3>Risk score <span>assigned at intake, reviewed yearly</span></h3>
+  {% if risk.score is not None %}
+  <div class="list">{% for p in risk.parts %}
+    <div class="li static"><div class="bd"><div class="t">{{ p.label }}</div><div class="s">{{ p.meaning }}</div></div><div class="r"><b>{{ p.value }}</b> of {{ p.high }}</div></div>
+  {% endfor %}</div>
+  <div class="hint" style="margin-top:8px">Total {{ risk.score }}: {{ dm.get_risk_class_display|lower }}. {% if risk.due %}The yearly review was due {{ risk.due_on|date:"M j, Y" }}.{% else %}Next review by {{ risk.due_on|date:"M j, Y" }}.{% endif %} The risk class follows the score.</div>
+  {% else %}
+  <div class="note">Not scored: the {{ dm.get_risk_class_display|lower }} class was set by hand.{% if can_set_risk %} Score the model with the rubric and its class follows the score from then on.{% endif %}</div>
+  {% endif %}
+</div>
+
+{% if interval.aem or interval.aem_ignored %}<div class="sec"><div class="note">{% if interval.aem %}On an approved AEM interval of {{ interval.in_force }} instead of the OEM's {{ interval.oem }}.{% else %}An AEM interval is on file, but life-support devices never go on AEM: they follow the OEM's {{ interval.oem }}.{% endif %} The AEM tab has the decision.</div></div>{% endif %}
+
+<div class="sec"><h3>Devices <span>{{ devices.active }} active{% if devices.retired %} · {{ devices.retired }} retired{% endif %}</span></h3>
+  <div class="list">
+  {% for a in devices.shown %}
+    <div class="li{% if not can_view_asset %} static{% endif %}"{% if can_view_asset %} hx-get="{% url 'web:asset' a.tag %}" hx-target="#drawer"{% endif %}>
+      <span class="rail {% if a.status == 'in_service' %}ok{% else %}warn{% endif %}"></span>
+      <div class="bd"><div class="t">{% if can_view_asset %}<a class="tag" href="{% url 'web:asset' a.tag %}">{{ a.tag }}</a>{% else %}{{ a.tag }}{% endif %} · {{ a.department }}</div>
+        <div class="s">{{ a.get_status_display }} · next PM {{ a.next_pm_on|date:"M j, Y"|default:"not scheduled" }}</div></div>
+      <div class="r">{% pm_sticker a %}</div>
+    </div>
+  {% empty %}
+    <div class="empty">No devices of this model in use.</div>
+  {% endfor %}
+  </div>
+  {% if devices.more %}<div class="hint" style="margin-top:8px">And {{ devices.more }} more active device{{ devices.more|pluralize }}, soonest PM first above.{% if can_view_asset %} <a class="link" href="{% url 'web:equipment' %}?q={{ dm.model|urlencode }}&amp;status=active">Find them on the Equipment screen</a>{% endif %}</div>{% endif %}
+</div>
+{% endwith %}

@@ -55,6 +55,7 @@
           </table>
         </div>
         <div class="hint" style="margin-top:8px">A device's class comes from its model in the catalog.</div>
+        {% with r=risk_scoring %}<div class="hint" id="set-risk-scored">{{ r.scored }} of {{ r.models }} model{{ r.models|pluralize }} scored with the rubric{% if r.reviews_due %} · {{ r.reviews_due }} yearly review{{ r.reviews_due|pluralize }} due{% endif %}. Models are scored from the PM library (PM schedule).</div>{% endwith %}
       </div>
     </div>
   </div>

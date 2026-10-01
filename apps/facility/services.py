@@ -350,3 +350,14 @@ def risk_summary() -> list[dict]:
     """The score bands with the active devices in each class (a device's class comes from its model)."""
     counts = dict(Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES).order_by().values_list("device_model__risk_class").annotate(n=Count("id")))
     return [{"band": band, "risk": rc.value, "label": rc.label, "devices": counts.get(rc.value, 0)} for band, rc in RISK_BANDS]
+
+
+def risk_scoring_summary(today=None) -> dict:
+    """How far the catalog's risk scoring has got (slice 14): its models, how many are scored, and how many scored ones are due
+    their yearly review (apps.equipment.services.risk_review_due). The unscored models are the gap between the first two."""
+    from apps.equipment.models import DeviceModel
+    from apps.equipment.services import risk_review_due
+
+    models = list(DeviceModel.objects.only("risk_function", "risk_physical", "risk_maintenance", "risk_incidents", "risk_reviewed_on"))
+    scored = [dm for dm in models if dm.risk_score is not None]
+    return {"models": len(models), "scored": len(scored), "reviews_due": sum(1 for dm in scored if risk_review_due(dm, today))}
