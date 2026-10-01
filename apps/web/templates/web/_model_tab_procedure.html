@@ -1,2 +1,63 @@
-{# The model drawer's procedure tab (slice 14). TODO: filled in by its part. #}
-<div class="empty">Coming soon.</div>
+{% load web %}
+{# The model drawer's Procedure tab (slice 14, part D). Context: dm, and proc from apps.web.views_procedures.procedure_tab; actions only for PM Edit. #}
+{% with p=proc.procedure %}
+{% if proc.can_edit %}<div class="sec-actions" style="gap:14px;margin:0 0 8px">{% if p %}<button class="link" type="button" hx-get="{% url 'web:pm_procedure_edit' p.pk %}?model={{ dm.pk }}" hx-target="#modal-card">Edit procedure</button>{% endif %}<button class="link" type="button" hx-get="{% url 'web:pm_procedure_new' %}?model={{ dm.pk }}" hx-target="#modal-card">New procedure</button></div>{% endif %}
+{% if p %}
+  <div class="sec">
+    <h3>PM procedure <span>{{ p.code }} · {{ proc.hours }} h estimated</span></h3>
+    <div style="font-weight:500;margin:-2px 0 10px">{{ p.name }}</div>
+    <dl class="dl">
+      <div><dt>Source</dt><dd>{{ p.get_source_kind_display }}</dd></div>
+      <div><dt>Revision</dt><dd>{{ p.revision|default:"—" }}</dd></div>
+      <div><dt>Reference</dt><dd>{{ p.source_reference|default:"—" }}</dd></div>
+      <div><dt>Source document</dt><dd>{% if proc.source_url %}<a class="link" href="{{ proc.source_url }}" target="_blank" rel="noopener noreferrer">Open the source document</a>{% else %}—{% endif %}</dd></div>
+      <div><dt>Estimated hours</dt><dd>{{ proc.hours }} h per PM</dd></div>
+      <div><dt>Last changed</dt><dd>{{ p.updated_at|date:"M j, Y" }}</dd></div>
+    </dl>
+  </div>
+
+  <div class="sec"><h3>Checklist <span>{{ proc.steps|length }} step{{ proc.steps|length|pluralize }}</span></h3>
+  {% if proc.steps %}
+    <div class="tbl-wrap"><table class="mini-tbl">
+      <thead><tr><th class="num">#</th><th>Step</th><th>Record</th></tr></thead>
+      <tbody>{% for s in proc.steps %}
+        <tr><td class="num muted">{{ forloop.counter }}</td><td style="white-space:normal">{{ s.text }}</td><td style="white-space:normal">{% if s.measured %}{% if s.measure %}{{ s.measure }}{% else %}A reading{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td></tr>
+      {% endfor %}</tbody>
+    </table></div>
+  {% else %}
+    <div class="note">This procedure has no steps on file. Its printed work orders leave lines to write down the steps and readings.</div>
+  {% endif %}
+  </div>
+
+  <div class="sec"><h3>Used by <span>{{ proc.used_by }} model{{ proc.used_by|pluralize }}</span></h3>
+  {% if proc.others %}
+    <div>This model, {% for o in proc.others %}{{ o.manufacturer }} {{ o.model }}{% if not forloop.last or proc.others_more %}, {% endif %}{% endfor %}{% if proc.others_more %}and {{ proc.others_more }} more{% endif %}.</div>
+    <div class="hint" style="margin-top:4px">A change to its checklist or hours changes the PM for all of them.</div>
+  {% else %}
+    <div>This model only.</div>
+  {% endif %}
+  </div>
+{% else %}
+  <div class="sec"><h3>PM procedure</h3>
+    <div class="note">No PM procedure on file for this model.</div>
+    <div class="hint" style="margin-top:8px">A PM for this model is estimated at {{ proc.default_hours|floatformat:"-2" }} hour{{ proc.default_hours|pluralize }}, and its work orders name no procedure.</div>
+  </div>
+{% endif %}
+
+{% if proc.can_edit %}
+  <div class="sec"><h3>{% if p %}Change procedure{% else %}Choose a procedure{% endif %} <span>{{ proc.choices|length }} in the library</span></h3>
+  {% if proc.choices %}
+    <form style="display:flex;gap:8px;flex-wrap:wrap" hx-post="{% url 'web:pm_model_procedure' dm.pk %}" hx-target="#drawer">
+      <select name="procedure" class="perm" style="flex:1;min-width:220px;padding:7px 9px" aria-label="PM procedure for this model">
+        <option value=""{% if not p %} selected{% endif %}>No procedure ({{ proc.default_hours|floatformat:"-2" }} h estimate)</option>
+        {% for pk, label in proc.choices %}<option value="{{ pk }}"{% if p and pk == p.pk %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+      <button class="btn sm primary" type="submit">Use for this model</button>
+    </form>
+  {% else %}
+    <div class="hint">The library has no procedures yet. Write the first one with New procedure.</div>
+  {% endif %}
+    <div class="hint" style="margin-top:8px">Hours apply to PM work orders created from now on. A printed PM work order shows the model's procedure as it is when printed{% if proc.open_pm %}, so this model's {{ proc.open_pm }} open PM work order{{ proc.open_pm|pluralize }} will print a change too{% endif %}.</div>
+  </div>
+{% endif %}
+{% endwith %}
