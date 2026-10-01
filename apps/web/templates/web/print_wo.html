@@ -1,0 +1,155 @@
+{% extends "web/print_base.html" %}
+{% load web recalls_tags %}
+{% comment %}One work order on paper (views_print.wo_print): what a technician takes to the device, with the PM checklist or room to
+   write findings, labor and parts so far, the timeline, and the sign-off. Everything typed by users is escaped as usual.{% endcomment %}
+{% block title %}{{ wo.number }}{% endblock %}
+{% block page_style %}<style>
+@page{size:letter;margin:.5in;@bottom-right{content:"{{ wo.number }} · page " counter(page) " of " counter(pages);font:9px sans-serif;color:#6a7280}}
+h2,h3{break-after:avoid}
+.keep{break-inside:avoid}
+.wo-org{color:var(--muted);font-size:11.5px;margin-bottom:2px}
+.wo-chips{display:flex;flex-wrap:wrap;gap:4px;margin:4px 0 10px}
+.wo-problem{white-space:pre-line;margin:0 0 8px;padding:6px 8px;border-left:3px solid var(--ink-2);background:#f7f8fa}
+.ruled .rule{height:26px;border-bottom:1px solid var(--line)}
+table.steps td.chk{width:22px}
+table.steps td.n{width:24px;color:var(--muted)}
+table.steps td.meas{width:2.3in}
+table.steps .blank{min-width:1in}
+tr.fill td{height:24px}
+tfoot td{font-weight:700;border-top:1px solid var(--ink);border-bottom:0}
+.totals{display:flex;flex-wrap:wrap;gap:6px 24px;justify-content:flex-end;margin-top:8px;font-variant-numeric:tabular-nums}
+.totals b{font-size:13.5px}
+.safety{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;margin-top:18px}
+.tl td.w{width:1.5in;white-space:nowrap;color:var(--ink-2)}
+.tl td.who{width:1.4in;color:var(--ink-2)}
+.tl td.t{white-space:pre-line}
+</style>{% endblock %}
+{% block bar_title %}{{ wo.number }} · {{ wo.get_type_display }}{% endblock %}
+{% block content %}
+{% with dm=asset.device_model %}
+<div class="wo-org">{{ facility }} · Clinical Engineering work order</div>
+<h1><span class="mono">{{ wo.number }}</span> · {{ wo.get_type_display }}</h1>
+<div class="wo-chips">
+  <span class="chip{% if wo.priority == 'critical' %} bad{% elif wo.priority == 'high' %} warn{% endif %}">{{ wo.get_priority_display }} priority</span>
+  <span class="chip">{{ wo.get_status_display }}</span>
+  {% if past_due_days %}<span class="chip bad">Past due</span>{% endif %}
+  {% if wo.tagged_out %}<span class="chip bad">Tagged out</span>{% endif %}
+</div>
+<dl class="kv">
+  <div><dt>Number</dt><dd class="mono">{{ wo.number }}</dd></div>
+  <div><dt>Type</dt><dd>{{ wo.get_type_display }}</dd></div>
+  <div><dt>Priority</dt><dd>{{ wo.get_priority_display }}</dd></div>
+  <div><dt>Status</dt><dd>{{ wo.get_status_display }}</dd></div>
+  <div><dt>Facility</dt><dd>{{ facility }}</dd></div>
+  <div><dt>Opened</dt><dd>{{ wo.opened_on|date:"M j, Y" }}</dd></div>
+  <div><dt>Due</dt><dd>{{ wo.due_on|date:"M j, Y" }}{% if past_due_days %} · {{ past_due_days }} d late{% endif %}</dd></div>
+  <div><dt>Started</dt><dd>{{ wo.started_on|date:"M j, Y"|default:"—" }}</dd></div>
+  <div><dt>Completed</dt><dd>{{ wo.completed_on|date:"M j, Y"|default:"—" }}</dd></div>
+</dl>
+
+<h2>Device</h2>
+<dl class="kv">
+  <div><dt>Asset tag</dt><dd class="mono"><b>{{ asset.tag }}</b></dd></div>
+  <div><dt>Device</dt><dd>{{ dm.description }}</dd></div>
+  <div><dt>Manufacturer and model</dt><dd>{{ dm.manufacturer }} {{ dm.model }}</dd></div>
+  <div><dt>Serial number</dt><dd>{{ asset.serial|default:"—" }}</dd></div>
+  <div><dt>Category</dt><dd>{{ dm.category }}</dd></div>
+  <div><dt>Risk class</dt><dd>{{ dm.get_risk_class_display }}</dd></div>
+  <div><dt>Department</dt><dd>{{ asset.department }}</dd></div>
+  <div><dt>Room</dt><dd>{{ asset.room|default:"—" }}</dd></div>
+  <div><dt>Support</dt><dd>{{ asset.get_support_type_display }}{% if asset.contract %} · {{ asset.contract.reference }}, {{ asset.contract.vendor }}{% if asset.contract.is_expired %} (expired {{ asset.contract.end_on|date:"M j, Y" }}){% else %} through {{ asset.contract.end_on|date:"M j, Y" }}{% endif %}{% endif %}</dd></div>
+  <div><dt>Warranty</dt><dd>{% if asset.warranty_end %}{% if asset.warranty_end >= today %}Through{% else %}Expired{% endif %} {{ asset.warranty_end|date:"M j, Y" }}{% else %}None on file{% endif %}</dd></div>
+</dl>
+
+<h2>Request</h2>
+<div class="wo-problem">{{ wo.problem }}</div>
+<dl class="kv">
+  <div><dt>Requested by</dt><dd>{{ wo.requester|default:"—" }}</dd></div>
+  <div><dt>Callback</dt><dd>{{ wo.callback|default:"Not given" }}</dd></div>
+  <div><dt>Reported location</dt><dd>{{ wo.reported_location|default:"—" }}</dd></div>
+  <div><dt>Source</dt><dd>{{ wo.get_source_display }}</dd></div>
+  <div><dt>Tagged out</dt><dd>{% if wo.tagged_out %}Yes, removed from use by the unit{% else %}No{% endif %}</dd></div>
+</dl>
+
+<h2>Assignment</h2>
+<dl class="kv">
+  <div><dt>Assigned to</dt><dd>{% if wo.vendor_service %}Vendor: {{ wo.vendor_name|default:"not named" }}{% elif wo.assigned_to %}{{ wo.assigned_to.name }}{% else %}Unassigned{% endif %}</dd></div>
+  <div><dt>Estimated hours</dt><dd>{{ wo.estimated_hours|floatformat:"-2" }} h</dd></div>
+</dl>
+
+{% if wo.alert %}
+<h2>Recall</h2>
+<p><b>{{ wo.alert|alert_label }}</b>{% if wo.alert.classification %} · {{ wo.alert.classification }}{% endif %} · {{ wo.alert.title }}</p>
+{% endif %}
+
+{% if is_pm %}
+<h2>PM checklist</h2>
+{% if procedure %}
+<p><b class="mono">{{ procedure.code }}</b> · {{ procedure.name }}</p>
+<p class="muted">{{ procedure.get_source_kind_display }}{% if procedure.source_reference %} · {{ procedure.source_reference }}{% endif %}{% if procedure.revision %} · revision {{ procedure.revision }}{% endif %}</p>
+{% if steps %}
+<table class="steps">
+  <thead><tr><th aria-label="Done"></th><th>#</th><th>Step</th><th>Measured</th></tr></thead>
+  <tbody>
+  {% for s in steps %}<tr><td class="chk"><span class="box"></span></td><td class="n">{{ forloop.counter }}</td><td>{{ s.text }}</td><td class="meas">{% if s.measured %}<span class="blank"></span>{% if s.measure %} {{ s.measure }}{% endif %}{% endif %}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="note">This procedure has no steps on file. Write down the steps performed and any readings.</div>
+<div class="ruled">{% for r in rules %}<div class="rule"></div>{% endfor %}</div>
+{% endif %}
+{% else %}
+<div class="note">No PM procedure is on file for this model. Write down the steps performed and any readings.</div>
+<div class="ruled">{% for r in rules %}<div class="rule"></div>{% endfor %}</div>
+{% endif %}
+{% if not is_open and wo.resolution %}<h3>Resolution</h3><p style="white-space:pre-line">{{ wo.resolution }}</p>{% endif %}
+{% else %}
+{% if is_open %}
+<h2>Findings and repair</h2>
+<div class="ruled">{% for r in rules %}<div class="rule"></div>{% endfor %}</div>
+{% else %}
+<h2>Resolution</h2>
+<p style="white-space:pre-line">{{ wo.resolution|default:"No resolution recorded." }}</p>
+{% endif %}
+{% endif %}
+
+<h2>Labor</h2>
+<table>
+  <thead><tr><th>Date</th><th>Technician</th><th>Work done</th><th class="num">Hours</th><th class="num">Rate</th><th class="num">Cost</th></tr></thead>
+  <tbody>
+  {% for line, cost in labor %}<tr><td>{{ line.worked_on|date:"M j, Y" }}</td><td>{{ line.technician.name|default:"—" }}</td><td>{{ line.description|default:"—" }}</td><td class="num">{{ line.hours|floatformat:"-2" }}</td><td class="num">${{ line.rate|floatformat:"2g" }}</td><td class="num">${{ cost|floatformat:"2g" }}</td></tr>
+  {% empty %}{% if not is_open %}<tr><td colspan="6" class="muted">No labor recorded.</td></tr>{% endif %}{% endfor %}
+  {% for r in blank_rows %}<tr class="fill"><td></td><td></td><td></td><td></td><td></td><td></td></tr>{% endfor %}
+  </tbody>
+  <tfoot><tr><td colspan="3">Labor total{% if is_open %} so far{% endif %}</td><td class="num">{{ labor_hours|floatformat:"-2" }} h</td><td></td><td class="num">${{ labor_total|floatformat:"2g" }}</td></tr></tfoot>
+</table>
+
+<h2>Parts</h2>
+<table>
+  <thead><tr><th>Part</th><th>Part number</th><th>PO</th><th class="num">Qty</th><th class="num">Unit cost</th><th class="num">Cost</th></tr></thead>
+  <tbody>
+  {% for line, cost in parts %}<tr><td>{{ line.description }}</td><td class="mono">{{ line.part_number|default:"—" }}</td><td>{{ line.po_number|default:"—" }}</td><td class="num">{{ line.quantity|floatformat:"-2" }}</td><td class="num">${{ line.unit_cost|floatformat:"2g" }}</td><td class="num">${{ cost|floatformat:"2g" }}</td></tr>
+  {% empty %}{% if not is_open %}<tr><td colspan="6" class="muted">No parts recorded.</td></tr>{% endif %}{% endfor %}
+  {% for r in blank_rows %}<tr class="fill"><td></td><td></td><td></td><td></td><td></td><td></td></tr>{% endfor %}
+  </tbody>
+  <tfoot><tr><td colspan="5">Parts total{% if is_open %} so far{% endif %}</td><td class="num">${{ parts_total|floatformat:"2g" }}</td></tr></tfoot>
+</table>
+<div class="totals"><span>Labor ${{ labor_total|floatformat:"2g" }}</span><span>Parts ${{ parts_total|floatformat:"2g" }}</span><b>Total{% if is_open %} so far{% endif %} ${{ total|floatformat:"2g" }}</b></div>
+
+<h2>Timeline</h2>
+<table class="tl">
+  <tbody>
+  {% for e in timeline %}<tr><td class="w">{{ e.at|date:"M j, Y g:i A" }}</td><td class="who">{{ e.who }}</td><td class="t">{{ e.text }}</td></tr>
+  {% empty %}<tr><td class="muted">Nothing recorded yet.</td></tr>{% endfor %}
+  </tbody>
+</table>
+
+<section class="keep">
+<h2>Sign-off</h2>
+<div class="sign"><div>Technician</div><div>Date</div></div>
+<div class="safety"><b>Electrical safety test</b><span><span class="box"></span> Pass</span><span><span class="box"></span> Fail</span></div>
+<div class="sign"><div>Returned to service by</div><div>Date</div></div>
+</section>
+{% endwith %}
+{% endblock %}

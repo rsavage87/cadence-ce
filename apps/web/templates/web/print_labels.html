@@ -1,0 +1,100 @@
+{% extends "web/print_base.html" %}
+{% load web %}
+{% comment %}Asset labels (views_print.labels). Two layouts: "label", one 2.25 x 1.25 in label per printed page for a thermal label
+   printer; "sheet", US Letter sheets of ten 2 x 4 in labels (Avery 5163: 0.5 in top and bottom, 5/32 in sides, 3/16 in between
+   the columns). The QR code encodes the device's request link and stays at least 0.8 in on the small label so a phone scans it.{% endcomment %}
+{% block title %}{% if tag and labels %}Asset label {{ labels.0.asset.tag }}{% else %}Asset labels{% endif %}{% endblock %}
+{% block body_class %}labels layout-{{ layout }}{% endblock %}
+{% block page_style %}<style>
+{% if layout == "label" %}@page{size:2.25in 1.25in;margin:0}{% else %}@page{size:letter;margin:.5in .15625in}{% endif %}
+/* The QR code's row has a fixed height, so long text is cut inside the label instead of pushing the request lines off it. The tag
+   is never cut: a long one gets a smaller face and wraps. */
+.lb{display:grid;grid-template-areas:"qr id" "req req";align-content:start;overflow:hidden;background:#fff;color:#000;line-height:1.15}
+.lb-qr{grid-area:qr}
+.lb-qr svg{display:block;width:100%;height:auto}
+.lb-id{grid-area:id;min-width:0;overflow:hidden}
+.lb-id div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lb-id .lb-tag{font-weight:700;letter-spacing:.01em;white-space:normal;overflow-wrap:anywhere;line-height:1.05}
+.lb-id .lb-dev{white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2}
+.lb-org{font-weight:700}
+.lb-req{grid-area:req;min-width:0}
+.lb-scan{font-weight:700}
+.lb-url{overflow-wrap:anywhere}
+/* one label per page */
+.lb-page{width:2.25in;height:1.25in;padding:0;margin:0;overflow:hidden;box-shadow:none}
+.layout-label .lb{width:2.25in;height:1.25in;padding:.05in .07in;grid-template-columns:.86in minmax(0,1fr);grid-template-rows:.86in auto;column-gap:.07in;row-gap:.015in;font-size:5.6pt}
+.layout-label .lb-qr{width:.86in;height:.86in}
+.layout-label .lb-org,.layout-label .lb-ce{font-size:5.4pt}
+.layout-label .lb-tag{font-size:12.5pt;margin:.02in 0 .015in}
+.layout-label .lb-tag.long{font-size:9pt}
+.layout-label .lb-tag.xl{font-size:7pt}
+.layout-label .lb-url{font-size:5pt}
+/* letter sheets of 2 x 4 in labels */
+.lb-sheet{display:grid;grid-template-columns:repeat(2,4in);grid-auto-rows:2in;column-gap:.1875in;align-content:start}
+.layout-sheet .lb{width:4in;height:2in;padding:.15in .18in;grid-template-columns:1.25in minmax(0,1fr);grid-template-rows:1.25in auto;column-gap:.16in;row-gap:.04in;font-size:8pt}
+.layout-sheet .lb-qr{width:1.25in;height:1.25in}
+.layout-sheet .lb-org,.layout-sheet .lb-ce{font-size:7.5pt}
+.layout-sheet .lb-tag{font-size:20pt;margin:.04in 0 .03in}
+.layout-sheet .lb-tag.long{font-size:14pt}
+.layout-sheet .lb-tag.xl{font-size:11pt}
+.layout-sheet .lb-url{font-size:7pt}
+.lb-none{max-width:6in}
+@media screen{
+  .lb-pages{display:flex;flex-wrap:wrap;gap:16px;justify-content:center;margin:16px auto;padding:0 16px}
+  .lb-page{box-shadow:0 1px 4px rgba(20,24,31,.14);zoom:1.75}  /* the small label is hard to read at actual size on a screen */
+  .lb-sheet.sheet{width:8.5in;max-width:none;min-height:11in;padding:.5in .15625in}
+  .layout-sheet .lb{outline:1px dashed var(--line)}
+  body.layout-sheet{overflow-x:auto}
+}
+@media print{
+  .lb-pages{margin:0;padding:0}
+  .lb-sheet.sheet{width:auto;padding:0}
+  .print-foot{display:none}
+}
+</style>{% endblock %}
+{% block bar_title %}{% if too_many %}Too many devices for one print{% elif tag and labels %}Asset label for {{ labels.0.asset.tag }}{% elif labels %}{{ labels|length }} asset label{{ labels|length|pluralize }}{% else %}Asset labels{% endif %}{% endblock %}
+{% block bar_hint %}{% if not labels %}Nothing to print.{% elif layout == "label" %}One 2.25 × 1.25 in label per page, for a thermal label printer. Print at actual size with no margins.{% else %}US Letter sheets of 2 × 4 in labels, 10 per sheet (Avery 5163 or equivalent). Print at actual size (100%).{% endif %}{% endblock %}
+{% block bar_actions %}{% if labels %}
+<a class="pbtn{% if layout == 'label' %} active{% endif %}" href="{% query request.GET layout='label' %}"{% if layout == 'label' %} aria-current="true"{% endif %}>Label printer</a>
+<a class="pbtn{% if layout == 'sheet' %} active{% endif %}" href="{% query request.GET layout='sheet' %}"{% if layout == 'sheet' %} aria-current="true"{% endif %}>Letter sheets</a>
+{% endif %}{% endblock %}
+{% block sheets %}
+{% if too_many %}
+<main class="sheet lb-none">
+  <h1>{{ too_many }} devices match this list</h1>
+  <p>Labels print at most {{ labels_max }} devices at a time. Narrow the filters on the Equipment screen, by department or category for example, and print again.</p>
+  <p><a class="pbtn" href="{% url 'web:equipment' %}{% query request.GET layout=None %}">Back to Equipment</a></p>
+</main>
+{% elif not labels %}
+<main class="sheet lb-none">
+  <h1>No devices match this list</h1>
+  <p>Change the filters on the Equipment screen and print again.</p>
+  <p><a class="pbtn" href="{% url 'web:equipment' %}{% query request.GET layout=None %}">Back to Equipment</a></p>
+</main>
+{% else %}
+<main class="lb-pages">
+{% for page in pages %}
+<section class="sheet {% if layout == 'label' %}lb-page{% else %}lb-sheet{% endif %}">
+{% for lb in page %}{% with a=lb.asset dm=lb.asset.device_model %}
+  <article class="lb">
+    <div class="lb-qr">{{ lb.qr }}</div>
+    <div class="lb-id">
+      <div class="lb-org">{{ facility }}</div>
+      <div class="lb-ce">Clinical Engineering</div>
+      <div class="lb-tag mono{% if a.tag|length > 16 %} xl{% elif a.tag|length > 11 %} long{% endif %}">{{ a.tag }}</div>
+      <div class="lb-dev">{{ dm.manufacturer }} {{ dm.model }}</div>
+      {% if a.serial %}<div>SN {{ a.serial }}</div>{% endif %}
+      <div>{{ a.department }}{% if a.room %}, room {{ a.room }}{% endif %}</div>
+    </div>
+    <div class="lb-req">
+      <div class="lb-scan">Scan to report a problem</div>
+      <div class="lb-url mono">{{ lb.short_url }}</div>
+      {% if hotline %}<div>Urgent: call {{ hotline }}</div>{% endif %}
+    </div>
+  </article>
+{% endwith %}{% endfor %}
+</section>
+{% endfor %}
+</main>
+{% endif %}
+{% endblock %}
