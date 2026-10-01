@@ -7,7 +7,7 @@ drawer's Request link), so unit staff can scan a device and report a problem. ?t
 Equipment list's own filters pick the devices, in the list's order (its page and the other screens' parameters are ignored).
 """
 from datetime import date
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from django.db.models import Prefetch
 from django.shortcuts import get_object_or_404, render
@@ -31,10 +31,20 @@ LABEL, SHEET = "label", "sheet"  # one 2.25 x 1.25 in label per page (thermal pr
 PER_SHEET = 10  # Avery 5163: 2 columns x 5 rows
 
 
+def url_size(short_url: str) -> str:
+    """How the printed URL fits on one line (print_labels.html): "" fits both layouts at their normal size; "long" needs the
+    small label's smaller face; "wide" is left off the small label and smaller on a sheet; "xwide" is left off both. One line
+    is about 48 characters on the 2.25 in label at 5 pt (56 at 4.3 pt), and 62 on the 4 in label at 7 pt (72 at 6 pt)."""
+    n = len(short_url)
+    return "" if n <= 48 else "long" if n <= 56 else "wide" if n <= 72 else "xwide"
+
+
 def _label(asset) -> dict:
     url = asset_request_url(asset)
     # Printed under the code for people without a scanner: browsers add the scheme themselves.
-    return {"asset": asset, "url": url, "short_url": url.split("://", 1)[-1], "qr": qr_svg(url, f"QR code: report a problem with {asset.tag}")}
+    short = url.split("://", 1)[-1]
+    return {"asset": asset, "url": url, "short_url": short, "url_size": url_size(short),
+            "qr": qr_svg(url, f"QR code: report a problem with {asset.tag}")}
 
 
 @web_view(Module.EQUIPMENT, Level.VIEW)
@@ -61,23 +71,38 @@ def labels(request):
 
 # --- work-order print -----------------------------------------------------------------------------
 
+def _cents(amount) -> Decimal:
+    return Decimal(amount).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
 RULED_LINES = 8  # blank lines to write on: findings while a repair is open, or the steps when no PM procedure is on file
 BLANK_ROWS = 2  # empty labor and parts rows while the work order is open
 
 
+def _step(step) -> dict:
+    if not isinstance(step, dict):
+        return {"text": str(step), "measured": False, "measure": ""}
+    measure = step.get("measure")
+    # Any reading counts but an absent one (None, False, ""): 0 and 0.3 are limits too, and True means "record a value".
+    measured = measure is not None and measure is not False and measure != ""
+    text = step.get("text")
+    if text in (None, ""):  # another key ({"step": ...}) or none: print what there is rather than an empty row
+        text = "; ".join(str(v) for k, v in step.items() if k != "measure" and v not in (None, ""))
+    return {"text": str(text), "measured": measured, "measure": "" if measure is True or not measured else str(measure)}
+
+
 def checklist_steps(procedure) -> list[dict]:
     """A procedure's steps for the print. A step is a string, or {"text": ..., "measure": ...} when a reading is recorded;
-    `measure` is what to record (e.g. "µA, limit 100"). Anything else in the JSON is printed as text rather than dropped."""
-    steps = procedure.checklist if procedure is not None and isinstance(procedure.checklist, list) else []
-    out = []
-    for step in steps:
-        if isinstance(step, dict):
-            measure = step.get("measure")
-            out.append({"text": str(step.get("text") or ""), "measured": measure not in (None, False, ""),
-                        "measure": measure if isinstance(measure, str) else ""})
-        else:
-            out.append({"text": str(step), "measured": False, "measure": ""})
-    return out
+    `measure` is what to record (e.g. "µA, limit 100"). Nothing in the JSON is dropped: a dict without "text" prints its other
+    values, and a checklist saved as one string prints a step per line."""
+    if procedure is None or procedure.checklist in (None, "", [], {}):
+        return []
+    steps = procedure.checklist
+    if isinstance(steps, str):
+        steps = [line.strip() for line in steps.splitlines() if line.strip()]
+    elif not isinstance(steps, list):
+        steps = [steps]
+    return [_step(s) for s in steps]
 
 
 @web_view(Module.WORKORDERS, Level.VIEW)
@@ -92,8 +117,9 @@ def wo_print(request, number):
     is_open = wo.status in OPEN_STATUSES
     is_pm = wo.type == WoType.PM
     procedure = wo.asset.device_model.pm_procedure if is_pm else None
-    labor = [(line, line.hours * line.rate) for line in wo.labor_lines.all()]
-    parts = [(line, line.quantity * line.unit_cost) for line in wo.part_lines.all()]
+    # Each line to the cent first, and the totals from those, so the printed columns add up to the printed totals.
+    labor = [(line, _cents(line.hours * line.rate)) for line in wo.labor_lines.all()]
+    parts = [(line, _cents(line.quantity * line.unit_cost)) for line in wo.part_lines.all()]
     labor_total = sum((cost for _line, cost in labor), Decimal(0))
     parts_total = sum((cost for _line, cost in parts), Decimal(0))
     return render(request, "web/print_wo.html", {

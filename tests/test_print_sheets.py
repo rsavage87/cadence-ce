@@ -185,10 +185,9 @@ def test_the_day_is_the_one_the_pm_screens_day_panel_shows(client, signed_in, ct
         assert [t for _, tags, _ in sheets(r.content.decode()) for t in tags] == ["CE-TODAY"], query
     r = client.get(URL + "?y=2026&m=11&day=2026-09-30")  # a selected day wins over the shown month, as on the PM screen
     assert r.context["day"] == SEP30 and [t for _, tags, _ in sheets(r.content.decode()) for t in tags] == ["CE-SEP30"]
-    r = client.get(URL + "?y=2026&m=11")  # another month with no day picked: its 1st, the day the PM screen's panel shows
-    assert r.context["day"] == date(2026, 11, 1)
-    pm_panel = client.get("/pm/?y=2026&m=11")
-    assert pm_panel.status_code == 200 and "Nov 1" in pm_panel.content.decode()
+    for query in ("?y=2026&m=11", "?y=2026&m=11&day=2026-11-20", "?day=2026-10-02", "?y=2026&m=9"):  # the PM screen's panel and the sheets agree
+        assert client.get(URL + query).context["day"] == client.get("/pm/" + query).context["day"], query
+    assert client.get(URL + "?y=2026&m=11").context["day"] == date(2026, 11, 1)  # another month with no day picked: its 1st
 
 
 def test_a_past_day_prints_its_overdue_devices_marked_overdue(client, signed_in, ctx, dept, pump_model, crew):
@@ -429,3 +428,16 @@ def test_print_section_hides_the_shell_and_forces_the_light_theme():
     assert ':root,:root:not([data-theme="light"]),:root[data-theme="dark"]{' in block and "color-scheme:light" in block
     assert "print-color-adjust:exact" in block and ".view{overflow:visible;padding:0}" in block and "html,body,.app{height:auto" in block
     assert "break-inside:avoid" in block and ".kpi," in block and ".panel," in block
+
+
+@pytest.mark.parametrize("day", [date(2026, 9, 15), date(2026, 10, 20)])  # overdue, and after the week (TODAY is Sep 29)
+def test_outside_the_week_waiting_devices_are_balanced_against_the_days_other_devices(client, signed_in, ctx, dept, pump_model, day):
+    """Two equally free pump technicians; one pump needs a PM work order, the other has an unassigned open one. Outside the week
+    plan, the waiting pump must count what the first was just given, as it does inside the week, so they land on two sheets."""
+    for name in ("Alex Able", "Blair Baker"):
+        Credential.objects.create(technician=Technician.objects.create(name=name, title="BMET II"), scope=Scope.CATEGORY, value="Infusion pumps")
+    dev("CE-A", pump_model, dept, day)
+    pm_wo(dev("CE-B", pump_model, dept, day))  # unassigned, as the nightly generate_pm leaves them
+    signed_in("director")
+    got = {name: tags for name, tags, _ in sheets(client.get(f"{URL}?day={day.isoformat()}").content.decode())}
+    assert got == {"Alex Able": ["CE-A"], "Blair Baker": ["CE-B"]}

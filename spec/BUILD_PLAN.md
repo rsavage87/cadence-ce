@@ -1,8 +1,8 @@
 # Build plan
 
 The mock (`cadence-ce-cmms-mock.html`) is the spec. Each slice below is shippable on its own and ends with green tests.
-Slices 0 to 10 are built: every screen in the mock exists, and people can be invited and sign in on their own. What each
-slice deferred is noted in its row and below.
+Slices 0 to 11 are built: every screen in the mock exists, people can be invited and sign in on their own, and the lists
+export and print. What each slice deferred is noted in its row and below.
 
 | # | Slice | Mock screen(s) | Code | Status |
 |---|-------|----------------|------|--------|
@@ -17,7 +17,7 @@ slice deferred is noted in its row and below.
 | 8 | Settings | Integrations, portal settings, editable policy, risk scoring | `facility` + `web` | done (connectors, paging, photo upload, and email or text confirmation deferred) |
 | 9 | PM schedule UI | PM schedule (calendar, create work orders for a day) | `pm` + `web` | done (Auto-assign week, Route sheets, and OEM library sync deferred) |
 | 10 | Sign-in and invitations | Users and access (Invite user, Resend invite), sign-in page | `accounts` + `web` | done (shared lockout counters across workers need Redis; email is sent in the request) |
-| 11 | Exports and printing | Export (CSV) on Equipment, Work orders, Contracts, a contract's Device list; Label, Print, Route sheets, report PDF, Response log, Overview Export | `web` | in progress |
+| 11 | Exports and printing | Export (CSV) on Equipment, Work orders, Contracts, a contract's Device list; Label, Print, Route sheets, report PDF, Response log, Overview Export | `web` | done (PDFs come from the browser's print dialog; Scan tag, Add device, Auto-assign week, Check feeds, Custom report, and Schedule still deferred) |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.
@@ -32,9 +32,9 @@ slice deferred is noted in its row and below.
 Operations: `apps/jobs` runs `generate_pm` and `import_openfda` once a day (the docker-compose `scheduler` service, at
 `SCHEDULER_DAILY_AT`), each at most once per local day and recorded in Admin under Scheduled jobs.
 
-The mock's toast-only buttons (Device list, Label, Print, Scan tag, and Export CSV outside Reports) are deferred until an export feature exists; Reports downloads each report as CSV.
+The mock's export and print buttons work since slice 11; its Scan tag (a mobile app's camera) and Add device (not in the mock either) are still left out.
 
-## Screen → view map (slices 4 to 10)
+## Screen → view map (slices 4 to 11)
 - Overview: `reports.services.overview_kpis(year, month)` + `pm.services.pm_on_time_series` for the 12-month chart; attention list = life-support overdue PMs, alerts needing action, unassigned portal requests, expired/expiring contracts, critical open WOs, WOs awaiting parts > 7 days.
 - Equipment: `Asset.objects.select_related(...)` with the same filters as the mock's toolbar (category, status, risk, department, support, overdue-only, bucket). Fleet buckets: retired / out of service / in repair / open recall / PM overdue / PM due ≤ 30 d / compliant, each device counted once in that order.
 - Work orders: list and board; status buttons call `workorders.services.change_status`; assignment dropdown lists `credentials.services.qualified_technicians(asset)` first.
@@ -107,3 +107,18 @@ The mock's toast-only buttons (Device list, Label, Print, Scan tag, and Export C
   SQLite), the policy reads an empty `app.tenant_id` as no tenant (`NULLIF`, re-applied by `enable_rls` on deploy), default
   roles are created inside their tenant, and lockout keys fold case the way Postgres does (`upper()`, so a dotless i shares kim's
   counter) in a cache of their own that junk logins cannot flush. `bootstrap_tenant --invite` emails the first director.
+- Exports and printing (slice 11): Export on Equipment, Work orders, and Contracts downloads the list as CSV with the filters on
+  screen (`/export/...csv`, `views_exports.py`; Equipment View, Work orders View, Contracts View), and a contract's drawer has
+  Device list. Every CSV goes through `web/exports.csv_response`: streamed inside the request's tenant (the rows are read after
+  the view returns, when the middleware has already left it), UTF-8 with a BOM, ISO dates, plain numbers, and text that a
+  spreadsheet would run kept as text (an apostrophe before a leading = + - @, and after a semicolon, tab, or line break inside
+  text, since a semicolon-separated Excel splits there whatever the quoting). Printable pages open in a new tab on
+  `web/print_base.html` and print or save as PDF from the browser: the work order with its PM checklist (`/print/work-orders/<n>/`,
+  line costs to the cent so the columns add up), asset labels with a QR code of the device's request link
+  (`/print/labels/?tag=` or the Equipment filters, at most 600, a 2.25 x 1.25 in thermal label or Letter sheets of 2 x 4 in; the
+  printed URL shrinks or is left off rather than push the hotline off the label), PM route sheets for the day the PM screen's
+  panel shows or the week (one sheet per technician: the open PM work order's holder, the vendor, the suggested technician, or
+  nobody credentialed; outside the week the waiting devices are balanced against the day's other suggestions), and every report
+  with its charts (`/print/reports/<key>/`; Recalls' Response log prints the recall report). The Overview's Export prints the page
+  itself (a print section in cadence.css hides the shell and keeps the light theme). Export and print links carry the list's
+  filters: cadence.js keeps their href equal to the address as HTMX changes it, so a middle-click or saved link gets them too.

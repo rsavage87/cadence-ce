@@ -13,6 +13,7 @@ Postgres `app.tenant_id` that row-level security reads). A queryset read then wo
 inside the tenant that was current when the response was made, for as long as it writes rows.
 """
 import csv
+import re
 from contextlib import nullcontext
 from datetime import date, datetime
 from decimal import Decimal
@@ -22,6 +23,7 @@ from django.http import StreamingHttpResponse
 from apps.tenants.context import get_current_tenant, tenant_context
 
 FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
+_EMBEDDED_FORMULA = re.compile(r"([;\t\r\n])(?=[=+\-@])")
 
 
 def cell(value):
@@ -38,7 +40,10 @@ def cell(value):
         return value.isoformat(timespec="minutes")
     if isinstance(value, date):
         return value.isoformat()
-    text = str(value)
+    # Inside the text too: Excel in many regions splits a double-clicked CSV on ";" (whatever the quoting, since this file is
+    # comma-separated), so "Pump alarm;=WEBSERVICE(...)" would give a cell starting with "=" that Excel runs. An apostrophe
+    # after a separator or line break keeps that piece text as well.
+    text = _EMBEDDED_FORMULA.sub(r"\1'", str(value))
     return "'" + text if text.startswith(FORMULA_START) else text
 
 
@@ -47,17 +52,24 @@ class _Echo:
         return value
 
 
+_writer = csv.writer(_Echo())
+
+
+def csv_line(values) -> str:
+    """One CSV line (CRLF, quoted where needed) from raw values."""
+    return _writer.writerow([cell(v) for v in values])
+
+
 def csv_response(filename: str, columns: list[str], rows) -> StreamingHttpResponse:
     """Stream `rows` (an iterable of sequences, such as a generator over a queryset) under `columns` as a download named `filename`."""
-    writer = csv.writer(_Echo())
     tenant = get_current_tenant()
 
     def lines():
-        yield "﻿" + writer.writerow([cell(c) for c in columns])
+        yield "\ufeff" + csv_line(columns)  # the byte-order mark: Excel reads the file as UTF-8
         # Closing the response (a finished or dropped download) closes this generator, which leaves the tenant again.
         with tenant_context(tenant) if tenant is not None else nullcontext():
             for row in rows:
-                yield writer.writerow([cell(v) for v in row])
+                yield csv_line(row)
 
     response = StreamingHttpResponse(lines(), content_type="text/csv; charset=utf-8")
     response["Content-Disposition"] = f'attachment; filename="{filename}"'

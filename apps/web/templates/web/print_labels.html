@@ -29,6 +29,10 @@
 .layout-label .lb-tag.long{font-size:9pt}
 .layout-label .lb-tag.xl{font-size:7pt}
 .layout-label .lb-url{font-size:5pt}
+/* The URL must stay on one line, or it pushes the hotline off the label: smaller when long, and left off the small label
+   when even that would wrap (the QR code carries it). Sizes from views_print.url_size: about 0.6 em per monospace character. */
+.layout-label .lb-url.long{font-size:4.3pt}
+.layout-label .lb-url.wide,.layout-label .lb-url.xwide{display:none}
 /* letter sheets of 2 x 4 in labels */
 .lb-sheet{display:grid;grid-template-columns:repeat(2,4in);grid-auto-rows:2in;column-gap:.1875in;align-content:start}
 .layout-sheet .lb{width:4in;height:2in;padding:.15in .18in;grid-template-columns:1.25in minmax(0,1fr);grid-template-rows:1.25in auto;column-gap:.16in;row-gap:.04in;font-size:8pt}
@@ -38,12 +42,14 @@
 .layout-sheet .lb-tag.long{font-size:14pt}
 .layout-sheet .lb-tag.xl{font-size:11pt}
 .layout-sheet .lb-url{font-size:7pt}
+.layout-sheet .lb-url.wide{font-size:6pt}
+.layout-sheet .lb-url.xwide{display:none}
 .lb-none{max-width:6in}
 @media screen{
   /* safe center: a Letter sheet wider than a phone screen starts at the left edge and scrolls, instead of being centred
      past the edge where nobody can scroll to it (browsers without `safe` keep the plain centre) */
   .lb-pages{display:flex;flex-wrap:wrap;gap:16px;justify-content:center;justify-content:safe center;margin:16px auto;padding:0 16px}
-  .lb-page{box-shadow:0 1px 4px rgba(20,24,31,.14);zoom:1.75}  /* the small label is hard to read at actual size on a screen */
+  .lb-page{flex:none;box-shadow:0 1px 4px rgba(20,24,31,.14);zoom:1.75}  /* readable on a screen; never squeezed (it scrolls on a phone) */
   .lb-sheet.sheet{width:8.5in;max-width:none;min-height:11in;padding:.5in .15625in}
   .layout-sheet .lb{outline:1px dashed var(--line)}
   body.layout-sheet{overflow-x:auto}
@@ -90,7 +96,7 @@
     </div>
     <div class="lb-req">
       <div class="lb-scan">Scan to report a problem</div>
-      <div class="lb-url mono">{{ lb.short_url }}</div>
+      <div class="lb-url mono{% if lb.url_size %} {{ lb.url_size }}{% endif %}">{{ lb.short_url }}</div>
       {% if hotline %}<div>Urgent: call {{ hotline }}</div>{% endif %}
     </div>
   </article>

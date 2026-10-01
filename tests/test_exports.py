@@ -216,7 +216,8 @@ def test_equipment_row_carries_every_column(client, signed_in, contract, vent, w
     assert records(rows)[0] == {
         "Tag": "CE-10001", "Serial": "G5-55012", "Manufacturer": "Hamilton Medical", "Model": "Hamilton-G5", "Description": "ICU ventilator",
         "Category": "Ventilators", "Risk class": "Life support", "Department": "ICU", "Room": "4-112", "Status": "In service", "Support": "OEM contract",
-        "Contract": "SC-2026-118", "Installed": (TODAY - timedelta(days=800)).isoformat(), "Acquisition cost": "38000.00",
+        "Contract": "SC-2026-118", "Contract end": contract.end_on.isoformat(), "Contract expired": "No",
+        "Installed": (TODAY - timedelta(days=800)).isoformat(), "Acquisition cost": "38000.00",
         "Warranty end": (TODAY + timedelta(days=40)).isoformat(), "Last PM": (TODAY - timedelta(days=170)).isoformat(),
         "Next PM": (TODAY + timedelta(days=10)).isoformat(), "Fleet state": "PM due within 30 days", "Open work orders": "2",
     }
@@ -224,6 +225,18 @@ def test_equipment_row_carries_every_column(client, signed_in, contract, vent, w
     # Two open work orders (vendor, nobody) and one completed; no install date or warranty is an empty cell.
     assert pump["Tag"] == "CE-10002" and pump["Open work orders"] == "2" and pump["Installed"] == "" and pump["Warranty end"] == ""
     assert pump["Fleet state"] == "Compliant" and pump["Risk class"] == "High"
+    assert pump["Contract"] == "SC-2026-118" and pump["Contract end"] == contract.end_on.isoformat() and pump["Contract expired"] == "No"
+
+
+def test_equipment_says_when_a_devices_contract_has_ended(client, signed_in, contract, vent):
+    """The screen marks an ended contract "expired"; without the end date and flag the file's Support column reads as covered."""
+    contract.start_on, contract.end_on = TODAY - timedelta(days=400), TODAY - timedelta(days=1)
+    contract.save()
+    signed_in("analyst")
+    row = records(download(client, "/export/equipment.csv?support=contract_expired")[1])
+    ended = (TODAY - timedelta(days=1)).isoformat()
+    assert [(r["Tag"], r["Support"], r["Contract"], r["Contract end"], r["Contract expired"]) for r in row] == [
+        ("CE-10001", "OEM contract", "SC-2026-118", ended, "Yes"), ("CE-10002", "OEM contract", "SC-2026-118", ended, "Yes")]
 
 
 def test_equipment_export_has_the_lists_rows_in_the_lists_order(client, signed_in, fleet):
@@ -525,3 +538,17 @@ def test_contract_drawer_offers_the_device_list_to_view_only_roles(client, signe
     a = link(body, f"/export/contracts/{contract.pk}/devices.csv")
     assert " download" in a and "Device list" in body and "Renew 12 months" not in body
     assert client.get(f"/export/contracts/{contract.pk}/devices.csv").status_code == 200
+
+
+def test_formula_text_after_a_semicolon_or_line_break_stays_text():
+    """Excel set to split on ";" (many regions) cuts a field at the semicolon whatever the quoting, so every piece that would
+    start with a formula character gets an apostrophe too. Plain text and numbers are untouched."""
+    import csv
+
+    from apps.web.exports import csv_line
+
+    line = csv_line(["ICU", "Pump alarm;=WEBSERVICE(CHAR(104)&A2);", "Nurse;  @SUM(1)", "Line 1\n+cmd", "a;b", "5 to 10", -3, None])
+    for delimiter in (",", ";"):  # how a comma Excel and a semicolon Excel split it
+        cells = [c for row in csv.reader(line.splitlines(), delimiter=delimiter) for c in row]
+        assert not any(c.startswith(("=", "+", "-", "@")) and c != "-3" for c in cells), (delimiter, cells)
+    assert "Pump alarm;'=WEBSERVICE(CHAR(104)&A2);" in line and "a;b" in line and ",-3," in line

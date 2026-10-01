@@ -100,13 +100,27 @@ def _sheets(items: list[tuple[tuple, dict]], with_day: bool) -> list[dict]:
     return sheets
 
 
+def _suggest_waiting(day: date, today: date, waiting: list, rows: list[dict]) -> dict:
+    """Technicians for devices whose open PM work order is on nobody's plate. Inside the week the week plan already counts the
+    day's other devices (sch.suggestions_for_day). Outside it the schedule picks for the day alone, so start from the hours the
+    day panel just gave the devices needing a work order: the waiting ones are balanced against them, not piled on whoever
+    sorts first by name."""
+    if today <= day < today + timedelta(days=sch.WEEK_DAYS):
+        return sch.suggestions_for_day(day, waiting, today)
+    load = sch.open_hours_by_technician()
+    for r in rows:
+        if r["technician"] is not None and not r["has_open_pm"]:
+            load[r["technician"].id] = load.get(r["technician"].id, Decimal("0")) + r["hours"]
+    return sch.suggest_technicians(waiting, today, load=load)
+
+
 def day_sheets(day: date, today: date) -> list[dict]:
     """The day panel's devices (sch.day_plan) on sheets. The plan suggests a technician only for devices with no open PM work order,
     so the devices whose open one is on nobody's plate ask the schedule the same way (bounded: one more plan, not one per device)."""
     plan = sch.day_plan(day, today)
     open_pm = _open_pms([r["asset"].id for r in plan["rows"]])
     waiting = [r["asset"] for r in plan["rows"] if r["asset"].id in open_pm and not _held(open_pm[r["asset"].id])]
-    more = sch.suggestions_for_day(day, waiting, today) if waiting else {}
+    more = _suggest_waiting(day, today, waiting, plan["rows"]) if waiting else {}
     items = []
     for r in plan["rows"]:
         a = r["asset"]

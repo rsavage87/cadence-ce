@@ -430,3 +430,42 @@ def test_retired_and_other_risk_devices_still_print_in_the_list(client, signed_i
     signed_in("technician")
     assert tags_in(client.get("/print/labels/").content.decode()) == ["CE-30001"]
     assert tags_in(client.get("/print/labels/?status=active").content.decode()) == []
+
+
+def test_a_long_request_url_never_wraps_into_the_hotline():
+    """Under the QR there is room for one URL line plus the hotline: a longer URL gets a smaller face, then is left off the
+    small label (the QR code carries it), then off the sheet label too."""
+    from apps.web.views_print import url_size
+
+    assert url_size("localhost:8000/r/riverside/?asset=CE-10241") == ""
+    assert url_size("cadence.riversidehealth.org/r/riverside/?asset=CE-10241") == "long"  # 55 characters, the review's case
+    assert url_size("cadence.riversidehealth.org/r/riverside-regional/?asset=CE-10241-B") == "wide"
+    assert url_size("x" * 73) == "xwide"
+
+
+def test_odd_checklist_shapes_print_rather_than_drop():
+    from types import SimpleNamespace
+
+    from apps.web.views_print import checklist_steps
+
+    steps = checklist_steps(SimpleNamespace(checklist=[{"step": "Inspect housing"}, {"text": "Ground resistance", "measure": 0.3},
+                                                         {"text": "Zero check", "measure": 0}, {"text": "Record leakage", "measure": True}, 7]))
+    assert [(s["text"], s["measured"], s["measure"]) for s in steps] == [
+        ("Inspect housing", False, ""), ("Ground resistance", True, "0.3"), ("Zero check", True, "0"), ("Record leakage", True, ""), ("7", False, "")]
+    assert [s["text"] for s in checklist_steps(SimpleNamespace(checklist="1. Inspect\n\n2. Test\n"))] == ["1. Inspect", "2. Test"]
+    assert checklist_steps(SimpleNamespace(checklist=[])) == [] and checklist_steps(None) == []
+
+
+def test_printed_line_costs_add_up_to_the_printed_totals(client, signed_in, ctx, vent, techs):
+    from decimal import Decimal
+
+    from apps.workorders.models import LaborLine
+    from apps.workorders.services import create_work_order
+
+    wo = create_work_order(asset=vent, type="repair", priority="normal", problem="Alarm")
+    for _ in range(2):
+        LaborLine.objects.create(work_order=wo, technician=techs["dana"], hours=Decimal("1.33"), rate=Decimal("82.50"))
+    signed_in("director")
+    r = client.get(f"/print/work-orders/{wo.number}/")
+    assert [cost for _line, cost in r.context["labor"]] == [Decimal("109.73"), Decimal("109.73")]
+    assert r.context["labor_total"] == Decimal("219.46") == r.context["total"]

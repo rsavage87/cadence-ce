@@ -63,7 +63,8 @@ def _covered_cost():
 # --- Equipment -------------------------------------------------------------------------------------
 
 EQUIPMENT_COLUMNS = ["Tag", "Serial", "Manufacturer", "Model", "Description", "Category", "Risk class", "Department", "Room", "Status", "Support",
-                     "Contract", "Installed", "Acquisition cost", "Warranty end", "Last PM", "Next PM", "Fleet state", "Open work orders"]
+                     "Contract", "Contract end", "Contract expired", "Installed", "Acquisition cost", "Warranty end", "Last PM", "Next PM",
+                     "Fleet state", "Open work orders"]
 
 
 @web_view(Module.EQUIPMENT, Level.VIEW)
@@ -78,7 +79,9 @@ def equipment_csv(request):
         for a in assets.iterator(chunk_size=CHUNK):
             dm = a.device_model
             yield [a.tag, a.serial, dm.manufacturer, dm.model, dm.description, dm.category, dm.get_risk_class_display(), a.department.name, a.room,
-                   a.get_status_display(), a.get_support_type_display(), a.contract.reference if a.contract_id else "", a.installed_on,
+                   # The screen marks an ended contract "expired"; the file says so too, or the Support column reads as covered.
+                   a.get_status_display(), a.get_support_type_display(), a.contract.reference if a.contract_id else "",
+                   a.contract.end_on if a.contract_id else None, (a.contract.end_on < today) if a.contract_id else None, a.installed_on,
                    a.acquisition_cost, a.warranty_end, a.last_pm_on, a.next_pm_on, FleetBucket(a.bucket).label, a.open_wos or 0]
 
     return csv_response(_filename("equipment", today), EQUIPMENT_COLUMNS, rows())

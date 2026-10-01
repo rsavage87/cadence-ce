@@ -63,6 +63,16 @@
   document.body.addEventListener("modal-close", closeModal);
   document.body.addEventListener("drawer-close", closeDrawer);
 
+  // Export and print links carry the list's current filters. The filters change through HTMX, which updates the address but
+  // not these links, so rewrite them whenever the address changes: then a middle-click, "Open in new tab", or "Save link as"
+  // gets the filters on screen too, not only a plain click.
+  function syncFilterLinks() {
+    document.querySelectorAll('[data-act="with-filters"]').forEach((a) => a.setAttribute("href", a.dataset.base + window.location.search));
+  }
+  ["htmx:pushedIntoHistory", "htmx:replacedInHistory", "htmx:historyRestore"].forEach((n) => document.addEventListener(n, syncFilterLinks));
+  window.addEventListener("popstate", syncFilterLinks);
+  syncFilterLinks();
+
   document.addEventListener("click", (e) => {
     const el = e.target;
     if (el === $("#scrim")) { closeDrawer(); return; }
@@ -74,9 +84,7 @@
       case "close-modal": closeModal(); break;
       case "copy": copyText(act.dataset.copy); break;
       case "print": window.print(); break;
-      // Export and print links carry the list's current filters: the filters change through HTMX and update the address,
-      // not the link, so take them from the address at click time (the click runs before the link is followed).
-      case "with-filters": act.setAttribute("href", act.dataset.base + window.location.search); break;
+      case "with-filters": syncFilterLinks(); break;  // belt and braces: the listeners above keep it current already
       case "theme": {
         const next = themeNow() === "dark" ? "light" : "dark";
         document.documentElement.setAttribute("data-theme", next);
