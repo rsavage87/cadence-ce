@@ -1,9 +1,10 @@
 {% load web %}
 {% comment %}The calendar and the day panel swap together (#pm-body, outerHTML) so the selected day follows the click; each link pushes its URL.
-   The hidden span re-fetches the body (same month and day) when a device changes in a drawer opened from the day list; the root
-   itself carries no swap attributes, so its links' own targets are all that apply.{% endcomment %}
+   The hidden span re-fetches the body (same month and day) when a device changes in a drawer opened from the day list, and after
+   Auto-assign week (pm-assigned: that answer is the modal, so the day list learns its new assignees this way; Create answers with
+   the body itself and does not fire it). The root itself carries no swap attributes, so its links' own targets are all that apply.{% endcomment %}
 <div id="pm-body" class="grid g-32">
-  <span hidden hx-get="{{ self_url }}" hx-trigger="devices-changed from:body" hx-target="#pm-body" hx-swap="outerHTML"></span>
+  <span hidden hx-get="{{ self_url }}" hx-trigger="devices-changed from:body, pm-assigned from:body" hx-target="#pm-body" hx-swap="outerHTML"></span>
   <div class="panel pm-cal"><div class="panel-b">
     <div class="cal-nav">
       {% if prev_url %}<a class="btn sm" href="{{ prev_url }}" hx-get="{{ prev_url }}" hx-target="#pm-body" hx-swap="outerHTML" hx-push-url="true" aria-label="Previous month">{% icon "l" %}</a>{% else %}<button class="btn sm" type="button" disabled aria-label="Previous month">{% icon "l" %}</button>{% endif %}

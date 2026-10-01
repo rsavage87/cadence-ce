@@ -1,0 +1,27 @@
+{% load web %}
+{% comment %}Auto-assign week (slice 14, views_pm_week): what the button does over the next 7 days, from the week plan the day list and
+   the workload show. Per technician, the PMs they get (new work orders, and open ones on nobody's plate) and the hours; the devices
+   nobody is credentialed for; what is already held; and the overdue devices it leaves alone. With nothing to do there is no button.{% endcomment %}
+<div class="modal-h"><h2>Auto-assign week</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+<div class="form pm-week">
+  <p class="full hint">{{ w.start|date:"M j" }} to {{ w.end|date:"M j, Y" }}. Each PM due goes to the least-loaded credentialed technician, day by day: the technician the day list names.</p>
+  {% if w.nothing_to_do %}
+  <div class="full note">{% if w.unassigned %}Nothing to assign: the PMs this week that are on nobody's plate need a credentialed technician.{% elif w.held %}Nothing to assign: every PM due this week is already with a technician or the vendor.{% else %}Nothing to assign: no PMs are due this week.{% endif %}</div>
+  {% else %}
+  <div class="full stats">
+    <div class="stat"><div class="v">{{ w.assigned }}</div><div class="l">PM{{ w.assigned|pluralize }} to assign</div></div>
+    <div class="stat"><div class="v">{{ w.created }}</div><div class="l">new work order{{ w.created|pluralize }}</div></div>
+    <div class="stat"><div class="v">{{ w.hours|floatformat:1 }}</div><div class="l">hours assigned</div></div>
+  </div>
+  {% if w.shares %}
+  <div class="full tbl-wrap"><table>
+    <thead><tr><th>Technician</th><th class="num">New work orders</th><th class="num">Open, now assigned</th><th class="num">PMs</th><th class="num">Hours</th></tr></thead>
+    <tbody>{% for s in w.shares %}<tr><td>{{ s.technician.name }}</td><td class="num">{{ s.new }}</td><td class="num">{{ s.existing }}</td><td class="num">{{ s.count }}</td><td class="num">{{ s.hours|floatformat:1 }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% endif %}
+  {% endif %}
+  {% if w.uncovered %}<div class="full note warn" role="status">Nobody is credentialed for {{ w.unassigned }} device{{ w.unassigned|pluralize }}: {% for u in uncovered %}{{ u.asset.tag }} ({{ u.asset.device_model.description }}, due {{ u.asset.next_pm_on|date:"M j" }}){% if not forloop.last %}, {% endif %}{% endfor %}{% if uncovered_more %}, and {{ uncovered_more }} more{% endif %}. {% if w.unassigned == 1 %}Its PM stays{% else %}Their PMs stay{% endif %} unassigned{% if w.unassigned_new %}; {{ w.unassigned_new }} work order{{ w.unassigned_new|pluralize }} {{ w.unassigned_new|pluralize:"is,are" }} still created for a manager to assign{% endif %}.</div>{% endif %}
+  {% if w.held %}<p class="full hint">{{ w.held }} PM{{ w.held|pluralize }} already with a technician or the vendor {{ w.held|pluralize:"stays,stay" }} as {{ w.held|pluralize:"it is,they are" }}.</p>{% endif %}
+  {% if w.overdue %}<div class="full note">{{ w.overdue }} overdue device{{ w.overdue|pluralize }} (PM due before {{ w.start|date:"M j" }}) {{ w.overdue|pluralize:"is,are" }} outside this week and not assigned here: open {{ w.overdue|pluralize:"its day,their days" }} on the calendar (the red counts) to create {{ w.overdue|pluralize:"its work order,their work orders" }}.</div>{% endif %}
+</div>
+<div class="modal-f">{% if w.nothing_to_do %}<button class="btn primary" type="button" data-act="close-modal">Close</button>{% else %}<button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="button" hx-post="{% url 'web:pm_week_assign' %}" hx-target="#modal-card" hx-disabled-elt="this">{% icon "sync" %} {{ confirm }}</button>{% endif %}</div>
