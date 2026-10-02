@@ -11,6 +11,7 @@ from pg_helpers import as_app_role, needs_postgres
 from test_custom_reports import TODAY, world  # noqa: F401
 
 from apps.accounts.models import Level, Module, Role, User
+from apps.equipment.models import DeviceModel
 from apps.reports import custom
 from apps.reports import subscriptions as subs
 from apps.reports.models import CustomReport, ReportSubscription
@@ -323,6 +324,7 @@ def test_without_view_on_what_it_lists_it_is_refused_in_plain_words(client, tena
     assert f'<div class="note warn" role="alert">{message}</div>' in body and "$193.97" not in body and world["r1"].number not in body
     assert f"/reports/{saved.key}.csv" not in body and f"/print/reports/{saved.key}/" not in body and "rep-schedule" not in body
     assert f'hx-post="/reports/custom-{saved.pk}/delete/"' in body  # deleting it shows nothing it lists
+    assert f'hx-get="/reports/custom-{saved.pk}/edit/"' not in body  # editing it would only say the same
     csv = client.get(f"/reports/{saved.key}.csv")
     assert csv.status_code == 403 and csv.content.decode() == message and csv["Content-Type"].startswith("text/plain")
     printed = client.get(f"/print/reports/{saved.key}/")
@@ -383,3 +385,19 @@ def test_each_source_saves_and_runs_under_the_policies(client, make_user, world)
         assert grouped.status_code == 200 and "Count</th>" in grouped.content.decode()
     with tenant_context(world["vent"].tenant):
         assert CustomReport.objects.count() == 4
+
+
+def test_editing_keeps_a_category_no_model_has_any_more(client, make_user, world):  # noqa: F811
+    """A report filtered on a category every model has since left lists nothing; its builder keeps the category checked, so saving
+    an edit (here only a new name) never widens it to the whole fleet."""
+    sign_in(client, make_user, "director")
+    report = custom.create_custom_report(name="Vents", source="devices", columns=["tag"], filters={"category": ["Ventilators"]})
+    DeviceModel.objects.filter(category="Ventilators").update(category="Ventilation")
+    body = client.get(f"/reports/custom-{report.pk}/edit/").content.decode()
+    assert 'name="f_category" value="Ventilators" checked' in body and "Ventilators (no model has it now)" in body
+    data = form(name="Vents, renamed", source="devices", col=["tag"], f_type=None, f_category=["Ventilators"], date_field="installed", sort="")
+    client.post(f"/reports/custom-{report.pk}/edit/", data, **BODY)
+    report.refresh_from_db()
+    assert report.name == "Vents, renamed" and report.filters == {"category": ["Ventilators"]}
+    preview = client.post("/reports/custom/preview/", data, **HX).content.decode()
+    assert "CE-10001" not in preview

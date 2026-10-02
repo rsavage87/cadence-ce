@@ -6,8 +6,9 @@ service contracts, recall matching, technician credentials, a public service req
 This is the starter codebase generated from the interactive mock in `spec/`. It contains the data model, tenancy,
 permissions, lifecycle services, importer, PM engine, KPI math, REST API, admin, portal, and tests, plus the HTMX
 web UI for Overview, Equipment, Work orders, Contracts, Recalls and alerts, Reports (eight survey-ready reports with CSV
-download), Users and access (Users, Roles, Technician credentials), and Settings (portal options, maintenance policy, KPI
-targets, integrations, risk scoring), and the PM schedule (calendar, a day's devices, create that day's PM work orders).
+download, and the facility's own custom reports), Users and access (Users, Roles, Technician credentials), and Settings
+(portal options, maintenance policy, KPI targets, integrations, risk scoring), and the PM schedule (calendar, a day's
+devices, create that day's PM work orders).
 Every screen in the mock is built; `spec/BUILD_PLAN.md` lists what each slice deferred.
 
 ## Run locally (Docker)
@@ -92,9 +93,11 @@ checklists, and choose each model's (PM Edit).
 A longer maintenance interval than the manufacturer's (AEM) is proposed with the model's three-year failure history, which the
 screen gathers from the facility's own records. The Equipment Management Committee then approves or rejects it, recorded by a
 PM Approve holder who did not propose it (the CE manager by default). Life-support models never go on AEM, and a model scored
-into life support leaves it. Ending an AEM, or approving a shorter interval, brings devices' next PMs in. Auto-assign week puts
-every PM due in the next 7 days on a credentialed technician's plate, as the schedule's plan suggests; it needs PM Approve and
-the right to assign work orders.
+into life support leaves it. Nor do imaging, radiologic, or medical laser models, which CMS keeps on the manufacturer's schedule:
+an Equipment Approve holder marks them when adding the model or in its Edit details (or with the asset importer's "OEM schedule
+required" column, for models it adds), and marking one ends its AEM and brings its PMs in. Ending an AEM, or approving a
+shorter interval, brings devices' next PMs in. Auto-assign week puts every PM due in the next 7 days on a credentialed
+technician's plate, as the schedule's plan suggests; it needs PM Approve and the right to assign work orders.
 
 ## Recording the work
 A work order's drawer records the time spent (Log time: who, when, hours, at the Settings labor rate) and the parts used (Add part),
@@ -103,6 +106,21 @@ records each checklist step as pass, fail, or not applicable, with the readings 
 A failed PM opens a repair work order and keeps the device out of service until that repair is done. The work-order print and the
 device's PM history show the recorded results. Recalls' Check FDA feed fetches new FDA recall notices on demand (at most every 15
 minutes) and matches them to your inventory.
+
+## Custom reports
+Reports' "+ Custom report" (Reports Edit: the director and Finance and quality by default) builds a report from work orders, devices,
+labor, or parts: pick the columns, filter by type, status, department, category, technician, or a date range (a rolling period such
+as the last 90 days, or fixed dates), and optionally group by a column or a month to get counts, totals, and averages. Preview shows
+the first rows before saving. Saved reports are listed under the eight standard ones for everyone with Reports View, and download,
+print, and email on a schedule like them. A report listing work orders also needs Work orders View, one listing devices Equipment
+View. Only the columns the builder offers can be asked for, and it never offers what a requester typed (the problem, notes, who
+asked, where), because reports are emailed.
+
+## Scan tag
+Scan tag on Equipment opens a device from its label: a handheld barcode scanner types into the field, a camera reads the code where
+the browser can (Chrome and Edge on Android and desktop; on an iPhone, the camera app opens the label's link), or type the tag.
+It reads a label's QR code link, a device link, or a plain tag, and opens only devices the user may see. Someone signed in to
+Cadence who opens a label's link on their phone gets an "Open in Cadence" link on the request page.
 
 ## Exports and printing
 Equipment, Work orders, and Contracts download as CSV with the filters on screen (Export), and a contract's covered devices

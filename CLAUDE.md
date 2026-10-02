@@ -28,10 +28,11 @@ security tests, `tests/test_postgres_rls.py`).
    (`web_view(..., scoped=True)`, a viewset's `scoped_actions`) and narrows what it shows through `scoping.work_orders` / `assets`.
 5. **State changes go through services** (`apps/workorders/services.py`, `apps/pm/services.py`, `apps/contracts/services.py`,
    `apps/accounts/services.py`, `apps/credentials/services.py`, `apps/recalls/services.py`, `apps/facility/services.py`, `apps/equipment/services.py`,
-   `apps/pm/aem.py`, `apps/pm/procedures.py`, `apps/workorders/costs.py`, `apps/workorders/completion.py`), never by setting fields in a
+   `apps/pm/aem.py`, `apps/pm/procedures.py`, `apps/workorders/costs.py`, `apps/workorders/completion.py`, `apps/reports/custom.py`), never by setting fields in a
    view or calling model helpers like
    `Contract.add_assets` directly. Services validate, write status history, and keep the asset in sync.
-6. **No PHI by design.** The portal never asks for patient identifiers. Don't add free-text fields that invite them.
+6. **No PHI by design.** The portal never asks for patient identifiers. Don't add free-text fields that invite them, and never offer
+   text a requester typed (a work order's problem, notes, requester, location) in anything emailed, such as a custom report's columns.
 7. **Migrations are generated, never hand-edited**, and committed with the change. After adding a tenant-scoped model,
    run `manage.py enable_rls --database=migrate` in the deploy step (docker-compose already does).
 8. **Tests for every slice:** a tenant-isolation test for each new model, and a service test for each rule.
@@ -80,7 +81,10 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `update_device_model`, `rename_department`: names unique in any letter case), and status changes
   (`STATUS_CHANGES`; retiring cancels open PMs), risk scoring (`set_risk_score`, `clear_risk_score`, `RISK_SCORE_BANDS`; every model
   change goes through `_save_model`, which locks the row and tells `apps.pm.aem.model_changed`), `permissions.py` (Edit to add, edit,
-  tag out, and add or edit models; Approve to retire or reinstate, and to score a model or change its risk class)
+  tag out, and add or edit models; Approve to retire or reinstate, to score a model or change its risk class, and to set or clear
+  `oem_schedule_required`, the CMS rule that keeps imaging, radiologic, and medical laser equipment on the manufacturer's schedule:
+  `DeviceModel.aem_excluded` covers it and life support); `scan.py` which device a scanned or typed code names (a label's request link
+  with any host, a device link, or a plain tag in any letter case, among the devices the user may see)
 - `apps/contracts` Contract with add/remove device operations and cost allocation; `services.py` for create/update/renew/delete, status, filters, KPI summary
 - `apps/workorders` WorkOrder and lines, ServiceRequest, lifecycle services; `scoping.py` who sees which devices and work orders inside a
   facility (scope_of, work_orders, assets, can_see_*, and shown_text, which masks other work orders' numbers); `costs.py` the only writer of labor and part lines (rates from
@@ -94,7 +98,7 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   the device drawer's PM tab share it), 30-day outlook, 7-day workload, PM library); `services.create_pm_work_orders_for_day` and
   `assign_week` / `week_assignment_preview` (Auto-assign week; both take `lock_planner()` first); `aem.py` the AEM program
   (`AemDecision`: evidence, propose, approve, reject, withdraw, end, the pull-in of next PMs; the only writer of
-  `DeviceModel.aem_interval_months`); `procedures.py` (write and revise procedures, the checklist line format, `set_model_procedure`);
+  `DeviceModel.aem_interval_months`; `exclusion()` says why a model never goes on AEM: life support, or the CMS mark); `procedures.py` (write and revise procedures, the checklist line format, `set_model_procedure`);
   `permissions.py` (View to see; Edit for procedures and AEM proposals; Approve to create a day's work orders and to decide or end
   AEM; Auto-assign week also needs work-order assign)
 - `apps/recalls` Alert (global), AlertMatch (per tenant), matching, openFDA importer; `services.py` dispositions and recall work-order batches,
@@ -103,15 +107,20 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   ECRI import is deferred (license).
 - `apps/credentials` Technician, Credential, qualification and coverage services, credential add/renew/sign-off/remove
 - `apps/portal` public request form (`/r/<tenant-slug>/`); `notifications.py` the requester's confirmation and done emails (only at the
-  facility's work email domains, never the problem text)
+  facility's work email domains, never the problem text); a label's link opened by a signed-in member who can see that device shows
+  "Open <tag> in Cadence" (the user's role is read only for a member, inside the facility's tenant_context), and nothing else changes
 - `apps/facility` Settings: `FacilitySettings` (one row per tenant: portal callback and hotline, the eight maintenance-policy texts,
   KPI targets and the monthly repair budget); `services.py` reads (`get_settings`, defaults until first saved), `update_settings`,
   `reset_policy`, `kpi_targets`, `compliance_targets`, `portal_url`, the integration list, risk bands; `permissions.py` (View to see,
   Edit to change). Named `facility` so it never reads like `django.conf.settings`.
 - `apps/reports` report emails (`ReportSubscription`, `subscriptions.py`, the daily `send_report_emails`; self-service only), overview KPIs, the Overview bundle (`overview_page`), attention list, nav counts, `cost_of_service`; the eight Reports
-  (`REPORTS` catalog and `run_report` in `services.py`; the numbers in `cost.py`, `fleet.py`, `operations.py`, read-only, `today` passed in)
+  (`REPORTS` catalog and `run_report` in `services.py`; the numbers in `cost.py`, `fleet.py`, `operations.py`, read-only, `today` passed in;
+  the API serves only these); custom reports (`CustomReport`, key `custom-<id>`): `custom.py` declares each source's columns and filters
+  (nothing else can be asked for), checks a definition (`clean_definition`), runs it in the database, and creates, changes, and deletes
+  one; `permissions.py` (Reports View runs, Reports Edit builds; a source also needs Work orders or Equipment View). `services.find_report`,
+  `run_any`, and `csv_filename` are the one lookup by key for the screen, CSV, print page, Schedule, and report emails
 - `apps/web` HTMX UI: one views/urls/forms module per screen (`views.py` Overview, Equipment, Work orders; `views_contracts.py`;
-  `views_users.py` Users and Roles tabs; `views_account.py` sign-in, password reset and change; `views_invite.py` accepting an invitation; `views_credentials.py`; `views_recalls.py`; `views_reports.py` with the CSV download; `views_settings.py`; `views_pm.py` with `pm_panels.py` for its lower panels; `views_pm_week.py` Auto-assign week; `views_wo_costs.py` and `views_wo_complete.py` the work order drawer's labor and parts and its Mark completed; `views_models.py` the device model drawer (PM program tab, Add model, Edit details, risk score) with `views_procedures.py` and `views_aem.py` for its Procedure and AEM tabs; `views_exports.py` the list CSVs; `views_print.py` asset labels and the
+  `views_users.py` Users and Roles tabs; `views_account.py` sign-in, password reset and change; `views_invite.py` accepting an invitation; `views_credentials.py`; `views_recalls.py`; `views_reports.py` with the CSV download and `views_custom_reports.py` the custom report builder (with `reports_custom.py`); `views_settings.py`; `views_pm.py` with `pm_panels.py` for its lower panels; `views_pm_week.py` Auto-assign week; `views_wo_costs.py` and `views_wo_complete.py` the work order drawer's labor and parts and its Mark completed; `views_models.py` the device model drawer (PM program tab, Add model, Edit details, risk score) with `views_procedures.py` and `views_aem.py` for its Procedure and AEM tabs; `views_exports.py` the list CSVs; `views_scan.py` Scan tag (with `static/web/scan.js`, the camera where the browser reads codes); `views_print.py` asset labels and the
   work-order print, with `qr.py`; `views_print_sheets.py` PM route sheets and report PDFs), templates,
   `charts.py` (SVG geometry: line, stacked bars, hbars with a benchmark marker, donut), `overview.py` and `reports_*.py` (chart geometry
   and display values for the Overview and the Reports; services never import them), `htmx.py` helpers, shell

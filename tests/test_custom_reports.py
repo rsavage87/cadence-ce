@@ -445,7 +445,7 @@ REFUSALS = [
     ({"filters": {"department": ["not-an-id"]}}, "filter_department", "Choose departments from this facility."),
     ({"filters": {"department": ["7d9f2c1e-0000-4000-8000-000000000000"]}}, "filter_department", "Choose departments from this facility."),
     ({"filters": {"technician": ["vendor"]}}, "filter_technician", "Choose technicians from this facility."),  # vendor time is labor's
-    ({"filters": {"category": ["Spaceships"]}}, "filter_category", "Choose categories this facility has."),
+    ({"filters": {"category": ["S" * 81]}}, "filter_category", "Choose categories this facility has."),
     ({"filters": {"type": ["repair"] * 201}}, None, None),  # duplicates collapse
     ({"filters": {"date": {"field": "completed", "period": "fortnight"}}}, "date", "Choose a period from the list."),
     ({"filters": {"date": {"field": "requested", "period": "last_7"}}}, "date", "Choose which date the period applies to."),
@@ -740,3 +740,33 @@ def test_the_daily_send_includes_custom_reports_and_skips_who_cannot_see_them(wo
     assert subs.SKIP_REASONS["no_source_access"] == "cannot see what the report lists"
     leftover.refresh_from_db()
     assert leftover.last_sent_on is None
+
+
+def test_pm_on_time_counts_a_cancelled_pm_as_the_kpi_does(world):
+    """A PM cancelled on a device still in use was missed: the PM completion KPI counts it, and so does the custom report's share.
+    One cancelled on a device since retired is left out of both (RETIRED_AND_CANCELLED)."""
+    from apps.pm.services import pm_on_time_rate
+
+    missed = create_work_order(asset=world["vent"], type="pm", priority="normal", problem="PM", opened_on=d(9, 2), due_on=d(9, 10))
+    change_status(missed, WoStatus.CANCELLED)
+    later = Asset.objects.create(tag="CE-10004", device_model=world["vent"].device_model, department=world["icu"])
+    gone = create_work_order(asset=later, type="pm", priority="normal", problem="PM", opened_on=d(9, 2), due_on=d(9, 12))
+    change_status(gone, WoStatus.CANCELLED)
+    Asset.objects.filter(pk=later.pk).update(status=AssetStatus.RETIRED)
+    on_time = {row["Number"]: row["PM on time"] for row in table(run("work_orders", ["number", "pm_on_time"]))}
+    assert on_time[missed.number] is False and on_time[gone.number] is None
+    kpi = pm_on_time_rate(d(9, 1), d(9, 30), TODAY)
+    r = run("work_orders", ["pm_on_time"], filters={"type": ["pm"], "date": {"field": "due", "period": "last_month"}}, group_by="type")
+    assert kpi == {"due": 4, "on_time": 1, "rate": 25.0}
+    assert r["columns"] == ["Type", "Count", "PM on time %"] and r["rows"] == [["Preventive maintenance", 5, 25.0]]  # every PM due, one share
+
+
+def test_blank_text_and_blank_codes_sort_last_either_way(world):
+    """A blank serial or a PM result not recorded yet reads as empty, and empty values sort last in either direction."""
+    assert [row[1] for row in run("devices", ["tag", "serial"], sort="serial")["rows"]] == ["HM-1", None, None]
+    assert [row[1] for row in run("devices", ["tag", "serial"], sort="-serial")["rows"]] == ["HM-1", None, None]
+    WorkOrder.objects.filter(pk=world["pm1"].pk).update(pm_result="pass")
+    WorkOrder.objects.filter(pk=world["pm2"].pk).update(pm_result="fail")
+    for sort in ("pm_result", "-pm_result"):
+        results = [row[1] for row in run("work_orders", ["number", "pm_result"], sort=sort)["rows"]]
+        assert all(results[:2]) and not any(results[2:]), (sort, results)

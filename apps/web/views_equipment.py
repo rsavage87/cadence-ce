@@ -110,9 +110,10 @@ def _create(request, form: NewDeviceForm):
 @web_view(Module.EQUIPMENT, Level.VIEW)
 def asset_new(request):
     _require(eq_perms.can_add(request.user))
+    can_mark = eq_perms.can_set_oem_schedule(request.user)  # the CMS mark on a new model (Equipment Approve)
     if request.method != "POST":
-        return _new_modal(request, NewDeviceForm())
-    form = NewDeviceForm(request.POST)
+        return _new_modal(request, NewDeviceForm(can_set_oem_schedule=can_mark))
+    form = NewDeviceForm(request.POST, can_set_oem_schedule=can_mark)
     asset = _create(request, form) if form.is_valid() else None
     if asset is None:
         return _new_modal(request, form)

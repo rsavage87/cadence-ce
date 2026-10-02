@@ -66,12 +66,13 @@ from django.db.models import (
     Value,
     When,
 )
-from django.db.models.functions import Cast, Coalesce, Lower, TruncDate, TruncMonth
+from django.db.models.functions import Cast, Coalesce, Lower, NullIf, TruncDate, TruncMonth
 from django.utils.text import slugify
 
 from apps.credentials.models import Technician
 from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, RiskClass, SupportType
 from apps.pm.dates import month_bounds
+from apps.pm.services import RETIRED_AND_CANCELLED
 from apps.tenants.context import get_current_tenant
 from apps.workorders.models import (
     LABOR_AMOUNT,
@@ -228,9 +229,10 @@ def _days_open(today):
 
 
 def _pm_on_time(today):
-    """A PM done on or before its due date: yes. Done late, or not done and past due today: no. Not due yet, cancelled, or not a
-    PM: empty. The rule of the PM completion KPI (apps.pm.services.pm_on_time_rate)."""
-    return Case(When(~Q(type=WoType.PM) | Q(status=WoStatus.CANCELLED), then=_NONE_INT),
+    """A PM done on or before its due date: yes. Done late, or not done and past due today: no; a PM cancelled on a device still
+    in use was missed, so it is no once past due too. Not due yet, cancelled on a device since retired, or not a PM: empty. The rule
+    of the PM completion KPI (apps.pm.services.pm_due_queryset, RETIRED_AND_CANCELLED), so the share agrees with the Overview."""
+    return Case(When(~Q(type=WoType.PM) | RETIRED_AND_CANCELLED, then=_NONE_INT),
                 When(completed_on__isnull=False, completed_on__lte=F("due_on"), then=Value(1)),
                 When(completed_on__isnull=False, then=Value(0)),
                 When(due_on__lt=today, then=Value(0)),
@@ -504,6 +506,9 @@ def filter_options(f: Filter) -> list[tuple[str, str]]:
     return []
 
 
+CATEGORY_MAX = DeviceModel._meta.get_field("category").max_length
+
+
 def _categories() -> list[str]:
     values = DeviceModel.objects.exclude(category="").order_by().values_list("category", flat=True).distinct()
     return sorted(set(values), key=str.casefold)
@@ -598,10 +603,11 @@ def _filter_values(f: Filter, raw, strict: bool) -> tuple[list[str], str]:
             return [], f"“{bad[0]}” is not one of the choices for {f.label.lower()}."
         return [v for v, _ in f.choices if v in values], ""  # in the declared order, so a definition reads the same however it was sent
     if f.kind == "category":
-        if strict:
-            known = set(_categories())
-            if any(v not in known for v in values):
-                return [], "Choose categories this facility has."
+        # Any category name, not only those in use now: a report saved with a category every model has since left (renamed in Edit
+        # details) matches nothing, and the builder keeps showing it checked, so saving an edit never silently widens the report.
+        # A name no model has filters nothing in, whatever is sent.
+        if strict and any(len(v) > CATEGORY_MAX for v in values):
+            return [], "Choose categories this facility has."
         return values, ""
     # department and technician: ids of this facility's rows (and "Vendor time" for labor)
     ids, out = [], []
@@ -830,9 +836,9 @@ def _expr(c: Column, today: date):
 
 
 def _rank(path: str, choices) -> Case:
-    """A coded value's place in its declared order (unknown values last), for sorting."""
-    return Case(*[When(**{path: v}, then=Value(i)) for i, v in enumerate(choices.values)], default=Value(len(choices.values)),
-                output_field=IntegerField())
+    """A coded value's place in its declared order, for sorting. A blank or unknown value has none (NULL), so it sorts with the
+    empty values: last, in either direction."""
+    return Case(*[When(**{path: v}, then=Value(i)) for i, v in enumerate(choices.values)], default=_NONE_INT, output_field=IntegerField())
 
 
 def _filtered(spec: SourceSpec, filters: dict, today: date):
@@ -908,7 +914,8 @@ def _listed(spec: SourceSpec, d: dict, qs, today: date, limit: int) -> dict:
     order = []
     if d["sort"]:
         c = spec.column(d["sort"].lstrip("-"))
-        key = _rank(c.value, c.choices) if c.choices else Lower(F(f"cr_{c.key}")) if c.kind == TEXT else F(f"cr_{c.key}")
+        # Text in any letter case, with blank text read as empty, so blanks sort last as missing values do (and as _grouped sorts them)
+        key = _rank(c.value, c.choices) if c.choices else NullIf(Lower(F(f"cr_{c.key}")), Value("")) if c.kind == TEXT else F(f"cr_{c.key}")
         order.append(OrderBy(key, descending=d["sort"].startswith("-"), nulls_last=True))
     raw = qs.annotate(**aliases).order_by(*order, *spec.order, "pk").values_list(*aliases)[:limit]
     rows = [[_plain(c, v) for c, v in zip(cols, r)] for r in raw]

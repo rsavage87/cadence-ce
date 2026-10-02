@@ -14,7 +14,8 @@ NEW = "new"  # the model or department select's value that reveals the fields fo
 CONDITIONS = [(1, "1 · Poor"), (2, "2 · Fair"), (3, "3 · Good"), (4, "4 · Very good"), (5, "5 · Excellent")]
 STATUSES = [(AssetStatus.IN_SERVICE, "In service"), (AssetStatus.OUT_OF_SERVICE, "Out of service: waiting for incoming inspection")]
 # A new model's fields, named as apps.equipment.services.create_device_model takes them (and keys its errors).
-MODEL_FIELDS = ("manufacturer", "model", "description", "category", "risk_class", "oem_pm_interval_months", "expected_life_years", "list_cost")
+MODEL_FIELDS = ("manufacturer", "model", "description", "category", "risk_class", "oem_pm_interval_months", "expected_life_years", "list_cost",
+                "oem_schedule_required")
 NOTES_PLACEHOLDER = "Accessories, mounting, history. No patient information."
 # The order web/_asset_fields.html lays the fields out in, so a form sent back with errors focuses the first one on screen.
 LAYOUT = ("tag", "serial", "device_model", *MODEL_FIELDS, "department", "room", "new_department", "installed_on", "warranty_end", "acquisition_cost",
@@ -115,11 +116,20 @@ class NewDeviceForm(DeviceForm):
                                                 widget=forms.NumberInput(attrs={"min": 1, "max": 120}))
     expected_life_years = forms.IntegerField(label="Expected life, years", required=False, initial=8, widget=forms.NumberInput(attrs={"min": 1, "max": 50}))
     list_cost = _money("List cost, $", False)
+    # The CMS mark (slice 18) is Equipment Approve's (apps.equipment.permissions): the field exists only on their form, so anyone
+    # else's new model starts unmarked whatever is posted (create_device_model refuses the mark from them too).
+    oem_schedule_required = forms.BooleanField(
+        label="Manufacturer's schedule required (CMS)", required=False,
+        help_text="Imaging (diagnostic or therapeutic), radiologic, or medical laser equipment: CMS requires the manufacturer's maintenance "
+                  "schedule, so the model never goes on AEM.")
     # The new department, used only when the department select says "Add a new department".
     new_department = forms.CharField(label="New department name", required=False, max_length=80)
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, can_set_oem_schedule: bool = False, **kwargs):
         super().__init__(*args, **kwargs)
+        self.can_set_oem_schedule = can_set_oem_schedule
+        if not can_set_oem_schedule:
+            del self.fields["oem_schedule_required"]
         # The category box suggests the facility's categories (a datalist); any new one is allowed.
         self.categories = list(DeviceModel.objects.order_by("category").values_list("category", flat=True).distinct())
 
@@ -133,7 +143,7 @@ class NewDeviceForm(DeviceForm):
         return d
 
     def model_fields(self) -> dict:
-        return {name: self.cleaned_data.get(name) for name in MODEL_FIELDS}
+        return {name: self.cleaned_data.get(name) for name in MODEL_FIELDS if name in self.fields}
 
     def asset_fields(self) -> dict:
         """create_asset's keyword arguments, but for the model and department (which may be new)."""

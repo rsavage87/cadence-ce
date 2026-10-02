@@ -1,10 +1,11 @@
 # Build plan
 
 The mock (`cadence-ce-cmms-mock.html`) is the spec. Each slice below is shippable on its own and ends with green tests.
-Slices 0 to 17 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
+Slices 0 to 18 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
 export and print, devices are added and changed in the product, reports and request confirmations go out by email, each
 device model's PM program (risk score, procedure, AEM interval) is kept in the product, and the work itself (time, parts,
-what was done, a PM's results) is recorded on the work order; vendors and clinical requesters see only their own share. What each slice deferred is noted in its row and below.
+what was done, a PM's results) is recorded on the work order; vendors and clinical requesters see only their own share; facilities
+build their own reports, and a label opens its device with Scan tag. What each slice deferred is noted in its row and below.
 
 | # | Slice | Mock screen(s) | Code | Status |
 |---|-------|----------------|------|--------|
@@ -15,17 +16,18 @@ what was done, a PM's results) is recorded on the work order; vendors and clinic
 | 4 | Web UI shell (HTMX) | Nav, topbar, Overview, Equipment, Work orders | new `apps/web` | done (device drawer: Overview + Work orders tabs) |
 | 5 | Contracts UI + credentials UI | Contracts section, Users and access (Users, Roles, Credentials tabs) | `contracts`, `accounts`, `credentials` + `web` | done (invitation email added in slice 10) |
 | 6 | Recalls UI + ECRI importer | Recalls and alerts | `recalls` + `web` | done (openFDA feed; ECRI importer deferred, it needs a license) |
-| 7 | Reports | Reports (COSR, PM compliance, MTBF, replacement, spend, contract vs in-house, technician productivity, recall log) | `reports` + `web` | done (CSV download and JSON API; PDF, Schedule, and Custom report deferred) |
+| 7 | Reports | Reports (COSR, PM compliance, MTBF, replacement, spend, contract vs in-house, technician productivity, recall log) | `reports` + `web` | done (CSV download and JSON API; PDF came in slice 11, Schedule in 13, Custom report in 18) |
 | 8 | Settings | Integrations, portal settings, editable policy, risk scoring | `facility` + `web` | done (connectors, paging, photo upload, and email or text confirmation deferred) |
 | 9 | PM schedule UI | PM schedule (calendar, create work orders for a day) | `pm` + `web` | done (Route sheets came in slice 11 and Auto-assign week in slice 14; OEM library sync deferred) |
 | 10 | Sign-in and invitations | Users and access (Invite user, Resend invite), sign-in page | `accounts` + `web` | done (shared lockout counters across workers need Redis; email is sent in the request) |
-| 11 | Exports and printing | Export (CSV) on Equipment, Work orders, Contracts, a contract's Device list; Label, Print, Route sheets, report PDF, Response log, Overview Export | `web` | done (PDFs come from the browser's print dialog; Scan tag and Custom report still deferred; Add device, Schedule, Auto-assign week, and Check feeds came later) |
+| 11 | Exports and printing | Export (CSV) on Equipment, Work orders, Contracts, a contract's Device list; Label, Print, Route sheets, report PDF, Response log, Overview Export | `web` | done (PDFs come from the browser's print dialog; Add device, Schedule, Auto-assign week, Check feeds, Scan tag, and Custom report came later) |
 | 12 | Device management | Equipment (Add device), device drawer (Edit details, Tag out of service, Return to service, PM schedule and Costs tabs) | `equipment` + `web` + `api` | done (the model catalog and AEM approval came in slice 14) |
 | 13 | Email notifications | Reports (Schedule), Settings (portal confirmation to the requester), the request portal | `reports` + `facility` + `portal` + `web` | done (report emails are self-service; text messages and paging still need a provider) |
 | 14 | The PM program | PM schedule (Auto-assign week, the PM library), a model's PM program (AEM, procedure, risk score) | `equipment` + `pm` + `web` | done (no API for procedures, AEM cases, or Auto-assign week yet; OEM library sync needs a library) |
 | 15 | Recording the work | Work order drawer (Cost, Mark completed), device PM history, Settings (labor rates), Recalls (Check feeds) | `workorders` + `recalls` + `web` + `api` | done (vendor accounts were limited to their company's work orders in slice 16) |
 | 16 | Who sees what | Users and access (company and unit on users, scope on roles), every screen for the vendor technician and the clinical requester | `accounts` + `workorders` + `web` + `api` | done (a custom role chooses its scope; the default vendor and requester scopes are fixed) |
 | 17 | The suite on PostgreSQL | (none: CI) | `tests` + CI | done (CI's test-postgres job runs every test on PostgreSQL 16 and the row-level security tests as the runtime role) |
+| 18 | Custom reports, Scan tag, the CMS rule | Reports (Custom report), Equipment (Scan tag), a model's PM program (AEM) | `reports` + `equipment` + `pm` + `portal` + `web` | done (the API serves the eight standard reports, not custom ones) |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.
@@ -40,7 +42,7 @@ what was done, a PM's results) is recorded on the work order; vendors and clinic
 Operations: `apps/jobs` runs `generate_pm` and `import_openfda` once a day (the docker-compose `scheduler` service, at
 `SCHEDULER_DAILY_AT`), each at most once per local day and recorded in Admin under Scheduled jobs.
 
-The mock's export and print buttons work since slice 11, and Add device since slice 12; its Scan tag (a mobile app's camera) is still left out.
+The mock's export and print buttons work since slice 11, Add device since slice 12, and Scan tag and Custom report since slice 18.
 
 ## Screen → view map (slices 4 to 13)
 - Overview: `reports.services.overview_kpis(year, month)` + `pm.services.pm_on_time_series` for the 12-month chart; attention list = life-support overdue PMs, alerts needing action, unassigned portal requests, expired/expiring contracts, critical open WOs, WOs awaiting parts > 7 days.
@@ -85,8 +87,8 @@ The mock's export and print buttons work since slice 11, and Add device since sl
   as in-house and is called out); a category with no recorded acquisition value has no ratio (listed in the hint, blank in the CSV);
   PM compliance counts a device marked missing as non-compliant and only counts PMs on active devices; the reliability rate uses the
   mock's ×2 factor (two 182-day halves, the same base as its MTBF); a work order cannot start or complete before it was opened; asset
-  tags cannot contain spaces or slashes (they live in URLs). The mock's Custom report, PDF, and Schedule buttons are deferred (they
-  need a report builder and an export service).
+  tags cannot contain spaces or slashes (they live in URLs). The mock's PDF and Schedule buttons came in slices 11 and 13, its Custom
+  report in slice 18.
 - Settings: `facility.services` over one `FacilitySettings` row per tenant (unsaved defaults until the first save; every save is
   audited). The portal panel auto-saves the callback requirement and the hotline (the public form and its confirmation page read
   them); the department-links modal builds `/r/<slug>/?dept=` links. The eight maintenance-policy texts save together or reset to the
@@ -208,3 +210,26 @@ The mock's export and print buttons work since slice 11, and Add device since sl
   admin refuses to delete a user, a recall notice, or a facility (several facilities' rows point at them; deactivate instead);
   the portal's case-insensitive department match picks by code point, so every collation agrees. Not covered: the API with token
   authentication, which does not resolve the facility yet (a separate fix).
+- Custom reports, Scan tag, and the CMS rule (slice 18): Reports' "+ Custom report" (Reports Edit: the director and Finance and
+  quality by default) builds a report from one source (work orders, devices, labor lines, part lines): columns, filters (choices,
+  departments, categories, technicians, yes/no, and one date range, a relative period resolved against the run's day so a scheduled
+  report rolls forward, or fixed dates), an optional grouping (a column or a date's month: a count, sums of money, hours, quantities,
+  and counts, averages of days, age, and condition, the share of PMs on time), and a sort. `reports/custom.py` declares what each
+  source offers and nothing else can be asked for: no free text a requester typed (problem, notes, who asked, where), no contract
+  prices, nothing about users beyond a technician's name. Money is each line to the cent as the work order drawer adds it, every
+  figure aggregates in the database, and at most 10,000 rows are listed (500 on screen). Saved reports are listed under the eight for
+  everyone with Reports View and download, print, and email on a schedule like them (`services.find_report` / `run_any`; the API
+  keeps serving the eight); running one also needs Work orders View, or Equipment View for devices, and the emails skip those
+  without it. Scan tag on Equipment (Equipment View, scoped users narrowed to their share) opens a device from a handheld scanner, the
+  camera where the browser reads codes (BarcodeDetector), or the keyboard: a label's request link from any host (another facility's
+  label says only that), a device link, or a plain tag in any letter case; a device outside the user's share reads like one that
+  does not exist. A label's link opened by a signed-in member who can see the device shows "Open <tag> in Cadence" on the portal,
+  and nobody else sees any difference. `DeviceModel.oem_schedule_required` marks imaging, radiologic, and medical laser models, which
+  CMS (S&C 14-07) keeps on the manufacturer's schedule: never on AEM (proposals refused, an open one cannot be approved), and marking
+  one ends its AEM and brings PMs in, as scoring into life support does; Equipment Approve sets or clears it (Edit details, Add model,
+  Add device's new model, the API PATCH, the importer's optional column for models it adds; the admin shows it read-only). Rules
+  settled in review: a custom report's PM on time counts a PM cancelled on a device still in use as missed, as the PM completion KPI
+  does; blank text and blank coded values sort last either way; editing a report keeps a category filter no model has any more
+  (shown checked), so a save never widens it; Edit is not offered to a builder who cannot see the report's source; a scanned link's
+  tag is decoded once more than the request's NUL check sees, so one with a control character is no tag; going back to a scanned
+  device's pushed URL renders the whole page.

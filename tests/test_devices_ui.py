@@ -562,9 +562,28 @@ def test_layout_is_the_order_the_fields_are_on_screen(client, signed_in, vent, d
     """focus_first_error walks LAYOUT; it must list every field in the order the template shows them."""
     signed_in("technician")
     names = re.findall(r'name="(\w+)"', client.get(NEW_URL, **HX).content.decode())
-    assert names == [n for n in LAYOUT if n in NewDeviceForm.base_fields] and set(NewDeviceForm.base_fields) == set(LAYOUT)
+    # The CMS mark is only on an Equipment Approve holder's form (test_add_device_offers_the_cms_mark_to_equipment_approve_only)
+    assert names == [n for n in LAYOUT if n in NewDeviceForm.base_fields and n != "oem_schedule_required"] and set(NewDeviceForm.base_fields) == set(LAYOUT)
     names = re.findall(r'name="(\w+)"', client.get(f"/equipment/{vent.tag}/edit/", **HX).content.decode())
     assert names == [n for n in LAYOUT if n in EditDeviceForm.base_fields]
+    signed_in("director")
+    names = re.findall(r'name="(\w+)"', client.get(NEW_URL, **HX).content.decode())
+    assert names == [n for n in LAYOUT if n in NewDeviceForm.base_fields]
+
+
+def test_add_device_offers_the_cms_mark_to_equipment_approve_only(client, signed_in, dept):
+    """Slice 18: a new model added with a device can be marked as CMS keeps on the manufacturer's schedule, by Equipment Approve only;
+    anyone else's form has no such field, and a mark they post anyway is ignored (the model starts unmarked)."""
+    signed_in("technician")
+    assert 'name="oem_schedule_required"' not in client.get(NEW_URL, **HX).content.decode()
+    r = client.post(NEW_URL, new_post(None, dept, **new_model(oem_schedule_required="on")), **HX)
+    assert r.status_code == 200 and "CE-20001 added" in r.headers.get("HX-Trigger", "")
+    assert DeviceModel.objects.get(model="BeneVision N12").oem_schedule_required is False
+    signed_in("director")
+    assert 'name="oem_schedule_required"' in client.get(NEW_URL, **HX).content.decode()
+    client.post(NEW_URL, new_post(None, dept, tag="CE-20002", **new_model(model="Cios Alpha", oem_schedule_required="on")), **HX)
+    marked = DeviceModel.objects.get(model="Cios Alpha")
+    assert marked.oem_schedule_required is True and marked.pm_interval_months == marked.oem_pm_interval_months
 
 
 def test_a_form_sent_back_focuses_its_first_error(client, signed_in, vent, pump_model, dept):

@@ -406,6 +406,28 @@ def test_scan_and_the_portal_note_under_the_policies(client, make_user, tenant, 
     assert scan_get(client, "MED-3", **HX)["HX-Retarget"] == "#drawer"
     assert error_of(scan_get(client, "CE-10002", **HX)) == no_device("CE-10002")
     assert "Open MED-3 in Cadence" in portal(client, "?asset=MED-3") and "in Cadence" not in portal(client, "?asset=CE-10002")
+    for code in ("/equipment/A%00B/", "https://h.example/r/riverside/?asset=A%00B"):  # decoded once more here: a NUL never reaches the query
+        assert error_of(scan_get(client, code, **HX)) == "That code is not an asset tag or a Cadence label."
     client.force_login(theirs_user)  # their role is hidden here: the note must not try to read it
     assert "in Cadence" not in portal(client, "?asset=CE-10001")
     assert "Open THEIRS-1 in Cadence" in client.get("/r/other/?asset=THEIRS-1").content.decode()
+
+
+@pytest.mark.parametrize("code", ["/equipment/A%00B/", "https://h.example/r/riverside/?asset=A%00B", "/equipment/A%01B/"])
+def test_a_control_character_decoded_from_a_link_is_no_tag(client, make_user, world, code):
+    """A link's tag is decoded once more than the request's own NUL check sees, so a %00 inside it arrives as a NUL, which PostgreSQL
+    refuses in a query: it is no tag, looked up nowhere and never echoed back (test_scan_and_the_portal_note_under_the_policies)."""
+    sign_in(client, make_user, "technician")
+    r = scan_get(client, code, **HX)
+    assert r.status_code == 200 and error_of(r) == "That code is not an asset tag or a Cadence label."
+    assert not scan.is_tag("A\x00B")
+
+
+def test_going_back_to_a_scanned_device_gets_the_whole_page(client, make_user, world):
+    """Scan pushes /equipment/<tag>/; htmx reloads a pushed URL missing from its history cache with HX-History-Restore-Request and
+    swaps the answer into <body>, so that request gets the Equipment page with the drawer open, never the drawer alone."""
+    sign_in(client, make_user, "technician")
+    restored = client.get("/equipment/CE-10001/", HTTP_HX_REQUEST="true", HTTP_HX_HISTORY_RESTORE_REQUEST="true").content.decode()
+    assert 'id="drawer"' in restored and 'id="modal-card"' in restored and "CE-10001" in restored
+    drawer = client.get("/equipment/CE-10001/", HTTP_HX_REQUEST="true", HTTP_HX_TARGET="drawer").content.decode()
+    assert 'id="modal-card"' not in drawer and "CE-10001" in drawer

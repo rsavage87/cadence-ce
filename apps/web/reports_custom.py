@@ -52,6 +52,10 @@ def builder_fields(source: str, typed: dict, errors: dict) -> dict | None:
     for f in spec.filters:
         picked = set(filters.get(f.key) or [])
         options = [{"value": v, "label": label, "checked": v in picked} for v, label in custom.filter_options(f)]
+        if f.kind == "category":  # a saved category no model has now stays checked, so saving an edit keeps the filter
+            offered = {o["value"] for o in options}
+            options += [{"value": v, "label": f"{v} (no model has it now)", "checked": True}
+                        for v in filters.get(f.key) or [] if isinstance(v, str) and v not in offered]
         out_filters.append({"key": f.key, "label": f.label, "options": options, "long": len(options) > 8,
                             "error": errors.get(f"filter_{f.key}", "")})
     date = filters.get("date") if isinstance(filters.get("date"), dict) else {}

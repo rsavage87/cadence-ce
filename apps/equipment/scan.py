@@ -87,8 +87,10 @@ def tag_in(code: str, slug: str) -> str:
 
 
 def is_tag(tag: str) -> bool:
-    """Whether `tag` could be a device's tag at all (no spaces or slashes, within the column); one that cannot is looked up nowhere."""
-    if not tag or len(tag) > TAG_MAX_LENGTH:
+    """Whether `tag` could be a device's tag at all (no spaces, slashes, or control characters, within the column); one that cannot
+    is looked up nowhere. Control characters matter: a link's ?asset= or path is decoded once more here, so a %00 inside it arrives
+    as a NUL the request's own check (apps.core.http.RejectNulMiddleware) never saw, and PostgreSQL refuses a NUL in a query."""
+    if not tag or len(tag) > TAG_MAX_LENGTH or any(unicodedata.category(ch) == "Cc" for ch in tag):
         return False
     try:
         TAG_VALIDATOR(tag)
@@ -102,6 +104,8 @@ def find(code: str, *, slug: str, qs) -> Asset:
     ValidationError with the words to show when there is none: the same NO_DEVICE whether the tag exists nowhere or only outside
     `qs`."""
     tag = tag_in(code, slug)
+    if any(unicodedata.category(ch) == "Cc" for ch in tag):  # e.g. a %00 decoded from a link: no tag, and never echoed back
+        raise ValidationError(NOT_A_LABEL)
     asset = qs.filter(tag__iexact=tag).first() if is_tag(tag) else None
     if asset is None:
         raise ValidationError(NO_DEVICE.format(tag=tag))

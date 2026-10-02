@@ -166,7 +166,8 @@ def get_asset(request, tag):
 def asset_detail(request, tag):
     asset = get_asset(request, tag)
     ctx = asset_drawer_context(request, asset)
-    if request.htmx:
+    # Scan tag pushes this URL; htmx reloads a pushed URL it no longer has in its history cache into <body>, so that gets the page
+    if request.htmx and not request.htmx.history_restore_request:
         return render(request, "web/_asset_drawer.html", ctx)
     return render(request, "web/equipment.html", {**_equipment_context(request), **ctx, "drawer_template": "web/_asset_drawer.html"})
 
