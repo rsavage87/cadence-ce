@@ -1,0 +1,28 @@
+{% load web %}
+{% comment %}Log time on a work order (slice 15, views_wo_costs.labor_add): the date worked, hours, who (in-house only; vendor service time
+   has no technician), the rate (work-order Approve only; everyone else's line is charged at the Settings rate), and a short note of
+   the work. A work order that takes no lines (closed, cancelled) gets the reason instead of the form.{% endcomment %}
+<div class="modal-h"><h2>Log time on {{ wo.number }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if locked %}
+<div class="form"><div class="full note">{{ locked }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="wl-form" hx-post="{% url 'web:wo_labor_add' wo.number %}" hx-target="#modal-card" novalidate>
+  <div class="form">
+    {% if form.non_field_errors %}<div class="full"><span class="err">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    {% include "web/_asset_field.html" with field=form.worked_on %}
+    {% include "web/_asset_field.html" with field=form.hours %}
+    {% if wo.vendor_service %}
+    <div class="full hint">Vendor service{% if wo.vendor_name %}, {{ wo.vendor_name }}{% endif %}: the time is the vendor's, logged without a technician.</div>
+    {% else %}
+    {% include "web/_asset_field.html" with field=form.technician cls="full" %}
+    {% endif %}
+    {% if form.can_set_rate %}
+    {% include "web/_asset_field.html" with field=form.rate cls="full" %}
+    {% endif %}
+    {% include "web/_asset_field.html" with field=form.description cls="full" %}
+    {% if not form.can_set_rate %}<div class="full hint">Charged at the Settings rate for {% if wo.vendor_service %}vendor service{% else %}in-house labor{% endif %}, ${{ rate|floatformat:"2g" }} an hour.</div>{% endif %}
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Log time</button></div>
+</form>
+{% endif %}

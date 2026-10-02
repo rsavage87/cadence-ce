@@ -15,6 +15,8 @@ ASSIGN_LEVEL = Level.APPROVE
 # Slice 15: recording the work. Labor and parts on a work order need Edit (technicians log their own time), as does completing it
 # (transition_level). A closed work order is the record: its lines are fixed until it is reopened (Approve).
 RECORD_LEVEL = Level.EDIT
+# A labor line charged at a rate other than Settings' (in-house or vendor) needs Approve: the Reports' spend is built on the rate.
+RATE_LEVEL = Level.APPROVE
 
 
 def transition_level(from_status: str, to_status: str) -> int:
@@ -34,3 +36,8 @@ def can_assign(user) -> bool:
 def can_record_work(user) -> bool:
     """Add or remove labor and parts lines on a work order that is not closed."""
     return user.has_level(MODULE, RECORD_LEVEL)
+
+
+def can_set_rate(user) -> bool:
+    """Log time at a rate other than the Settings rate for the work order (apps.workorders.costs.default_rate)."""
+    return user.has_level(MODULE, RATE_LEVEL)

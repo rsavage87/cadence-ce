@@ -29,7 +29,10 @@ from .models import POLICY, POLICY_DEFAULTS, POLICY_MAX_LENGTH, FacilitySettings
 PORTAL_FIELDS = ("portal_require_callback", "portal_hotline", "portal_confirmation", "portal_email_domains")
 POLICY_FIELDS = tuple(field for field, _label, _default in POLICY)
 TARGET_FIELDS = ("target_pm_pct", "target_uptime_pct", "target_mttr_days", "repair_budget_monthly")
-EDITABLE = PORTAL_FIELDS + POLICY_FIELDS + TARGET_FIELDS
+# Labor rates (slice 15): what a labor line logged on a work order is charged at unless the line says otherwise. Lines keep the
+# rate they were logged at, so a change here prices new lines only (apps.workorders.costs).
+RATE_FIELDS = ("labor_rate", "vendor_labor_rate")
+EDITABLE = PORTAL_FIELDS + POLICY_FIELDS + TARGET_FIELDS + RATE_FIELDS
 
 # (field, label, low, high): the ranges a target may take. Life support and high risk PM stay at 100% (survey rule).
 TARGET_RANGES = [("target_pm_pct", "PM completion target", Decimal("50"), Decimal("100")),
@@ -38,6 +41,8 @@ TARGET_RANGES = [("target_pm_pct", "PM completion target", Decimal("50"), Decima
 LIFE_SUPPORT_PM_TARGET = 100.0
 HOTLINE_MAX_LENGTH = 40
 BUDGET_MAX = Decimal("9999999999.99")  # the largest value the DecimalField(12, 2) column holds
+RATE_LABELS = {"labor_rate": "In-house labor rate", "vendor_labor_rate": "Vendor labor rate"}
+RATE_MAX = Decimal("9999.99")  # per hour; also the ceiling for a rate set on one labor line
 
 # Confirmation to the requester: on screen always, and by email when the facility turns it on. Text messages are not offered.
 CONFIRM_SCREEN, CONFIRM_EMAIL = "screen", "email"
@@ -62,6 +67,20 @@ def get_settings() -> FacilitySettings:
     return FacilitySettings.objects.first() or FacilitySettings()
 
 
+def decimal_places(d: Decimal) -> int:
+    """Decimal places that carry a digit: 1.50 has 1, 2.000 has 0. Worked from the digits, never normalize(), which rounds a long
+    number to the context's precision (82.000000000000000000000000000001 would pass as 82) and overflows on a huge exponent."""
+    _sign, digits, exponent = d.as_tuple()
+    if not isinstance(exponent, int) or exponent >= 0 or not any(digits):
+        return 0
+    places = -exponent
+    for digit in reversed(digits):
+        if digit != 0 or places == 0:
+            break
+        places -= 1
+    return places
+
+
 def _decimal(value, field: str, errors: dict):
     if value is None or value == "":
         return None
@@ -74,11 +93,10 @@ def _decimal(value, field: str, errors: dict):
         errors[field] = "Enter a number."
         return None
     places = _places(field)
-    exponent = d.normalize().as_tuple().exponent
-    if isinstance(exponent, int) and -exponent > places:
+    if decimal_places(d) > places:
         errors[field] = f"Use at most {places} decimal place{'' if places == 1 else 's'}."
         return None
-    return d + 0  # drops a negative zero's sign
+    return abs(d) if d == 0 else d  # drops a negative zero's sign; no arithmetic, so a huge exponent reaches the range checks
 
 
 def _text(value, field: str, errors: dict) -> str:
@@ -163,6 +181,14 @@ def _clean(fields: dict) -> dict:
             elif d is not None and d > BUDGET_MAX:
                 errors[field] = "That budget is too large."
             cleaned[field] = d
+        elif field in RATE_FIELDS:
+            d = _decimal(value, field, errors)
+            label = RATE_LABELS[field]
+            if d is None and field not in errors:
+                errors[field] = f"{label} is required."
+            elif d is not None and not (0 <= d <= RATE_MAX):
+                errors[field] = f"{label} must be between $0 and ${RATE_MAX:,} an hour."
+            cleaned[field] = d
         else:
             d = _decimal(value, field, errors)
             _f, label, low, high = next(r for r in TARGET_RANGES if r[0] == field)
@@ -240,6 +266,12 @@ def kpi_targets(s: FacilitySettings | None = None) -> dict:
     return {"pm_on_time": float(s.target_pm_pct), "pm_on_time_life_support": LIFE_SUPPORT_PM_TARGET, "uptime_pct": float(s.target_uptime_pct),
             "mttr_days": float(s.target_mttr_days),
             "repair_budget_monthly": float(s.repair_budget_monthly) if s.repair_budget_monthly is not None else None}
+
+
+def labor_rates(s: FacilitySettings | None = None) -> dict:
+    """The hourly rates new labor lines are charged at: in-house and vendor service, as Decimals."""
+    s = s or get_settings()
+    return {"in_house": s.labor_rate, "vendor": s.vendor_labor_rate}
 
 
 def compliance_targets(s: FacilitySettings | None = None) -> dict:

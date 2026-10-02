@@ -1,0 +1,20 @@
+{% load web %}
+{% comment %}Add a part to a work order (slice 15, views_wo_costs.part_add): what it is, its part number, quantity, unit cost, and PO. A
+   work order that takes no lines (closed, cancelled) gets the reason instead of the form.{% endcomment %}
+<div class="modal-h"><h2>Add a part to {{ wo.number }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if locked %}
+<div class="form"><div class="full note">{{ locked }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="wp-form" hx-post="{% url 'web:wo_part_add' wo.number %}" hx-target="#modal-card" novalidate>
+  <div class="form">
+    {% if form.non_field_errors %}<div class="full"><span class="err">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    {% include "web/_asset_field.html" with field=form.description cls="full" %}
+    {% include "web/_asset_field.html" with field=form.quantity %}
+    {% include "web/_asset_field.html" with field=form.unit_cost %}
+    {% include "web/_asset_field.html" with field=form.part_number %}
+    {% include "web/_asset_field.html" with field=form.po_number %}
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Add part</button></div>
+</form>
+{% endif %}

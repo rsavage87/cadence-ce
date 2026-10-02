@@ -1,9 +1,58 @@
 {% load web %}
-{# The work order drawer's Cost section (slice 15, part A: labor and parts lines, adding and removing them). Context: views_wo_costs.costs_context. #}
-  <div class="sec"><h3>Cost <span>{% if is_open %}so far{% else %}actual{% endif %}</span></h3>
+{% comment %}The work order drawer's Cost section (slice 15, part A): the totals, then the labor lines (date, who, hours, rate, amount) and
+   the part lines (description, part number, quantity, unit cost, amount, PO), each with Remove for users who may record work while
+   the work order takes lines, and Log time and Add part (modals in #modal-card). Context: views_wo_costs.costs_context ("costs").{% endcomment %}
+{% with c=costs %}
+  <div class="sec" id="wo-costs"><h3>Cost <span>{% if is_open %}so far{% else %}actual{% endif %}</span></h3>
     <div class="stats">
-      <div class="stat"><div class="v">{{ labor_hours|floatformat:"-2" }} h</div><div class="l">labor · {{ wo.labor_cost|money }}</div></div>
-      <div class="stat"><div class="v">{{ wo.parts_cost|money }}</div><div class="l">parts{% with n=wo.part_lines.all|length %}{% if n %} · {{ n }} line{{ n|pluralize }}{% endif %}{% endwith %}</div></div>
-      <div class="stat"><div class="v">{{ wo.total_cost|money }}</div><div class="l">total</div></div>
+      <div class="stat"><div class="v">{{ c.hours }} h</div><div class="l">labor{% if c.rate is not None %} at ${{ c.rate|floatformat:"2g" }}/h{% endif %} · ${{ c.labor_total|floatformat:"2g" }}</div></div>
+      <div class="stat"><div class="v">${{ c.parts_total|floatformat:"2g" }}</div><div class="l">parts{% with n=c.parts|length %}{% if n %} · {{ n }} line{{ n|pluralize }}{% endif %}{% endwith %}</div></div>
+      <div class="stat"><div class="v">${{ c.total|floatformat:"2g" }}</div><div class="l">total</div></div>
     </div>
+
+    <div class="wo-lines">
+      <div class="lbl">Labor</div>
+      {% if c.labor %}
+      <div class="list">
+        {% for row in c.labor %}{% with line=row.line %}
+        <div class="li static">
+          <div class="bd">
+            <div class="t">{{ row.hours }} h · {{ row.who }}</div>
+            <div class="s">{{ line.worked_on|date:"M j, Y" }} · ${{ line.rate|floatformat:"2g" }}/h{% if line.description %} · {{ line.description }}{% endif %}</div>
+          </div>
+          <div class="r">${{ row.amount|floatformat:"2g" }}{% if c.can_record %}
+            <button class="btn sm ghost" type="button" hx-post="{% url 'web:wo_labor_delete' wo.number line.pk %}" hx-target="#drawer"
+                    hx-confirm="Remove {{ row.hours }} h by {{ row.who }} on {{ line.worked_on|date:'M j, Y' }}?" aria-label="Remove {{ row.hours }} h by {{ row.who }} on {{ line.worked_on|date:'M j, Y' }}">Remove</button>{% endif %}</div>
+        </div>
+        {% endwith %}{% endfor %}
+      </div>
+      {% else %}<div class="hint">No time logged{% if is_open %} yet{% endif %}.</div>{% endif %}
+    </div>
+
+    <div class="wo-lines">
+      <div class="lbl">Parts</div>
+      {% if c.parts %}
+      <div class="list">
+        {% for row in c.parts %}{% with line=row.line %}
+        <div class="li static">
+          <div class="bd">
+            <div class="t">{{ line.description }}{% if line.quantity != 1 %} × {{ row.quantity }}{% endif %}</div>
+            <div class="s">{% if line.part_number %}PN {{ line.part_number }} · {% endif %}{{ row.quantity }} at ${{ line.unit_cost|floatformat:"2g" }}{% if line.po_number %} · PO {{ line.po_number }}{% endif %}</div>
+          </div>
+          <div class="r">${{ row.amount|floatformat:"2g" }}{% if c.can_record %}
+            <button class="btn sm ghost" type="button" hx-post="{% url 'web:wo_part_delete' wo.number line.pk %}" hx-target="#drawer"
+                    hx-confirm="Remove {{ row.event }}?" aria-label="Remove {{ row.event }}">Remove</button>{% endif %}</div>
+        </div>
+        {% endwith %}{% endfor %}
+      </div>
+      {% else %}<div class="hint">No parts{% if is_open %} yet{% endif %}.</div>{% endif %}
+    </div>
+
+    {% if c.can_record %}
+    <div class="wo-cost-add">
+      <button class="btn sm" type="button" hx-get="{% url 'web:wo_labor_add' wo.number %}" hx-target="#modal-card">{% icon "plus" %} Log time</button>
+      <button class="btn sm" type="button" hx-get="{% url 'web:wo_part_add' wo.number %}" hx-target="#modal-card">{% icon "plus" %} Add part</button>
+    </div>
+    {% elif c.locked %}<div class="hint wo-cost-add">{{ c.locked }}</div>{% endif %}
   </div>
+{% endwith %}

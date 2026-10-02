@@ -500,6 +500,15 @@ button.link{background:none;border:0;padding:0;font:inherit;font-size:12px;font-
 .rs-title{margin:0;font-size:13px;color:var(--ink)}
 .rs-form .radio input{padding:0;border:0}
 
+/* Slice 15, part A: the work order drawer's labor and part lines (the amount and Remove at the right; notes wrap on a phone) */
+.wo-lines{margin-top:12px}
+.wo-lines .lbl{font-size:12px;color:var(--ink-3)}
+.wo-lines .li{padding:7px 0}
+.wo-lines .li .s{white-space:normal}
+.wo-lines .li .r{display:flex;align-items:center;gap:4px;color:var(--ink);font-weight:500}
+.wo-cost-add{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+#set-targets .set-sub{margin:16px 0 8px}
+
 /* Slice 11: printing app pages */
 /* What the browser prints of an app page (the Overview's Export button calls window.print(); any other screen prints from the
    browser's menu): the page's content on white, in the light theme whatever the screen shows, with chart and chip colours kept.
