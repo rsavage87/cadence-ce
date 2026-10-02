@@ -41,6 +41,9 @@ MODELS = [
     ("Welch Allyn", "Connex Spot", "Vital signs monitor", "Patient monitoring", RiskClass.MEDIUM, 12, 8, 3100, 30, None),
     ("Siemens Healthineers", "Cios Spin", "Mobile C-arm", "Imaging", RiskClass.HIGH, 6, 10, 275000, 2, ContractType.OEM),
 ]
+# CMS (S&C 14-07) keeps imaging and radiologic equipment (diagnostic or therapeutic: X-ray, CT, MRI, ultrasound alike) and medical
+# lasers on the manufacturer's schedule, never AEM. The demo's catalog has one such category, the mobile C-arm's (fluoroscopic X-ray).
+OEM_SCHEDULE_CATEGORIES = {"Imaging"}
 DEPTS = ["ICU", "ED", "OR", "Med/Surg 3E", "Med/Surg 4E", "NICU", "Dialysis", "Central Sterile", "Radiology", "Telemetry 5"]
 # Fictional notices (they do not describe real recalls for these products), one per disposition the Recalls screen shows.
 # FDA number, published days ago, classification, manufacturer, product, model terms, catalog model, title, action, status, closed days ago, note
@@ -169,7 +172,8 @@ class Command(BaseCommand):
                 proc = PmProcedure.objects.create(code=f"{mfr[:2].upper()}-{model.split()[0][:6].upper()}-PM{pm}", name=f"{desc} {pm}-month PM",
                                                   estimated_hours=1.5 if cost > 20000 else 0.75, checklist=CHECKLIST)
                 dm = DeviceModel.objects.create(manufacturer=mfr, model=model, description=desc, category=cat, risk_class=risk, oem_pm_interval_months=pm,
-                                                expected_life_years=life, list_cost=cost, pm_procedure=proc)
+                                                expected_life_years=life, list_cost=cost, pm_procedure=proc,
+                                                oem_schedule_required=cat in OEM_SCHEDULE_CATEGORIES)
                 contract = None
                 if ctype:
                     contract = Contract.objects.create(reference=f"SC-{rnd.randint(2023, 2026)}-{rnd.randint(100, 999)}",
@@ -298,7 +302,8 @@ class Command(BaseCommand):
     def _approved_aem(self, domain: str, today: date) -> None:
         """One AEM interval in force, as the mock's PM library shows for the patient monitors: proposed by a technician with the
         model's failure history (computed from the records above as of the proposal date), approved for the Equipment Management
-        Committee by the CE manager, through apps.pm.aem like any other."""
+        Committee by the CE manager, through apps.pm.aem like any other (which refuses a model CMS keeps on the manufacturer's
+        schedule, so the demo's AEM is never on one)."""
         monitor = DeviceModel.objects.get(manufacturer="Philips", model="IntelliVue MX750")
         proposer = User.objects.get(username=f"dwhitfield@{domain}")  # technician: PM Edit
         approver = User.objects.get(username=f"rfeldman@{domain}")  # CE manager: PM Approve

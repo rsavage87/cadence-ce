@@ -32,7 +32,7 @@
       <tr class="row" hx-get="{% url 'web:pm_model' r.device_model.pk %}" hx-target="#drawer"><td class="two"><a class="tag" href="{% url 'web:pm_model' r.device_model.pk %}">{{ r.device_model.manufacturer }} {{ r.device_model.model }}</a><small>{{ r.device_model.description }}</small></td>
         <td>{% risk_chip r.device_model.risk_class %}</td>
         <td>{{ r.oem_months }} mo</td>
-        <td>{% if r.aem %}<span class="chip acc">AEM {{ r.program_months }} mo</span>{% else %}<span class="muted">OEM interval</span>{% endif %}</td>
+        <td>{% if r.aem %}<span class="chip acc">AEM {{ r.program_months }} mo</span>{% elif r.oem_required %}<span class="chip neutral" title="CMS requires the manufacturer's maintenance schedule for imaging, radiologic, and medical laser equipment: never on AEM">OEM required by CMS</span>{% else %}<span class="muted">OEM interval</span>{% endif %}</td>
         <td{% if r.procedure %} class="two"{% endif %}>{% if r.procedure %}{{ r.procedure.code }}<small>{{ r.procedure.get_source_kind_display }}</small>{% else %}<span class="muted">No procedure</span>{% endif %}</td>
         <td class="num{% if not r.procedure %} muted{% endif %}">{{ r.hours|floatformat:2 }}</td>
         <td class="muted">{% if r.procedure %}{{ r.steps }} step{{ r.steps|pluralize }}{% else %}—{% endif %}</td>
@@ -40,6 +40,7 @@
     {% endfor %}</tbody>
   </table></div>
   {% if library.with_procedure < library.models %}<div class="hint" style="margin-top:8px">A model without a procedure is estimated at 1 hour per PM, and its work orders name no procedure.</div>{% endif %}
+  {% if library.oem_required %}<div class="hint" style="margin-top:8px">OEM required by CMS: imaging, radiologic, and medical laser equipment follow the manufacturer's maintenance schedule and never go on AEM ({{ library.oem_required }} model{{ library.oem_required|pluralize }}).</div>{% endif %}
   {% else %}
   <div class="panel-b"><div class="empty">No device models yet.</div></div>
   {% endif %}

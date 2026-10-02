@@ -587,6 +587,8 @@ button.link{background:none;border:0;padding:0;font:inherit;font-size:12px;font-
   .wc-results{grid-template-columns:1fr}
 }
 /* Slice 18, part C: a model that keeps the manufacturer's schedule by regulation (CMS: imaging, radiologic, medical laser) */
+/* The model form's checkbox reads as the field's label, its hint below it */
+.form .dm-mark .check-row{color:var(--ink);font-weight:500}
 
 /* Slice 11: printing app pages */
 /* What the browser prints of an app page (the Overview's Export button calls window.print(); any other screen prints from the

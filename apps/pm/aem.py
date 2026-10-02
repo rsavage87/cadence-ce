@@ -7,6 +7,9 @@ A case goes proposed -> approved (in force) -> ended, or proposed -> rejected or
 
 - Life support never goes on AEM (the facility's policy; DeviceModel.pm_interval_months ignores an interval on file anyway).
   High-risk models stay eligible: the committee decides on their history.
+- Nor does equipment CMS keeps on the manufacturer's schedule (S&C 14-07: imaging and radiologic equipment, diagnostic or
+  therapeutic, and medical lasers; slice 18). The facility marks those models (DeviceModel.oem_schedule_required, Equipment
+  Approve). Both rules are exclusion(): a proposal is refused with the rule's reason, and so is the approval of one still open.
 - The policy (Settings, policy_aem) asks for a three-year failure history: a proposal needs a device of the model installed at
   least AEM_HISTORY_YEARS ago, and approval checks again. evidence() is that history, from the facility's own records only; the
   proposal keeps a snapshot of it, so the committee sees what the proposer saw next to today's figures.
@@ -14,13 +17,14 @@ A case goes proposed -> approved (in force) -> ended, or proposed -> rejected or
   model's row first, so two approvals of the same model cannot both win.
 - Separation of duties: the committee signs off on someone else's case, so whoever proposed cannot approve or reject it.
 - A longer interval moves no device's next PM: it applies from each device's next PM, as update_device_model documents for any
-  interval change. A shorter one, ending an AEM, or a model becoming life support pulls in every device whose next PM is now
-  later than its last PM (or install date, or today) plus the interval it is back on, through equipment.services.update_asset so
-  the open PM work order moves with it.
+  interval change. A shorter one, ending an AEM, or a model becoming excluded (life support, or marked for the manufacturer's
+  schedule) pulls in every device whose next PM is now later than its last PM (or install date, or today) plus the interval it is
+  back on, through equipment.services.update_asset so the open PM work order moves with it. A model that stops being excluded
+  changes no interval: AEM is proposed and approved again.
 - An interval on file with no approved decision (set before this slice through the admin or the API) is "on file without a
   recorded approval": it can be ended the same way (end() taking the model), and an approved proposal replaces it, including one
-  for the same interval (the committee ratifies what is in use; no device moves). On a life-support model it was never used, so
-  ending it moves nothing, and a model leaving life support drops it rather than start using it unapproved.
+  for the same interval (the committee ratifies what is in use; no device moves). On an excluded model it was never used, so
+  ending it moves nothing, and a model that stops being excluded drops it rather than start using it unapproved.
 - The OEM interval is equipment data (Equipment Edit). It cannot be set equal to the AEM interval in force (that would end a
   committee decision, which is PM Approve's: End AEM first; equipment.services.update_device_model refuses it), and a proposal
   whose OEM interval changed before the committee decided is refused at approval (propose again with the current figures).
@@ -48,6 +52,12 @@ REASON_MAX = AemDecision._meta.get_field("end_reason").max_length
 CHANGE_REASON_MAX = 100  # simple_history's history_change_reason column
 
 LIFE_SUPPORT_REFUSAL = "Life-support devices are excluded from AEM by policy: they always follow the OEM interval."
+OEM_SCHEDULE_REFUSAL = ("CMS requires the manufacturer's maintenance schedule for imaging, radiologic, and medical laser equipment, so this "
+                        "model is excluded from AEM: it always follows the OEM interval.")
+# Why an open proposal was withdrawn and an interval in force ended when the model became excluded (model_changed).
+LIFE_SUPPORT_ENDED = "The model is now life support; life-support devices are excluded from AEM by policy."
+OEM_SCHEDULE_ENDED = ("The model is now marked as imaging, radiologic, or medical laser equipment; CMS requires the manufacturer's "
+                      "schedule for it, so it is excluded from AEM.")
 
 
 def _months(n: int) -> str:
@@ -180,11 +190,22 @@ def is_legacy(dm: DeviceModel, approved: AemDecision | None) -> bool:
     return dm.aem_interval_months is not None and approved is None
 
 
+def exclusion(dm: DeviceModel) -> str:
+    """Why the model never goes on AEM, or '' when it may: life support (the facility's policy) first, then the CMS rule for the
+    equipment marked oem_schedule_required."""
+    if dm.risk_class == RiskClass.LIFE_SUPPORT:
+        return LIFE_SUPPORT_REFUSAL
+    if dm.oem_schedule_required:
+        return OEM_SCHEDULE_REFUSAL
+    return ""
+
+
 def propose_blocker(dm: DeviceModel, today: date | None = None, *, ev: dict | None = None, open_: AemDecision | None = None) -> str:
     """Why a proposal for this model would be refused before anything is typed ('' when it can be made). `ev` and `open_` save
     the queries when the caller has them already."""
-    if dm.risk_class == RiskClass.LIFE_SUPPORT:
-        return LIFE_SUPPORT_REFUSAL
+    excluded = exclusion(dm)
+    if excluded:
+        return excluded
     open_ = open_ if open_ is not None else open_proposal(dm)
     if open_ is not None:
         return _open_refusal(open_)
@@ -302,8 +323,9 @@ def _interval(value, dm: DeviceModel, *, ratify: bool = False) -> int:
 
 
 def _check_eligible(dm: DeviceModel) -> None:
-    if dm.risk_class == RiskClass.LIFE_SUPPORT:
-        raise ValidationError(LIFE_SUPPORT_REFUSAL)
+    reason = exclusion(dm)
+    if reason:
+        raise ValidationError(reason)
 
 
 def _check_history(dm: DeviceModel, today: date) -> dict:
@@ -349,8 +371,8 @@ def propose(dm: DeviceModel, *, interval_months, rationale, by=None, today: date
 @transaction.atomic
 def approve(decision: AemDecision, *, by, decided_on: date, note: str, today: date | None = None) -> AemDecision:
     """The committee approves an open proposal: it goes in force (ending the interval in force before it, if any) and becomes the
-    model's PM interval. Life support and the history are checked again. Returns the decision, with `devices_moved`: how many
-    devices' next PM came in because the new interval is shorter than the one before it."""
+    model's PM interval. The exclusions (life support, the CMS mark) and the history are checked again. Returns the decision, with
+    `devices_moved`: how many devices' next PM came in because the new interval is shorter than the one before it."""
     today = today or date.today()
     dm = _lock(decision.device_model)
     current = _locked_decision(decision)
@@ -409,15 +431,17 @@ def withdraw(decision: AemDecision, *, by=None, today: date | None = None, reaso
 
 
 def end_moves_devices(dm: DeviceModel) -> bool:
-    """Whether ending the model's AEM interval brings next PMs in: not on a life-support model, which never used it."""
-    return dm.risk_class != RiskClass.LIFE_SUPPORT
+    """Whether ending the model's AEM interval brings next PMs in: not on a model excluded from AEM (life support, the CMS mark),
+    which never used it."""
+    return not dm.aem_excluded
 
 
 @transaction.atomic
 def end(target: AemDecision | DeviceModel, *, by=None, reason: str, today: date | None = None, pull_in: bool | None = None) -> int:
     """End the AEM interval in force: the approved decision given, or the model's (approved, or on file without a recorded
     approval). The model goes back to the OEM interval and every device whose next PM is now too far out comes in (`pull_in`;
-    by default unless the model is life support, whose devices never used the interval). Returns how many devices' next PM moved."""
+    by default unless the model is excluded from AEM, whose devices never used the interval). Returns how many devices' next PM
+    moved."""
     today = today or date.today()
     given = target if isinstance(target, AemDecision) else None
     dm = _lock(target.device_model if given else target)
@@ -438,20 +462,32 @@ def end(target: AemDecision | DeviceModel, *, by=None, reason: str, today: date 
     return _pull_in(dm, by=by, today=today) if pull_in else 0
 
 
+def _was_excluded(device_model, previous: dict) -> bool:
+    """Whether the model was excluded from AEM before the change (`previous` holds the changed fields' old values)."""
+    risk_class = previous.get("risk_class", device_model.risk_class)
+    marked = previous.get("oem_schedule_required", device_model.oem_schedule_required)
+    return risk_class == RiskClass.LIFE_SUPPORT or bool(marked)
+
+
 def model_changed(device_model, changed: list[str], by=None, previous: dict | None = None) -> dict:
-    """Called by equipment.services (_save_model), inside its transaction, after a model's risk class or OEM interval changed
-    (`changed` names the fields, `previous` their values before). A model that became life support leaves AEM: the interval in
-    force ends (its devices' next PMs come in) and an open proposal is withdrawn. A model that left life support drops an interval
-    on file without a recorded approval (it never applied there, and must not start applying unapproved). Returns what happened:
-    {"ended", "withdrawn", "cleared": bool, "moved": devices whose next PM came in}. (An OEM interval equal to the AEM interval in
-    force is refused before saving: update_device_model.)"""
-    effect = {"ended": False, "withdrawn": False, "cleared": False, "moved": 0}
-    if "risk_class" not in changed:
+    """Called by equipment.services (_save_model), inside its transaction, after a model's risk class, OEM interval, or CMS mark
+    changed (`changed` names the fields, `previous` their values before). A model that became excluded from AEM (life support, or
+    marked as equipment CMS keeps on the manufacturer's schedule) leaves AEM: the interval in force ends (its devices' next PMs
+    come in) and an open proposal is withdrawn. A model that stopped being excluded drops an interval on file without a recorded
+    approval (it never applied there, and must not start applying unapproved); otherwise its interval stays the OEM's until the
+    committee approves an AEM again. Returns what happened: {"ended", "withdrawn", "cleared": bool, "moved": devices whose next PM
+    came in, "rule": "life_support" or "oem_schedule" when the model became excluded, else ""}. (An OEM interval equal to the AEM
+    interval in force is refused before saving: update_device_model.)"""
+    effect = {"ended": False, "withdrawn": False, "cleared": False, "moved": 0, "rule": ""}
+    if not {"risk_class", "oem_schedule_required"} & set(changed):
         return effect
     today = date.today()
-    was = (previous or {}).get("risk_class")
-    if device_model.risk_class == RiskClass.LIFE_SUPPORT:
-        reason = "The model is now life support; life-support devices are excluded from AEM by policy."
+    previous = previous or {}
+    was_excluded = _was_excluded(device_model, previous)
+    if device_model.aem_excluded and not was_excluded:
+        life_support = device_model.risk_class == RiskClass.LIFE_SUPPORT
+        effect["rule"] = "life_support" if life_support else "oem_schedule"
+        reason = LIFE_SUPPORT_ENDED if life_support else OEM_SCHEDULE_ENDED
         proposal = open_proposal(device_model)
         if proposal is not None:
             withdraw(proposal, by=by, today=today, reason=reason)
@@ -459,8 +495,8 @@ def model_changed(device_model, changed: list[str], by=None, previous: dict | No
         if device_model.aem_interval_months is not None or in_force(device_model) is not None:
             effect["moved"] = end(device_model, by=by, reason=reason, today=today, pull_in=True)  # it applied until now
             effect["ended"] = True
-    elif was == RiskClass.LIFE_SUPPORT and is_legacy(device_model, in_force(device_model)):
-        _set_interval(_lock(device_model), None, by, "AEM on file without a recorded approval cleared: the model left life support",
-                      device_model)
+    elif was_excluded and not device_model.aem_excluded and is_legacy(device_model, in_force(device_model)):
+        left = "life support" if previous.get("risk_class") == RiskClass.LIFE_SUPPORT else "the CMS exclusion"
+        _set_interval(_lock(device_model), None, by, f"AEM on file without a recorded approval cleared: the model left {left}", device_model)
         effect["cleared"] = True
     return effect

@@ -1,11 +1,15 @@
 {% load web %}
 {% comment %}The model drawer's AEM tab (slice 14). Context: dm, and aem from apps.web.views_aem.aem_tab: the interval in force (OEM,
    approved by the committee, or on file without a recorded approval), the open proposal with the actions this user may take, the
-   live failure history, and every decision. Buttons appear only for users the views allow; the views check again.{% endcomment %}
+   live failure history, and every decision. Buttons appear only for users the views allow; the views check again. A model excluded
+   from AEM (life support, or the CMS rule for imaging, radiologic, and medical laser equipment) says why in the interval section,
+   once, instead of offering Propose.{% endcomment %}
 {% with a=aem %}
 <div class="sec"><h3>PM interval <span>OEM {{ a.oem }} month{{ a.oem|pluralize }}</span></h3>
 {% if a.life_support %}
-  <div class="note">Life support: every {{ a.oem }} month{{ a.oem|pluralize }}, the OEM interval. Life-support devices are excluded from AEM by policy.{% if a.legacy %} An AEM interval of {{ a.legacy_months }} month{{ a.legacy_months|pluralize }} is on file, but it is never used.{% endif %}</div>
+  <div class="note">Life support: every {{ a.oem }} month{{ a.oem|pluralize }}, the OEM interval. Life-support devices are excluded from AEM by policy.{% if a.oem_required %} CMS also requires the manufacturer's schedule for this equipment.{% endif %}{% if a.legacy %} An AEM interval of {{ a.legacy_months }} month{{ a.legacy_months|pluralize }} is on file, but it is never used.{% endif %}</div>
+{% elif a.oem_required %}
+  <div class="note">Manufacturer's schedule: every {{ a.oem }} month{{ a.oem|pluralize }}, the OEM interval. CMS requires the manufacturer's maintenance schedule for imaging, radiologic, and medical laser equipment, so this model is excluded from AEM and no interval can be proposed for it.{% if a.legacy %} An AEM interval of {{ a.legacy_months }} month{{ a.legacy_months|pluralize }} is on file, but it is never used.{% endif %}</div>
 {% elif a.approved %}{% with d=a.approved %}
   <div class="note ok">AEM in force: every {{ d.interval_months }} month{{ d.interval_months|pluralize }} instead of the OEM's {{ a.oem }}, approved by the Equipment Management Committee on {{ d.decided_on|date:"M j, Y" }}.</div>
   <dl class="dl" style="margin-top:10px">
@@ -23,22 +27,23 @@
 
 {% if a.proposal %}{% with p=a.proposal %}
 <div class="sec"><h3>Open proposal <span>{{ p.interval_months }} month{{ p.interval_months|pluralize }} · proposed {{ p.proposed_on|date:"M j, Y" }}</span></h3>
-  <div class="hint" style="margin-bottom:6px">{{ p.proposed_by|default:"A former user" }} proposes every {{ p.interval_months }} month{{ p.interval_months|pluralize }} instead of the OEM's {{ p.oem_interval_months }}{% if dm.aem_interval_months and not a.life_support %}, replacing the {{ dm.aem_interval_months }}-month interval in use{% endif %}.</div>
+  <div class="hint" style="margin-bottom:6px">{{ p.proposed_by|default:"A former user" }} proposes every {{ p.interval_months }} month{{ p.interval_months|pluralize }} instead of the OEM's {{ p.oem_interval_months }}{% if dm.aem_interval_months and not a.excluded %}, replacing the {{ dm.aem_interval_months }}-month interval in use{% endif %}.</div>
   <div class="note" style="white-space:pre-line">{{ p.rationale }}</div>
   {% if a.proposal_evidence %}<div class="hint" style="margin:10px 0 6px">Failure history when proposed</div>{% include "web/_aem_evidence.html" with ev=a.proposal_evidence %}
   {% else %}<div class="hint" style="margin-top:6px">Proposed on the failure history below, unchanged since.</div>{% endif %}
   {% if a.can_decide or a.can_withdraw %}<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-    {% if a.can_decide %}<button class="btn sm primary" type="button" hx-get="{% url 'web:pm_aem_decide' p.pk %}?decision=approve" hx-target="#modal-card">Approve</button><button class="btn sm" type="button" hx-get="{% url 'web:pm_aem_decide' p.pk %}?decision=reject" hx-target="#modal-card">Reject</button>{% endif %}
+    {% if a.can_decide %}{% if a.can_approve %}<button class="btn sm primary" type="button" hx-get="{% url 'web:pm_aem_decide' p.pk %}?decision=approve" hx-target="#modal-card">Approve</button>{% endif %}<button class="btn sm" type="button" hx-get="{% url 'web:pm_aem_decide' p.pk %}?decision=reject" hx-target="#modal-card">Reject</button>{% endif %}
     {% if a.can_withdraw %}<button class="btn sm" type="button" hx-post="{% url 'web:pm_aem_withdraw' p.pk %}" hx-target="#drawer" hx-confirm="Withdraw this AEM proposal? The model keeps its current interval.">Withdraw</button>{% endif %}
   </div>{% endif %}
   {% if a.decide_note %}<div class="hint" style="margin-top:6px">{{ a.decide_note }}</div>{% endif %}
+  {% if a.excluded %}<div class="hint" style="margin-top:6px">This model is excluded from AEM now, so this proposal cannot be approved: reject or withdraw it.</div>{% endif %}
 </div>
 {% endwith %}{% endif %}
 
 <div class="sec"><h3>Failure history <span>last {{ a.history_years }} years, as of today</span></h3>
   {% include "web/_aem_evidence.html" with ev=a.evidence %}
   {% if a.can_propose %}<div style="margin-top:10px"><button class="btn sm primary" type="button" hx-get="{% url 'web:pm_aem_propose' dm.pk %}" hx-target="#modal-card">Propose an AEM interval</button></div>
-  {% elif a.propose_note and not a.proposal and not a.life_support %}<div class="note" style="margin-top:10px">{{ a.propose_note }}</div>{% endif %}
+  {% elif a.propose_note and not a.proposal and not a.excluded %}<div class="note" style="margin-top:10px">{{ a.propose_note }}</div>{% endif %}
 </div>
 
 <div class="sec"><h3>Decisions <span>{{ a.history|length }}</span></h3>

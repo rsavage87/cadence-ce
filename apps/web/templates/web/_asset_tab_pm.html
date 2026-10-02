@@ -1,7 +1,7 @@
 {% load web %}
 {# Device drawer, PM schedule tab (slice 12; the mock's drawerAsset). Context: pm, from apps/web/asset_tabs.pm_tab; the drawer's can_view_wo links work orders. #}
 {% with p=pm.procedure up=pm.upcoming %}
-  <div class="sec"><h3>Maintenance strategy</h3><div class="note">{{ pm.strategy }}</div></div>
+  <div class="sec"><h3>Maintenance strategy</h3><div class="note">{{ pm.strategy }}{% if asset.device_model.oem_schedule_required %} CMS requires the manufacturer's maintenance schedule for imaging, radiologic, and medical laser equipment, so this model never goes on AEM.{% endif %}</div></div>
 
   <div class="sec">
   {% if p %}

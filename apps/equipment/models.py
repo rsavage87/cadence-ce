@@ -87,8 +87,16 @@ class DeviceModel(TenantModel):
         return None if any(p is None for p in parts) else sum(parts)
 
     @property
+    def aem_excluded(self) -> bool:
+        """Never on AEM: life support (the facility's policy) and the equipment CMS keeps on the manufacturer's schedule (imaging,
+        radiologic, medical laser). apps.pm.aem says which rule applies (exclusion)."""
+        return self.risk_class == RiskClass.LIFE_SUPPORT or self.oem_schedule_required
+
+    @property
     def pm_interval_months(self) -> int:
-        if self.risk_class == RiskClass.LIFE_SUPPORT:  # policy: life support never goes on AEM
+        """The interval in force: the OEM interval for a model excluded from AEM, whatever AEM interval is on file; else the AEM
+        interval when there is one."""
+        if self.aem_excluded:
             return self.oem_pm_interval_months
         return self.aem_interval_months or self.oem_pm_interval_months
 

@@ -5,7 +5,9 @@ AEM tab (views_models.render_model_drawer).
 
 Who may do what (apps/pm/permissions.py), checked here on every request, GET and POST: PM View sees the tab; PM Edit proposes; PM
 Approve approves, rejects, and ends; the proposer (still holding PM Edit) or a PM Approve holder withdraws an open proposal. The
-proposer never decides their own case (apps.pm.aem refuses it; the tab says why the buttons are missing).
+proposer never decides their own case (apps.pm.aem refuses it; the tab says why the buttons are missing). A model excluded from
+AEM (life support, or marked as equipment CMS keeps on the manufacturer's schedule) says why instead of offering Propose, and an
+open proposal on one (left from before the exclusion) is offered for rejecting or withdrawing, never approving.
 
 Propose, the decision, and End AEM are modals (#modal-card): a save swaps the drawer into #drawer (HX-Retarget), toasts, fires
 `models-changed` (the PM library re-fetches on it) and, when devices' next PMs moved, `devices-changed` and `wo-changed` (their open
@@ -75,14 +77,18 @@ def aem_tab(request, dm) -> dict:
     is_proposer = proposal is not None and proposal.proposed_by_id == user.pk
     legacy = aem.is_legacy(dm, approved)
     blocker = aem.propose_blocker(dm, today, ev=ev, open_=proposal) if can_edit else ""
+    excluded = aem.exclusion(dm)
     return {"aem": {
         "oem": dm.oem_pm_interval_months, "life_support": dm.risk_class == RiskClass.LIFE_SUPPORT,
+        # CMS: imaging, radiologic, and medical laser equipment keep the manufacturer's schedule (slice 18)
+        "oem_required": dm.oem_schedule_required, "excluded": excluded,
         "approved": approved, "legacy": legacy, "legacy_months": dm.aem_interval_months if legacy else None,
         # The history the proposal was made on, unless it is today's figures (shown below) unchanged
         "proposal": proposal, "proposal_evidence": evidence_view(proposal.evidence) if proposal and proposal.evidence != ev else None,
         "evidence": evidence_view(ev), "history": decisions, "history_years": aem.AEM_HISTORY_YEARS,
         "can_propose": can_edit and not blocker, "propose_note": blocker,
         "can_decide": can_decide and proposal is not None and not is_proposer,
+        "can_approve": can_decide and proposal is not None and not is_proposer and not excluded,
         "decide_note": aem.decide_blocker(proposal, user) if can_decide and is_proposer else "",
         "can_withdraw": proposal is not None and (can_decide or (is_proposer and can_edit)),
         "can_end": can_decide and (approved is not None or legacy),
@@ -147,8 +153,11 @@ def aem_propose(request, pk):
 def _decide_modal(request, decision, form):
     dm = decision.device_model
     shorter = form.choice == APPROVE and decision.interval_months < dm.pm_interval_months
+    blocker = aem.decide_blocker(decision, request.user)
+    if not blocker and form.choice == APPROVE:
+        blocker = aem.exclusion(dm)  # excluded after it was proposed: it can be rejected or withdrawn, not approved
     return render(request, "web/_aem_decide.html", {
-        "decision": decision, "dm": dm, "form": form, "blocker": aem.decide_blocker(decision, request.user),
+        "decision": decision, "dm": dm, "form": form, "blocker": blocker,
         "evidence": evidence_view(decision.evidence), "policy": _policy(), "shorter": shorter,
         "oem_changed": aem.oem_changed_refusal(decision, dm) if decision.status == AemStatus.PROPOSED else "",
         "moves": len(aem.pull_in_plan(dm, decision.interval_months)) if shorter else 0})
@@ -218,7 +227,7 @@ def _end_modal(request, pk, decision, dm, form):
         blocker = "This model has no AEM interval in force: it follows the OEM interval."
     else:
         blocker = ""
-    moves_devices = aem.end_moves_devices(dm)  # a life-support model never used the interval: ending it moves nothing
+    moves_devices = aem.end_moves_devices(dm)  # an excluded model (life support, the CMS mark) never used it: ending it moves nothing
     return render(request, "web/_aem_end.html", {
         "pk": pk, "dm": dm, "approved": approved, "form": form, "blocker": blocker, "unused": not moves_devices,
         "from_months": dm.aem_interval_months or (approved.interval_months if approved is not None else None),

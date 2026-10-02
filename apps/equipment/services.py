@@ -9,12 +9,13 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import models, transaction
 from django.db.models import Case, Count, Exists, F, OuterRef, Q, Value, When
 
 from apps.recalls.models import AlertMatch
 
+from . import permissions
 from .models import TAG_VALIDATOR, Asset, AssetStatus, Department, DeviceModel, RiskClass, SupportType
 
 PM_DUE_SOON_DAYS = 30
@@ -299,17 +300,21 @@ def create_department(name: str) -> Department:
 
 @transaction.atomic
 def create_device_model(*, manufacturer, model, description, category, risk_class, oem_pm_interval_months=12, expected_life_years=8,
-                        list_cost=0, by=None) -> DeviceModel:
-    """Add a model to the facility's catalog. Life support never goes on AEM (DeviceModel.pm_interval_months), so no AEM here."""
+                        list_cost=0, oem_schedule_required=False, by=None) -> DeviceModel:
+    """Add a model to the facility's catalog. No AEM here: an AEM interval is approved on the model's AEM tab (apps.pm.aem), and
+    life support and a model marked oem_schedule_required never go on it (DeviceModel.pm_interval_months). Marking a new model
+    needs Equipment Approve when a user adds it (_check_oem_schedule_level)."""
     fields = _model_fields({"manufacturer": manufacturer, "model": model, "description": description, "category": category,
                             "risk_class": risk_class, "oem_pm_interval_months": oem_pm_interval_months, "expected_life_years": expected_life_years,
-                            "list_cost": list_cost})
+                            "list_cost": list_cost, "oem_schedule_required": oem_schedule_required})
+    if fields["oem_schedule_required"]:
+        _check_oem_schedule_level(by)
     _check_model_unique(fields["manufacturer"], fields["model"])
     return DeviceModel.objects.create(**fields)
 
 
 MODEL_FIELDS = ("manufacturer", "model", "description", "category", "risk_class", "oem_pm_interval_months", "aem_interval_months",
-                "expected_life_years", "list_cost", "pm_procedure")
+                "expected_life_years", "list_cost", "pm_procedure", "oem_schedule_required")
 _MODEL_TEXT = {"manufacturer": 120, "model": 120, "description": 200, "category": 80}
 
 
@@ -346,6 +351,10 @@ def _model_fields(raw: dict) -> dict:
         if cost is None or not cost.is_finite() or cost < 0:
             errors["list_cost"] = "The list cost is a number, 0 or more."
         out["list_cost"] = cost
+    if "oem_schedule_required" in raw:
+        if not isinstance(raw["oem_schedule_required"], bool):
+            errors["oem_schedule_required"] = "Say whether the manufacturer's schedule is required: yes or no."
+        out["oem_schedule_required"] = raw["oem_schedule_required"]
     if "pm_procedure" in raw:
         if raw["pm_procedure"] is not None:
             try:
@@ -356,6 +365,21 @@ def _model_fields(raw: dict) -> dict:
     if errors:
         raise ValidationError(errors)
     return out
+
+
+# CMS (S&C 14-07) keeps imaging, radiologic, and medical laser equipment on the manufacturer's schedule: whether a model is such
+# equipment decides compliance, as its risk class does, so a user needs Equipment Approve to set or clear the mark.
+OEM_SCHEDULE_PERMISSION = ("Marking a model as keeping the manufacturer's schedule (CMS: imaging, radiologic, medical laser), or clearing "
+                           "the mark, needs Equipment Approve.")
+OEM_SCHEDULE_MARKED = "Manufacturer's schedule required (CMS)"
+OEM_SCHEDULE_CLEARED = "Manufacturer's schedule (CMS) no longer required"
+
+
+def _check_oem_schedule_level(by) -> None:
+    """The door every change of the mark goes through: Add model, Edit details, and the API ask first, and anything else a user
+    reaches lands here. A change with no user (the importer, the demo seed, a shell) is the operator's own."""
+    if by is not None and not permissions.can_set_oem_schedule(by):
+        raise PermissionDenied(OEM_SCHEDULE_PERMISSION)
 
 
 def _check_model_unique(manufacturer: str, model: str, exclude=None) -> None:
@@ -373,7 +397,10 @@ def update_device_model(device_model: DeviceModel, *, by=None, **fields) -> Devi
     would end a committee decision: End AEM first). A new interval moves no device's next PM by itself: it applies from each
     device's next PM.
     A scored model's risk class follows its score (set_risk_score), so a new class that disagrees with the score's band is refused;
-    an unscored model's class can change here (the screen and the API ask for Equipment Approve for that)."""
+    an unscored model's class can change here (the screen and the API ask for Equipment Approve for that).
+    Setting or clearing oem_schedule_required needs Equipment Approve from `by` (PermissionDenied otherwise; sending back the
+    current value is fine). Marking a model on AEM ends its AEM and brings its devices' next PMs in (apps.pm.aem.model_changed, as
+    for life support); clearing the mark changes no interval: AEM is proposed and approved again."""
     unknown = set(fields) - set(MODEL_FIELDS)
     if unknown:
         raise ValidationError(f"These cannot be changed here: {', '.join(sorted(unknown))}.")
@@ -382,9 +409,12 @@ def update_device_model(device_model: DeviceModel, *, by=None, **fields) -> Devi
         # Only an approved AEM case sets it (apps.pm.aem); sending back the current value is fine.
         raise ValidationError({"aem_interval_months": "An AEM interval is set by approving an AEM proposal (PM schedule, PM library)."})
     cleaned.pop("aem_interval_months", None)  # never written here, so a value sent back from a stale read cannot undo an approval
+    mark = cleaned.get("oem_schedule_required")
+    if mark is not None and mark != device_model.oem_schedule_required:
+        _check_oem_schedule_level(by)
     oem = cleaned.get("oem_pm_interval_months")
     if (oem is not None and oem != device_model.oem_pm_interval_months and device_model.aem_interval_months == oem
-            and device_model.risk_class != RiskClass.LIFE_SUPPORT):
+            and not device_model.aem_excluded):
         # It would leave the AEM interval nothing to change, which ends a committee decision: that is End AEM's (PM Approve).
         raise ValidationError({"oem_pm_interval_months": f"This model is on an AEM interval of {oem} months. End the AEM on the model's "
                                                          "AEM tab first, then change the OEM interval."})
@@ -395,13 +425,17 @@ def update_device_model(device_model: DeviceModel, *, by=None, **fields) -> Devi
                                              "Change the risk score to change the class."})
     if "manufacturer" in cleaned or "model" in cleaned:
         _check_model_unique(cleaned.get("manufacturer", device_model.manufacturer), cleaned.get("model", device_model.model), exclude=device_model)
-    _save_model(device_model, cleaned, by=by)
+    reason = ""
+    if mark is not None and mark != device_model.oem_schedule_required:
+        reason = OEM_SCHEDULE_MARKED if mark else OEM_SCHEDULE_CLEARED  # the history says what the change was about
+    _save_model(device_model, cleaned, by=by, reason=reason)
     return device_model
 
 
 def _save_model(device_model: DeviceModel, values: dict, *, by=None, reason: str = "") -> list[str]:
-    """Set the values that differ and save once; then tell apps.pm.aem when the risk class or the OEM interval changed (a model
-    that became life support leaves AEM). The one path every model change takes. Returns the fields that changed."""
+    """Set the values that differ and save once; then tell apps.pm.aem when the risk class, the OEM interval, or the CMS mark
+    changed (a model that became life support or was marked oem_schedule_required leaves AEM). The one path every model change
+    takes. Returns the fields that changed."""
     # Onto the row as it is now, locked: the caller's copy may predate another change (an AEM approval sets aem_interval_months),
     # and saving that copy whole would write the old value back. The caller's copy is refreshed afterwards.
     fresh = DeviceModel.objects.select_for_update().get(pk=device_model.pk)
@@ -418,14 +452,15 @@ def _save_model(device_model: DeviceModel, values: dict, *, by=None, reason: str
         if user is not None:
             fresh._history_user = user
         fresh.save()
-    if {"risk_class", "oem_pm_interval_months"} & set(changed):
+    if {"risk_class", "oem_pm_interval_months", "oem_schedule_required"} & set(changed):
         from apps.pm import aem  # pm imports equipment; imported here to keep the two apps' modules loadable in any order
 
         effect = aem.model_changed(fresh, changed=changed, by=by, previous=previous)
     else:
         effect = None
     device_model.refresh_from_db()
-    # What the AEM program did about it, for the screen to say (a model scored into life support leaves AEM, its PMs come in).
+    # What the AEM program did about it, for the screen to say (a model scored into life support or marked for the manufacturer's
+    # schedule leaves AEM, its PMs come in).
     device_model.aem_effect = effect
     return changed
 

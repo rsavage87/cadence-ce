@@ -18,14 +18,24 @@ class DepartmentSerializer(serializers.ModelSerializer):
 
 
 class DeviceModelSerializer(serializers.ModelSerializer):
-    """Adding one goes through apps.equipment.services.create_device_model (DeviceModelViewSet.perform_create); this parses and shows."""
+    """Adding one goes through apps.equipment.services.create_device_model (DeviceModelViewSet.perform_create); this parses and shows.
+
+    oem_schedule_required (slice 18: CMS keeps imaging, radiologic, and medical laser equipment on the manufacturer's schedule) is
+    changed with PATCH or PUT, through update_device_model, which refuses a user without Equipment Approve (a 403, as the risk
+    class). Adding a model creates it unmarked (create_device_model takes only the viewset's CREATE_FIELDS), so a new model sent
+    marked is refused rather than saved without the mark."""
 
     pm_interval_months = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = DeviceModel
         fields = ["id", "manufacturer", "model", "description", "category", "risk_class", "oem_pm_interval_months", "aem_interval_months",
-                  "pm_interval_months", "expected_life_years", "list_cost", "pm_procedure"]
+                  "pm_interval_months", "oem_schedule_required", "expected_life_years", "list_cost", "pm_procedure"]
+
+    def validate(self, attrs):
+        if self.instance is None and attrs.get("oem_schedule_required"):
+            raise serializers.ValidationError({"oem_schedule_required": ["Set this with PATCH once the model is added (Equipment Approve)."]})
+        return attrs
 
 
 class AssetSerializer(serializers.ModelSerializer):

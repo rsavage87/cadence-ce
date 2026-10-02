@@ -24,7 +24,8 @@ def _workload(today) -> list[dict]:
 
 def _library() -> dict:
     rows = sch.pm_library()
-    return {"rows": rows, "models": len(rows), "with_procedure": sum(1 for r in rows if r["procedure"] is not None)}
+    return {"rows": rows, "models": len(rows), "with_procedure": sum(1 for r in rows if r["procedure"] is not None),
+            "oem_required": sum(1 for r in rows if r["oem_required"])}
 
 
 def panels_context(request, today) -> dict:

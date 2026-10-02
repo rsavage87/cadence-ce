@@ -296,7 +296,8 @@ def workload_next_7_days(today: date) -> list[Load]:
 
 def pm_library() -> list[dict]:
     """Every device model with its PM program: the OEM interval, the interval in force (AEM when approved; never for life
-    support), and its procedure. Most critical first, then category."""
+    support, nor for the equipment CMS keeps on the manufacturer's schedule: `oem_required`), and its procedure. Most critical
+    first, then category."""
     models = (DeviceModel.objects.select_related("pm_procedure")
               .annotate(devices=Count("assets", filter=Q(assets__status__in=Asset.ACTIVE_STATUSES)), rank=RISK_RANK_MODEL)
               .order_by("rank", "category", "manufacturer", "model"))
@@ -305,7 +306,8 @@ def pm_library() -> list[dict]:
         proc = dm.pm_procedure
         aem = dm.pm_interval_months != dm.oem_pm_interval_months
         out.append({"device_model": dm, "devices": dm.devices, "oem_months": dm.oem_pm_interval_months, "program_months": dm.pm_interval_months,
-                    "aem": aem, "procedure": proc, "hours": pm_hours(dm), "steps": len(proc.checklist) if proc else 0})
+                    "aem": aem, "oem_required": dm.oem_schedule_required, "procedure": proc, "hours": pm_hours(dm),
+                    "steps": len(proc.checklist) if proc else 0})
     return out
 
 

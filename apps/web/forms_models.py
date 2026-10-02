@@ -3,15 +3,21 @@ Input parsing for the device model catalog (slice 14): Add model, Edit details, 
 name unique in any letter case, interval and life ranges, the rubric's ranges and bands) live in apps.equipment.services; these
 forms parse what was typed and put the services' errors back on the fields they name. The facility's categories are read in
 __init__, never at class level.
+
+The CMS mark (oem_schedule_required, slice 18) is Equipment Approve's: for anyone else the template shows it read-only and sends
+no checkbox, the form keeps the model's current value, and a post that changes it anyway is refused on the field (the service
+refuses it again).
 """
 from django import forms
 
 from apps.equipment.models import DeviceModel, RiskClass
-from apps.equipment.services import RISK_PARTS, risk_band
+from apps.equipment.services import OEM_SCHEDULE_PERMISSION, RISK_PARTS, risk_band
 
 # The fields Add model sends to create_device_model, in the order the form lays them out (Edit details has all but risk_class).
-MODEL_FIELDS = ("manufacturer", "model", "description", "category", "risk_class", "oem_pm_interval_months", "expected_life_years", "list_cost")
+MODEL_FIELDS = ("manufacturer", "model", "description", "category", "risk_class", "oem_pm_interval_months", "expected_life_years", "list_cost",
+                "oem_schedule_required")
 EDIT_FIELDS = tuple(f for f in MODEL_FIELDS if f != "risk_class")
+MARK = "oem_schedule_required"
 
 # What each score means, short (the Settings rubric's parts; the classic clinical engineering risk scale).
 RISK_MEANINGS = {
@@ -69,22 +75,43 @@ class DeviceModelForm(ServiceErrorsMixin, forms.Form):
     expected_life_years = forms.IntegerField(label="Expected life, years", required=False, initial=8, widget=forms.NumberInput(attrs={"min": 1, "max": 50}))
     list_cost = forms.DecimalField(label="List cost, $", required=False, max_digits=12, decimal_places=2, help_text="Blank is 0.",
                                    widget=forms.NumberInput(attrs={"min": 0, "step": "0.01"}))
+    oem_schedule_required = forms.BooleanField(
+        label="Manufacturer's schedule required (CMS)", required=False,
+        help_text="Imaging (diagnostic or therapeutic), radiologic, or medical laser equipment: CMS requires the manufacturer's maintenance "
+                  "schedule, so the model never goes on AEM. Marking a model on AEM ends it and brings its devices' PMs in.")
 
-    def __init__(self, *args, device_model: DeviceModel | None = None, **kwargs):
+    def __init__(self, *args, device_model: DeviceModel | None = None, can_set_oem_schedule: bool = False, **kwargs):
         kwargs.setdefault("auto_id", "dm-%s")
         if device_model is not None and not args and not kwargs.get("data"):
             kwargs["initial"] = {f: getattr(device_model, f) for f in EDIT_FIELDS}
         super().__init__(*args, **kwargs)
         self.device_model = device_model
+        self.can_set_oem_schedule = can_set_oem_schedule
         if device_model is not None:
             del self.fields["risk_class"]
             self.fields["oem_pm_interval_months"].help_text = "A new interval applies from each device's next PM; no date moves now."
         # The category box suggests the facility's categories (a datalist); any new one is allowed.
         self.categories = list(DeviceModel.objects.order_by("category").values_list("category", flat=True).distinct())
 
+    @property
+    def marked(self) -> bool:
+        """The model's mark as stored (a new model has none): what someone without Equipment Approve sees and keeps."""
+        return bool(self.device_model is not None and self.device_model.oem_schedule_required)
+
+    def clean_oem_schedule_required(self):
+        value = self.cleaned_data.get(MARK)
+        if self.can_set_oem_schedule:
+            return value
+        # Their form has no checkbox, so nothing posted means the mark as it is; a post that changes it is refused here.
+        if MARK in self.data and value != self.marked:
+            raise forms.ValidationError(OEM_SCHEDULE_PERMISSION)
+        return self.marked
+
     def service_fields(self) -> dict:
-        """create_device_model's or update_device_model's keyword arguments (update saves only what differs)."""
-        return {name: self.cleaned_data.get(name) for name in (MODEL_FIELDS if self.device_model is None else EDIT_FIELDS)}
+        """create_device_model's or update_device_model's keyword arguments (update saves only what differs). The mark only from
+        an Equipment Approve holder: anyone else's form leaves it to the service as it is."""
+        names = MODEL_FIELDS if self.device_model is None else EDIT_FIELDS
+        return {name: self.cleaned_data.get(name) for name in names if name != MARK or self.can_set_oem_schedule}
 
 
 def _choices(key: str, low: int, high: int) -> list[tuple[str, str]]:
