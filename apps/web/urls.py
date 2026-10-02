@@ -1,7 +1,7 @@
 from django.contrib.auth import views as auth_views
 from django.urls import include, path
 
-from . import views, views_account, views_equipment, views_invite
+from . import views, views_account, views_equipment, views_invite, views_wo_complete, views_wo_costs
 
 app_name = "web"
 
@@ -29,6 +29,12 @@ urlpatterns = [
     path("work-orders/<str:number>/status/", views.wo_status, name="wo_status"),
     path("work-orders/<str:number>/assign/", views.wo_assign, name="wo_assign"),
     path("work-orders/<str:number>/notes/", views.wo_note, name="wo_note"),
+    # Slice 15: recording the work. Labor and parts (views_wo_costs), completing with the resolution and a PM's results (views_wo_complete).
+    path("work-orders/<str:number>/labor/", views_wo_costs.labor_add, name="wo_labor_add"),
+    path("work-orders/<str:number>/labor/<uuid:pk>/delete/", views_wo_costs.labor_delete, name="wo_labor_delete"),
+    path("work-orders/<str:number>/parts/", views_wo_costs.part_add, name="wo_part_add"),
+    path("work-orders/<str:number>/parts/<uuid:pk>/delete/", views_wo_costs.part_delete, name="wo_part_delete"),
+    path("work-orders/<str:number>/complete/", views_wo_complete.wo_complete, name="wo_complete"),
     path("pm/", include("apps.web.urls_pm")),
     path("contracts/", include("apps.web.urls_contracts")),
     path("users/", include("apps.web.urls_users")),

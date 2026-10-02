@@ -49,6 +49,9 @@ class FacilitySettings(TenantModel):
     target_mttr_days = models.DecimalField(max_digits=4, decimal_places=1, default=Decimal("3.0"))
     repair_budget_monthly = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True,
                                                 help_text="Monthly repair budget shown on the Overview's spend tile; blank for none")
+    # Labor rates (slice 15): what a labor line on a work order is charged at unless the line says otherwise (the mock's $82 and $215).
+    labor_rate = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal("82.00"), help_text="In-house labor, per hour")
+    vendor_labor_rate = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal("215.00"), help_text="Vendor service labor, per hour")
     history = HistoricalRecords()
 
     class Meta:

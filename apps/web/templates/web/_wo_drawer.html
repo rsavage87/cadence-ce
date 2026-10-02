@@ -48,14 +48,9 @@
 
   <div class="sec"><h3>Problem</h3><div style="white-space:pre-line">{{ wo.problem }}</div></div>
   {% if wo.resolution %}<div class="sec"><h3>Resolution</h3><div style="white-space:pre-line">{{ wo.resolution }}</div></div>{% endif %}
+  {% include "web/_wo_results.html" %}
 
-  <div class="sec"><h3>Cost <span>{% if is_open %}so far{% else %}actual{% endif %}</span></h3>
-    <div class="stats">
-      <div class="stat"><div class="v">{{ labor_hours|floatformat:"-2" }} h</div><div class="l">labor · {{ wo.labor_cost|money }}</div></div>
-      <div class="stat"><div class="v">{{ wo.parts_cost|money }}</div><div class="l">parts{% with n=wo.part_lines.all|length %}{% if n %} · {{ n }} line{{ n|pluralize }}{% endif %}{% endwith %}</div></div>
-      <div class="stat"><div class="v">{{ wo.total_cost|money }}</div><div class="l">total</div></div>
-    </div>
-  </div>
+  {% include "web/_wo_costs.html" %}
 
   <div class="sec"><h3>Timeline</h3>
     <ul class="tl">{% for e in timeline %}<li><div>{{ e.text }}</div><div class="w">{{ e.at|date:"M j, Y g:i A" }} · {{ e.who }}</div></li>{% endfor %}</ul>
@@ -69,7 +64,11 @@
 </div>
 <div class="dr-f">
   {% for a in actions %}
+  {% if a.to == "completed" %}{# slice 15: completing asks for the resolution (and a PM's results) in a modal #}
+  <button class="btn{% if a.primary %} primary{% endif %}" type="button" hx-get="{% url 'web:wo_complete' wo.number %}" hx-target="#modal-card">{{ a.label }}</button>
+  {% else %}
   <button class="btn{% if a.primary %} primary{% endif %}" type="button" hx-post="{% url 'web:wo_status' wo.number %}" hx-vals='{"to": "{{ a.to }}"}' hx-target="#drawer">{{ a.label }}</button>
+  {% endif %}
   {% endfor %}
   <a class="btn" href="{% url 'web:wo_print' wo.number %}" target="_blank" rel="noopener" title="Print this work order with its checklist">{% icon "print" %} Print</a>
 </div>

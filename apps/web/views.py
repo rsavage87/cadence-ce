@@ -195,6 +195,8 @@ WO_ACTIONS = {
 
 
 def _wo_drawer_context(request, wo) -> dict:
+    from . import views_wo_complete, views_wo_costs  # slice 15's sections; they render this drawer, so imported here
+
     today = date.today()
     unassigned = wo.assigned_to_id is None and not wo.vendor_service
     actions = [] if unassigned else [{"to": to, "label": label, "primary": primary} for to, label, primary in WO_ACTIONS.get(wo.status, [])
@@ -218,6 +220,8 @@ def _wo_drawer_context(request, wo) -> dict:
         "labor_hours": sum(float(line.hours) for line in wo.labor_lines.all()),
         "is_portal": wo.source == Source.PORTAL,
         "recall_match": recall_match,
+        **views_wo_costs.costs_context(request, wo),
+        **views_wo_complete.results_context(request, wo),
     }
 
 

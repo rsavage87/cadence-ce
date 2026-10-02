@@ -1,0 +1,9 @@
+{% load web %}
+{# The work order drawer's Cost section (slice 15, part A: labor and parts lines, adding and removing them). Context: views_wo_costs.costs_context. #}
+  <div class="sec"><h3>Cost <span>{% if is_open %}so far{% else %}actual{% endif %}</span></h3>
+    <div class="stats">
+      <div class="stat"><div class="v">{{ labor_hours|floatformat:"-2" }} h</div><div class="l">labor · {{ wo.labor_cost|money }}</div></div>
+      <div class="stat"><div class="v">{{ wo.parts_cost|money }}</div><div class="l">parts{% with n=wo.part_lines.all|length %}{% if n %} · {{ n }} line{{ n|pluralize }}{% endif %}{% endwith %}</div></div>
+      <div class="stat"><div class="v">{{ wo.total_cost|money }}</div><div class="l">total</div></div>
+    </div>
+  </div>

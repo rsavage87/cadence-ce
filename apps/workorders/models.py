@@ -25,6 +25,13 @@ class Priority(models.TextChoices):
 DUE_DAYS = {Priority.CRITICAL: 1, Priority.HIGH: 2, Priority.NORMAL: 5, Priority.LOW: 10}
 
 
+class PmResult(models.TextChoices):
+    """A PM's outcome, as the mock's PM history words it (slice 15). Recorded when a PM work order is completed."""
+    PASS = "pass", "Pass"
+    PASS_MINOR_REPAIR = "pass_minor_repair", "Pass with minor repair"
+    FAIL = "fail", "Fail, repair work order opened"
+
+
 class WoStatus(models.TextChoices):
     OPEN = "open", "Open"
     IN_PROGRESS = "in_progress", "In progress"
@@ -77,6 +84,13 @@ class WorkOrder(TenantModel):
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     alert = models.ForeignKey("recalls.Alert", on_delete=models.SET_NULL, null=True, blank=True, related_name="work_orders",
                               help_text="The recall or hazard notice this work order responds to")
+    # Slice 15: what a completed PM found (apps.workorders.completion). checklist_results is the procedure's checklist as it was when
+    # the PM was done, step by step: [{"text", "measure", "result": "pass" | "fail" | "na", "reading"}], so revising the procedure
+    # later never rewrites a PM already on record.
+    pm_result = models.CharField(max_length=20, choices=PmResult.choices, blank=True)
+    checklist_results = models.JSONField(default=list, blank=True)
+    follow_up_of = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True, related_name="follow_ups",
+                                     help_text="The work order (a failed PM) this repair was opened from")
     history = HistoricalRecords()
 
     class Meta:
@@ -142,6 +156,7 @@ class LaborLine(TenantModel):
     hours = models.DecimalField(max_digits=6, decimal_places=2)
     rate = models.DecimalField(max_digits=8, decimal_places=2, help_text="Hourly rate applied (in-house or vendor)")
     description = models.CharField(max_length=200, blank=True)
+    history = HistoricalRecords()  # slice 15: time is recorded in the product, and every change to it is audited
 
 
 class PartLine(TenantModel):
@@ -151,6 +166,7 @@ class PartLine(TenantModel):
     quantity = models.DecimalField(max_digits=8, decimal_places=2, default=1)
     unit_cost = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     po_number = models.CharField(max_length=40, blank=True)
+    history = HistoricalRecords()
 
 
 class WorkOrderNote(TenantModel):
