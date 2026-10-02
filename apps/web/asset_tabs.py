@@ -22,7 +22,7 @@ from apps.pm.dates import add_months
 from apps.pm.models import AemDecision, AemStatus
 from apps.pm.schedule import DEFAULT_PM_HOURS, planned_technicians
 from apps.reports.fleet import REPLACEMENT_MARKUP, _repairs_in_window, replacement_score
-from apps.workorders.models import OPEN_STATUSES, LaborLine, PartLine, WorkOrder, WoType
+from apps.workorders.models import OPEN_STATUSES, LaborLine, PartLine, PmResult, WorkOrder, WoStatus, WoType
 
 from . import charts
 from .templatetags.web import money, money_k
@@ -127,14 +127,37 @@ def _done_by(wo) -> str:
     return wo.assigned_to.name if wo.assigned_to_id else ""
 
 
+RESULT_CSS = {PmResult.PASS: "", PmResult.PASS_MINOR_REPAIR: "warnc", PmResult.FAIL: "down"}
+
+
+def history_rows(history: list[WorkOrder]) -> list[dict]:
+    """The History table's rows. A PM completed with a recorded result (slice 15) shows it as the mock words it ("Pass", "Pass with
+    minor repair", "Fail, repair work order opened", with a link to that repair); older ones, and a reopened PM, show the resolution
+    or the status as before. The repairs come in one query, and only when a listed PM failed."""
+    recorded = {w.pk for w in history if w.pm_result and w.status in (WoStatus.COMPLETED, WoStatus.CLOSED)}
+    failed = [w.pk for w in history if w.pk in recorded and w.pm_result == PmResult.FAIL]
+    repairs = {}
+    if failed:
+        for r in WorkOrder.objects.filter(follow_up_of_id__in=failed).order_by("opened_on", "number"):
+            repairs.setdefault(r.follow_up_of_id, r)  # the first opened, should a PM ever have two
+    rows = []
+    for w in history:
+        if w.pk in recorded:
+            rows.append({"wo": w, "who": _done_by(w), "result": w.get_pm_result_display(), "has_resolution": True, "css": RESULT_CSS.get(w.pm_result, ""),
+                         "repair": repairs.get(w.pk), "hours": w.labor_hours})
+        else:
+            rows.append({"wo": w, "who": _done_by(w), "result": w.resolution.strip() or w.get_status_display(), "has_resolution": bool(w.resolution.strip()),
+                         "css": "", "repair": None, "hours": w.labor_hours})
+    return rows
+
+
 def pm_tab(asset, today: date | None = None) -> dict:
     today = today or date.today()
     dm = asset.device_model
     procedure = dm.pm_procedure
     history = pm_history(asset)
     open_pm = min((w for w in history if w.status in OPEN_STATUSES), key=lambda w: (w.opened_on, w.number), default=None)
-    rows = [{"wo": w, "who": _done_by(w), "result": w.resolution.strip() or w.get_status_display(), "has_resolution": bool(w.resolution.strip()),
-             "hours": w.labor_hours} for w in history[:HISTORY_LIMIT]]
+    rows = history_rows(history[:HISTORY_LIMIT])
     # The committee's date only for a model on AEM (one query then; none for the OEM schedule)
     approved = AemDecision.objects.filter(device_model=dm, status=AemStatus.APPROVED).first() if dm.pm_interval_months != dm.oem_pm_interval_months else None
     return {"pm": {
