@@ -7,7 +7,7 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 
-from apps.facility.services import POLICY_FIELDS, TARGET_FIELDS, TARGET_RANGES
+from apps.facility.services import POLICY_FIELDS, RATE_FIELDS, RATE_MAX, TARGET_FIELDS, TARGET_RANGES
 
 
 def plain_number(value) -> str:
@@ -34,16 +34,23 @@ TARGET_FORM = [
     ("repair_budget_monthly", "Monthly repair budget ($)", "Shown on the Overview's spend tile; leave blank for none"),
 ]
 
+# The labor rates (slice 15), in the same panel and form: field, label, help line. A change prices labor logged afterwards only.
+_RATE_RANGE = f"Between 0 and {RATE_MAX:,}"
+RATE_FORM = [
+    ("labor_rate", "In-house labor rate ($ per hour)", f"{_RATE_RANGE}. Charged on time technicians log on work orders"),
+    ("vendor_labor_rate", "Vendor labor rate ($ per hour)", f"{_RATE_RANGE}. Charged on vendor service time"),
+]
+
 
 _THOUSANDS = re.compile(r"\d{1,3}(,\d{3})+(\.\d+)?")
 
 
 def _number(field: str, value: str) -> str:
-    """Tolerate what people paste into a number box: "$52,000" for the budget, "95 %" for a percentage. A comma counts only as a
-    thousands separator in the budget ("52,000"); anything else ("1,5" meaning 1.5) goes to the service unchanged and is refused
-    there, so a decimal comma never silently becomes a number ten times larger."""
+    """Tolerate what people paste into a number box: "$52,000" for the budget or "$215" for a labor rate, "95 %" for a percentage.
+    A comma counts only as a thousands separator in money ("52,000"); anything else ("1,5" meaning 1.5) goes to the service
+    unchanged and is refused there, so a decimal comma never silently becomes a number ten times larger."""
     text = str(value or "").strip()
-    if field == "repair_budget_monthly":
+    if field == "repair_budget_monthly" or field in RATE_FIELDS:
         text = text.removeprefix("$").strip()
         if _THOUSANDS.fullmatch(text):
             text = text.replace(",", "")
@@ -72,6 +79,12 @@ def policy_fields(post) -> dict:
 
 def target_fields(post) -> dict:
     return {field: _number(field, post.get(field, "")) for field in TARGET_FIELDS}
+
+
+def rate_fields(post) -> dict:
+    """The labor rates present in the post ("$215", "1,250.00" tolerated as for the budget). A rate the post leaves out is left
+    as it is; one sent blank goes to the service, which refuses it."""
+    return {field: _number(field, post.get(field, "")) for field in RATE_FIELDS if field in post}
 
 
 def error_dict(e: ValidationError) -> dict:

@@ -199,8 +199,47 @@ def board_columns(f: WorkOrderFilters, today: date | None = None) -> list[dict]:
     return [{"name": name, "count": qs.count(), "items": list(qs[:BOARD_LIMIT])} for name, qs in columns]
 
 
+def _cost_events(wo: WorkOrder) -> list[dict]:
+    """Labor and part lines as the timeline tells them (slice 15), from their audit history: each line when it was logged and by
+    whom ("1.5 h logged by Dana Whitfield", "Part: Pump door latch × 2 ($84.00)"), and each removal. A line on file from before
+    lines were audited (no "Added" record) is told from the line itself."""
+    from apps.credentials.models import Technician
+
+    from . import costs
+    from .models import LaborLine, PartLine
+
+    # Two queries whatever the number of lines (the work-order print counts them): the technician comes with each record.
+    labor_history = list(LaborLine.history.filter(work_order_id=wo.pk, tenant_id=wo.tenant_id, history_type__in=("+", "-"))
+                         .select_related("history_user", "technician").order_by("history_date", "history_id"))
+    part_history = list(PartLine.history.filter(work_order_id=wo.pk, tenant_id=wo.tenant_id, history_type__in=("+", "-"))
+                        .select_related("history_user").order_by("history_date", "history_id"))
+    told = {h.id for h in [*labor_history, *part_history] if h.history_type == "+"}
+    untold = [line for line in wo.labor_lines.all() if line.id not in told]
+    tech_ids = {line.technician_id for line in untold if line.technician_id}
+    names = {t.pk: t.name for t in Technician.objects.filter(pk__in=tech_ids)} if tech_ids else {}  # only for lines from before the audit
+
+    entries = []
+    for h in labor_history:
+        name = h.technician.name if h.technician_id and h.technician else ""
+        text = costs.labor_event(h.hours, name)
+        if h.history_type == "-":
+            text = f"Labor removed: {text[0].lower()}{text[1:]}, worked {h.worked_on:%b %-d, %Y}"
+        entries.append({"at": h.history_date, "who": str(h.history_user) if h.history_user else (name or "System"), "text": text})
+    for h in part_history:
+        text = costs.part_event(h.description, h.quantity, h.unit_cost)
+        entries.append({"at": h.history_date, "who": str(h.history_user) if h.history_user else "System",
+                        "text": f"Part removed: {text}" if h.history_type == "-" else f"Part: {text}"})
+    for line in untold:
+        name = names.get(line.technician_id, "")
+        entries.append({"at": line.created_at, "who": name or "System", "text": costs.labor_event(line.hours, name)})
+    for line in wo.part_lines.all():
+        if line.id not in told:
+            entries.append({"at": line.created_at, "who": "System", "text": f"Part: {costs.part_event(line.description, line.quantity, line.unit_cost)}"})
+    return entries
+
+
 def timeline(wo: WorkOrder) -> list[dict]:
-    """Status history and notes for the work order drawer, oldest first."""
+    """Status history, notes, and labor and parts (slice 15) for the work order drawer, oldest first."""
     entries = []
     for h in wo.status_history.select_related("changed_by"):
         who = str(h.changed_by) if h.changed_by else ""
@@ -214,5 +253,6 @@ def timeline(wo: WorkOrder) -> list[dict]:
         entries.append({"at": h.created_at, "who": who or "System", "text": text})
     for n in wo.notes.all():
         entries.append({"at": n.created_at, "who": n.author_name or str(n.author or "") or "Staff", "text": n.text})
+    entries += _cost_events(wo)  # after the rest: at the same instant, the status change that came with it reads first
     entries.sort(key=lambda e: e["at"])
     return entries

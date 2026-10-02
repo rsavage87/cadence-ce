@@ -1,7 +1,7 @@
 """
-Settings screen (slice 8): integrations, the service request portal, maintenance policy, KPI targets, and risk
-scoring, from apps.facility.services. Anyone with Settings View sees the page; changes need Settings Edit
-(apps/facility/permissions.py), checked on every POST.
+Settings screen (slice 8): integrations, the service request portal, maintenance policy, KPI targets (and since slice 15
+the labor rates, in the same panel), and risk scoring, from apps.facility.services. Anyone with Settings View sees the page;
+changes need Settings Edit (apps/facility/permissions.py), checked on every POST.
 
 Each editable panel (#set-portal, #set-policy, #set-targets) is its own partial: its POST answers with that panel
 re-rendered and a toast. A rejected policy or targets save keeps what the user typed and marks the bad field; a
@@ -18,7 +18,7 @@ from apps.facility import services as fs
 
 from .decorators import web_view
 from .forms import parse_uuid
-from .forms_settings import TARGET_FORM, error_dict, plain_number, policy_fields, portal_fields, target_fields
+from .forms_settings import RATE_FORM, TARGET_FORM, error_dict, plain_number, policy_fields, portal_fields, rate_fields, target_fields
 from .htmx import is_partial, toast
 
 CHIPS = {fs.CONNECTED: ("ok", "Connected"), fs.LICENSE: ("warn", "License needed"), fs.NOT_CONNECTED: ("neutral", "Not connected")}
@@ -45,10 +45,13 @@ def _policy_ctx(request, s, typed: dict | None = None, errors: dict | None = Non
 
 
 def _targets_ctx(request, s, typed: dict | None = None, errors: dict | None = None) -> dict:
-    rows = [{"field": field, "label": label, "help": help_text, "error": (errors or {}).get(field, ""),
-             "value": typed.get(field, "") if typed is not None else plain_number(getattr(s, field))}
-            for field, label, help_text in TARGET_FORM]
-    return {"targets": rows, "can_edit": fac_perms.can_edit(request.user)}
+    """The KPI targets and, in the same form, the labor rates (slice 15). After a rejected save, `typed` holds what was sent."""
+    def rows(form):
+        return [{"field": field, "label": label, "help": help_text, "error": (errors or {}).get(field, ""),
+                 "value": typed.get(field, "") if typed is not None else plain_number(getattr(s, field))}
+                for field, label, help_text in form]
+
+    return {"targets": rows(TARGET_FORM), "rates": rows(RATE_FORM), "can_edit": fac_perms.can_edit(request.user)}
 
 
 def _integrations() -> dict:
@@ -139,10 +142,14 @@ def settings_policy_reset(request):
 @require_POST
 @web_view(fac_perms.MODULE, fac_perms.EDIT_LEVEL)
 def settings_targets(request):
+    rates = rate_fields(request.POST)  # the panel's labor rates (slice 15); a post without them leaves them as they are
     try:
-        s = fs.update_settings(by=request.user, **target_fields(request.POST))
+        s = fs.update_settings(by=request.user, **target_fields(request.POST), **rates)
     except ValidationError as e:
         errors = error_dict(e)
-        typed = {field: request.POST.get(field, "") for field, _label, _help in TARGET_FORM}  # as typed, before "$" and "," were dropped
-        return toast(render(request, "web/_settings_targets.html", _targets_ctx(request, fs.get_settings(), typed, errors)), _first(errors))
-    return toast(render(request, "web/_settings_targets.html", _targets_ctx(request, s)), "Targets saved")
+        s = fs.get_settings()
+        # as typed, before "$" and "," were dropped; a rate the post left out shows as saved (it was not part of this change)
+        typed = {**{field: request.POST.get(field, "") for field, _label, _help in TARGET_FORM},
+                 **{field: request.POST.get(field, plain_number(getattr(s, field))) for field, _label, _help in RATE_FORM}}
+        return toast(render(request, "web/_settings_targets.html", _targets_ctx(request, s, typed, errors)), _first(errors))
+    return toast(render(request, "web/_settings_targets.html", _targets_ctx(request, s)), "Targets and labor rates saved" if rates else "Targets saved")
