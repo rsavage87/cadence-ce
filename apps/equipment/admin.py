@@ -13,11 +13,14 @@ class DepartmentAdmin(TenantModelAdmin):
 
 @admin.register(DeviceModel)
 class DeviceModelAdmin(TenantModelAdmin):
-    list_display = ("manufacturer", "model", "description", "category", "risk_class", "oem_pm_interval_months", "aem_interval_months")
-    list_filter = ("risk_class", "category", "manufacturer")
+    list_display = ("manufacturer", "model", "description", "category", "risk_class", "oem_pm_interval_months", "aem_interval_months",
+                    "oem_schedule_required")
+    list_filter = ("risk_class", "oem_schedule_required", "category", "manufacturer")
     search_fields = ("manufacturer", "model", "description")
     # Only an approved AEM case sets the AEM interval (apps.pm.aem, the PM program's AEM tab), with the committee's sign-off on record.
-    readonly_fields = TenantModelAdmin.readonly_fields + ("aem_interval_months",)
+    # The CMS mark is set in the model's Edit details (Equipment Approve): marking ends an AEM in force and brings next PMs in
+    # (equipment.services._save_model), which a save here would skip.
+    readonly_fields = TenantModelAdmin.readonly_fields + ("aem_interval_months", "oem_schedule_required")
 
 
 @admin.register(Asset)

@@ -262,9 +262,11 @@ def _age(today):
 
 
 def _pm_interval(today):
-    """The interval in force, as DeviceModel.pm_interval_months decides it: life support keeps the manufacturer's; others take an
-    approved AEM interval when there is one."""
-    return Case(When(device_model__risk_class=RiskClass.LIFE_SUPPORT, then=F("device_model__oem_pm_interval_months")),
+    """The interval in force, as DeviceModel.pm_interval_months decides it: a model excluded from AEM (life support, or marked as
+    CMS keeps on the manufacturer's schedule: aem_excluded) keeps the manufacturer's; others take an approved AEM interval when there
+    is one."""
+    oem = F("device_model__oem_pm_interval_months")
+    return Case(When(device_model__risk_class=RiskClass.LIFE_SUPPORT, then=oem), When(device_model__oem_schedule_required=True, then=oem),
                 default=Coalesce("device_model__aem_interval_months", "device_model__oem_pm_interval_months"), output_field=IntegerField())
 
 
