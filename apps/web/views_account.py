@@ -81,7 +81,7 @@ password_reset_confirm = ResetConfirmView.as_view()
 
 @sensitive_post_parameters()
 @never_cache
-@web_view()
+@web_view(scoped=True)  # shows nothing of the facility, so a scoped user (slice 16) changes their password too
 def password_change(request):
     """Any signed-in user of a facility. Keeps this session signed in; Django signs every other session out, since each
     session carries a hash of the password."""

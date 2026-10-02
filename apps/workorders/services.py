@@ -159,8 +159,9 @@ class WorkOrderFilters:
     open_only: bool = True
 
 
-def filter_work_orders(f: WorkOrderFilters, ignore_status: bool = False):
-    qs = (WorkOrder.objects.select_related("asset", "asset__device_model", "asset__department", "assigned_to")
+def filter_work_orders(f: WorkOrderFilters, ignore_status: bool = False, qs=None):
+    """The Work orders list's filters, over `qs` when given (a scoped user's work orders, apps.workorders.scoping), else all."""
+    qs = ((WorkOrder.objects.all() if qs is None else qs).select_related("asset", "asset__device_model", "asset__department", "assigned_to")
           .prefetch_related("labor_lines", "part_lines"))
     if f.q:
         q = f.q.strip()
@@ -185,10 +186,11 @@ def unassigned_portal_requests():
     return WorkOrder.objects.filter(source=Source.PORTAL, status__in=OPEN_STATUSES, assigned_to__isnull=True, vendor_service=False)
 
 
-def board_columns(f: WorkOrderFilters, today: date | None = None) -> list[dict]:
-    """Kanban columns. Status filters don't apply (the columns are the statuses); done work shows for the last 7 days."""
+def board_columns(f: WorkOrderFilters, today: date | None = None, qs=None) -> list[dict]:
+    """Kanban columns. Status filters don't apply (the columns are the statuses); done work shows for the last 7 days. Over `qs`
+    when given, as filter_work_orders."""
     today = today or date.today()
-    base = filter_work_orders(f, ignore_status=True).order_by(PRIORITY_RANK, "due_on", "number")
+    base = filter_work_orders(f, ignore_status=True, qs=qs).order_by(PRIORITY_RANK, "due_on", "number")
     recent = today - timedelta(days=BOARD_RECENT_DAYS)
     columns = [
         ("Open", base.filter(status=WoStatus.OPEN)),

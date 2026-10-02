@@ -119,7 +119,9 @@ def test_other_tenants_records_are_not_found(client, tenant, other_tenant, make_
 
 
 def test_view_level_is_enough_to_open_the_device_drawer_but_not_to_create(client, signed_in, vent):
-    signed_in("requester")  # equipment: View, work orders: Request
+    user = signed_in("requester")  # equipment: View, work orders: Request
+    user.department = "ICU"  # slice 16: a requester sees their own unit's devices
+    user.save()
     r = client.get(f"/equipment/{vent.tag}/", **HX)
     assert r.status_code == 200 and not r.context["can_create_wo"]
 
@@ -325,7 +327,9 @@ def test_device_drawer_open_recall_chip_only_while_action_is_needed(client, sign
 
 
 def test_device_drawer_hides_recalls_from_roles_without_recalls_view(client, signed_in, pump, pump_recall):
-    signed_in("requester")  # equipment: View, recalls: None
+    user = signed_in("requester")  # equipment: View, recalls: None
+    user.department = "ICU"  # slice 16: a requester sees their own unit's devices
+    user.save()
     r = client.get(f"/equipment/{pump.tag}/?tab=recalls", **HX)
     body = r.content.decode()
     assert r.status_code == 200 and r.context["tab"] == "overview"  # the tab does not exist, so ?tab=recalls falls back
@@ -346,7 +350,10 @@ def test_recall_work_order_shows_chip_and_row(client, signed_in, pump, pump_reca
 
 def test_recall_row_is_plain_text_without_recalls_view_or_a_match(client, signed_in, pump, vent, pump_recall):
     wo = create_work_order(asset=pump, type="recall", priority="high", problem="Inspect", alert=pump_recall.alert)
-    signed_in("vendor")  # work orders: Edit, recalls: None
+    assign(wo, vendor_name="BD field service")  # slice 16: a vendor technician sees their company's work orders only
+    user = signed_in("vendor")  # work orders: Edit, recalls: None
+    user.company = "BD"
+    user.save()
     body = client.get(f"/work-orders/{wo.number}/", **HX).content.decode()
     assert "<dt>Recall</dt>" in body and "FDA Z-TEST-1 · " in body and "/recalls/?match=" not in body
     signed_in("director")

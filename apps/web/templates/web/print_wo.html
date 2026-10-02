@@ -1,5 +1,5 @@
 {% extends "web/print_base.html" %}
-{% load web recalls_tags %}
+{% load web recalls_tags scoping_tags %}
 {% comment %}One work order on paper (views_print.wo_print): what a technician takes to the device, with the PM checklist or room to
    write findings, labor and parts so far, the timeline, and the sign-off. Once a PM is completed it prints its result and the
    checklist as recorded (slice 15) instead of boxes. Everything typed by users is escaped as usual.{% endcomment %}
@@ -67,14 +67,14 @@ tfoot td{font-weight:700;border-top:1px solid var(--ink);border-bottom:0}
 </dl>
 
 <h2>Request</h2>
-<div class="wo-problem">{{ wo.problem }}</div>
+<div class="wo-problem">{% shown_text wo.problem %}</div>
 <dl class="kv">
   <div><dt>Requested by</dt><dd>{{ wo.requester|default:"—" }}</dd></div>
   <div><dt>Callback</dt><dd>{{ wo.callback|default:"Not given" }}</dd></div>
   <div><dt>Reported location</dt><dd>{{ wo.reported_location|default:"—" }}</dd></div>
   <div><dt>Source</dt><dd>{{ wo.get_source_display }}</dd></div>
   <div><dt>Tagged out</dt><dd>{% if wo.tagged_out %}Yes, removed from use by the unit{% else %}No{% endif %}</dd></div>
-  {% if wo.follow_up_of %}<div><dt>Opened from</dt><dd>Failed PM <span class="mono">{{ wo.follow_up_of.number }}</span>{% if wo.follow_up_of.completed_on %}, done {{ wo.follow_up_of.completed_on|date:"M j, Y" }}{% endif %}</dd></div>{% endif %}
+  {% if follow_up_of %}<div><dt>Opened from</dt><dd>Failed PM <span class="mono">{{ follow_up_of.number }}</span>{% if follow_up_of.completed_on %}, done {{ follow_up_of.completed_on|date:"M j, Y" }}{% endif %}</dd></div>{% endif %}
 </dl>
 
 <h2>Assignment</h2>
@@ -124,7 +124,7 @@ tfoot td{font-weight:700;border-top:1px solid var(--ink);border-bottom:0}
 <div class="ruled">{% for r in rules %}<div class="rule"></div>{% endfor %}</div>
 {% endif %}
 {% if unrecorded %}<p class="muted">No step results were recorded when this PM was completed.</p>{% endif %}
-{% if not is_open and wo.resolution %}<h3>Resolution</h3><p style="white-space:pre-line">{{ wo.resolution }}</p>{% endif %}
+{% if not is_open and wo.resolution %}<h3>Resolution</h3><p style="white-space:pre-line">{% shown_text wo.resolution %}</p>{% endif %}
 {% for f in follow_ups %}<p>Repair opened from this PM: <b class="mono">{{ f.number }}</b> · {{ f.get_status_display }}</p>{% endfor %}
 {% else %}
 {% if is_open %}
@@ -132,7 +132,7 @@ tfoot td{font-weight:700;border-top:1px solid var(--ink);border-bottom:0}
 <div class="ruled">{% for r in rules %}<div class="rule"></div>{% endfor %}</div>
 {% else %}
 <h2>Resolution</h2>
-<p style="white-space:pre-line">{{ wo.resolution|default:"No resolution recorded." }}</p>
+<p style="white-space:pre-line">{% if wo.resolution %}{% shown_text wo.resolution %}{% else %}No resolution recorded.{% endif %}</p>
 {% endif %}
 {% endif %}
 
@@ -162,7 +162,7 @@ tfoot td{font-weight:700;border-top:1px solid var(--ink);border-bottom:0}
 <h2>Timeline</h2>
 <table class="tl">
   <tbody>
-  {% for e in timeline %}<tr><td class="w">{{ e.at|date:"M j, Y g:i A" }}</td><td class="who">{{ e.who }}</td><td class="t">{{ e.text }}</td></tr>
+  {% for e in timeline %}<tr><td class="w">{{ e.at|date:"M j, Y g:i A" }}</td><td class="who">{{ e.who }}</td><td class="t">{% shown_text e.text %}</td></tr>
   {% empty %}<tr><td class="muted">Nothing recorded yet.</td></tr>{% endfor %}
   </tbody>
 </table>

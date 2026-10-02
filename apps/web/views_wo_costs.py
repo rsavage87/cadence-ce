@@ -3,8 +3,8 @@ Labor and parts in the work order drawer (slice 15). Views parse input, call app
 
 Who may do what (apps/workorders/permissions.py), checked here on every request, GET and POST: work-order Edit (can_record_work)
 logs time, adds parts, and removes either; a rate other than the Settings one needs Approve (can_set_rate), and the rate box is
-only offered to those who have it. Requesters and analysts get a 403; another facility's work order or line is a 404 (the scoped
-managers cannot see it). A closed or cancelled work order takes no lines (apps.workorders.costs says why).
+only offered to those who have it. Requesters and analysts get a 403; another facility's work order or line, or a work order outside a
+scoped user's share (apps.workorders.scoping), is a 404. A closed or cancelled work order takes no lines (apps.workorders.costs says why).
 
 Log time and Add part are modals (#modal-card): a save swaps the work order's drawer into #drawer instead (HX-Retarget), toasts,
 fires `wo-changed` (the lists' cost column re-fetches on it), then closes the modal after settle. A Remove button sits in the
@@ -25,7 +25,7 @@ from apps.workorders.models import LaborLine, PartLine
 from .decorators import web_view
 from .forms_wo_costs import LaborForm, PartForm, money_text
 from .htmx import toast
-from .views import _get_wo, _render_wo_drawer
+from .views import _render_wo_drawer, get_wo
 
 
 def costs_context(request, wo) -> dict:
@@ -99,9 +99,9 @@ def _check_rate(request, wo):
     _require(same)
 
 
-@web_view(wo_perms.MODULE, wo_perms.RECORD_LEVEL)
+@web_view(wo_perms.MODULE, wo_perms.RECORD_LEVEL, scoped=True)
 def labor_add(request, number):
-    wo = _get_wo(number)
+    wo = get_wo(request, number)
     if request.method != "POST":
         if not request.htmx:  # only ever a modal: a direct visit opens the work order
             return redirect("web:wo", number=wo.number)
@@ -120,9 +120,9 @@ def labor_add(request, number):
 
 
 @require_POST
-@web_view(wo_perms.MODULE, wo_perms.RECORD_LEVEL)
+@web_view(wo_perms.MODULE, wo_perms.RECORD_LEVEL, scoped=True)
 def labor_delete(request, number, pk):
-    wo = _get_wo(number)
+    wo = get_wo(request, number)
     line = get_object_or_404(LaborLine.objects, pk=pk, work_order=wo)
     try:
         costs.remove_labor(line, by=request.user)
@@ -137,9 +137,9 @@ def _part_modal(request, wo, form):
     return _modal(request, "web/_wo_part.html", wo, form)
 
 
-@web_view(wo_perms.MODULE, wo_perms.RECORD_LEVEL)
+@web_view(wo_perms.MODULE, wo_perms.RECORD_LEVEL, scoped=True)
 def part_add(request, number):
-    wo = _get_wo(number)
+    wo = get_wo(request, number)
     if request.method != "POST":
         if not request.htmx:
             return redirect("web:wo", number=wo.number)
@@ -157,9 +157,9 @@ def part_add(request, number):
 
 
 @require_POST
-@web_view(wo_perms.MODULE, wo_perms.RECORD_LEVEL)
+@web_view(wo_perms.MODULE, wo_perms.RECORD_LEVEL, scoped=True)
 def part_delete(request, number, pk):
-    wo = _get_wo(number)
+    wo = get_wo(request, number)
     line = get_object_or_404(PartLine.objects, pk=pk, work_order=wo)
     try:
         costs.remove_part(line, by=request.user)

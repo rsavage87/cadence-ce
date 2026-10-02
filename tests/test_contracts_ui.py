@@ -290,7 +290,9 @@ def test_device_drawer_links_the_contract_and_offers_edit_by_level(client, signe
     signed_in("technician")  # contracts: View
     body = client.get(f"/equipment/{vent.tag}/", **HX).content.decode()
     assert f'href="{url(contract)}"' in body and 'id="sp-host"' in body and f"/contracts/assets/{vent.tag}/support/" not in body
-    signed_in("requester")  # contracts: None
+    requester = signed_in("requester")  # contracts: None
+    requester.department = "ICU"  # slice 16: a requester sees their own unit's devices
+    requester.save()
     body = client.get(f"/equipment/{vent.tag}/", **HX).content.decode()
     assert "SC-2026-118 · Hamilton Medical" in body and f'href="{url(contract)}"' not in body
     signed_in("manager")

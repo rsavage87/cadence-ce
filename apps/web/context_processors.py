@@ -4,6 +4,7 @@ from django.utils.functional import SimpleLazyObject
 from apps.accounts.models import Level, Module
 from apps.credentials.models import Technician
 from apps.reports.services import nav_counts
+from apps.workorders import scoping
 
 # key, label, icon, url name, module that must be viewable. Order follows the mock's NAV.
 NAV = [
@@ -18,14 +19,22 @@ NAV = [
     ("settings", "Settings", "set", "web:settings", Module.SETTINGS),
 ]
 
+# Slice 16: the screens a scoped user (apps.workorders.scoping: a vendor's company, a requester's unit) may open, each narrowed to
+# their share. Every other screen shows the whole facility, so its views refuse them (web_view's `scoped`) and the nav leaves it out.
+SCOPED_SCREENS = {"equipment", "workorders"}
+
+
+def nav_entries(user) -> list[tuple]:
+    """The NAV rows this user may open: View on the module, and for a scoped user only SCOPED_SCREENS."""
+    scoped = scoping.is_scoped(user)
+    return [row for row in NAV if user.has_level(row[4], Level.VIEW) and (not scoped or row[0] in SCOPED_SCREENS)]
+
 
 def _shell(request):
     user = request.user
-    counts = nav_counts()
-    items = []
-    for key, label, icon, url_name, module in NAV:
-        if user.has_level(module, Level.VIEW):
-            items.append({"key": key, "label": label, "icon": icon, "url": reverse(url_name), "count": counts.get(key), "hot": counts.get(f"{key}_hot", False)})
+    counts = nav_counts(user)  # a scoped user's badges count their own devices and work orders
+    items = [{"key": key, "label": label, "icon": icon, "url": reverse(url_name), "count": counts.get(key), "hot": counts.get(f"{key}_hot", False)}
+             for key, label, icon, url_name, _module in nav_entries(user)]
     name = user.get_full_name() or user.username
     initials = "".join(p[0] for p in name.split()[:2]).upper() or "?"
     return {"nav": items, "user_name": name, "initials": initials, "role": user.role.name if user.role_id else ("Superuser" if user.is_superuser else ""),

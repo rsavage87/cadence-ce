@@ -1,5 +1,6 @@
 {% load web contracts_tags recalls_tags %}
 {% contracts_access request.user as ct %}
+{# Slice 16: "scoped" (views.asset_drawer_context) hides the contract link and the support editor; the Contracts screen refuses scoped users. #}
 {% with dm=asset.device_model %}
 <div class="dr-h">
   <div>
@@ -28,8 +29,8 @@
     <div><dt>Expected life</dt><dd>{{ dm.expected_life_years }} yr</dd></div>
     <div><dt>Acquisition cost</dt><dd>{{ asset.acquisition_cost|money }}</dd></div>
     <div><dt>Warranty</dt><dd>{% if asset.warranty_end %}{% if asset.warranty_end|days_until >= 0 %}Through{% else %}Expired{% endif %} {{ asset.warranty_end|date:"M Y" }}{% else %}—{% endif %}</dd></div>
-    <div><dt>Support</dt><dd>{{ asset.get_support_type_display }}{% if ct.edit %} <button class="link" type="button" hx-get="{% url 'web:asset_support' asset.tag %}" hx-target="#sp-host">Edit</button>{% endif %}</dd></div>
-    <div><dt>Contract</dt><dd>{% if asset.contract %}{% if ct.view %}<a class="link" href="{% url 'web:contract' asset.contract.pk %}" hx-get="{% url 'web:contract' asset.contract.pk %}" hx-target="#drawer">{{ asset.contract.reference }}</a>{% else %}{{ asset.contract.reference }}{% endif %} · {{ asset.contract.vendor }}{% else %}None{% endif %}</dd></div>
+    <div><dt>Support</dt><dd>{{ asset.get_support_type_display }}{% if ct.edit and not scoped %} <button class="link" type="button" hx-get="{% url 'web:asset_support' asset.tag %}" hx-target="#sp-host">Edit</button>{% endif %}</dd></div>
+    <div><dt>Contract</dt><dd>{% if asset.contract %}{% if ct.view and not scoped %}<a class="link" href="{% url 'web:contract' asset.contract.pk %}" hx-get="{% url 'web:contract' asset.contract.pk %}" hx-target="#drawer">{{ asset.contract.reference }}</a>{% else %}{{ asset.contract.reference }}{% endif %} · {{ asset.contract.vendor }}{% else %}None{% endif %}</dd></div>
     {% if asset.contract %}<div><dt>Coverage</dt><dd>{{ asset.contract.get_coverage_display }}</dd></div><div><dt>Contract term</dt><dd>{{ asset.contract.start_on|date:"M Y" }} to {{ asset.contract.end_on|date:"M Y" }}{% if asset.contract.is_expired %} (expired){% endif %}</dd></div>{% endif %}
     <div><dt>PM interval</dt><dd>{% if dm.aem_interval_months and dm.pm_interval_months != dm.oem_pm_interval_months %}{{ dm.pm_interval_months }} mo AEM (OEM {{ dm.oem_pm_interval_months }} mo){% else %}{{ dm.pm_interval_months }} months, OEM{% endif %}</dd></div>
     <div><dt>Condition</dt><dd>{{ asset.condition }} of 5</dd></div>

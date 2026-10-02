@@ -15,7 +15,7 @@ from apps.facility import services as fs
 from apps.tenants.context import tenant_context
 from apps.workorders import costs
 from apps.workorders.models import LaborLine, PartLine, WoStatus
-from apps.workorders.services import change_status, create_work_order
+from apps.workorders.services import assign, change_status, create_work_order
 
 HX = {"HTTP_HX_REQUEST": "true"}
 TODAY = date.today()
@@ -69,6 +69,14 @@ def toast_of(r) -> str:
     return triggers(r).get("toast", {}).get("value", "")
 
 
+def share(user, wo):
+    """Slice 16: a clinical requester sees their unit's work orders and a vendor technician their company's; give them this one."""
+    user.department, user.company = "ICU", "BD"
+    user.save()
+    if user.role.slug == "vendor":
+        assign(wo, vendor_name="BD field service")
+
+
 def urls(wo, line=None, p=None) -> dict:
     base = f"/work-orders/{wo.number}"
     return {"labor": f"{base}/labor/", "part": f"{base}/parts/", "labor_delete": f"{base}/labor/{line.pk}/delete/" if line else None,
@@ -86,7 +94,7 @@ def test_every_view_checks_the_level_server_side(client, signed_in, wo, techs, r
     line = costs.add_labor(wo, hours="1", worked_on=TODAY, by=None)
     p = costs.add_part(wo, description="Fuse", quantity="1", unit_cost="2", by=None)
     u = urls(wo, line, p)
-    signed_in(role)
+    share(signed_in(role), wo)
     ok = 200 if may_record else 403
     assert client.get(u["labor"], **HX).status_code == ok
     assert client.get(u["part"], **HX).status_code == ok
@@ -102,7 +110,7 @@ def test_every_view_checks_the_level_server_side(client, signed_in, wo, techs, r
 @pytest.mark.parametrize("role, may_record, may_rate", ROLES)
 def test_the_drawer_offers_what_the_role_may_do(client, signed_in, wo, role, may_record, may_rate):
     costs.add_labor(wo, hours="1.5", worked_on=TODAY, by=None)
-    signed_in(role)
+    share(signed_in(role), wo)
     r = client.get(f"/work-orders/{wo.number}/", **HX)
     body = r.content.decode()
     assert r.status_code == 200 and "1.5 h · Dana Whitfield" in body and "$123.00" in body
@@ -111,7 +119,8 @@ def test_the_drawer_offers_what_the_role_may_do(client, signed_in, wo, role, may
     if may_record:
         modal = client.get(f"/work-orders/{wo.number}/labor/", **HX).content.decode()
         assert ('name="rate"' in modal) == may_rate
-        assert ("Charged at the Settings rate for in-house labor, $82.00 an hour." in modal) != may_rate
+        charged = "for vendor service, $215.00" if role == "vendor" else "for in-house labor, $82.00"  # share() made it the vendor's
+        assert (f"Charged at the Settings rate {charged} an hour." in modal) != may_rate
 
 
 def test_a_different_rate_needs_approve(client, signed_in, wo, techs):

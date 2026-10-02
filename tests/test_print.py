@@ -85,9 +85,13 @@ def test_labels_need_equipment_view_and_the_print_needs_work_orders_view(client,
 
 
 def test_every_default_role_can_print(client, signed_in, wo, vent):
-    # Every default role holds View on Equipment and on Work orders (the requester's Request level includes it).
+    # Every default role holds View on Equipment and on Work orders (the requester's Request level includes it). Slice 16: the
+    # requester sees their unit's devices and work orders, the vendor technician their company's.
+    assign(wo, vendor_name="Hamilton Medical field service")
     for slug in ("director", "manager", "technician", "requester", "analyst", "vendor"):
-        signed_in(slug)
+        user = signed_in(slug)
+        user.department, user.company = "ICU", "Hamilton Medical"
+        user.save()
         assert client.get(label_url(vent)).status_code == 200, slug
         assert client.get(wo_url(wo)).status_code == 200, slug
 
@@ -236,7 +240,9 @@ def test_a_sheet_of_fifteen_labels_runs_as_many_queries_as_one(client, signed_in
 
 
 def test_the_device_drawer_links_to_its_label(client, signed_in, vent):
-    signed_in("requester")
+    user = signed_in("requester")
+    user.department = "ICU"  # slice 16: a requester sees their own unit's devices
+    user.save()
     body = client.get(f"/equipment/{vent.tag}/", **HX).content.decode()
     assert 'href="/print/labels/?tag=CE-10001" target="_blank"' in body
 

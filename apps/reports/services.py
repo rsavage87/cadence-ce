@@ -20,6 +20,7 @@ from apps.facility.services import kpi_targets
 from apps.pm.dates import month_bounds
 from apps.pm.services import overdue_assets, pm_on_time_rate, pm_on_time_series
 from apps.recalls.models import AlertMatch
+from apps.workorders import scoping
 from apps.workorders.models import LABOR_AMOUNT, OPEN_STATUSES, PART_AMOUNT, LaborLine, PartLine, Priority, WorkOrder, WoStatus, WoType
 from apps.workorders.services import PRIORITY_RANK, unassigned_portal_requests
 
@@ -171,7 +172,13 @@ def contracts_needing_attention(today: date | None = None):
     return expired.count() + ending.count()
 
 
-def nav_counts() -> dict:
+def nav_counts(user=None) -> dict:
+    """The nav's badges. For a scoped user (apps.workorders.scoping: a vendor's company, a requester's unit) only the two screens
+    they may open, counted over their own devices and work orders, and never hot: the portal requests waiting are a CE manager's
+    to assign. Everyone else (and no user) gets the facility's."""
+    if user is not None and scoping.is_scoped(user):
+        return {"equipment": scoping.assets(user, Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES)).count(),
+                "workorders": scoping.work_orders(user, WorkOrder.objects.filter(status__in=OPEN_STATUSES)).count(), "workorders_hot": False}
     contracts = contracts_needing_attention()
     recalls = AlertMatch.objects.filter(status=AlertMatch.Status.NEEDS_ACTION).count()
     pm_overdue = overdue_assets().count()
