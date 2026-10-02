@@ -29,11 +29,15 @@ def _create_pm(asset, as_of: date, by=None):
                              estimated_hours=proc.estimated_hours if proc else DEFAULT_PM_HOURS)
 
 
+@transaction.atomic
 def generate_pm_work_orders(as_of: date | None = None, lead_days: int | None = None) -> int:
     """
     Create a PM work order for every active device whose next PM is due within `lead_days`
     and that has no open PM work order yet. Safe to run nightly. Requires a tenant context.
+    Takes the planner lock first, as Create and Auto-assign week do: on PostgreSQL two of them at once (the nightly job, the API's
+    generate, a planner clicking Create) would otherwise each find no open PM and each create one.
     """
+    lock_planner()
     as_of = as_of or date.today()
     lead_days = settings.PM_LEAD_DAYS if lead_days is None else lead_days
     horizon = as_of + timedelta(days=lead_days)

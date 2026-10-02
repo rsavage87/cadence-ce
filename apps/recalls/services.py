@@ -118,6 +118,10 @@ def create_recall_work_orders(match: AlertMatch, by=None, today: date | None = N
     from apps.workorders.services import assign, create_work_order
 
     today = today or date.today()
+    # The match's row first, locked: two batches at once (two coordinators, the screen and the API, a retry) would otherwise each
+    # read no recall work orders yet and each create a full set (PostgreSQL; SQLite runs one writer at a time).
+    list(AlertMatch.objects.select_for_update().filter(pk=match.pk).values_list("pk", flat=True))  # the lock; then the copy as it is now
+    match.refresh_from_db()
     if match.status != S.IN_PROGRESS and S.IN_PROGRESS not in ALLOWED_TRANSITIONS[match.status]:
         raise ValidationError(f"Reopen {alert_label(match.alert)} before creating work orders.")
     assets = list(match.affected_assets().select_related("device_model", "department", "tenant").order_by("tag"))

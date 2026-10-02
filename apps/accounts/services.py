@@ -220,7 +220,7 @@ def invite_user(tenant, *, email, first_name, last_name, role, department="", co
         # username is unique across tenants; say only that the address cannot be used here
         raise ValidationError("That address cannot be used for a new account here. Contact support.")
     if create_technician:
-        Technician.objects.create(tenant=tenant, user=user, name=f"{first_name} {last_name}", title=NEW_TECHNICIAN_TITLE)
+        Technician.objects.create(tenant=tenant, user=user, name=f"{first_name} {last_name}"[:120], title=NEW_TECHNICIAN_TITLE)  # its column
     return user
 
 

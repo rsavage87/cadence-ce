@@ -308,7 +308,7 @@ class WorkOrderViewSet(TenantViewSet):
         if not wo_perms.can_assign(request.user):
             raise PermissionDenied("Assigning work orders needs Approve access.")
         tech = Technician.objects.filter(pk=request.data.get("technician")).first() if request.data.get("technician") else None
-        wo_services.assign(wo, technician=tech, vendor_name=request.data.get("vendor_name", ""), by=request.user)
+        _via_service(wo_services.assign, wo, technician=tech, vendor_name=request.data.get("vendor_name", ""), by=request.user)  # a refusal is a 400
         return Response(self.get_serializer(wo).data)
 
 

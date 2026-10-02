@@ -344,7 +344,7 @@ def wo_new(request):
         return render(request, "web/_wo_new.html", {"form": form, "asset": form.asset_obj})
     d = form.cleaned_data
     wo = wo_services.create_work_order(asset=d["asset"], type=d["type"], priority=d["priority"], problem=d["problem"],
-                                       requester=d["requester"] or request.user.get_full_name(), created_by=request.user, tag_out=d["tag_out"])
+                                       requester=(d["requester"] or request.user.get_full_name())[:120], created_by=request.user, tag_out=d["tag_out"])
     assignee = d.get("assignee")
     if assignee == VENDOR:
         wo_services.assign(wo, vendor_name=vendor_name_for(wo.asset), by=request.user)

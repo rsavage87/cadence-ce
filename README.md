@@ -30,7 +30,8 @@ pip install -r requirements-dev.txt
 cp .env.example .env   # point DATABASE_URL at your Postgres, or leave TESTING to use SQLite for tests only
 python manage.py makemigrations && python manage.py migrate
 python manage.py seed_demo && python manage.py runserver
-pytest
+pytest                                                              # on SQLite
+CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pytest   # on PostgreSQL, with the row-level security tests
 ```
 
 ## Daily jobs

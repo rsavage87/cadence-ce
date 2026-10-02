@@ -1,7 +1,7 @@
 # Build plan
 
 The mock (`cadence-ce-cmms-mock.html`) is the spec. Each slice below is shippable on its own and ends with green tests.
-Slices 0 to 16 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
+Slices 0 to 17 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
 export and print, devices are added and changed in the product, reports and request confirmations go out by email, each
 device model's PM program (risk score, procedure, AEM interval) is kept in the product, and the work itself (time, parts,
 what was done, a PM's results) is recorded on the work order; vendors and clinical requesters see only their own share. What each slice deferred is noted in its row and below.
@@ -25,6 +25,7 @@ what was done, a PM's results) is recorded on the work order; vendors and clinic
 | 14 | The PM program | PM schedule (Auto-assign week, the PM library), a model's PM program (AEM, procedure, risk score) | `equipment` + `pm` + `web` | done (no API for procedures, AEM cases, or Auto-assign week yet; OEM library sync needs a library) |
 | 15 | Recording the work | Work order drawer (Cost, Mark completed), device PM history, Settings (labor rates), Recalls (Check feeds) | `workorders` + `recalls` + `web` + `api` | done (vendor accounts were limited to their company's work orders in slice 16) |
 | 16 | Who sees what | Users and access (company and unit on users, scope on roles), every screen for the vendor technician and the clinical requester | `accounts` + `workorders` + `web` + `api` | done (a custom role chooses its scope; the default vendor and requester scopes are fixed) |
+| 17 | The suite on PostgreSQL | (none: CI) | `tests` + CI | done (CI's test-postgres job runs every test on PostgreSQL 16 and the row-level security tests as the runtime role) |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.
@@ -193,3 +194,17 @@ The mock's export and print buttons work since slice 11, and Add device since sl
   reads "another work order" in texts, and the facility's technician roster, report emails, and every facility-wide screen stay
   closed to them. Users and access sets the company or unit (required for scoped roles; units are the facility's departments) and a
   custom role's scope. A vendor's failed PM sends its repair to the same vendor when their contract covers repairs.
+- The suite on PostgreSQL (slice 17): `CADENCE_TEST_DATABASE_URL` runs the tests on PostgreSQL 16 (CI's test-postgres job, a
+  postgres:16 service): the same suite, connected as a superuser, so row locks, numeric rounding, and constraints behave as in
+  production, and the test database carries the row-level security policies (tests/conftest.py). `tests/test_postgres_rls.py`
+  switches to the runtime role (SET LOCAL ROLE cadence_app) and signs in, resets a password, accepts an invitation, uses the
+  portal, renders every screen and report (CSV and print), calls the API (session sign-in), writes, uses the Django admin, and runs
+  bootstrap_tenant, seed_demo, generate_pm, import_openfda, send_report_emails, run_daily_jobs, import_assets, and scheduler --once
+  under the policies, checking that the jobs did their work (a job reading no rows would still finish). The policy check reads
+  every table with a tenant_id from the database (accounts_user is the one exception). Rules settled in review: a request with a
+  NUL character is a 400 (PostgreSQL text cannot hold one); text composed from several fields is cut to its column, the importer
+  skips and reports a value too long for its column, and the API answers 400 for an over-long note or vendor name; the nightly
+  PM generation takes the planner lock and a recall batch locks its match, so overlapping runs never create duplicates; the
+  admin refuses to delete a user, a recall notice, or a facility (several facilities' rows point at them; deactivate instead);
+  the portal's case-insensitive department match picks by code point, so every collation agrees. Not covered: the API with token
+  authentication, which does not resolve the facility yet (a separate fix).

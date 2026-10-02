@@ -1,7 +1,9 @@
 from datetime import date, timedelta
+from io import StringIO
 
 import pytest
 from django.core.cache import caches
+from django.core.management import call_command
 
 from apps.accounts.models import Role, User, create_default_roles
 from apps.credentials.models import Credential, Scope, Technician
@@ -9,6 +11,29 @@ from apps.equipment.models import Asset, Department, DeviceModel, RiskClass
 from apps.recalls.models import Alert, AlertMatch
 from apps.tenants.context import tenant_context
 from apps.tenants.models import Tenant
+
+APP_ROLE = "cadence_app"  # the runtime role in production (scripts/init-db.sql): not the owner, not a superuser
+
+
+@pytest.fixture(scope="session")
+def django_db_setup(django_db_setup, django_db_blocker):
+    """On PostgreSQL (CADENCE_TEST_DATABASE_URL, CI's second test job), the test database gets the row-level security policies
+    production runs under (enable_rls) and the non-owner role APP_ROLE gets the app's privileges on it, so tests/test_postgres_rls.py
+    can run requests and commands under the policies (SET LOCAL ROLE). The suite itself connects as a superuser, which the
+    policies do not apply to. Nothing changes on SQLite."""
+    from django.db import connection
+
+    if connection.vendor != "postgresql":
+        return
+    with django_db_blocker.unblock():
+        call_command("enable_rls", database="default", stdout=StringIO())
+        with connection.cursor() as cur:
+            cur.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", [APP_ROLE])
+            if cur.fetchone() is None:
+                cur.execute(f"CREATE ROLE {APP_ROLE} NOLOGIN")
+            cur.execute(f"GRANT USAGE ON SCHEMA public TO {APP_ROLE}")
+            cur.execute(f"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO {APP_ROLE}")
+            cur.execute(f"GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO {APP_ROLE}")
 
 
 @pytest.fixture(autouse=True)

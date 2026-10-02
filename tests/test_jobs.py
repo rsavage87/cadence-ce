@@ -38,6 +38,18 @@ class FakeFDA:
 
 
 @pytest.fixture(autouse=True)
+def _keep_the_test_connection(monkeypatch):
+    """The scheduler drops stale connections between jobs (close_old_connections), as a long-running process must. A test runs in
+    one transaction on one connection: on PostgreSQL closing it would end the test's transaction (SQLite's in-memory test database
+    ignores close), so the tests keep it. What the tests check (a retry after a failed write, the next job still running) holds."""
+    from django.db import connection
+
+    if connection.vendor == "postgresql":
+        monkeypatch.setattr("apps.jobs.services.close_old_connections", lambda: None)
+        monkeypatch.setattr("apps.jobs.management.commands.scheduler.close_old_connections", lambda: None)
+
+
+@pytest.fixture(autouse=True)
 def fda(monkeypatch):
     """No test here touches the network: the importer gets a canned openFDA answer."""
     calls = []

@@ -46,6 +46,14 @@ RISK_MAP = {"life support": RiskClass.LIFE_SUPPORT, "life-support": RiskClass.LI
 DATE_FORMATS = ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%d-%b-%Y", "%Y/%m/%d")
 
 
+# The columns' limits (PostgreSQL enforces them): a row with a longer value is skipped and reported, never cut silently.
+TEXT_LIMITS = {"tag": Asset._meta.get_field("tag").max_length, "serial": Asset._meta.get_field("serial").max_length,
+               "room": Asset._meta.get_field("room").max_length, "department": Department._meta.get_field("name").max_length,
+               "manufacturer": DeviceModel._meta.get_field("manufacturer").max_length, "model": DeviceModel._meta.get_field("model").max_length,
+               "description": DeviceModel._meta.get_field("description").max_length, "category": DeviceModel._meta.get_field("category").max_length}
+COST_LIMIT = Decimal("10000000000")  # numeric(12, 2)
+
+
 def parse_date(s):
     s = (s or "").strip()
     for fmt in DATE_FORMATS:
@@ -116,17 +124,32 @@ class Command(BaseCommand):
                     self.stderr.write(f"Skipped {tag!r}: it cannot be used as an asset tag.")
                     skipped += 1
                     continue
+                # A value longer than its column, or a cost too large for it: PostgreSQL would refuse it and roll back the whole file
+                # (SQLite stores it), so the row is reported and skipped instead.
+                long = next(((f, limit) for f, limit in TEXT_LIMITS.items() if len(get(row, f)) > limit), None)
+                if long:
+                    self.stderr.write(f"Skipped {tag[:40]!r}: the {long[0]} is longer than {long[1]} characters.")
+                    skipped += 1
+                    continue
+                cost = parse_money(get(row, "cost"))
+                if cost is not None and abs(cost) >= COST_LIMIT:
+                    self.stderr.write(f"Skipped {tag!r}: the cost {get(row, 'cost')!r} is too large.")
+                    skipped += 1
+                    continue
+                interval = get(row, "pm_interval")
                 dept, _ = Department.objects.get_or_create(name=get(row, "department") or "Unassigned", defaults={"tenant": tenant})
                 dm, _ = DeviceModel.objects.get_or_create(
                     manufacturer=get(row, "manufacturer") or "Unknown", model=get(row, "model") or "Unknown",
                     defaults={"tenant": tenant, "description": get(row, "description") or get(row, "model") or "Device",
                               "category": get(row, "category") or "Uncategorized",
                               "risk_class": RISK_MAP.get(get(row, "risk").lower(), RiskClass.MEDIUM),
-                              "oem_pm_interval_months": int(get(row, "pm_interval") or 12) if get(row, "pm_interval").isdigit() else 12})
+                              # 1 to 120 months, as on screen; anything else (or unreadable) takes the default
+                              "oem_pm_interval_months": int(interval) if interval.isdecimal() and len(interval) <= 3 and 1 <= int(interval) <= 120
+                              else 12})
                 status = STATUS_MAP.get(get(row, "status").lower())  # None: no status in the file, or one it does not know
                 fields = {
                     "device_model": dm, "department": dept, "serial": get(row, "serial"), "room": get(row, "room"),
-                    "installed_on": parse_date(get(row, "installed")), "acquisition_cost": parse_money(get(row, "cost")),
+                    "installed_on": parse_date(get(row, "installed")), "acquisition_cost": cost,
                     "last_pm_on": parse_date(get(row, "last_pm")), "next_pm_on": parse_date(get(row, "next_pm")),
                     "warranty_end": parse_date(get(row, "warranty")),
                 }
@@ -153,5 +176,5 @@ class Command(BaseCommand):
                     created += 1
             if opts["dry_run"]:
                 transaction.set_rollback(True)
-        summary = f"{created} created, {updated} updated, {skipped} skipped (no tag, or a tag with spaces or slashes)"
+        summary = f"{created} created, {updated} updated, {skipped} skipped (no tag, a tag with spaces or slashes, or a value too long)"
         self.stdout.write(self.style.SUCCESS(f"{'Dry run: ' if opts['dry_run'] else ''}{summary}"))

@@ -60,6 +60,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "apps.core.http.RejectNulMiddleware",  # PostgreSQL text cannot hold NUL: a 400, never a 500 (slice 17)
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -96,7 +97,14 @@ WSGI_APPLICATION = "config.wsgi.application"
 # --- Database -------------------------------------------------------------
 # 'default' is the runtime connection (non-superuser role, subject to row-level security).
 # 'migrate' is the owner connection used by `migrate` and `enable_rls`.
-if TESTING:
+if TESTING and os.environ.get("CADENCE_TEST_DATABASE_URL"):
+    # The suite on PostgreSQL (CI's second test job, slice 17): pytest-django creates test_<name> on this server and migrates it.
+    # Connect as a superuser (CI's service container user): the row-level security policies, which tests/conftest.py installs on
+    # the test database, do not apply to it, so the suite runs as on SQLite; tests/test_postgres_rls.py switches to the non-owner
+    # role cadence_app for the paths that must hold under the policies. 'migrate' points at the same test database.
+    DATABASES = {"default": dj_database_url.parse(os.environ["CADENCE_TEST_DATABASE_URL"])}
+    DATABASES["migrate"] = {**DATABASES["default"], "TEST": {"MIRROR": "default"}}
+elif TESTING:
     DATABASES = {
         "default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"},
     }

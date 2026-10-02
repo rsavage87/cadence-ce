@@ -38,3 +38,10 @@ class UserAdmin(BaseUserAdmin):
         if request.user.is_superuser:
             return qs
         return qs.filter(tenant_id=request.user.tenant_id)
+
+    def has_delete_permission(self, request, obj=None):
+        # Rows in several facilities' tables point at it, and under row-level security a delete only sees the facility it runs as,
+        # so it would fail at commit (and the confirmation page would leave out what it deletes).
+        # Deactivate a user instead (Users and access).
+        return False
+

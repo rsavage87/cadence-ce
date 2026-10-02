@@ -55,7 +55,10 @@ def request_form(request, tenant_slug):
         if request.GET.get("dept") and "department" not in initial:
             # Department links carry the name; an exact match wins over a case-insensitive one ("ICU" and "Icu" can both exist).
             wanted = request.GET["dept"]
-            initial["department"] = Department.objects.filter(name=wanted).first() or Department.objects.filter(name__iexact=wanted).first()
+            # Otherwise the first case-insensitive match by code point, so SQLite, a C-collated and an en_US-collated PostgreSQL pick the
+            # same one (ordering by name would follow the database's collation).
+            initial["department"] = (Department.objects.filter(name=wanted).first()
+                                     or min(Department.objects.filter(name__iexact=wanted), key=lambda d: d.name, default=None))
         if request.method == "POST":
             ip = client_ip(request)
             if _rate_limited(ip):

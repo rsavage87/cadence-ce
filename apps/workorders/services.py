@@ -26,6 +26,9 @@ from .models import (
     WoType,
 )
 
+STATUS_NOTE_MAX = WorkOrderStatusHistory._meta.get_field("note").max_length
+VENDOR_NAME_MAX = WorkOrder._meta.get_field("vendor_name").max_length
+NAME_MAX = WorkOrder._meta.get_field("requester").max_length  # the 120-character name columns (requester, author_name, Technician.name)
 URGENCY_TO_PRIORITY = {Urgency.CRITICAL: Priority.CRITICAL, Urgency.HIGH: Priority.HIGH, Urgency.NORMAL: Priority.NORMAL}
 
 
@@ -52,6 +55,9 @@ def change_status(wo: WorkOrder, to_status: str, by=None, note: str = "", as_of=
         raise ValidationError(f"Cannot move {wo.number} from {wo.get_status_display()} to {to_status}.")
     if to_status in (WoStatus.IN_PROGRESS, WoStatus.COMPLETED) and as_of < wo.opened_on:
         raise ValidationError(f"{wo.number} cannot be started or completed before it was opened on {wo.opened_on:%b %-d, %Y}.")
+    note = (note or "").strip()
+    if len(note) > STATUS_NOTE_MAX:  # the API passes its note straight in; PostgreSQL refuses longer text (a 500, not a 400)
+        raise ValidationError({"note": f"Keep the note to {STATUS_NOTE_MAX} characters."})
     from_status = wo.status
     wo.status = to_status
     if to_status == WoStatus.IN_PROGRESS:
@@ -95,6 +101,8 @@ def assign(wo: WorkOrder, technician=None, vendor_name: str = "", by=None) -> Wo
 
     note = ""
     vendor_name = (vendor_name or "").strip()  # a stray space from the API would keep it from its company's share (apps.workorders.scoping)
+    if len(vendor_name) > VENDOR_NAME_MAX:
+        raise ValidationError({"vendor_name": f"Keep the vendor's name to {VENDOR_NAME_MAX} characters."})
     if vendor_name:
         wo.vendor_service, wo.vendor_name, wo.assigned_to = True, vendor_name, None
         note = f"Assigned to vendor: {vendor_name}"
@@ -114,8 +122,9 @@ def create_service_request(*, asset, department, problem, urgency, requester_nam
     completed, each only while the facility confirms by email and the address is at one of its domains (apps.portal.notifications)."""
     priority = URGENCY_TO_PRIORITY[urgency]
     wo = create_work_order(asset=asset, type=WoType.REPAIR, priority=priority, problem=problem,
-                           requester=f"{requester_name or 'Unit staff'}, {department.name}", source=Source.PORTAL, callback=callback,
-                           reported_location=f"{department.name} {room}".strip(), tag_out=tagged_out)
+                           # Composed from fields each within its own limit, so cut to the columns' (PostgreSQL refuses longer text).
+                           requester=f"{requester_name or 'Unit staff'}, {department.name}"[:120], source=Source.PORTAL, callback=callback,
+                           reported_location=f"{department.name} {room}".strip()[:120], tag_out=tagged_out)
     sr = ServiceRequest.objects.create(tenant=asset.tenant, asset=asset, department=department, room=room, requester_name=requester_name, callback=callback,
                                        requester_email=(requester_email or "").strip().lower(), problem=problem, urgency=urgency, tagged_out=tagged_out,
                                        work_order=wo, submitted_ip=ip)
@@ -139,7 +148,7 @@ def add_note(wo: WorkOrder, text: str, by=None) -> WorkOrderNote:
         raise ValidationError("A note needs some text.")
     if len(text) > NOTE_MAX_LENGTH:
         raise ValidationError(f"Notes are limited to {NOTE_MAX_LENGTH} characters.")
-    name = (by.get_full_name() or by.username) if by else ""
+    name = ((by.get_full_name() or by.username) if by else "")[:NAME_MAX]  # a full name may be longer than the column
     return WorkOrderNote.objects.create(tenant=wo.tenant, work_order=wo, author=by, author_name=name, text=text)
 
 

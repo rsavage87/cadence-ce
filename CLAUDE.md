@@ -6,7 +6,9 @@ workflows come from there. `spec/BUILD_PLAN.md` maps each screen to code and lis
 
 ## Stack
 Python 3.12, Django 5, Django REST Framework, PostgreSQL 16 (row-level security), django-simple-history for audit,
-HTMX for the web UI (`apps/web`, via django-htmx), pytest. Tests run on SQLite automatically (`TESTING` in settings).
+HTMX for the web UI (`apps/web`, via django-htmx), pytest. Tests run on SQLite automatically (`TESTING` in settings), and on
+PostgreSQL 16 when `CADENCE_TEST_DATABASE_URL` points at a server (CI runs both; the Postgres run includes the real row-level
+security tests, `tests/test_postgres_rls.py`).
 
 ## Non-negotiables
 1. **Every business table inherits `apps.core.models.TenantModel`.** Query through `Model.objects` (tenant-scoped).
@@ -14,7 +16,8 @@ HTMX for the web UI (`apps/web`, via django-htmx), pytest. Tests run on SQLite a
 2. **Code that runs before a tenant is set never touches a tenant-scoped table**: loading the signed-in user
    (`backends.get_user`), signed-out pages, and management commands before `tenant_context()`. No `select_related("role")`
    there: under row-level security the row is hidden or the query fails, and SQLite tests cannot tell (`tests/test_rls_paths.py`
-   stands in for the policy; add new signed-out paths to it).
+   stands in for the policy on SQLite, `tests/test_postgres_rls.py` runs the real policies as the runtime role on PostgreSQL; add
+   new signed-out paths and commands to both).
 3. **Never write `queryset = Model.objects.all()` at class level** (admin, DRF, forms): it is evaluated at import time
    with no tenant in context and stays empty. Resolve querysets inside the request (`get_queryset`).
 4. **Permissions are server-side.** Web views use `@web_view(Module.X, Level.Y)` (apps/web/decorators.py, which wraps
@@ -47,6 +50,7 @@ python manage.py run_daily_jobs                                    # both daily 
 python manage.py scheduler                                         # long-running: runs them at SCHEDULER_DAILY_AT (docker-compose `scheduler`)
 python manage.py enable_rls --database=migrate                     # Postgres only, run after migrate
 pytest
+CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pytest   # the suite on PostgreSQL as a superuser, with RLS tests
 ```
 
 ## Conventions
