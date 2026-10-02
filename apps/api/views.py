@@ -2,6 +2,10 @@
 REST API. Every viewset resolves its queryset per request through the tenant-scoped manager;
 never put `queryset = Model.objects.all()` on the class (it would be evaluated at import time
 with no tenant in context and stay empty).
+
+Slice 16: a scoped user (the vendor technician, the clinical requester; apps.workorders.scoping) is refused by every endpoint
+except the actions a view names in `scoped_actions` (ModulePermission). Work orders and devices name theirs and narrow their
+querysets to the user's share, so a row outside it is a 404, as another facility's is, and search and ordering only sort that share.
 """
 import re
 from datetime import date
@@ -17,7 +21,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.accounts.models import Level
+from apps.accounts.models import DataScope, Level
 from apps.contracts.models import Contract
 from apps.credentials.models import Credential, Technician
 from apps.credentials.services import qualified_technicians
@@ -34,6 +38,7 @@ from apps.recalls.models import AlertMatch
 from apps.reports.services import REPORTS, overview_kpis, report_meta, run_report
 from apps.tenants.context import get_current_tenant
 from apps.workorders import permissions as wo_perms
+from apps.workorders import scoping
 from apps.workorders import services as wo_services
 from apps.workorders.models import OPEN_STATUSES, WorkOrder, WoStatus
 
@@ -45,6 +50,9 @@ class TenantViewSet(viewsets.ModelViewSet):
     model = None
     module = None
     permission_classes = [IsAuthenticated, ModulePermission]
+    # Slice 16: the actions that narrow every row they read or write to a scoped user's share. None by default: every other
+    # action refuses a scoped user whatever their levels (ModulePermission), so a viewset opts in, never out.
+    scoped_actions = frozenset()
 
     def get_queryset(self):
         return self.model.objects.all()
@@ -155,6 +163,10 @@ class AssetViewSet(EquipmentWrites, TenantViewSet):
     model, module, serializer_class = Asset, "equipment", s.AssetSerializer
     search_fields = ["tag", "serial", "device_model__model", "device_model__manufacturer", "department__name", "contract__reference"]
     ordering_fields = ["tag", "next_pm_on", "installed_on", "acquisition_cost"]
+    # Slice 16: a scoped user reads the devices in their share and, at the usual levels (Equipment Edit; Approve to retire), edits
+    # only those. Adding and deleting devices stay closed to them (a new device has no work orders, so a company-scoped user could
+    # never see it; inventory is the facility-wide roles' work), as do the qualified technicians (the facility's staff, not a device).
+    scoped_actions = frozenset({"list", "retrieve", "update", "partial_update", "change_status"})
     in_use = "{0.tag} has work orders or service requests, so it cannot be deleted; retire it instead."
     FIXED_ON_UPDATE = {
         "tag": "Asset tags never change: they are on the sticker and in links.",
@@ -164,7 +176,7 @@ class AssetViewSet(EquipmentWrites, TenantViewSet):
     }
 
     def get_queryset(self):
-        return Asset.objects.select_related("device_model", "department", "contract")
+        return scoping.assets(self.request.user, Asset.objects.select_related("device_model", "department", "contract"))
 
     def perform_create(self, serializer):
         d = dict(serializer.validated_data)
@@ -174,6 +186,9 @@ class AssetViewSet(EquipmentWrites, TenantViewSet):
 
     def perform_update(self, serializer):
         asset, d = serializer.instance, dict(serializer.validated_data)
+        if scoping.is_scoped(self.request.user) and "department" in d and d["department"].pk != asset.department_id:
+            # Slice 16: a scoped user edits devices inside their share; moving one to another unit is the facility-wide roles' call.
+            raise PermissionDenied("Moving a device to another department needs a role that sees the whole facility.")
         errors = {}
         for field, message in self.FIXED_ON_UPDATE.items():
             if field in d and d.pop(field) != getattr(asset, field):
@@ -206,9 +221,26 @@ class WorkOrderViewSet(TenantViewSet):
     model, module, serializer_class = WorkOrder, "workorders", s.WorkOrderSerializer
     search_fields = ["number", "asset__tag", "problem", "requester"]
     ordering_fields = ["opened_on", "due_on", "priority"]
+    # Slice 16: a scoped user reads and works (at the usual levels) only the work orders in their share. Creating is refused to a
+    # company-scoped user (create below) and takes only devices in the share; deleting stays closed to them.
+    scoped_actions = frozenset({"list", "retrieve", "create", "update", "partial_update", "transition", "assign"})
 
     def get_queryset(self):
-        return WorkOrder.objects.select_related("asset", "assigned_to").prefetch_related("labor_lines", "part_lines")
+        qs = WorkOrder.objects.select_related("asset", "assigned_to").prefetch_related("labor_lines", "part_lines")
+        return scoping.work_orders(self.request.user, qs)
+
+    def get_serializer(self, *args, **kwargs):
+        serializer = super().get_serializer(*args, **kwargs)
+        if "data" in kwargs and scoping.is_scoped(self.request.user):
+            # Slice 16: a scoped user opens or moves work only onto a device in their share; another device's id reads as unknown (400).
+            serializer.fields["asset"].queryset = scoping.assets(self.request.user)
+        return serializer
+
+    def create(self, request, *args, **kwargs):
+        if scoping.scope_of(request.user) == DataScope.COMPANY:
+            # The vendor technician "sees and updates" the work assigned to their company; the facility opens and assigns it.
+            raise PermissionDenied("Your role updates the work orders assigned to your company; the facility opens them.")
+        return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
         d = serializer.validated_data

@@ -279,7 +279,13 @@ def test_refused_or_malformed_status_changes_are_400s(client, signed_in, ctx, ve
 
 @pytest.mark.parametrize("slug", ["requester", "analyst", "vendor"])
 def test_view_only_roles_read_but_cannot_write(client, signed_in, ctx, vent, dept, vent_model, slug):
-    signed_in(slug)
+    user = signed_in(slug)
+    # Slice 16: the requester sees their unit's devices and the vendor those with work assigned to their company (tests/test_scoping_api.py).
+    user.department, user.company = "ICU", "Hamilton Medical"
+    user.save()
+    if slug == "vendor":
+        create_work_order(asset=vent, type=WoType.REPAIR, priority="normal", problem="Flow sensor", vendor_service=True,
+                          vendor_name="Hamilton Medical field service")
     assert client.get(one(vent)).status_code == 200 and client.get(ASSETS).status_code == 200
     assert post(client, ASSETS, {"tag": "CE-20001", "device_model": str(vent_model.id), "department": str(dept.id)}).status_code == 403
     assert patch(client, one(vent), {"room": "2"}).status_code == 403
@@ -392,9 +398,15 @@ def test_another_facilitys_device_is_a_404(client, signed_in, ctx, vent, theirs)
 
 
 def test_reads_and_filters_are_unchanged(client, signed_in, ctx, vent, pump):
-    signed_in("requester")
+    user = signed_in("requester")
+    user.department = "ICU"  # slice 16: the requester sees their unit's devices; both are in the ICU
+    user.save()
     assert [x["tag"] for x in client.get(f"{ASSETS}?search=10002").json()["results"]] == ["CE-10002"]
     assert [x["tag"] for x in client.get(f"{ASSETS}?ordering=-tag").json()["results"]] == ["CE-10002", "CE-10001"]
+    # Slice 16: the qualified technicians are the facility's staff, closed to a scoped role (tests/test_scoping_api.py); a facility-wide
+    # view-only role still reads them.
+    assert client.get(f"{ASSETS}{vent.id}/qualified_technicians/").status_code == 403
+    signed_in("analyst")
     assert client.get(f"{ASSETS}{vent.id}/qualified_technicians/").status_code == 200
 
 
