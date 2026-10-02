@@ -1,0 +1,5 @@
+{% load web %}
+{% comment %}The Scan tag modal (slice 18, views_scan.scan), from the Equipment screen's page head. A device found opens its drawer and
+   closes this; a code that names none of the user's devices comes back here with the reason.{% endcomment %}
+<div class="modal-h"><h2>Scan tag</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% include "web/_scan_form.html" with modal=True %}

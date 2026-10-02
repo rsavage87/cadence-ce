@@ -1,6 +1,8 @@
 {% extends "portal/base.html" %}
 {% block body %}
-<div class="note">If a device failure is affecting a patient right now, call the Clinical Engineering hotline{% if hotline %} at {{ hotline }}{% endif %} in addition to submitting this form.</div>
+{% comment %}Slice 18: only for someone signed in who could open this device in Cadence (views._open_in_cadence). Styled here, not in
+   base.html, so the page everyone else gets is byte for byte what it was.{% endcomment %}{% if in_cadence %}<div class="note in-cadence" style="margin-bottom:10px;border:1px solid var(--line);background:var(--surface)">Signed in to Cadence as {{ in_cadence.name }}. <a href="{{ in_cadence.url }}" style="color:var(--accent);font-weight:600">Open {{ asset.tag }} in Cadence</a></div>
+{% endif %}<div class="note">If a device failure is affecting a patient right now, call the Clinical Engineering hotline{% if hotline %} at {{ hotline }}{% endif %} in addition to submitting this form.</div>
 <form method="post">{% csrf_token %}
   {% if form.non_field_errors %}<div class="err">{{ form.non_field_errors }}</div>{% endif %}
   {% for field in form.visible_fields %}

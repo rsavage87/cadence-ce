@@ -5,7 +5,8 @@ On PostgreSQL a tenant-scoped table only shows a tenant's rows while `app.tenant
 SQLite, where set_db_tenant does nothing, so a query made too early passes here and fails in production. The `rls` fixture
 stands in for the policy: it records what set_db_tenant was last told and notes every query that touches a tenant-scoped
 table while no tenant is set. Covered: loading the signed-in user on every request, signing in, the password-reset request,
-accepting an invitation, the public portal, and the bootstrap and seed commands.
+accepting an invitation, the public portal (signed out, and opened from a label while signed in), and the bootstrap and seed
+commands.
 """
 import re
 from io import StringIO
@@ -14,9 +15,10 @@ from urllib.parse import urlsplit
 import pytest
 from django.core.management import call_command
 from django.db import connection
+from django.test.utils import CaptureQueriesContext
 
 from apps.accounts import invitations, services
-from apps.accounts.models import Role
+from apps.accounts.models import Role, create_default_roles
 from apps.tenants.management.commands.enable_rls import tenant_scoped_tables
 
 
@@ -118,6 +120,22 @@ def test_public_portal(client, rls, tenant):
     with rls:
         assert client.get("/r/riverside/").status_code == 200
     assert rls.violations == []
+
+
+def test_the_portal_with_a_signed_in_user(client, rls, tenant, other_tenant, make_user, vent):
+    """Slice 18: a label's link opened while signed in. The "Open in Cadence" note reads the user's role (Equipment View, their share)
+    inside the portal facility's tenant_context, and only for a member of that facility: another facility's member's role is not
+    read there at all (the policy hides it, so reading it would fail the request), and the page is the one everyone gets."""
+    client.force_login(make_user("technician"))
+    with rls:
+        body = client.get(f"/r/riverside/?asset={vent.tag.lower()}").content.decode()
+    assert rls.violations == [] and f"Open {vent.tag} in Cadence" in body
+    create_default_roles(other_tenant)
+    client.force_login(make_user("director", tenant_=other_tenant))
+    with rls, CaptureQueriesContext(connection) as queries:
+        r = client.get(f"/r/riverside/?asset={vent.tag}")
+    assert r.status_code == 200 and "in Cadence" not in r.content.decode() and rls.violations == []
+    assert [q["sql"] for q in queries.captured_queries if '"accounts_role"' in q["sql"]] == []
 
 
 def test_bootstrap_tenant_with_invite(rls, db, mailoutbox):
