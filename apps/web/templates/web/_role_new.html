@@ -6,7 +6,8 @@
     <label>Role name{{ form.name }}{% if form.name.errors %}<span class="err">{{ form.name.errors|striptags }}</span>{% endif %}</label>
     <label>Copy permissions from{{ form.copy_from }}{% if form.copy_from.errors %}<span class="err">{{ form.copy_from.errors|striptags }}</span>{% endif %}</label>
     <label class="full">Description{{ form.description }}</label>
+    <label class="full">Sees{{ form.scope }}{% if form.scope.errors %}<span class="err">{{ form.scope.errors|striptags }}</span>{% endif %}</label>
   </div>
-  <div class="hint" style="padding:0 16px 12px">Adjust the module levels in the matrix after the role is created.</div>
+  <div class="hint" style="padding:0 16px 12px">Adjust the module levels in the matrix after the role is created. A role that sees only its company's work orders or its department's devices needs each user's company or unit (Users, Edit).</div>
   <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Create role</button></div>
 </form>

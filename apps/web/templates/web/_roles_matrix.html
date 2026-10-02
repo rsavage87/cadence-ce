@@ -1,12 +1,20 @@
 {% load users_tags %}
-{# Re-fetches itself after a role is added; level changes return the whole matrix. #}
+{# Re-fetches itself after a role is added; level and scope changes return the whole matrix. #}
 <div id="roles-matrix" class="tbl-wrap" hx-get="{% url 'web:roles' %}" hx-trigger="roles-changed from:body" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap">
   <table>
-    <thead><tr><th>Role</th>{% for k, l in modules %}<th>{{ l }}</th>{% endfor %}<th class="num">Users</th></tr></thead>
+    <thead><tr><th>Role</th><th>Sees</th>{% for k, l in modules %}<th>{{ l }}</th>{% endfor %}<th class="num">Users</th></tr></thead>
     <tbody>
       {% for m in matrix %}
       <tr>
         <td class="two" style="white-space:normal;min-width:220px"><b style="font-weight:600">{{ m.role.name }}</b><small>{{ m.role.description }}</small></td>
+        <td>
+          {% if can_manage_users %}
+          <select class="perm role-scope" name="scope" aria-label="{{ m.role.name }}, sees"{% if m.scope_fixed %} disabled title="{{ m.scope_fixed }}"{% else %}
+                  hx-post="{% url 'web:role_scope' m.role.id %}" hx-trigger="change" hx-target="#roles-matrix" hx-swap="outerHTML"{% endif %}>
+            {% for v, short, long in scopes %}<option value="{{ v }}" title="{{ long }}"{% if m.scope == v %} selected{% endif %}>{{ short }}</option>{% endfor %}
+          </select>
+          {% else %}{% for v, short, long in scopes %}{% if m.scope == v %}<span title="{{ long }}">{{ short }}</span>{% endif %}{% endfor %}{% endif %}
+        </td>
         {% for module, level in m.cells %}
         <td>
           {% if can_manage_users %}

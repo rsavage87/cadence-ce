@@ -3,5 +3,6 @@
 {% block content %}
 {% include "web/_users_tabs.html" %}
 {% include "web/_roles_matrix.html" %}
-<div class="note" style="margin-top:12px">None hides the module. View is read-only. Request lets a user submit and follow their own requests. Edit allows creating and updating records. Approve adds sign-off actions: closing recalls, approving AEM changes, closing other people's work orders. Full adds configuration. The Director role is fixed; changes to other roles apply at the next sign-in.</div>
+<div class="note" style="margin-top:12px">None hides the module. View is read-only. Request lets a user submit and follow their own requests. Edit allows creating and updating records. Approve adds sign-off actions: closing recalls, approving AEM changes, closing other people's work orders. Full adds configuration. The Director role is fixed; changes to other roles apply at the next sign-in.
+  Sees is which devices and work orders a role's users get: the whole facility, only the work orders assigned to their company, or only their own department's devices and work orders. The Director always sees the whole facility, and the vendor technician and clinical requester keep the narrow view their descriptions promise.</div>
 {% endblock %}

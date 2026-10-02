@@ -7,10 +7,12 @@ urlpatterns = [
     path("", v.users, name="users"),
     path("invite/", v.user_invite, name="user_invite"),
     path("<int:pk>/role/", v.user_role, name="user_role"),
+    path("<int:pk>/edit/", v.user_edit, name="user_edit"),
     path("<int:pk>/deactivate/", v.user_deactivate, name="user_deactivate"),
     path("<int:pk>/reactivate/", v.user_reactivate, name="user_reactivate"),
     path("<int:pk>/resend-invite/", v.user_resend_invite, name="user_resend_invite"),
     path("roles/", v.roles, name="roles"),
     path("roles/new/", v.role_new, name="role_new"),
     path("roles/<uuid:pk>/level/", v.role_level, name="role_level"),
+    path("roles/<uuid:pk>/scope/", v.role_scope, name="role_scope"),
 ]

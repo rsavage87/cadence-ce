@@ -11,14 +11,18 @@
     </select>
     {% else %}{{ u.role.name|default:"No role" }}{% endif %}
   </td>
-  <td>{{ u.department|default:"—" }}</td>
+  {% comment %}Slice 16: a company-scoped user sees by their company and a department-scoped one by their unit; either without it sees nothing.{% endcomment %}
+  <td class="two">{% if row.scope == "company" %}{% if row.gap %}<span class="chip warn">Sees nothing until a company is set</span>{% else %}{{ u.company }}<small>Sees this company's work orders</small>{% endif %}
+    {% elif row.scope == "department" %}{% if row.gap %}<span class="chip warn">Sees nothing until a department is set</span>{% if u.department %}<small>No department here is named {{ u.department }}</small>{% endif %}{% else %}{{ u.department }}<small>Sees this unit only</small>{% endif %}
+    {% else %}{{ u.department|default:"—" }}{% endif %}</td>
   <td>{% user_status_chip row.status %}</td>
   <td class="muted">{{ u.last_login|last_active }}</td>
   <td>{% if row.tech %}<a class="link" href="{% url 'web:credentials' %}?technician={{ row.tech.id }}">{{ row.cred_count }} credential{{ row.cred_count|pluralize }}</a>{% if row.expiring %} <span class="chip warn">{{ row.expiring }} expiring</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
   <td class="num" style="white-space:nowrap">
     {% if can_manage_users %}
       {% if row.status == "deactivated" %}<button class="btn sm" type="button" hx-post="{% url 'web:user_reactivate' u.pk %}{% query request.GET %}" hx-target="#users-body" hx-swap="outerHTML">Reactivate</button>
-      {% else %}{% if row.pending %}<button class="btn sm ghost" type="button" hx-post="{% url 'web:user_resend_invite' u.pk %}{% query request.GET %}" hx-target="#users-body" hx-swap="outerHTML">Resend invite</button>{% endif %}
+      {% else %}<button class="btn sm ghost" type="button" hx-get="{% url 'web:user_edit' u.pk %}" hx-target="#modal-card" aria-label="Edit {{ u.get_full_name|default:u.username }}">Edit</button>
+      {% if row.pending %}<button class="btn sm ghost" type="button" hx-post="{% url 'web:user_resend_invite' u.pk %}{% query request.GET %}" hx-target="#users-body" hx-swap="outerHTML">Resend invite</button>{% endif %}
       {% if not row.is_self and not u.is_superuser %}<button class="btn sm ghost" type="button" hx-post="{% url 'web:user_deactivate' u.pk %}{% query request.GET %}" hx-target="#users-body" hx-swap="outerHTML"
               hx-confirm="Deactivate {{ u.get_full_name|default:u.username }}? {% if row.pending %}Their invitation link stops working.{% else %}They keep their history but cannot sign in.{% endif %}">Deactivate</button>{% endif %}{% endif %}
     {% endif %}

@@ -5,6 +5,11 @@ User is not tenant-scoped, so every lookup here filters on request.tenant; anoth
 Row actions return the refreshed row and raise 'users-changed' so the list (and its filters) catch up; the matrix is
 returned whole. State changes go through apps.accounts.services; invitation emails (Invite user, Resend invite, slice 10)
 through apps.accounts.invitations, whose send never raises on a mail failure, so the account change always stands.
+
+Slice 16 (who sees what): a user's company or department is set in Invite user and in Edit on their row, and the list says
+which one a scoped user sees by, or that they see nothing yet. Choosing a company- or department-scoped role in a row's role
+select for someone without what it needs opens Edit with that role chosen, to ask for it. The matrix shows each role's scope
+and changes a custom role's (the Director's and the default vendor and requester roles' are fixed).
 """
 from datetime import date, timedelta
 
@@ -14,17 +19,21 @@ from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
-from django_htmx.http import trigger_client_event
+from django_htmx.http import reswap, retarget, trigger_client_event
 
 from apps.accounts import invitations, services
-from apps.accounts.models import Level, Module, Role, User
+from apps.accounts.models import DataScope, Level, Module, Role, User
 from apps.accounts.services import USER_STATUSES
 from apps.credentials.models import Credential, Technician
+from apps.workorders.scoping import scope_of
 
 from .decorators import web_view
 from .forms import parse_uuid
-from .forms_users import InviteUserForm, NewRoleForm, parse_user_filters
+from .forms_users import COMPANY_LIST_ID, InviteUserForm, NewRoleForm, UserAccessForm, parse_user_filters
 from .htmx import is_partial, toast
+
+# The matrix's short words for a role's scope (DataScope's labels are the long form, used in Add role).
+SCOPE_SHORT = {DataScope.FACILITY: "Whole facility", DataScope.COMPANY: "Own company", DataScope.DEPARTMENT: "Own department"}
 
 
 def _tabs_context(request, tab: str) -> dict:
@@ -37,12 +46,17 @@ def _tabs_context(request, tab: str) -> dict:
     }
 
 
+def _name(user) -> str:
+    return user.get_full_name() or user.username
+
+
 # --- Users tab ------------------------------------------------------------------------------------
 
 def _rows(request, users) -> list[dict]:
     """One dict per user with what the row template needs; credential counts come from one query, not one per row."""
     horizon = date.today() + timedelta(days=settings.CREDENTIAL_EXPIRY_WARNING_DAYS)
     techs = {t.user_id: t for t in Technician.objects.filter(user__in=[u.pk for u in users]).prefetch_related("credentials")}
+    departments = services.department_names(request.tenant)
     rows = []
     for u in users:
         tech = techs.get(u.pk)
@@ -50,7 +64,9 @@ def _rows(request, users) -> list[dict]:
         rows.append({"u": u, "status": services.user_status(u), "tech": tech, "cred_count": len(creds),
                      "expiring": sum(1 for c in creds if c.expires_on and c.expires_on <= horizon), "is_self": u.pk == request.user.pk,
                      # Resend invite only where a link could still set the first password (not after a password was set in Admin)
-                     "pending": invitations.is_pending(u)})
+                     "pending": invitations.is_pending(u),
+                     # slice 16: what a scoped user sees by, and what is missing when they see nothing
+                     "scope": scope_of(u), "gap": services.scope_gap(u, departments)})
     return rows
 
 
@@ -78,6 +94,10 @@ def _body_response(request, message: str):
     return toast(render(request, "web/_users_body.html", {**_users_context(request), "oob_summary": True}), message)
 
 
+def _is_scope_error(error: ValidationError) -> bool:
+    return hasattr(error, "error_dict") and bool({"company", "department"} & set(error.error_dict))
+
+
 @require_POST
 @web_view(Module.USERS, Level.FULL)
 def user_role(request, pk):
@@ -85,9 +105,41 @@ def user_role(request, pk):
     role = Role.objects.filter(pk=parse_uuid(request.POST.get("role"))).first()
     try:
         services.set_user_role(user, role, by=request.user)
-        return _body_response(request, f"{user.get_full_name() or user.username}: role set to {role.name}")
+        return _body_response(request, f"{_name(user)}: role set to {role.name}")
     except ValidationError as e:
-        return _body_response(request, e.messages[0])
+        if not _is_scope_error(e):
+            return _body_response(request, e.messages[0])
+        # The role needs a company or department the account does not have: ask for it in Edit, with the role chosen. The list
+        # re-fetches meanwhile, so the row's select shows the role the user still has until Edit saves.
+        form = UserAccessForm({"role": str(role.id), "company": user.company, "department": user.department}, user=user)
+        form.is_valid()
+        form.add_service_errors(e)
+        form.focus_first_error()
+        response = reswap(retarget(_edit_modal(request, user, form), "#modal-card"), "innerHTML")
+        return trigger_client_event(response, "users-changed", {})
+
+
+def _edit_modal(request, user, form):
+    return render(request, "web/_user_edit.html", {"form": form, "target": user, "company_list_id": COMPANY_LIST_ID})
+
+
+@web_view(Module.USERS, Level.FULL)
+def user_edit(request, pk):
+    """Edit on a row: role, company, and department. GET with the form's values (the role select re-renders it for the role chosen)."""
+    user = _get_user(request, pk)
+    is_self = user.pk == request.user.pk
+    if request.method != "POST":
+        params = request.GET.dict()
+        return _edit_modal(request, user, UserAccessForm(user=user, is_self=is_self, initial=params, focus="role" if params else None))
+    form = UserAccessForm(request.POST, user=user, is_self=is_self)
+    if form.is_valid():
+        try:
+            services.set_user_access(user, role=form.cleaned_data["role"], **form.scope_values(), by=request.user)
+            return _modal_done(f"{_name(user)} updated", "users-changed")
+        except ValidationError as e:
+            form.add_service_errors(e)
+            form.focus_first_error()
+    return _edit_modal(request, user, form)
 
 
 @require_POST
@@ -96,7 +148,7 @@ def user_deactivate(request, pk):
     user = _get_user(request, pk)
     try:
         services.deactivate_user(user, by=request.user)
-        return _body_response(request, f"{user.get_full_name() or user.username} deactivated")
+        return _body_response(request, f"{_name(user)} deactivated")
     except ValidationError as e:
         return _body_response(request, e.messages[0])
 
@@ -107,7 +159,7 @@ def user_reactivate(request, pk):
     user = _get_user(request, pk)
     try:
         services.reactivate_user(user, by=request.user)
-        return _body_response(request, f"{user.get_full_name() or user.username} reactivated")
+        return _body_response(request, f"{_name(user)} reactivated")
     except ValidationError as e:
         return _body_response(request, e.messages[0])
 
@@ -134,22 +186,26 @@ def _modal_done(message: str, event: str):
 
 
 def _invite_modal(request, form):
-    return render(request, "web/_user_invite.html", {"form": form, "valid_days": settings.INVITATION_VALID_DAYS})
+    return render(request, "web/_user_invite.html", {"form": form, "valid_days": settings.INVITATION_VALID_DAYS, "company_list_id": COMPANY_LIST_ID})
 
 
 @web_view(Module.USERS, Level.FULL)
 def user_invite(request):
     if request.method != "POST":
-        return _invite_modal(request, InviteUserForm())
+        # with the form's values: the role select re-renders the form for the role chosen (its company and department fields)
+        params = request.GET.dict()
+        return _invite_modal(request, InviteUserForm(initial=params, focus="role") if params else InviteUserForm())
     form = InviteUserForm(request.POST)
     if not form.is_valid():
+        form.focus_first_error()
         return _invite_modal(request, form)
     d = form.cleaned_data
     try:
         user = services.invite_user(request.tenant, email=d["email"], first_name=d["first_name"], last_name=d["last_name"], role=d["role"],
-                                    department=d["department"], create_technician=d["create_technician"], by=request.user)
+                                    create_technician=d["create_technician"], by=request.user, **form.scope_values())
     except ValidationError as e:
-        form.add_error(None, e.messages[0])
+        form.add_service_errors(e)
+        form.focus_first_error()
         return _invite_modal(request, form)
     # The account exists whatever happens to the email. A failed send keeps the modal open with the warning (a toast fades
     # before it is read); Resend invite tries again.
@@ -168,8 +224,10 @@ def _roles_context(request) -> dict:
     matrix = []
     for role in services.role_order(Role.objects.prefetch_related("permissions")):
         levels = {p.module: p.level for p in role.permissions.all()}
-        matrix.append({"role": role, "cells": [(m.value, levels.get(m.value, Level.NONE)) for m in ROLE_MATRIX_MODULES], "users": counts.get(role.id, 0)})
+        matrix.append({"role": role, "cells": [(m.value, levels.get(m.value, Level.NONE)) for m in ROLE_MATRIX_MODULES], "users": counts.get(role.id, 0),
+                       "scope": role.effective_scope, "scope_fixed": services.scope_fixed_reason(role)})
     return {**_tabs_context(request, "roles"), "matrix": matrix, "modules": [(m.value, m.label) for m in ROLE_MATRIX_MODULES], "levels": Level.choices,
+            "scopes": [(v, SCOPE_SHORT[v], label) for v, label in DataScope.choices],
             "oob_summary": request.htmx is not None and bool(request.htmx)}
 
 
@@ -198,6 +256,28 @@ def role_level(request, pk):
     return toast(render(request, "web/_roles_matrix.html", _roles_context(request)), message)
 
 
+def _scope_message(role) -> str:
+    message = f"{role.name}: sees {DataScope(role.effective_scope).label.lower()}"
+    missing = services.users_without_scope(role)
+    if missing:
+        need = "company" if role.effective_scope == DataScope.COMPANY else "department"
+        n = len(missing)
+        message += f". {n} of its users {'has' if n == 1 else 'have'} no {need} and {'sees' if n == 1 else 'see'} nothing until one is set (Users tab)"
+    return message
+
+
+@require_POST
+@web_view(Module.USERS, Level.FULL)
+def role_scope(request, pk):
+    role = get_object_or_404(Role.objects, pk=pk)
+    try:
+        services.set_role_scope(role, request.POST.get("scope", ""), by=request.user)
+        message = _scope_message(role)
+    except ValidationError as e:
+        message = e.messages[0]
+    return toast(render(request, "web/_roles_matrix.html", _roles_context(request)), message)
+
+
 @web_view(Module.USERS, Level.FULL)
 def role_new(request):
     if request.method != "POST":
@@ -206,7 +286,7 @@ def role_new(request):
     if form.is_valid():
         d = form.cleaned_data
         try:
-            role = services.create_role(name=d["name"], description=d["description"], copy_from=d["copy_from"])
+            role = services.create_role(name=d["name"], description=d["description"], copy_from=d["copy_from"], scope=d["scope"], by=request.user)
             return _modal_done(f'Role "{role.name}" created', "roles-changed")
         except ValidationError as e:
             form.add_error(None, e.messages[0])
