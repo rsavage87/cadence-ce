@@ -1,0 +1,74 @@
+{% load web %}
+{% comment %}Completing a work order (slice 15, views_wo_complete.wo_complete): the resolution, and for a PM the device's checklist
+   step by step (pass, fail, or N/A, and a reading for a measured step), the overall result, and a failed PM's options (shown once
+   Fail is chosen; without :has support they simply stay visible). A work order that cannot be completed now says why instead.{% endcomment %}
+<div class="modal-h"><h2>Complete {{ wo.number }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="wc-form" class="wc-form" hx-post="{% url 'web:wo_complete' wo.number %}" hx-target="#modal-card" novalidate>
+  {{ form.signature }}
+  <div class="form">
+    <p class="full wc-title"><strong>{{ asset.tag }}</strong> · {{ dm.description }}, {{ dm.manufacturer }} {{ dm.model }}<br><span class="muted">{{ wo.get_type_display }}{% if wo.vendor_service %} · {{ wo.vendor_name|default:"Vendor" }}{% elif wo.assigned_to %} · {{ wo.assigned_to.name }}{% endif %}</span></p>
+    {% if form.non_field_errors %}<div class="full"><span class="err">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+  </div>
+  {% if is_pm %}
+  <div class="wc-sec">
+    {% if has_checklist %}
+    <div class="wc-head"><span class="hint">Checklist{% if procedure %}: <b>{{ procedure.code }}</b> · {{ procedure.name }}{% endif %}</span>
+      <button class="btn sm" type="button" hx-get="{% url 'web:wo_complete' wo.number %}" hx-vals='{"fill": "pass"}' hx-include="#wc-form" hx-target="#modal-card">Mark the rest pass</button></div>
+    {% if form.checklist_errors %}<div class="err" role="alert" style="margin-bottom:6px">{{ form.checklist_errors }}</div>{% endif %}
+    <div class="tbl-wrap"><table class="mini-tbl wc-steps">
+      <thead><tr><th>#</th><th>Step</th><th class="c">Pass</th><th class="c">Fail</th><th class="c">N/A</th></tr></thead>
+      <tbody>
+      {% for r in rows %}<tr>
+        <td class="muted">{{ r.n }}</td>
+        <td class="st">{{ r.text }}{% if r.measure %}<small class="muted">Record {{ r.measure }}</small>{% endif %}{% if r.error %}<span class="err">{{ r.error }}</span>{% endif %}
+          {% if r.measured %}<input class="rd" type="text" name="reading_{{ r.n }}" value="{{ r.reading }}" maxlength="{{ reading_max }}" autocomplete="off" aria-label="Step {{ r.n }}: reading" placeholder="Reading"{% if r.focus == "reading" %} autofocus{% endif %}>{% if r.reading_error %}<span class="err">{{ r.reading_error }}</span>{% endif %}{% endif %}</td>
+        {% for value, label in step_choices %}<td class="c"><input type="radio" name="step_{{ r.n }}" value="{{ value }}" aria-label="Step {{ r.n }}: {{ label }}"{% if r.value == value %} checked{% endif %}{% if r.focus == "step" and forloop.first %} autofocus{% endif %}></td>{% endfor %}
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}
+    <div class="note">{% if procedure %}{{ procedure.code }} has no steps on file{% else %}No PM procedure is on file for this model{% endif %}. Say in the resolution what was checked, and any readings.</div>
+    {% if form.checklist_errors %}<div class="err" role="alert" style="margin-top:6px">{{ form.checklist_errors }}</div>{% endif %}
+    {% endif %}
+  </div>
+  {% endif %}
+  <div class="form">
+    {% if is_pm %}
+    <div class="full">
+      <div class="wc-label" id="wc-result-label">Result</div>
+      <div class="radio wc-results" role="radiogroup" aria-labelledby="wc-result-label">
+        {% for opt in results %}<label><input type="radio" name="pm_result" value="{{ opt.value }}"{% if opt.checked %} checked{% endif %}{% if form.first_error == "pm_result" and forloop.first %} autofocus{% endif %}><span>{{ opt.label }}<small>{{ opt.hint }}</small></span></label>{% endfor %}
+      </div>
+      {% if form.pm_result.errors %}<span class="err">{{ form.pm_result.errors|striptags }}</span>{% endif %}
+    </div>
+    {% endif %}
+    <label class="full">Resolution{{ form.resolution }}{% if form.resolution.errors %}<span class="err">{{ form.resolution.errors|striptags }}</span>{% endif %}</label>
+    {% if is_pm %}
+    <div class="full wc-fail">
+      <div class="wc-label">If the PM failed</div>
+      {% if own_repair %}
+      <div class="hint">{{ own_repair.number }}, the repair this PM opened when it last failed, is still open: the failure is recorded on it.</div>
+      {% elif offer_open_repair %}
+      <label class="check-row">{{ form.open_repair }} Open a new repair work order for the failed steps</label>
+      <div class="hint">{{ asset.tag }} already has open repair {{ other_repair.number }}. Clear this to record the failure on it instead.</div>
+      {% if form.open_repair.errors %}<span class="err">{{ form.open_repair.errors|striptags }}</span>{% endif %}
+      {% else %}
+      <div class="hint">A repair work order is opened for the failed steps{% if follow_up_tech %}, assigned to {{ follow_up_tech.name }}{% else %}, unassigned until a CE manager assigns it{% endif %}.</div>
+      {% endif %}
+      {% if offer_tag_out %}
+      <label class="check-row">{{ form.tag_out }} Tag {{ asset.tag }} out of service until the repair is done</label>
+      {% else %}
+      <div class="hint">{{ asset.tag }} is {{ asset.get_status_display|lower }}, so there is nothing to tag out.</div>
+      {% endif %}
+    </div>
+    {% endif %}
+    {% if requester_emailed %}<div class="full hint">A portal request: the requester's done email never includes this resolution.</div>{% endif %}
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Mark completed</button></div>
+</form>
+{% endif %}

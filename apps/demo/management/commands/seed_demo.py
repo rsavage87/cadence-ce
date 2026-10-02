@@ -14,6 +14,7 @@ from django.utils import timezone
 from apps.accounts.models import Role, User, create_default_roles
 from apps.contracts.models import Contract, ContractType, Coverage
 from apps.credentials.models import Credential, Scope, Technician
+from apps.credentials.services import qualified_technicians
 from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, RiskClass
 from apps.facility.services import update_settings
 from apps.pm import aem
@@ -23,8 +24,9 @@ from apps.recalls.models import Alert, AlertMatch
 from apps.recalls.services import create_recall_work_orders, set_status
 from apps.tenants.context import tenant_context
 from apps.tenants.models import Tenant
-from apps.workorders.models import LaborLine, PartLine, Priority, Source, WorkOrder, WoType
-from apps.workorders.services import change_status, create_work_order
+from apps.workorders.completion import complete_work_order
+from apps.workorders.models import LaborLine, PartLine, PmResult, Priority, Source, WorkOrder, WoType
+from apps.workorders.services import assign, change_status, create_work_order
 
 MODELS = [
     # manufacturer, model, description, category, risk, pm months, life yrs, cost, n, support
@@ -84,6 +86,19 @@ USERS = [
 ]
 PROBLEMS = ["Battery will not hold charge", "Occlusion alarm with no occlusion", "Screen flickers intermittently", "Error code on startup",
             "Pump door latch loose", "No waveform on lead II"]
+# Every demo procedure's checklist; the electrical safety step records the leakage current (slice 15 records each PM's results).
+CHECKLIST = ["Visual inspection and cleaning", {"text": "Electrical safety test per IEC 62353", "measure": "leakage µA, limit 100"},
+             "Functional test per service manual", "Alarm verification", "Apply PM sticker and document"]
+VISUAL, LEAKAGE = 0, 1  # the steps a minor repair and the failed PM touch
+REPAIR_RESOLUTIONS = ["Replaced faulty component and verified per OEM procedure", "Calibrated and functionally tested, returned to service",
+                      "Cleaned connector and reseated cable, passed functional test", "Replaced battery, runtime test passed",
+                      "Firmware updated, verified operation", "No fault found on bench, monitored 24 h and returned"]
+MINOR_REPAIRS = ["Visual inspection: replaced a worn power cord strain relief", "Visual inspection: tightened a loose pole clamp",
+                 "Visual inspection: replaced a cracked battery door latch", "Visual inspection: replaced a missing caster cap"]
+MINOR_REPAIR_SHARE = 0.08  # of the demo's completed PMs; the rest pass, but for one that fails (the first eligible life-support PM)
+FAIL_BEFORE_DAYS = 60  # the failed PM is at least this old, so its repair is done and the device back in service
+FAILED_READING = "184 µA"
+FAIL_REPAIR = "Replaced the line cord (open ground conductor). Leakage 38 µA after repair; electrical safety and functional tests passed."
 
 
 class Command(BaseCommand):
@@ -139,9 +154,7 @@ class Command(BaseCommand):
             tag = 10240
             for mfr, model, desc, cat, risk, pm, life, cost, n, ctype in MODELS:
                 proc = PmProcedure.objects.create(code=f"{mfr[:2].upper()}-{model.split()[0][:6].upper()}-PM{pm}", name=f"{desc} {pm}-month PM",
-                                                  estimated_hours=1.5 if cost > 20000 else 0.75,
-                                                  checklist=["Visual inspection and cleaning", "Electrical safety test per IEC 62353",
-                                                             "Functional test per service manual", "Alarm verification", "Apply PM sticker and document"])
+                                                  estimated_hours=1.5 if cost > 20000 else 0.75, checklist=CHECKLIST)
                 dm = DeviceModel.objects.create(manufacturer=mfr, model=model, description=desc, category=cat, risk_class=risk, oem_pm_interval_months=pm,
                                                 expected_life_years=life, list_cost=cost, pm_procedure=proc)
                 contract = None
@@ -161,7 +174,10 @@ class Command(BaseCommand):
                                              acquisition_cost=round(cost * rnd.uniform(0.9, 1.1), 2),
                                              condition=rnd.randint(2, 5), last_pm_on=add_months(next_pm, -pm), next_pm_on=next_pm, contract=contract)
                     assets.append(a)
-            # six months of closed work orders, plus a small open backlog
+            # six months of closed work orders, plus a small open backlog. What each one found comes from its own generator, so
+            # the devices, dates, and technicians stay as they were before results were recorded.
+            outcomes = random.Random(20261002)
+            failed_pm = None
             for day in range(-180, 0):
                 d = today + timedelta(days=day)
                 if d.weekday() >= 5:
@@ -182,7 +198,12 @@ class Command(BaseCommand):
                     done = wo.due_on + timedelta(days=rnd.randint(1, 8)) if late else d + timedelta(days=rnd.randint(0, min(6, (wo.due_on - d).days)))
                     if done <= today - timedelta(days=1):
                         change_status(wo, "in_progress", as_of=d)
-                        change_status(wo, "completed", as_of=done)
+                        if not is_pm:
+                            complete_work_order(wo, resolution=outcomes.choice(REPAIR_RESOLUTIONS), today=done)
+                        elif failed_pm is None and day <= -FAIL_BEFORE_DAYS and self._can_fail(a):
+                            failed_pm = self._failed_pm(wo, done)
+                        else:
+                            self._completed_pm(wo, done, outcomes)
                         change_status(wo, "closed", as_of=done)
             # facility settings as the mock shows them: a shop hotline on the portal and a monthly repair budget
             update_settings(portal_hotline="ext. 4400", repair_budget_monthly=Decimal("52000"))
@@ -207,6 +228,37 @@ class Command(BaseCommand):
                     set_status(match, AlertMatch.Status.CLOSED, note=note, today=today - timedelta(days=closed_days_ago))
             self._approved_aem(domain, today)
         self.stdout.write(self.style.SUCCESS(f"Seeded {tenant.name}: {len(assets)} devices, {len(techs)} technicians. Sign in as {kim} / DemoPass-2026"))
+
+    @staticmethod
+    def _can_fail(asset) -> bool:
+        """The demo's failed PM is on a life-support device in service (so it is tagged out until its repair is done)."""
+        return asset.device_model.risk_class == RiskClass.LIFE_SUPPORT and Asset.objects.get(pk=asset.pk).status == AssetStatus.IN_SERVICE
+
+    @staticmethod
+    def _completed_pm(wo, done: date, outcomes: random.Random) -> None:
+        """A PM completed through apps.workorders.completion like any other: mostly Pass, sometimes Pass with minor repair (the
+        visual inspection found something put right on the spot), each with its leakage reading."""
+        results = [{"result": "pass", "reading": f"{outcomes.randint(4, 62)} µA" if i == LEAKAGE else ""} for i in range(len(CHECKLIST))]
+        if outcomes.random() < MINOR_REPAIR_SHARE:
+            results[VISUAL]["result"] = "fail"
+            complete_work_order(wo, pm_result=PmResult.PASS_MINOR_REPAIR, results=results, resolution=outcomes.choice(MINOR_REPAIRS), today=done)
+        else:
+            complete_work_order(wo, pm_result=PmResult.PASS, results=results, today=done)
+
+    @staticmethod
+    def _failed_pm(wo, done: date):
+        """The demo's one failed PM: leakage over the limit. It opens its follow-up repair and tags the device out; the repair is done
+        two days later (by a credentialed technician when the follow-up was left unassigned), which returns the device to service."""
+        results = [{"result": "pass", "reading": ""} for _ in CHECKLIST]
+        results[LEAKAGE] = {"result": "fail", "reading": FAILED_READING}
+        repair = complete_work_order(wo, pm_result=PmResult.FAIL, results=results, tag_out=True, today=done).follow_up
+        if repair.assigned_to_id is None:
+            credentialed = qualified_technicians(repair.asset, done)
+            assign(repair, technician=credentialed[0][0] if credentialed else wo.assigned_to)
+        change_status(repair, "in_progress", as_of=done)
+        complete_work_order(repair, resolution=FAIL_REPAIR, today=done + timedelta(days=2))
+        change_status(repair, "closed", as_of=done + timedelta(days=2))
+        return wo
 
     def _approved_aem(self, domain: str, today: date) -> None:
         """One AEM interval in force, as the mock's PM library shows for the patient monitors: proposed by a technician with the

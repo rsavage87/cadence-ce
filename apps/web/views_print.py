@@ -5,6 +5,8 @@ dialog prints them or saves a PDF.
 Labels carry the device's request link as a QR code (apps.facility.services.asset_request_url, the same link as the device
 drawer's Request link), so unit staff can scan a device and report a problem. ?tag= prints one device; otherwise the
 Equipment list's own filters pick the devices, in the list's order (its page and the other screens' parameters are ignored).
+
+A completed PM prints its result and its checklist as recorded (slice 15), and a failed PM and its follow-up repair name each other.
 """
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
@@ -16,6 +18,7 @@ from apps.accounts.models import Level, Module
 from apps.equipment.models import Asset
 from apps.equipment.services import filter_assets
 from apps.facility.services import asset_request_url, get_settings
+from apps.workorders import completion
 from apps.workorders import services as wo_services
 from apps.workorders.models import OPEN_STATUSES, LaborLine, PartLine, WorkOrder, WoType
 
@@ -111,12 +114,15 @@ def wo_print(request, number):
     labor_lines = Prefetch("labor_lines", queryset=LaborLine.objects.select_related("technician").order_by("worked_on", "created_at"))
     part_lines = Prefetch("part_lines", queryset=PartLine.objects.order_by("created_at"))
     wo = get_object_or_404(WorkOrder.objects.select_related("asset", "asset__device_model", "asset__device_model__pm_procedure", "asset__department",
-                                                            "asset__contract", "assigned_to", "alert").prefetch_related(labor_lines, part_lines),
-                           number=number)
+                                                            "asset__contract", "assigned_to", "alert", "follow_up_of")
+                           .prefetch_related(labor_lines, part_lines), number=number)
     today = date.today()
     is_open = wo.status in OPEN_STATUSES
     is_pm = wo.type == WoType.PM
     procedure = wo.asset.device_model.pm_procedure if is_pm else None
+    # Slice 15: a completed PM prints what was recorded (completion.recorded_steps: the checklist as it was, with each step's
+    # result and reading) instead of boxes to tick; an open one prints the procedure's checklist as it is now.
+    recorded = is_pm and wo.status in completion.DONE_STATUSES and bool(wo.pm_result)
     # Each line to the cent first, and the totals from those, so the printed columns add up to the printed totals.
     labor = [(line, _cents(line.hours * line.rate)) for line in wo.labor_lines.all()]
     parts = [(line, _cents(line.quantity * line.unit_cost)) for line in wo.part_lines.all()]
@@ -126,6 +132,9 @@ def wo_print(request, number):
         "wo": wo, "asset": wo.asset, "facility": request.tenant.name, "today": today, "is_open": is_open, "is_pm": is_pm,
         "past_due_days": (today - wo.due_on).days if is_open and wo.due_on < today else 0,
         "procedure": procedure, "steps": checklist_steps(procedure),
+        "recorded": recorded, "recorded_steps": completion.recorded_steps(wo) if recorded else [],
+        "unrecorded": is_pm and wo.status in completion.DONE_STATUSES and not wo.pm_result,  # completed before results were recorded
+        "follow_ups": list(wo.follow_ups.order_by("opened_on", "number")) if is_pm else [],
         "labor": labor, "parts": parts, "labor_hours": sum((line.hours for line, _cost in labor), Decimal(0)),
         "labor_total": labor_total, "parts_total": parts_total, "total": labor_total + parts_total,
         "timeline": wo_services.timeline(wo), "rules": range(RULED_LINES), "blank_rows": range(BLANK_ROWS) if is_open else range(0),

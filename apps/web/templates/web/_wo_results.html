@@ -1,2 +1,28 @@
 {% load web %}
 {# The work order drawer's PM results (slice 15, part B): the result and the checklist as recorded. Context: views_wo_complete.results_context. #}
+{% with r=pm_record %}
+  {% if r.show %}
+  <div class="sec"><h3>PM result <span>{% if r.steps %}{{ r.steps|length }} step{{ r.steps|length|pluralize }} as recorded {{ wo.completed_on|date:"M j, Y" }}{% else %}no checklist on file when done{% endif %}</span></h3>
+    <div class="chips" style="margin-bottom:8px"><span class="chip {{ r.css }}">{{ r.label }}</span></div>
+    {% if r.steps %}
+    <div class="tbl-wrap"><table class="mini-tbl">
+      <thead><tr><th>#</th><th>Step</th><th>Result</th><th>Reading</th></tr></thead>
+      <tbody>{% for s in r.steps %}
+        <tr><td class="muted">{{ s.n }}</td><td style="white-space:normal">{{ s.text }}</td><td><span class="chip {{ s.css }}">{{ s.label }}</span></td>
+          <td>{% if s.reading %}{{ s.reading }}{% if s.measure %} <span class="muted">· {{ s.measure }}</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td></tr>
+      {% endfor %}</tbody>
+    </table></div>
+    {% endif %}
+  </div>
+  {% elif r.reopened %}
+  <div class="sec"><div class="note">Reopened. When last completed this PM was recorded as {{ r.label }}; completing it again records its results anew.</div></div>
+  {% endif %}
+  {% if r.follow_ups %}
+  <div class="sec"><h3>Repair <span>opened from this PM</span></h3>
+    {% for f in r.follow_ups %}<div><a class="link" href="{% url 'web:wo' f.number %}" hx-get="{% url 'web:wo' f.number %}" hx-target="#drawer">{{ f.number }}</a> · {{ f.get_type_display }} {% wo_status_chip f.status %}</div>{% endfor %}
+  </div>
+  {% endif %}
+  {% if r.follow_up_of %}
+  <div class="sec"><div class="note">Opened from failed PM <a class="link" href="{% url 'web:wo' r.follow_up_of.number %}" hx-get="{% url 'web:wo' r.follow_up_of.number %}" hx-target="#drawer">{{ r.follow_up_of.number }}</a>{% if r.follow_up_of.completed_on %}, done {{ r.follow_up_of.completed_on|date:"M j, Y" }}{% endif %}.</div></div>
+  {% endif %}
+{% endwith %}

@@ -46,7 +46,7 @@
         <tr><td>{% if h.wo.completed_on %}{{ h.wo.completed_on|date:"M j, Y" }}{% else %}{% wo_status_chip h.wo.status %}{% endif %}</td>
           <td>{% if can_view_wo %}<a class="link" href="{% url 'web:wo' h.wo.number %}" hx-get="{% url 'web:wo' h.wo.number %}" hx-target="#drawer">{{ h.wo.number }}</a>{% else %}{{ h.wo.number }}{% endif %}</td>
           <td>{% if h.who %}{{ h.who }}{% if h.wo.vendor_service %} <span class="muted">· vendor</span>{% endif %}{% else %}<span class="muted">Unassigned</span>{% endif %}</td>
-          <td{% if not h.has_resolution %} class="muted"{% endif %} style="white-space:normal;min-width:140px">{{ h.result|truncatechars:140 }}</td>
+          <td{% if not h.has_resolution %} class="muted"{% elif h.css %} class="{{ h.css }}"{% endif %} style="white-space:normal;min-width:140px">{{ h.result|truncatechars:140 }}{% if h.repair %} · <a class="link" href="{% url 'web:wo' h.repair.number %}" hx-get="{% url 'web:wo' h.repair.number %}" hx-target="#drawer" style="white-space:nowrap">{{ h.repair.number }}</a>{% endif %}</td>
           <td class="num">{% if h.hours is not None %}{{ h.hours|floatformat:2 }}{% else %}<span class="muted">—</span>{% endif %}</td></tr>
       {% endfor %}</tbody>
     </table></div>
