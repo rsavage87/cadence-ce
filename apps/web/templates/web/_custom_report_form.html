@@ -1,0 +1,41 @@
+{% load web %}
+{% comment %}The custom report builder (slice 18, views_custom_reports), in the Reports panel's place. Context: b (views_custom_reports._builder):
+   typed (what the form holds: name, source, columns, filters, group_by, sort), errors (by part), sources (the ones this user may build
+   on), fields (the source's part, apps.web.reports_custom.builder_fields), report (the one being edited), action, cancel, title, refusal.
+   novalidate: the server checks every part and puts each problem next to it. The form also posts without htmx (csrf_token, action).{% endcomment %}
+<div class="panel cr-panel">
+  <div class="panel-h"><h2>{{ b.title }}</h2><span class="sub">A report of your own, kept for everyone in the facility with Reports View</span></div>
+  <div class="panel-b">
+    {% if b.refusal %}
+    <div class="note warn" role="alert">{{ b.refusal }}</div>
+    <div class="cr-actions"><a class="btn" href="{{ b.cancel }}" hx-get="{{ b.cancel }}" hx-target="#rep-body" hx-swap="outerHTML" hx-push-url="true">Back</a></div>
+    {% elif not b.sources %}
+    <div class="note warn" role="alert">A custom report lists work orders or devices: building one needs Work orders View or Equipment View as well as Reports Edit.</div>
+    {% else %}
+    <form id="cr-form" class="cr-form" method="post" action="{{ b.action }}" hx-post="{{ b.action }}" hx-target="#rep-body" hx-swap="outerHTML" novalidate>
+      {% csrf_token %}
+      {% if b.errors %}<div class="note warn cr-errors" role="alert">The report was not saved. {% if b.errors.form %}{{ b.errors.form }}{% else %}Check the parts marked below.{% endif %}</div>{% endif %}
+      <div class="form cr-head">
+        <label>Name
+          <input id="cr-name" name="name" value="{{ b.typed.name }}" maxlength="80" autocomplete="off" required{% if b.errors.name %} aria-invalid="true" aria-describedby="cr-name-err"{% endif %}>
+          {% if b.errors.name %}<span class="err" id="cr-name-err">{{ b.errors.name }}</span>{% endif %}
+        </label>
+        <label>What it lists
+          <select id="cr-source" name="source" hx-get="{% url 'web:custom_report_fields' %}" hx-target="#cr-fields" hx-swap="innerHTML" hx-trigger="change"{% if b.errors.source %} aria-invalid="true" aria-describedby="cr-source-err"{% endif %}>
+            {% for s in b.sources %}<option value="{{ s.value }}"{% if s.value == b.typed.source %} selected{% endif %}>{{ s.label }}</option>{% endfor %}
+          </select>
+          {% if b.errors.source %}<span class="err" id="cr-source-err">{{ b.errors.source }}</span>{% else %}<span class="hint">Changing it starts the columns and filters again.</span>{% endif %}
+        </label>
+      </div>
+      <div id="cr-fields">{% include "web/_custom_report_fields.html" with f=b.fields errors=b.errors %}</div>
+      <div class="cr-actions">
+        <button class="btn" type="button" hx-post="{% url 'web:custom_report_preview' %}" hx-target="#cr-preview" hx-swap="innerHTML">Preview</button>
+        <span class="spacer"></span>
+        <a class="btn ghost" href="{{ b.cancel }}" hx-get="{{ b.cancel }}" hx-target="#rep-body" hx-swap="outerHTML" hx-push-url="true">Cancel</a>
+        <button class="btn primary" type="submit">{% if b.report %}Save changes{% else %}Save report{% endif %}</button>
+      </div>
+    </form>
+    <div id="cr-preview" class="cr-preview" aria-live="polite"></div>
+    {% endif %}
+  </div>
+</div>

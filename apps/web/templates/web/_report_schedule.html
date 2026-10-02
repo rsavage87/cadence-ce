@@ -1,7 +1,8 @@
 {% load web %}
 {% comment %}The Schedule modal (slice 13, views_reports.report_schedule): email this report to yourself, every Monday or on the
    first Monday of each month. Self-service only: it always goes to the account's own email, and only while the account can view
-   Reports. Each option says when its first email goes out.{% endcomment %}
+   Reports. Each option says when its first email goes out. Slice 18: a custom report too, while the account can see what it lists
+   (refusal says why not).{% endcomment %}
 <div class="modal-h"><h2>Email this report</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
 {% if can_schedule %}
 <form id="rs-form" class="rs-form" hx-post="{% url 'web:report_schedule' report.key %}" hx-target="#modal-card">
@@ -16,6 +17,6 @@
   <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Save</button></div>
 </form>
 {% else %}
-<div class="form"><div class="full note">{% if not email %}Your account has no email address, so reports cannot be emailed to you. An administrator can add one.{% else %}Reports cannot be emailed to this account.{% endif %}</div></div>
+<div class="form"><div class="full note">{% if refusal %}{{ refusal }}{% elif not email %}Your account has no email address, so reports cannot be emailed to you. An administrator can add one.{% else %}Reports cannot be emailed to this account.{% endif %}</div></div>
 <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
 {% endif %}

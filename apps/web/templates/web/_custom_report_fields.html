@@ -1,0 +1,59 @@
+{% comment %}The builder's source part (slice 18): columns, filters, the date range, grouping, and sort, inside #cr-fields. Context: f
+   (apps.web.reports_custom.builder_fields), errors (by part), clear_preview (a new source: the old preview no longer applies),
+   refusal (a source this user may not build on).{% endcomment %}
+{% if clear_preview %}<div id="cr-preview" class="cr-preview" aria-live="polite" hx-swap-oob="true"></div>{% endif %}
+{% if not f %}
+<div class="note warn" role="alert">{% if refusal %}{{ refusal }}{% else %}Choose what the report lists.{% endif %}</div>
+{% else %}
+<fieldset class="cr-sec"{% if errors.columns %} aria-describedby="cr-cols-err"{% endif %}>
+  <legend>Columns</legend>
+  <div class="cr-cols">{% for c in f.columns %}<label class="cr-check"><input type="checkbox" name="col" value="{{ c.key }}"{% if c.checked %} checked{% endif %}><span>{{ c.label }}</span></label>{% endfor %}</div>
+  {% if errors.columns %}<span class="err" id="cr-cols-err">{{ errors.columns }}</span>{% endif %}
+  <p class="hint">Up to {{ f.max_columns }}, shown in this order. What people typed into a work order (the problem, notes, who asked, where) is never offered: reports are emailed.</p>
+</fieldset>
+
+<fieldset class="cr-sec">
+  <legend>Filters</legend>
+  <p class="hint">Leave a filter empty to include everything.</p>
+  {% if errors.filters %}<span class="err">{{ errors.filters }}</span>{% endif %}
+  <div class="cr-filters">
+    {% for flt in f.filters %}
+    <div class="cr-filter" role="group" aria-labelledby="cr-f-{{ flt.key }}">
+      <div class="cr-label" id="cr-f-{{ flt.key }}">{{ flt.label }}</div>
+      {% if flt.options %}<div class="cr-checks{% if flt.long %} long{% endif %}">{% for o in flt.options %}<label class="cr-check"><input type="checkbox" name="f_{{ flt.key }}" value="{{ o.value }}"{% if o.checked %} checked{% endif %}><span>{{ o.label }}</span></label>{% endfor %}</div>
+      {% else %}<div class="hint">None in this facility yet.</div>{% endif %}
+      {% if flt.error %}<span class="err">{{ flt.error }}</span>{% endif %}
+    </div>
+    {% endfor %}
+    <div class="cr-filter cr-date" role="group" aria-labelledby="cr-f-date">
+      <div class="cr-label" id="cr-f-date">Date</div>
+      <div class="cr-dates">
+        <select name="date_field" aria-label="Which date">{% for d in f.date.fields %}<option value="{{ d.key }}"{% if d.selected %} selected{% endif %}>{{ d.label }}</option>{% endfor %}</select>
+        <select name="date_period" aria-label="Period"><option value="">Any time</option>{% for d in f.date.periods %}<option value="{{ d.key }}"{% if d.selected %} selected{% endif %}>{{ d.label }}</option>{% endfor %}</select>
+        <label class="cr-custom">From<input type="date" name="date_from" value="{{ f.date.from }}"></label>
+        <label class="cr-custom">To<input type="date" name="date_to" value="{{ f.date.to }}"></label>
+      </div>
+      {% if f.date.error %}<span class="err">{{ f.date.error }}</span>{% endif %}
+      <p class="hint">A period such as Last 30 days moves with each run, so a scheduled report always covers its latest days. From and To apply to Between dates.</p>
+    </div>
+  </div>
+</fieldset>
+
+<fieldset class="cr-sec">
+  <legend>Group and sort</legend>
+  <div class="form cr-grid">
+    <label>Group by
+      <select name="group_by"{% if errors.group_by %} aria-invalid="true"{% endif %}><option value="">Nothing: list every row</option>{% for g in f.groups %}<option value="{{ g.key }}"{% if g.selected %} selected{% endif %}>{{ g.label }}</option>{% endfor %}</select>
+      {% if errors.group_by %}<span class="err">{{ errors.group_by }}</span>{% endif %}
+    </label>
+    <label>Sort by
+      <select name="sort"{% if errors.sort %} aria-invalid="true"{% endif %}><option value="">The usual order</option>{% for s in f.sorts %}<option value="{{ s.key }}"{% if s.selected %} selected{% endif %}>{{ s.label }}</option>{% endfor %}</select>
+      {% if errors.sort %}<span class="err">{{ errors.sort }}</span>{% endif %}
+    </label>
+    <label>Direction
+      <select name="sort_dir"><option value="asc">Ascending (A to Z, oldest, lowest)</option><option value="desc"{% if f.descending %} selected{% endif %}>Descending (Z to A, newest, highest)</option></select>
+    </label>
+  </div>
+  <p class="hint">A grouped table shows each group, a count, and what adds up among the columns chosen: totals of money, hours, quantities, and counts, and averages of days, age, and condition. Other columns are left out.</p>
+</fieldset>
+{% endif %}

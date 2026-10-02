@@ -7,7 +7,8 @@
     <h1>Reports and analytics</h1>
     <p class="sub">Built from the same work order and inventory data as the Overview · as of today, {{ today|date:"M j, Y" }} · every report downloads as CSV</p>
   </div>
-  {# The mock's "Custom report" and "Schedule" buttons only toast; they wait for a report builder and scheduled email. #}
+  {# The mock's "Custom report" button (slice 18): the builder takes the panel's place, for Reports Edit (checked again on the server). #}
+  {% if can_build %}<div class="actions rep-actions"><a class="btn" href="{% url 'web:custom_report_new' %}" hx-get="{% url 'web:custom_report_new' %}" hx-target="#rep-body" hx-swap="outerHTML" hx-push-url="true">{% icon "plus" %} Custom report</a></div>{% endif %}
 </div>
 {% include "web/_reports_body.html" %}
 {% endblock %}

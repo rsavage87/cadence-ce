@@ -1,0 +1,23 @@
+{% load custom_report_tags %}
+{% comment %}A custom report's panel (slice 18), on the Reports screen and its print page. Context: r (apps.reports.custom.run), p
+   (apps.web.reports_custom.present_custom: the head, the rows shown, the count in words), refusal (the plain words when the report
+   lists what the user cannot see), printing (the print page, whose header already says what the report shows). Every name and value
+   here can be user text: Django escapes it, and cr_cells escapes each cell.{% endcomment %}
+{% if refusal %}
+<div class="note warn" role="alert">{{ refusal }}</div>
+{% else %}
+{% if not printing %}<p class="cr-desc">{{ r.description }}</p>{% endif %}
+{% if r.problem %}
+<div class="note warn">{{ r.problem }}</div>
+{% elif r.rows %}
+<div class="tbl-wrap cr-table"><table>
+  <thead><tr>{% cr_head p.head %}</tr></thead>
+  <tbody>{% for row in p.rows %}<tr>{% cr_cells row r.kinds %}</tr>{% endfor %}</tbody>
+  {% if r.totals %}<tfoot><tr>{% cr_cells r.totals r.kinds total=True %}</tr></tfoot>{% endif %}
+</table></div>
+{% else %}
+<div class="empty">Nothing matches this report{% if r.definition.filters %}'s filters{% endif %} as of {{ today|date:"M j, Y" }}.</div>
+{% endif %}
+{% if r.rows %}<div class="hint cr-count">{{ p.count_text }}{% if r.totals %} The totals row covers every {{ r.noun|slice:":-1" }}{% if r.grouped %} in every group{% endif %}{% if r.truncated %}, not only those listed{% endif %}.{% endif %}</div>{% endif %}
+{% if r.left_out %}<div class="hint">Left out of the grouped table: {{ r.left_out|join:", " }}. A grouped table shows only what adds up: totals of money, hours, quantities, and counts, and averages of days, age, and condition.</div>{% endif %}
+{% endif %}

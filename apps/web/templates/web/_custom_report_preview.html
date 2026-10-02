@@ -1,0 +1,22 @@
+{% load custom_report_tags %}
+{% comment %}The builder's Preview (slice 18, views_custom_reports.custom_preview), inside #cr-preview: the form as it stands, run for its first
+   rows; nothing is saved. Context: r and p (as the panel's), or problems (what to fix first), or refusal.{% endcomment %}
+<div class="cr-preview-h"><h3>Preview</h3><span class="hint">Nothing is saved until you save the report.</span></div>
+{% if refusal %}
+<div class="note warn" role="alert">{{ refusal }}</div>
+{% elif problems %}
+<div class="note warn" role="alert">Fix these to preview: {% for m in problems %}{{ m }}{% if not forloop.last %} {% endif %}{% endfor %}</div>
+{% else %}
+<p class="cr-desc">{{ r.description }}</p>
+{% if r.rows %}
+<div class="tbl-wrap cr-table"><table>
+  <thead><tr>{% cr_head p.head %}</tr></thead>
+  <tbody>{% for row in p.rows %}<tr>{% cr_cells row r.kinds %}</tr>{% endfor %}</tbody>
+  {% if r.totals %}<tfoot><tr>{% cr_cells r.totals r.kinds total=True %}</tr></tfoot>{% endif %}
+</table></div>
+<div class="hint cr-count">{{ p.count_text }}</div>
+{% else %}
+<div class="empty">Nothing matches these filters today.</div>
+{% endif %}
+{% if r.left_out %}<div class="hint">Left out of the grouped table: {{ r.left_out|join:", " }}.</div>{% endif %}
+{% endif %}

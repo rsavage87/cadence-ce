@@ -6,7 +6,7 @@ Here is the report you scheduled in Cadence CE.
 {{ report.subtitle }}
 {{ facility }} · as of {{ today|date:"F j, Y" }}
 
-Its table is attached as {{ filename }} ({{ rows }} row{{ rows|pluralize }}). It opens in Excel or any spreadsheet.
+Its table is attached as {{ filename }} ({% if truncated %}the first {{ rows }} of {{ total }} rows{% else %}{{ rows }} row{{ rows|pluralize }}{% endif %}). It opens in Excel or any spreadsheet.
 
 To see the latest figures with the charts, or to print the report or save it as a PDF, open it here (you may be asked to sign in):
 {{ print_url }}

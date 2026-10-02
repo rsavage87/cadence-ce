@@ -10,6 +10,10 @@ Each email carries the report's table as an attachment, byte for byte the CSV th
 link to the printable report, which asks the reader to sign in. Links start with settings.APP_BASE_URL, never a request's Host.
 Reports hold device, cost, and staff figures, never the free text a requester typed, so the email cannot repeat patient details.
 
+Slice 18: a facility's custom reports (apps/reports/custom.py) are scheduled and emailed like the eight standard ones: every report
+is found and run by key through apps.reports.services.find_report and run_any. A custom report that lists work orders or devices is
+sent only to someone who can see them (apps/reports/permissions.py); deleting one deletes its subscriptions.
+
 send_due starts with no tenant (the daily job): it reads only the Tenant table (a system table) before it enters each facility's
 tenant_context, which is what row-level security on PostgreSQL requires.
 """
@@ -31,8 +35,9 @@ from apps.tenants.models import Tenant
 from apps.web.exports import csv_line
 from apps.workorders.scoping import is_scoped
 
+from . import permissions as perms
 from .models import ReportSubscription
-from .services import report_meta, run_report
+from .services import csv_filename, find_report, run_any
 
 log = logging.getLogger(__name__)
 
@@ -50,6 +55,7 @@ SKIP_REASONS = {
     "scoped": "sees only part of the facility",
     "other_facility": "not in this facility",
     "unknown_report": "report no longer offered",
+    "no_source_access": "cannot see what the report lists",
 }
 
 
@@ -89,17 +95,19 @@ def subscription_for(user, report_key: str) -> ReportSubscription | None:
 def set_subscription(user, report_key: str, frequency: str | None) -> ReportSubscription | None:
     """Email `report_key` to `user` weekly or monthly, or stop it (None or ""). Returns the subscription, or None once it is off.
     Raises ValidationError for an unknown report or frequency, and (when turning one on) for a user who cannot receive it: not in
-    this facility, deactivated, without an email address, or without Reports View. A changed frequency keeps last_sent_on, so a
-    report already sent today is not sent again."""
-    if report_meta(report_key) is None:
+    this facility, deactivated, without an email address, without Reports View, or (a custom report) without View on what it
+    lists. A changed frequency keeps last_sent_on, so a report already sent today is not sent again."""
+    meta = find_report(report_key)
+    if meta is None:
         raise ValidationError("There is no such report.")
+    report_key = meta["key"]  # a custom report's key as it is stored, however its id was spelled
     frequency = frequency or ""
     if frequency and frequency not in Frequency.values:
         raise ValidationError("Choose Off, Every Monday, or First Monday of each month.")
     if not frequency:
         ReportSubscription.objects.filter(user=user, report=report_key).delete()
         return None
-    refusal = _refusal(user)
+    refusal = _refusal(user) or (perms.email_refusal(user, meta["source"]) if meta["custom"] else "")
     if refusal:
         raise ValidationError(refusal)
     sub = ReportSubscription.objects.filter(user=user, report=report_key).first()
@@ -164,15 +172,12 @@ def report_csv(data: dict) -> bytes:
     return ("\ufeff" + csv_line(data["columns"]) + "".join(csv_line(row) for row in data["rows"])).encode("utf-8")
 
 
-def csv_filename(report_key: str, day: date) -> str:
-    return f"cadence-{report_key}-{day:%Y-%m-%d}.csv"
-
-
 def skip_reason(sub: ReportSubscription, tenant) -> str | None:
     """Why `sub` must not be sent in `tenant` now (a key of SKIP_REASONS), or None. Run inside the tenant's context: Reports View
     is read from the user's role, a tenant-scoped row."""
     user = sub.user
-    if report_meta(sub.report) is None:
+    meta = find_report(sub.report)
+    if meta is None:
         return "unknown_report"
     if user.tenant_id != tenant.id:
         return "other_facility"
@@ -184,15 +189,18 @@ def skip_reason(sub: ReportSubscription, tenant) -> str | None:
         return "no_access"
     if is_scoped(user):  # a subscription made before their role was narrowed: never sent, as the web refuses them every report
         return "scoped"
+    if perms.meta_refusal(user, meta):  # a custom report listing work orders or devices they can no longer see
+        return "no_source_access"
     return None
 
 
 def _send(sub: ReportSubscription, tenant, today: date, data: dict) -> bool:
     """Email one report (already computed as of `today`) to its subscriber and stamp the day. True once the mail backend took it."""
-    meta = report_meta(sub.report)
-    filename = csv_filename(sub.report, today)
+    meta = find_report(sub.report)
+    filename = csv_filename(meta, today)
     context = {
         "user": sub.user, "facility": tenant.name, "report": meta, "today": today, "rows": len(data["rows"]), "filename": filename,
+        "total": data.get("total"), "truncated": bool(data.get("truncated")),  # a custom report lists at most custom.MAX_ROWS
         "frequency": sub.frequency, "next_on": next_due_on(sub.frequency, today + timedelta(days=1)),
         "print_url": settings.APP_BASE_URL + reverse("web:report_print", args=[sub.report]),
         "report_url": settings.APP_BASE_URL + reverse("web:report", args=[sub.report]),
@@ -227,7 +235,7 @@ def send_report_email(sub: ReportSubscription, today: date) -> bool:
         reason = skip_reason(sub, tenant)
         if reason:
             raise ValidationError(f"Not sent: {SKIP_REASONS[reason]}.")
-        return _send(sub, tenant, today, run_report(sub.report, today))
+        return _send(sub, tenant, today, run_any(sub.report, today))
 
 
 def _send_facility(tenant, today: date, counts: dict) -> None:
@@ -246,7 +254,7 @@ def _send_facility(tenant, today: date, counts: dict) -> None:
             continue
         try:
             if sub.report not in reports:
-                reports[sub.report] = run_report(sub.report, today)
+                reports[sub.report] = run_any(sub.report, today)
             sent = _send(sub, tenant, today, reports[sub.report])
         except AlreadySent:
             counts["due"] -= 1  # another run has it: neither sent nor failed here

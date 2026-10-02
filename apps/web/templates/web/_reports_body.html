@@ -1,12 +1,18 @@
 {% load web %}
 {# The list and the panel swap together so the active item follows the selection; the URL is pushed so each report has its own address. #}
+{# Slice 18: the facility's custom reports follow the eight; the builder (views_custom_reports) takes the panel's place. #}
 {% if partial %}<title>{{ report.title }} · Reports · {{ request.tenant.name }}</title>{% endif %}{# only in the swapped fragment, at its root: htmx retitles the document from it #}
 <div id="rep-body" class="grid g-13">
   <nav class="panel rep-list" aria-label="Reports"><div class="list" style="padding:6px">
     {% for it in reports %}<a class="li{% if it.key == report.key %} active{% endif %}" href="{% url 'web:report' it.key %}" hx-get="{% url 'web:report' it.key %}" hx-target="#rep-body" hx-swap="outerHTML" hx-push-url="true"{% if it.key == report.key %} aria-current="page"{% endif %}><div class="bd"><div class="t">{{ it.title }}</div><div class="s" style="white-space:normal">{{ it.subtitle }}</div></div></a>{% endfor %}
+    {% if customs or can_build %}<div class="rep-grp" id="rep-custom" role="heading" aria-level="2">Custom reports</div>{% endif %}
+    {% for it in customs %}<a class="li{% if it.key == report.key %} active{% endif %}" href="{% url 'web:report' it.key %}" hx-get="{% url 'web:report' it.key %}" hx-target="#rep-body" hx-swap="outerHTML" hx-push-url="true"{% if it.key == report.key %} aria-current="page"{% endif %}><div class="bd"><div class="t">{{ it.title }}</div><div class="s" style="white-space:normal">{{ it.subtitle }}</div></div></a>{% endfor %}
+    {% if not customs and can_build %}<div class="hint rep-none">None yet. Custom report builds one from work orders, devices, labor, or parts.</div>{% endif %}
   </div></nav>
+  {% if builder %}{% include "web/_custom_report_form.html" with b=builder %}{% else %}
   <div class="panel">
-    <div class="panel-h"><h2>{{ report.title }}</h2><div class="actions"><a class="btn sm" href="{% url 'web:report_print' report.key %}" target="_blank" rel="noopener" title="Print this report, or save it as a PDF">{% icon "dl" %} PDF</a><a class="btn sm" href="{% url 'web:report_csv' report.key %}" download>{% icon "dl" %} CSV</a>{% include "web/_report_schedule_button.html" %}</div></div>
+    <div class="panel-h"><h2>{{ report.title }}</h2><div class="actions">{% if not refusal %}<a class="btn sm" href="{% url 'web:report_print' report.key %}" target="_blank" rel="noopener" title="Print this report, or save it as a PDF">{% icon "dl" %} PDF</a><a class="btn sm" href="{% url 'web:report_csv' report.key %}" download>{% icon "dl" %} CSV</a>{% include "web/_report_schedule_button.html" %}{% endif %}{% if report.custom and can_build %}<a class="btn sm" href="{% url 'web:custom_report_edit' report.pk %}" hx-get="{% url 'web:custom_report_edit' report.pk %}" hx-target="#rep-body" hx-swap="outerHTML" hx-push-url="true">Edit</a><button class="btn sm danger" type="button" hx-post="{% url 'web:custom_report_delete' report.pk %}" hx-target="#rep-body" hx-swap="outerHTML" hx-confirm="Delete the custom report {{ report.title }}? It is removed for everyone in the facility, and anyone who has it emailed stops getting it.">Delete</button>{% endif %}</div></div>
     <div class="panel-b">{% include report.template %}</div>
   </div>
+  {% endif %}
 </div>

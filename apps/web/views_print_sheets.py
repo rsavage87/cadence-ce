@@ -14,7 +14,8 @@ An open PM work order that is unassigned, or held by a deactivated technician, i
 workload panel read it the same way), so its device goes to the suggested technician and the sheet shows who holds the work order.
 
 Report PDFs (Reports View) lay out one report of the Reports screen for paper: the same numbers, presentation, and partial, with the
-app's stylesheet for the charts' colours. "Save as PDF" in the browser's print dialog makes the PDF.
+app's stylesheet for the charts' colours. "Save as PDF" in the browser's print dialog makes the PDF. A custom report (slice 18) prints
+the same way, its first rows as the screen shows them, and is refused in plain words to someone who cannot see what it lists.
 """
 from datetime import date, timedelta
 from decimal import Decimal
@@ -27,11 +28,13 @@ from apps.accounts.models import Level, Module
 from apps.equipment.models import RiskClass
 from apps.pm import permissions as pm_perms
 from apps.pm import schedule as sch
+from apps.reports import permissions as rep_perms
 from apps.reports import services as rs
 
 from . import views_pm, views_reports
 from .decorators import web_view
 from .reports import present
+from .reports_custom import present_custom
 
 # Sheet keys sort technicians by name, then the vendor's sheet, then the devices nobody can take.
 TECH, VENDOR, NOBODY = 0, 1, 2
@@ -127,12 +130,16 @@ def route_sheets(request):
 
 @web_view(Module.REPORTS, Level.VIEW)
 def report_print(request, key):
-    meta = rs.report_meta(key)
+    meta = rs.find_report(key)
     if meta is None:
         raise Http404("No such report")
+    refusal = rep_perms.meta_refusal(request.user, meta)
+    if refusal:
+        return views_reports.refused(refusal)
     today = views_reports._today()  # the Reports screen's clock, so the paper and the screen show the same numbers
-    data = rs.run_report(meta["key"], today)
-    ctx = {"today": today, "report": meta, "r": data, "p": present(meta["key"], data),
+    data = rs.run_any(meta["key"], today)
+    p = present_custom(data) if meta["custom"] else present(meta["key"], data)
+    ctx = {"today": today, "report": meta, "r": data, "p": p, "printing": True,
            "can_view_asset": request.user.has_level(Module.EQUIPMENT, Level.VIEW), "can_view_wo": request.user.has_level(Module.WORKORDERS, Level.VIEW),
            "can_view_recalls": request.user.has_level(Module.RECALLS, Level.VIEW)}
     return render(request, "web/print_report.html", ctx)

@@ -3,7 +3,8 @@
 {% comment %}One report for paper (slice 11, views_print_sheets.report_print): the Reports screen's partial with the same data and
    permission flags. Its charts and chips are styled by the app's tokens (var(--accent), var(--ok), ...), which print.css does not
    define, so cadence.css loads here too; the style below then keeps the page light and undoes the app rules that fight the print
-   layout. Links stay as plain text: the page has no app shell to open them in.{% endcomment %}
+   layout. Links stay as plain text: the page has no app shell to open them in. A custom report (slice 18) prints its panel too, with
+   its description and the run's dates under the title.{% endcomment %}
 {% block title %}{{ report.title }}{% endblock %}
 {% block page_style %}<link rel="stylesheet" href="{% static 'web/cadence.css' %}">
 <style>
@@ -43,7 +44,7 @@ html,body{height:auto;background:var(--bg);color:var(--ink);font:12.5px/1.45 -ap
 {% block content %}
 <header class="rp-head">
   <h1>{{ report.title }}</h1>
-  <p class="rp-sub">{{ report.subtitle }}</p>
+  <p class="rp-sub">{% if report.custom and r.description %}{{ r.description }}{% else %}{{ report.subtitle }}{% endif %}</p>
   <p class="muted">{{ request.tenant.name }} · As of {{ today|date:"M j, Y" }}</p>
 </header>
 <div class="rp-body">{% include report.template %}</div>

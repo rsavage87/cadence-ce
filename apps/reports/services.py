@@ -287,3 +287,36 @@ def run_report(key: str, today: date | None = None) -> dict:
                  "compliance": fleet.report_compliance, "mtbf": fleet.report_mtbf, "replace": fleet.report_replace,
                  "tech": operations.report_tech, "recall": operations.report_recall}
     return functions[key](today or date.today())
+
+
+# --- Any report by key (slice 18): the eight above, or one of the facility's custom reports --------------------------------
+# REPORTS, report_meta, and run_report keep meaning the eight standard reports (the API serves only those). Everything that shows
+# or sends a report by key goes through find_report and run_any instead: the Reports screen, its CSV and print pages, the Schedule
+# modal, and the report emails. So a custom report (apps/reports/custom.py, key "custom-<id>") is shown, downloaded, printed,
+# scheduled, and emailed like the others. A meta also says whether the report is "custom", the access it needs beyond Reports View
+# ("needs", apps/reports/permissions.py), and its CSV's "file_stem" (csv_filename).
+
+def find_report(key) -> dict | None:
+    """The meta of the standard report, or the current facility's custom report, with this key; None for neither."""
+    meta = report_meta(key)
+    if meta is not None:
+        return {**meta, "custom": False, "needs": (), "file_stem": meta["key"]}
+    from . import custom  # here, not at the top: custom imports this module
+
+    return custom.meta_for_key(key)
+
+
+def run_any(key: str, today: date | None = None) -> dict:
+    """The data for any report find_report knows, as of `today`: run_report's for a standard one, apps.reports.custom.run's for a
+    custom one (its table, up to custom.MAX_ROWS rows)."""
+    if report_meta(key) is not None:
+        return run_report(key, today)
+    from . import custom
+
+    return custom.run_key(key, today or date.today())
+
+
+def csv_filename(meta: dict, day: date) -> str:
+    """The CSV's name, the same for the screen's download and the email's attachment: cadence-cosr-2026-10-05.csv, or a custom
+    report's from its name (cadence-pump-repairs-2026-10-05.csv)."""
+    return f"cadence-{meta['file_stem']}-{day:%Y-%m-%d}.csv"

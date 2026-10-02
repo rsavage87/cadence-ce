@@ -307,14 +307,14 @@ def test_a_missed_monday_is_caught_up_the_next_day_and_only_once(tenant, two_fac
 
 
 def test_a_report_that_cannot_be_computed_fails_its_emails_only(tenant, two_facilities, mailoutbox, monkeypatch):
-    real = subs.run_report
+    real = subs.run_any  # slice 18: every report, standard or custom, runs through run_any
 
-    def run_report(key, today=None):
+    def run_any(key, today=None):
         if key == "cosr":
             raise ZeroDivisionError("bad data")
         return real(key, today)
 
-    monkeypatch.setattr(subs, "run_report", run_report)
+    monkeypatch.setattr(subs, "run_any", run_any)
     summary = subs.send_due(MON)
     assert summary["failed"] == 1 and summary["sent"] == 3
     assert ("kim@riverside.example", "cadence-replace-2026-10-05.csv") in _sent_to(mailoutbox)
@@ -518,5 +518,5 @@ def test_two_runs_at_once_send_each_email_once(tenant, person, mailoutbox, monke
         stale = ReportSubscription.objects.select_related("user").get(user=kim)  # what the second run loaded
         assert subs.send_report_email(stale, MON) is True
         with pytest.raises(subs.AlreadySent):
-            subs._send(stale, tenant, MON, subs.run_report("cosr", MON))
+            subs._send(stale, tenant, MON, subs.run_any("cosr", MON))
     assert len(mailoutbox) == 1

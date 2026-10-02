@@ -9,15 +9,22 @@ so /reports/<key>/ renders as a full page too. Each report also downloads as CSV
 Schedule (slice 13) emails a report to the signed-in user, every Monday or on the first Monday of each month
 (apps.reports.subscriptions). The button says what they have; its modal saves through set_subscription and sends the button
 back out of band, so the panel shows the new state.
+
+Custom reports (slice 18) sit in the list under the eight, at /reports/custom-<id>/, and download, print, and schedule the same
+way: every view here finds a report by key through apps.reports.services.find_report and runs it through run_any. A custom
+report that lists work orders or devices needs View on them too (apps/reports/permissions.py): without it the panel says so
+in plain words, and the CSV is refused with the same words. Building one is views_custom_reports.
 """
 from datetime import date
 
 from django.core.exceptions import ValidationError
-from django.http import Http404
+from django.http import Http404, HttpResponseForbidden
 from django.shortcuts import redirect, render
 from django_htmx.http import trigger_client_event
 
 from apps.accounts.models import Level, Module
+from apps.reports import custom
+from apps.reports import permissions as rep_perms
 from apps.reports import services as rs
 from apps.reports import subscriptions as subs
 
@@ -25,6 +32,7 @@ from .decorators import web_view
 from .exports import csv_response
 from .htmx import is_partial, toast
 from .reports import present
+from .reports_custom import present_custom
 
 
 def _today() -> date:
@@ -33,38 +41,63 @@ def _today() -> date:
 
 
 def _meta(key: str | None) -> dict:
-    meta = rs.report_meta(key or rs.REPORT_KEYS[0])
+    meta = rs.find_report(key or rs.REPORT_KEYS[0])
     if meta is None:
         raise Http404("No such report")
     return meta
 
 
+def refused(message: str) -> HttpResponseForbidden:
+    """A download or print page the user may not have, refused in plain words."""
+    return HttpResponseForbidden(message, content_type="text/plain; charset=utf-8")
+
+
+def body_context(request, partial: bool) -> dict:
+    """What #rep-body needs around its panel: the list (the eight, then the facility's custom reports) and the page's flags."""
+    return {"nav_active": "reports", "today": _today(), "reports": rs.REPORTS, "customs": custom.menu(), "partial": partial,
+            "can_build": rep_perms.can_build(request.user)}
+
+
+def report_context(request, meta: dict, today: date) -> dict:
+    """One report's panel: its data and presentation, or the refusal when it lists what the user cannot see."""
+    user = request.user
+    refusal = rep_perms.meta_refusal(user, meta)
+    data = {} if refusal else rs.run_any(meta["key"], today)
+    if refusal:
+        p = {}
+    else:
+        p = present_custom(data) if meta["custom"] else present(meta["key"], data)
+    ctx = {"report": meta, "r": data, "p": p, "refusal": refusal,
+           "can_view_asset": user.has_level(Module.EQUIPMENT, Level.VIEW), "can_view_wo": user.has_level(Module.WORKORDERS, Level.VIEW),
+           "can_view_recalls": user.has_level(Module.RECALLS, Level.VIEW)}
+    return {**ctx, **(_schedule_button(user, meta) if not refusal else {"can_schedule": False})}
+
+
 @web_view(Module.REPORTS, Level.VIEW)
 def reports(request, key=None):
     meta = _meta(key)
-    today = _today()
-    data = rs.run_report(meta["key"], today)
     partial = is_partial(request, "rep-body")
-    ctx = {"nav_active": "reports", "today": today, "reports": rs.REPORTS, "report": meta, "r": data, "p": present(meta["key"], data), "partial": partial,
-           "can_view_asset": request.user.has_level(Module.EQUIPMENT, Level.VIEW), "can_view_wo": request.user.has_level(Module.WORKORDERS, Level.VIEW),
-           "can_view_recalls": request.user.has_level(Module.RECALLS, Level.VIEW), **_schedule_button(request.user, meta)}
+    ctx = {**body_context(request, partial), **report_context(request, meta, _today())}
     return render(request, "web/_reports_body.html" if partial else "web/reports.html", ctx)
 
 
 @web_view(Module.REPORTS, Level.VIEW)
 def report_csv(request, key):
     meta = _meta(key)
+    refusal = rep_perms.meta_refusal(request.user, meta)
+    if refusal:
+        return refused(refusal)
     today = _today()
-    data = rs.run_report(meta["key"], today)
-    return csv_response(f"cadence-{meta['key']}-{today:%Y-%m-%d}.csv", data["columns"], data["rows"])
+    data = rs.run_any(meta["key"], today)
+    return csv_response(rs.csv_filename(meta, today), data["columns"], data["rows"])
 
 
 # --- Schedule (slice 13) ---------------------------------------------------------------------------------------------------
 
 def _schedule_button(user, meta) -> dict:
     """The Schedule button's state. Shown only to someone who can have reports emailed (in this facility, an email address,
-    Reports View); the service checks the same on save."""
-    can = subs.can_schedule(user)
+    Reports View, and for a custom report View on what it lists); the service checks the same on save."""
+    can = subs.can_schedule(user) and not rep_perms.meta_refusal(user, meta)
     sub = subs.subscription_for(user, meta["key"]) if can else None
     return {"can_schedule": can, "schedule_sub": sub, "schedule_label": f"Scheduled {subs.SHORT[sub.frequency]}" if sub else "Schedule"}
 
@@ -78,8 +111,9 @@ def _schedule_modal(request, meta, error: str = "", chosen: str | None = None):
         on = subs.first_send_on(value, today, sub.last_sent_on if sub else None)
         first = "Next" if value == current else "First"
         options.append({"value": value, "label": label, "hint": f"{first} email {on:%A}, {on:%B} {on.day}, {on.year}"})
-    ctx = {"report": meta, "email": request.user.email, "can_schedule": subs.can_schedule(request.user), "options": options,
-           "chosen": current if chosen is None else chosen, "error": error}
+    refusal = rep_perms.meta_refusal(request.user, meta)
+    ctx = {"report": meta, "email": request.user.email, "can_schedule": subs.can_schedule(request.user) and not refusal, "refusal": refusal,
+           "options": options, "chosen": current if chosen is None else chosen, "error": error}
     return render(request, "web/_report_schedule.html", ctx)
 
 

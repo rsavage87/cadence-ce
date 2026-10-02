@@ -502,6 +502,46 @@ button.link{background:none;border:0;padding:0;font:inherit;font-size:12px;font-
 .rs-title{margin:0;font-size:13px;color:var(--ink)}
 .rs-form .radio input{padding:0;border:0}
 /* Slice 18, part A: custom reports (the builder, the saved list under the eight reports, a custom report's table) */
+.rep-actions a.btn,#rep-body a.btn{text-decoration:none}
+.rep-list .rep-grp{padding:12px 12px 4px;font-size:11.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-3)}
+.rep-list .rep-none{padding:2px 12px 8px}
+.cr-desc{margin:0 0 10px;font-size:12.5px;color:var(--ink-2)}
+.cr-count{margin-top:8px}
+.cr-table tfoot td{font-weight:600;background:var(--surface-2);border-bottom:0}
+.cr-form .form{padding:0}
+.cr-head{margin-bottom:12px}
+.cr-errors{margin-bottom:12px}
+.cr-sec{margin:0 0 12px;padding:8px 12px 12px;border:1px solid var(--line);border-radius:8px;min-width:0}
+.cr-sec legend{padding:0 4px;font-size:12.5px;font-weight:600;color:var(--ink-2)}
+.cr-sec .hint{margin:6px 0 0}
+.cr-cols{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:2px 12px}
+.cr-check{display:flex;align-items:flex-start;gap:7px;padding:3px 0;font-size:13px;color:var(--ink);cursor:pointer;min-width:0}
+.cr-check input{margin:2px 0 0;flex:none;accent-color:var(--accent)}
+.cr-check span{min-width:0;overflow-wrap:anywhere}
+.cr-filters{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;margin-top:8px}
+.cr-filter{min-width:0}
+.cr-label{margin-bottom:4px;font-size:12.5px;color:var(--ink-2)}
+.cr-checks.long{max-height:170px;overflow:auto;padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:var(--surface)}
+.cr-date{grid-column:1/-1}
+.cr-dates{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end}
+.cr-dates select,.cr-dates input{font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line-2);border-radius:6px;padding:6px 8px;min-width:0;max-width:100%}
+.cr-dates label{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--ink-3)}
+/* From and To matter only for "Between dates"; without :has they simply stay visible */
+@supports selector(:has(*)){
+  .cr-dates .cr-custom{display:none}
+  .cr-dates:has(option[value="custom"]:checked) .cr-custom{display:flex}
+}
+.cr-grid{grid-template-columns:2fr 2fr 1.5fr}
+.cr-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px}
+.cr-actions .spacer{flex:1}
+.cr-preview:not(:empty){margin-top:16px;padding-top:12px;border-top:1px solid var(--line)}
+.cr-preview-h{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.cr-preview-h h3{margin:0;font-size:14px}
+@media (max-width:760px){
+  .cr-grid{grid-template-columns:1fr}
+  .cr-cols{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}
+  .cr-dates select,.cr-dates label{flex:1 1 100%}
+}
 
 /* Slice 15, part A: the work order drawer's labor and part lines (the amount and Remove at the right; notes wrap on a phone) */
 .wo-lines{margin-top:12px}
