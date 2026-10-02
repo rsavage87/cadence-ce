@@ -26,6 +26,18 @@ class Level(models.IntegerChoices):
     FULL = 5, "Full"
 
 
+class DataScope(models.TextChoices):
+    """Which devices and work orders a role's users see inside their facility (slice 16; apps.workorders.scoping applies it)."""
+    FACILITY = "facility", "The whole facility"
+    COMPANY = "company", "Only work orders assigned to their company"
+    DEPARTMENT = "department", "Only their department's devices and work orders"
+
+
+# A role whose scope is blank takes its default by slug: the vendor technician sees only work orders assigned to their company and
+# the clinical requester only their own unit's (the default roles' descriptions); every other role sees the whole facility.
+DEFAULT_SCOPES = {"vendor": DataScope.COMPANY, "requester": DataScope.DEPARTMENT}
+
+
 class Role(TenantModel):
     """A named access level. Permissions are one row per module (see RolePermission)."""
 
@@ -33,6 +45,8 @@ class Role(TenantModel):
     slug = models.SlugField(max_length=40)
     description = models.CharField(max_length=300, blank=True)
     is_system = models.BooleanField(default=False, help_text="System roles (e.g. Director) cannot be edited or deleted.")
+    scope = models.CharField(max_length=20, choices=DataScope.choices, blank=True,
+                             help_text="Which devices and work orders its users see; blank takes the default for the role (DEFAULT_SCOPES)")
     history = HistoricalRecords()
 
     class Meta:
@@ -41,6 +55,10 @@ class Role(TenantModel):
 
     def __str__(self):
         return self.name
+
+    @property
+    def effective_scope(self) -> str:
+        return self.scope or DEFAULT_SCOPES.get(self.slug, DataScope.FACILITY)
 
     def level_for(self, module: str) -> int:
         perm = self.permissions.filter(module=module).first()
@@ -69,6 +87,9 @@ class User(AbstractUser):
     tenant = models.ForeignKey("tenants.Tenant", on_delete=models.PROTECT, null=True, blank=True, related_name="users")
     role = models.ForeignKey(Role, on_delete=models.SET_NULL, null=True, blank=True, related_name="users")
     department = models.CharField(max_length=80, blank=True)
+    # Slice 16: the vendor a company-scoped user works for, as work orders name it (WorkOrder.vendor_name: a contract's vendor, or
+    # "<manufacturer> field service"). A department-scoped user's unit is `department`, matched to a Department by name.
+    company = models.CharField(max_length=120, blank=True)
     phone = models.CharField(max_length=40, blank=True)
     is_invited = models.BooleanField(default=False, help_text="Invitation sent, first sign-in pending.")
     invited_at = models.DateTimeField(null=True, blank=True, help_text="When the latest invitation email was sent; resending replaces the link.")
