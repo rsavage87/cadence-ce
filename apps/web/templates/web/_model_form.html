@@ -17,6 +17,12 @@
     {% include "web/_asset_field.html" with field=form.oem_pm_interval_months %}
     {% include "web/_asset_field.html" with field=form.expected_life_years %}
     {% include "web/_asset_field.html" with field=form.list_cost %}
+    {% with f=form.oem_schedule_required %}{% comment %}The CMS mark: a checkbox for Equipment Approve, read-only (and never posted) for anyone else.{% endcomment %}
+    {% if form.can_set_oem_schedule %}
+    <div class="fld full dm-mark"><label class="check-row" for="{{ f.id_for_label }}">{{ f }} {{ f.label }}</label><span class="hint" id="{{ f.auto_id }}_helptext">{{ f.help_text }}</span>{% if f.errors %}<span class="err" id="{{ f.auto_id }}_error">{{ f.errors|striptags }}</span>{% endif %}</div>
+    {% else %}
+    <div class="fld full"><label for="dm-mark-ro">{{ f.label }}</label><input id="dm-mark-ro" type="text" value="{% if form.marked %}Yes: imaging, radiologic, or medical laser equipment{% else %}No{% endif %}" readonly aria-describedby="dm-mark-ro-hint"><span class="hint" id="dm-mark-ro-hint">Set by Equipment Approve. CMS requires the manufacturer's schedule for imaging, radiologic, and medical laser equipment, so such a model never goes on AEM.</span>{% if f.errors %}<span class="err" id="{{ f.auto_id }}_error">{{ f.errors|striptags }}</span>{% endif %}</div>
+    {% endif %}{% endwith %}
     <datalist id="dm-categories">{% for c in form.categories %}<option value="{{ c }}"></option>{% endfor %}</datalist>
   </div>
   {% if dm %}<div class="hint" style="padding:0 16px 12px">An AEM interval is changed on the AEM tab, and the PM procedure on the Procedure tab.</div>{% endif %}

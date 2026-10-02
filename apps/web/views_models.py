@@ -3,6 +3,8 @@ The device model drawer (slice 14): a model's PM program, opened from the PM lib
 (this module: details, risk score, intervals, devices), Procedure (views_procedures.procedure_tab), and AEM (views_aem.aem_tab).
 Add model and Edit details (Equipment Edit) and the risk score (Equipment Approve) are here too: a model's details and its risk
 are equipment data (apps.equipment.permissions), checked here on every request, GET and POST, behind the PM View the screen needs.
+On both forms, marking a model as equipment CMS keeps on the manufacturer's schedule (imaging, radiologic, medical laser; slice
+18) needs Equipment Approve as well: others see the mark read-only, and a form that changes it anyway is refused.
 
 Every change fires `models-changed` (the PM library re-fetches on it) and toasts. Actions inside a tab answer with the whole drawer
 on that tab (render_model_drawer), which #drawer swaps in. The three forms are modals (#modal-card): a save swaps the model's
@@ -68,8 +70,11 @@ def program_tab(request, dm, today: date | None = None) -> dict:
         "interval": {"oem": _months(oem), "in_force": _months(months), "aem": months != oem,
                      # in force without an approved decision (set before slice 14): never called approved (apps.pm.aem.is_legacy)
                      "unapproved": months != oem and aem.in_force(dm) is None,
-                     # an AEM interval on file that life support ignores (DeviceModel.pm_interval_months)
-                     "aem_ignored": aem_on_file and months == oem and dm.risk_class == RiskClass.LIFE_SUPPORT},
+                     # an AEM interval on file that an excluded model ignores (DeviceModel.pm_interval_months)
+                     "aem_ignored": aem_on_file and months == oem and dm.aem_excluded,
+                     "life_support": dm.risk_class == RiskClass.LIFE_SUPPORT,
+                     # CMS: imaging, radiologic, and medical laser equipment keep the manufacturer's schedule (slice 18)
+                     "oem_required": dm.oem_schedule_required},
         "devices": {"shown": shown, "active": active_count, "more": max(active_count - len(shown), 0),
                     "retired": Asset.objects.filter(device_model=dm, status=AssetStatus.RETIRED).count()},
         "can_view_asset": user.has_level(Module.EQUIPMENT, Level.VIEW),
@@ -114,19 +119,23 @@ def _require(allowed: bool):
 
 
 def aem_note(effect: dict | None) -> str:
-    """What the AEM program did about a change (equipment.services sets dm.aem_effect): a model scored into life support leaves AEM."""
+    """What the AEM program did about a change (equipment.services sets dm.aem_effect): a model scored into life support, or marked
+    as keeping the manufacturer's schedule (CMS), leaves AEM."""
     if not effect:
         return ""
     parts = []
     if effect.get("ended"):
-        parts.append("its AEM interval ended (life support follows the OEM interval)")
+        # The CMS mark is only set on Edit details, whose toast already names it (mark_toast)
+        why = "back on the OEM interval" if effect.get("rule") == "oem_schedule" else "life support follows the OEM interval"
+        parts.append(f"its AEM interval ended ({why})")
     if effect.get("withdrawn"):
         parts.append("its open AEM proposal was withdrawn")
     if effect.get("cleared"):
         parts.append("the AEM interval on file without a recorded approval was cleared")
     moved = effect.get("moved") or 0
     if moved:
-        parts.append(f"{'1 device' if moved == 1 else f'{moved} devices'}' next PM moved earlier")
+        whose = "1 device's" if moved == 1 else f"{moved} devices'"
+        parts.append(f"{whose} next PM moved earlier")
     return "; " + "; ".join(parts) if parts else ""
 
 
@@ -149,13 +158,25 @@ def _form_modal(request, form, dm=None):
     return render(request, "web/_model_form.html", {"form": form, "dm": dm, "score": dm.risk_score if dm else None})
 
 
+def mark_toast(dm, was_marked: bool) -> str:
+    """What saving said about the CMS mark, when it changed: marking moves the model off AEM (aem_note says what ended), clearing it
+    leaves the OEM interval in force until an AEM is approved again."""
+    if dm.oem_schedule_required == was_marked:
+        return ""
+    if dm.oem_schedule_required:
+        return ": it keeps the manufacturer's schedule (CMS)"
+    return ": the manufacturer's schedule is no longer required; it stays on the OEM interval until an AEM is approved"
+
+
 @web_view(pm_perms.MODULE, pm_perms.VIEW_LEVEL)
 def model_new(request):
-    """Add model: a new catalog entry through create_device_model. Equipment Edit."""
+    """Add model: a new catalog entry through create_device_model. Equipment Edit; marking it for the manufacturer's schedule
+    (CMS), Equipment Approve."""
     _require(eq_perms.can_edit_model(request.user))
+    can_mark = eq_perms.can_set_oem_schedule(request.user)
     if request.method != "POST":
-        return _form_modal(request, DeviceModelForm())
-    form = DeviceModelForm(request.POST)
+        return _form_modal(request, DeviceModelForm(can_set_oem_schedule=can_mark))
+    form = DeviceModelForm(request.POST, can_set_oem_schedule=can_mark)
     dm = None
     if form.is_valid():
         try:
@@ -164,17 +185,20 @@ def model_new(request):
             form.add_service_errors(e)
     if dm is None:
         return _form_modal(request, form)
-    return _saved(request, dm, f"{dm} added to the catalog")
+    return _saved(request, dm, f"{dm} added to the catalog" + ("; it keeps the manufacturer's schedule (CMS)" if dm.oem_schedule_required else ""))
 
 
 @web_view(pm_perms.MODULE, pm_perms.VIEW_LEVEL)
 def model_edit(request, pk):
-    """Edit details: everything but the risk class (the risk score's job) through update_device_model. Equipment Edit."""
+    """Edit details: everything but the risk class (the risk score's job) through update_device_model. Equipment Edit; the CMS
+    mark, Equipment Approve."""
     _require(eq_perms.can_edit_model(request.user))
+    can_mark = eq_perms.can_set_oem_schedule(request.user)
     dm = get_model(pk)
     if request.method != "POST":
-        return _form_modal(request, DeviceModelForm(device_model=dm), dm)
-    form = DeviceModelForm(request.POST, device_model=dm)  # no risk class or AEM field: posting them changes nothing
+        return _form_modal(request, DeviceModelForm(device_model=dm, can_set_oem_schedule=can_mark), dm)
+    was_marked = dm.oem_schedule_required
+    form = DeviceModelForm(request.POST, device_model=dm, can_set_oem_schedule=can_mark)  # no risk class or AEM field: posting them changes nothing
     if form.is_valid():
         try:
             eq.update_device_model(dm, by=request.user, **form.service_fields())
@@ -183,7 +207,7 @@ def model_edit(request, pk):
     if not form.is_valid():
         dm.refresh_from_db()  # the heading shows the stored name, not the one refused
         return _form_modal(request, form, dm)
-    return _saved(request, dm, f"{dm} updated")
+    return _saved(request, dm, f"{dm} updated" + mark_toast(dm, was_marked))
 
 
 def _risk_modal(request, dm, form):

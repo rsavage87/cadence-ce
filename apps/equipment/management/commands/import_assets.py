@@ -4,7 +4,12 @@ Import an equipment inventory from a CSV export of another CMMS (MediMizer, AIMS
     python manage.py import_assets --tenant riverside inventory.csv [--dry-run]
 
 Columns are matched by name, case-insensitively, using the aliases below. Add aliases as you meet new exports.
-Unknown device models and departments are created on the fly; existing tags are updated, not duplicated.
+Unknown device models and departments are created on the fly; existing tags are updated, not duplicated. A model already in the
+catalog keeps its details (risk class, interval, the CMS mark): the file's model columns only describe a model it adds.
+
+The optional "OEM schedule required" column marks a new model as equipment CMS keeps on the manufacturer's schedule (imaging,
+radiologic, medical laser: never on AEM): yes/no, true/false, or 1/0, blank is no. A value it cannot read skips the row and says
+so on stderr, as a value too long for its column does.
 """
 import csv
 from datetime import date, datetime
@@ -36,6 +41,8 @@ ALIASES = {
     "last_pm": ["last pm", "last pm date", "last inspection"],
     "next_pm": ["next pm", "next pm date", "next due", "due date"],
     "warranty": ["warranty", "warranty end", "warranty expiration"],
+    "oem_schedule": ["oem schedule required", "manufacturer's schedule required", "manufacturer schedule required", "oem schedule",
+                     "cms oem schedule", "aem excluded"],
 }
 
 STATUS_MAP = {"in service": AssetStatus.IN_SERVICE, "active": AssetStatus.IN_SERVICE, "in use": AssetStatus.IN_SERVICE, "in repair": AssetStatus.IN_REPAIR,
@@ -44,6 +51,7 @@ STATUS_MAP = {"in service": AssetStatus.IN_SERVICE, "active": AssetStatus.IN_SER
 RISK_MAP = {"life support": RiskClass.LIFE_SUPPORT, "life-support": RiskClass.LIFE_SUPPORT, "critical": RiskClass.LIFE_SUPPORT, "high": RiskClass.HIGH,
             "medium": RiskClass.MEDIUM, "moderate": RiskClass.MEDIUM, "low": RiskClass.LOW}
 DATE_FORMATS = ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%d-%b-%Y", "%Y/%m/%d")
+YES_NO = {"yes": True, "y": True, "true": True, "1": True, "no": False, "n": False, "false": False, "0": False, "": False}
 
 
 # The columns' limits (PostgreSQL enforces them): a row with a longer value is skipped and reported, never cut silently.
@@ -136,6 +144,11 @@ class Command(BaseCommand):
                     self.stderr.write(f"Skipped {tag!r}: the cost {get(row, 'cost')!r} is too large.")
                     skipped += 1
                     continue
+                oem_schedule = YES_NO.get(get(row, "oem_schedule").lower())
+                if oem_schedule is None:
+                    self.stderr.write(f"Skipped {tag!r}: OEM schedule required is {get(row, 'oem_schedule')[:40]!r}; use yes or no (blank is no).")
+                    skipped += 1
+                    continue
                 interval = get(row, "pm_interval")
                 dept, _ = Department.objects.get_or_create(name=get(row, "department") or "Unassigned", defaults={"tenant": tenant})
                 dm, _ = DeviceModel.objects.get_or_create(
@@ -145,7 +158,8 @@ class Command(BaseCommand):
                               "risk_class": RISK_MAP.get(get(row, "risk").lower(), RiskClass.MEDIUM),
                               # 1 to 120 months, as on screen; anything else (or unreadable) takes the default
                               "oem_pm_interval_months": int(interval) if interval.isdecimal() and len(interval) <= 3 and 1 <= int(interval) <= 120
-                              else 12})
+                              else 12,
+                              "oem_schedule_required": oem_schedule})
                 status = STATUS_MAP.get(get(row, "status").lower())  # None: no status in the file, or one it does not know
                 fields = {
                     "device_model": dm, "department": dept, "serial": get(row, "serial"), "room": get(row, "room"),
@@ -176,5 +190,5 @@ class Command(BaseCommand):
                     created += 1
             if opts["dry_run"]:
                 transaction.set_rollback(True)
-        summary = f"{created} created, {updated} updated, {skipped} skipped (no tag, a tag with spaces or slashes, or a value too long)"
+        summary = f"{created} created, {updated} updated, {skipped} skipped (no tag, a tag with spaces or slashes, a value too long, or one it cannot read)"
         self.stdout.write(self.style.SUCCESS(f"{'Dry run: ' if opts['dry_run'] else ''}{summary}"))

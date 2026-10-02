@@ -5,7 +5,7 @@
   <div>
     <h2>{{ dm.manufacturer }} {{ dm.model }}</h2>
     <div class="sub">{{ dm.description }} · {{ dm.category }}</div>
-    <div class="chips">{% risk_chip dm.risk_class %}{% if score is not None %}<span class="chip neutral" title="Risk score: {{ score }}">Score {{ score }}</span>{% endif %}{% if dm.pm_interval_months != dm.oem_pm_interval_months %}<span class="chip acc">AEM {{ dm.pm_interval_months }} mo</span>{% else %}<span class="chip">OEM {{ dm.oem_pm_interval_months }} mo</span>{% endif %}</div>
+    <div class="chips">{% risk_chip dm.risk_class %}{% if score is not None %}<span class="chip neutral" title="Risk score: {{ score }}">Score {{ score }}</span>{% endif %}{% if dm.pm_interval_months != dm.oem_pm_interval_months %}<span class="chip acc">AEM {{ dm.pm_interval_months }} mo</span>{% else %}<span class="chip">OEM {{ dm.oem_pm_interval_months }} mo</span>{% endif %}{% if dm.oem_schedule_required %}<span class="chip neutral" title="CMS requires the manufacturer's maintenance schedule for imaging, radiologic, and medical laser equipment">OEM required by CMS</span>{% endif %}</div>
   </div>
   <button class="iconbtn" type="button" data-act="close-drawer" aria-label="Close">{% icon "x" %}</button>
 </div>
