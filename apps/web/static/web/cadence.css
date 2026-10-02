@@ -496,6 +496,20 @@ button.link{background:none;border:0;padding:0;font:inherit;font-size:12px;font-
 }
 
 /* Slice 18, part B: Scan tag (the modal's code field and camera view on Equipment, the portal's "Open in Cadence" note) */
+/* The field is 16px so a phone does not zoom in on it; the camera view fills the width, no taller than most of a phone's screen.
+   scan.js shows and hides the camera's parts with the hidden attribute, which .btn's display would otherwise override. The portal's
+   note is styled in portal/request.html (the portal does not load this file). */
+.scan-form{display:grid;gap:8px;padding:16px}
+.scan-form>label{font-size:12.5px;color:var(--ink-2)}
+.scan-row{display:flex;gap:8px}
+.scan-row input{flex:1;min-width:0;font:inherit;font-size:16px;letter-spacing:.02em;color:var(--ink);background:var(--surface);border:1px solid var(--line-2);border-radius:6px;padding:8px 10px}
+.scan-form .err{font-size:12.5px}
+.scan-cam{display:grid;gap:8px;margin-top:4px}
+.scan-cam [hidden]{display:none!important}
+.scan-cam video{display:block;width:100%;max-height:min(60vh,420px);object-fit:cover;border-radius:8px;background:#000}
+.scan-cam-actions{display:flex;gap:8px;flex-wrap:wrap}
+.scan-cam [data-scan-status]:empty{display:none}
+.scan-page{max-width:560px}
 
 /* Slice 13: the Reports panel's Schedule button shows a report is emailed; its modal picks how often */
 .btn.sched-on{border-color:var(--accent-line);background:var(--accent-soft);color:var(--accent)}

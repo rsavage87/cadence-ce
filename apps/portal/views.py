@@ -7,18 +7,28 @@ request number and response target. No patient identifiers are asked for.
 When the facility confirms requests by email (Settings, slice 13), the form also offers an optional work email at one of the
 facility's domains; apps.portal.notifications sends the confirmation and, later, the done notice. The confirmation page names
 the address only to the browser that sent the request (a short-lived signed cookie), since request numbers are easy to guess.
+
+Slice 18: a label's QR code opens this page with ?asset=<tag> (a phone's camera app reads it). Someone signed in to Cadence at this
+facility who could open that device there (Equipment View, inside their share: apps.workorders.scoping) also sees a note naming
+them, with a link that opens the device in Cadence. Everyone else gets the page exactly as before: signed out, a member of another
+facility, a role without Equipment View, a share that leaves the device out, or a tag that is no device. The signed-in user is loaded
+without their role (apps.accounts.backends.get_user: the role is a tenant-scoped row), so the role is read only for a member of
+this facility and only inside its tenant_context, where row-level security shows it; another facility's user's role is never read.
 """
 from django.conf import settings
 from django.core.cache import caches
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.views.decorators.csrf import csrf_protect
 
+from apps.accounts.models import Level, Module
 from apps.core.http import client_ip
 from apps.equipment.models import Asset, Department
 from apps.facility import services as fs
 from apps.tenants.context import tenant_context
 from apps.tenants.models import Tenant
+from apps.workorders import scoping
 from apps.workorders.models import ServiceRequest, Urgency
 from apps.workorders.services import create_service_request
 
@@ -37,6 +47,21 @@ def _rate_limited(ip) -> bool:
         return True
     cache.set(key, n + 1, 3600)
     return False
+
+
+def _open_in_cadence(request, tenant, asset) -> dict | None:
+    """The signed-in note's name and link, or None. Call inside tenant_context(tenant)."""
+    user = request.user
+    if asset is None or not user.is_authenticated:
+        return None
+    # Signed in at this facility: the request works in it (TenantMiddleware: the user's own facility, or the one a superuser without a
+    # facility chose), and the account is this facility's. Only then is the role read, here inside the facility's context.
+    working_in = getattr(request, "tenant", None)
+    if working_in is None or working_in.pk != tenant.pk or user.tenant_id not in (None, tenant.pk):
+        return None
+    if not user.has_level(Module.EQUIPMENT, Level.VIEW) or not scoping.can_see_asset(user, asset):
+        return None
+    return {"name": user.get_full_name() or user.username, "url": reverse("web:asset", args=[asset.tag])}
 
 
 @csrf_protect
@@ -78,7 +103,8 @@ def request_form(request, tenant_slug):
                 return response
         else:
             form = ServiceRequestForm(initial=initial, require_callback=facility.portal_require_callback, email_domains=email_domains)
-        return render(request, "portal/request.html", {"tenant": tenant, "form": form, "asset": asset, "hotline": facility.portal_hotline})
+        return render(request, "portal/request.html", {"tenant": tenant, "form": form, "asset": asset, "hotline": facility.portal_hotline,
+                                                       "in_cadence": _open_in_cadence(request, tenant, asset)})
 
 
 def _sent_value(tenant, sr) -> str:

@@ -5,8 +5,10 @@
 <div class="page-head">
   <div><h1>Equipment</h1>{% include "web/_equipment_summary.html" %}</div>
   <div class="actions">
-    {% comment %}Both carry the list's current filters (data-act="with-filters" reads them from the address at click time). The
-       mock's "Scan tag" (the mobile app's camera) is left out; Add device is slice 12.{% endcomment %}
+    {% comment %}Scan tag (slice 18) opens a device from its label: the modal here, a page of its own when opened directly (the
+       mock's mobile app camera is the browser's here, apps/web/views_scan.py). Labels and Export carry the list's current filters
+       (data-act="with-filters" reads them from the address at click time). Add device is slice 12.{% endcomment %}
+    <a class="btn" href="{% url 'web:scan' %}" hx-get="{% url 'web:scan' %}" hx-target="#modal-card" title="Open a device by scanning its label or typing its tag">{% icon "scan" %} Scan tag</a>
     {% query request.GET page=None as eq_q %}
     <a class="btn" href="{% url 'web:labels' %}{{ eq_q }}" data-act="with-filters" data-base="{% url 'web:labels' %}" target="_blank" rel="noopener" title="Print asset labels, with their request QR codes, for the devices in this list">{% icon "print" %} Labels</a>
     <a class="btn" href="{% url 'web:equipment_csv' %}{{ eq_q }}" data-act="with-filters" data-base="{% url 'web:equipment_csv' %}" download title="Download the devices in this list as CSV">{% icon "dl" %} Export</a>

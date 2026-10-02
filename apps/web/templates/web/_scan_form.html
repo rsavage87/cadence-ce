@@ -1,0 +1,23 @@
+{% load web %}
+{% comment %}The Scan tag form (slice 18, views_scan.scan), in the modal (`modal`: HTMX into #modal-card) and on the page (a plain GET).
+   A handheld scanner types into the field and presses Enter; the camera block is static/web/scan.js's, which shows "Use camera" only
+   where the browser can read codes with a camera and otherwise leaves the line saying so (also what shows without JavaScript).{% endcomment %}
+<form class="scan-form" action="{% url 'web:scan' %}" method="get"{% if modal %} hx-get="{% url 'web:scan' %}" hx-target="#modal-card" hx-sync="this:replace"{% endif %}>
+  <label for="scan-code">Asset tag or label</label>
+  <div class="scan-row">
+    <input id="scan-code" name="code" type="text" value="{{ code }}" data-scan-field autofocus autocomplete="off" autocapitalize="characters"
+           spellcheck="false" enterkeyhint="go" aria-describedby="{% if error %}scan-error {% endif %}scan-help"{% if error %} aria-invalid="true"{% endif %}>
+    <button class="btn primary" type="submit">Open</button>
+  </div>
+  {% if error %}<p class="err" id="scan-error" role="alert">{{ error }}</p>{% endif %}
+  <p class="hint" id="scan-help">Scan the device's label with a handheld scanner, or type its tag. A label's QR code link works too.</p>
+  <div class="scan-cam" data-scan-camera>
+    <video data-scan-video playsinline muted hidden aria-label="Camera view"></video>
+    <div class="scan-cam-actions">
+      <button class="btn" type="button" data-scan-start hidden>{% icon "scan" %} Use camera</button>
+      <button class="btn" type="button" data-scan-stop hidden>Stop camera</button>
+    </div>
+    <p class="hint" data-scan-none>This browser cannot read codes with the camera. Use a handheld scanner or type the tag; on a phone, the camera app opens a label's QR code.</p>
+    <p class="hint" data-scan-status role="status" aria-live="polite"></p>
+  </div>
+</form>
