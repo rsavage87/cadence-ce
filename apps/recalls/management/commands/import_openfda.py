@@ -4,20 +4,20 @@ Pull device recall records from openFDA and match them to every tenant's invento
     python manage.py import_openfda --days 30
 
 openFDA is free and needs no key for light use: https://open.fda.gov/apis/device/recall/
+The fetch and the upsert are apps.recalls.feeds, shared with the Recalls screen's Check FDA feed (which matches only the
+signed-in user's facility); this command matches every active facility. A failed fetch ends it with an error and no matching.
 ECRI alerts require an ECRI membership and API agreement; add a second importer for them.
 """
-from datetime import date, timedelta
-
-import requests
+import requests  # noqa: F401  (the fetch is in apps.recalls.feeds; tests patch requests.get through this module's name)
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from apps.recalls.models import Alert
+from apps.recalls.feeds import IMPORT_TIMEOUT, MAX_LIMIT, FeedError, import_recalls, parse_date
 from apps.recalls.services import match_all_open_alerts
 from apps.tenants.context import tenant_context
 from apps.tenants.models import Tenant
 
-ENDPOINT = "https://api.fda.gov/device/recall.json"
+_parse = parse_date  # the importer's date parsing, by its old name
 
 
 class Command(BaseCommand):
@@ -26,52 +26,20 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument("--days", type=int, default=30, help="Recalls FDA posted in the last N days (default 30)")
         parser.add_argument("--manufacturer", help="Limit to one manufacturer name (openFDA text search)")
-        parser.add_argument("--limit", type=int, default=1000, help="Records to fetch; openFDA's maximum per request is 1000")
+        parser.add_argument("--limit", type=int, default=MAX_LIMIT, help="Records to fetch; openFDA's maximum per request is 1000")
 
     def handle(self, *args, **opts):
-        since = (date.today() - timedelta(days=opts["days"])).strftime("%Y%m%d")
-        # By posting date, not initiation date: FDA posts a recall weeks after the firm starts it, so a window on the start date
-        # finds almost nothing recent (1 record against 273 for the same 30 days when this was checked). Spaces, not "+":
-        # requests encodes the spaces, and a literal "+" makes openFDA answer 500.
-        search = f"event_date_posted:[{since} TO {date.today():%Y%m%d}]"
-        if opts["manufacturer"]:
-            search += f' AND recalling_firm:"{opts["manufacturer"]}"'
-        resp = requests.get(ENDPOINT, params={"search": search, "limit": opts["limit"]}, timeout=30)
-        if resp.status_code == 404:  # openFDA returns 404 for "no results"
+        try:
+            result = import_recalls(days=opts["days"], limit=opts["limit"], manufacturer=opts["manufacturer"], timeout=IMPORT_TIMEOUT)
+        except FeedError as e:
+            raise CommandError(f"{e}; nothing imported") from e
+        if result.total == 0 and not result.returned:  # openFDA's 404, its "no results"
             self.stdout.write("No recalls in that window.")
             return
-        resp.raise_for_status()
-        payload = resp.json()
-        results = payload.get("results", [])
-        total = (payload.get("meta") or {}).get("results", {}).get("total")
-        if isinstance(total, int) and total > len(results):
+        if result.truncated:
             # openFDA returns at most --limit records (1000 per request); say so instead of silently dropping the rest.
-            self.stderr.write(f"openFDA reports {total} recalls in the window but returned {len(results)}; raise --limit or shorten --days.")
-        imported = 0
-        for rec in results:
-            # One record per recalled product: key on the product's recall number (Z-1234-2026), not the event, which covers
-            # several products; keyed by event, every product but the last would be lost, with its device description.
-            ext = rec.get("product_res_number") or rec.get("cfres_id") or rec.get("res_event_number")
-            if not ext:
-                continue
-            _, created = Alert.objects.update_or_create(
-                source=Alert.Source.FDA, external_id=str(ext),
-                defaults={
-                    # device/recall.json carries no recall class (the enforcement feed does); the root cause stays in `raw`.
-                    "classification": "",
-                    "manufacturer": rec.get("recalling_firm", "")[:160],
-                    "product": rec.get("product_description", "")[:300],
-                    # FDA product codes (e.g. "FRN") are not model names; matching falls back to the product description.
-                    "model_terms": [],
-                    "title": (rec.get("reason_for_recall") or rec.get("product_description") or "")[:300],
-                    "action": rec.get("action", ""),
-                    # When FDA made it public, which is when a CE department could have received it; the start date if missing.
-                    "published_on": _parse(rec.get("event_date_posted")) or _parse(rec.get("event_date_initiated")),
-                    "raw": rec,
-                },
-            )
-            imported += int(created)
-        self.stdout.write(f"Imported {imported} new alerts")
+            self.stderr.write(f"openFDA reports {result.total} recalls in the window but returned {result.returned}; raise --limit or shorten --days.")
+        self.stdout.write(f"Imported {result.new} new alerts")
         failed = []
         for tenant in Tenant.objects.filter(is_active=True):
             try:
@@ -84,12 +52,3 @@ class Command(BaseCommand):
             self.stdout.write(f"{tenant.slug}: {n} new matches")
         if failed:
             raise CommandError(f"Recall matching failed for {', '.join(failed)}")
-
-
-def _parse(s):
-    """openFDA dates: "2026-09-14" in the live feed, "20260914" in older records and in search syntax."""
-    digits = str(s or "").replace("-", "")
-    try:
-        return date(int(digits[:4]), int(digits[4:6]), int(digits[6:8])) if len(digits) == 8 and digits.isdigit() else None
-    except ValueError:
-        return None
