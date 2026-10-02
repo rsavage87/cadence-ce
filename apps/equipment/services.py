@@ -506,8 +506,14 @@ def rename_department(department: Department, name: str) -> Department:
     if Department.objects.filter(name__iexact=name).exclude(pk=department.pk).exists():
         raise ValidationError({"name": f"{name} is already a department here."})
     if name != department.name:
+        old = department.name
         department.name = name
         department.save(update_fields=["name"])
+        # A clinical requester's unit is the department's name (User.department, apps.workorders.scoping): they follow the rename
+        # rather than suddenly seeing nothing. Users are not tenant rows, so the tenant is explicit.
+        from apps.accounts.models import User
+
+        User.objects.filter(tenant_id=department.tenant_id, department__iexact=old).update(department=name)
     return department
 
 

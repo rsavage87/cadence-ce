@@ -109,15 +109,25 @@ def blocker(wo: WorkOrder, today: date | None = None) -> str:
     return ""
 
 
-def own_open_repair(wo: WorkOrder) -> WorkOrder | None:
+def _visible(qs, user):
+    """`qs` narrowed to what `user` may see (apps.workorders.scoping, slice 16): a vendor completing their PM is never offered, told
+    about, or given another company's or the facility's own repair. No user: everything (services and commands)."""
+    from .scoping import work_orders  # scoping imports the models; keep this module importable on its own
+
+    return qs if user is None else work_orders(user, qs)
+
+
+def own_open_repair(wo: WorkOrder, user=None) -> WorkOrder | None:
     """The repair this PM opened at an earlier failure, while it is still open (a reopened PM failing again records on it)."""
-    return WorkOrder.objects.filter(follow_up_of=wo, type=WoType.REPAIR, status__in=OPEN_STATUSES).order_by("opened_on", "number").first()
+    qs = WorkOrder.objects.filter(follow_up_of=wo, type=WoType.REPAIR, status__in=OPEN_STATUSES).order_by("opened_on", "number")
+    return _visible(qs, user).first()
 
 
-def other_open_repair(wo: WorkOrder) -> WorkOrder | None:
+def other_open_repair(wo: WorkOrder, user=None) -> WorkOrder | None:
     """The device's oldest open repair work order that this PM did not open: a failure can be recorded on it instead."""
-    return (WorkOrder.objects.filter(asset_id=wo.asset_id, type=WoType.REPAIR, status__in=OPEN_STATUSES)
-            .exclude(follow_up_of=wo).exclude(pk=wo.pk).order_by("opened_on", "number").first())
+    qs = (WorkOrder.objects.filter(asset_id=wo.asset_id, type=WoType.REPAIR, status__in=OPEN_STATUSES)
+          .exclude(follow_up_of=wo).exclude(pk=wo.pk).order_by("opened_on", "number"))
+    return _visible(qs, user).first()
 
 
 def recorded_steps(wo: WorkOrder) -> list[dict]:
@@ -240,6 +250,17 @@ def follow_up_priority(device_model) -> str:
     return Priority.HIGH if device_model.risk_class in (RiskClass.LIFE_SUPPORT, RiskClass.HIGH) else Priority.NORMAL
 
 
+def vendor_repairs(asset, today: date) -> bool:
+    """Whether the vendor who did the PM also does the repair: unless the device's live contract leaves repair labor out (preventive
+    maintenance only, or parts only). No contract: the manufacturer's field service on time and materials."""
+    from apps.contracts.models import Coverage
+
+    contract = asset.contract if asset.contract_id else None
+    if contract is None or contract.end_on < today:
+        return True
+    return contract.coverage not in (Coverage.PM_ONLY, Coverage.PARTS)
+
+
 def follow_up_technician(pm: WorkOrder, asset, today: date | None = None):
     """Who the follow-up repair goes to: the PM's technician while active and credentialed for the device, else None."""
     tech = pm.assigned_to if pm.assigned_to_id and not pm.vendor_service else None
@@ -289,7 +310,7 @@ def _record_failure(pm: WorkOrder, asset, snapshot, resolution: str, *, open_rep
     Completion.tagged_out says whether the device was in service and is now out."""
     hold = tag_out and asset.status in HOLDABLE
     newly_out = hold and asset.status == AssetStatus.IN_SERVICE
-    existing = own_open_repair(pm) or (None if open_repair else other_open_repair(pm))
+    existing = own_open_repair(pm, by) or (None if open_repair else other_open_repair(pm, by))
     if existing is not None:
         failed = "; ".join(_failed_lines(snapshot)) or resolution
         services.add_note(existing, f"PM {pm.number} failed on {today:%b} {today.day}, {today.year}: {failed}"[:services.NOTE_MAX_LENGTH], by=by)
@@ -302,9 +323,14 @@ def _record_failure(pm: WorkOrder, asset, snapshot, resolution: str, *, open_rep
     repair = services.create_work_order(asset=asset, type=WoType.REPAIR, priority=follow_up_priority(asset.device_model),
                                         problem=_problem(pm, snapshot, resolution), requester=_requester(by, pm), opened_on=today, created_by=by,
                                         tag_out=hold, follow_up_of=pm)
-    tech = follow_up_technician(pm, asset, today)
-    if tech is not None:
-        services.assign(repair, technician=tech, by=by)
+    if pm.vendor_service and pm.vendor_name and vendor_repairs(asset, today):
+        # A vendor's PM failed: the repair goes to the same vendor (their contract covers it, or they work time and materials), so it
+        # is in their share of the work orders too (apps.workorders.scoping). Otherwise CE's own technicians take it.
+        services.assign(repair, vendor_name=pm.vendor_name, by=by)
+    else:
+        tech = follow_up_technician(pm, asset, today)
+        if tech is not None:
+            services.assign(repair, technician=tech, by=by)
     return Completion(work_order=pm, follow_up=repair, repair=repair, tagged_out=newly_out)
 
 
@@ -359,7 +385,7 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
         snapshot = _steps(steps, results, errors)
     _check_result(locked, pm_result, snapshot, bool(steps), text, errors)
     fail = is_pm and pm_result == PmResult.FAIL
-    if fail and not open_repair and own_open_repair(locked) is None and other_open_repair(locked) is None:
+    if fail and not open_repair and own_open_repair(locked, by) is None and other_open_repair(locked, by) is None:
         errors["open_repair"] = f"{asset.tag} has no open repair work order to record the failure on, so a failed PM opens one."
     if errors:
         raise ValidationError(errors)

@@ -407,10 +407,17 @@ def test_a_scoped_user_without_a_company_or_unit_sees_nothing(client, make_user,
 
 # --- through a work order in their share ------------------------------------------------------------------------------------------
 
-def test_a_failed_vendor_pm_does_not_lead_to_the_in_house_repair(client, make_user, world):
-    """A vendor's failed PM opens a repair for CE to assign: the vendor neither reaches it nor reads its number, in the toast, the PM's
-    drawer (its history names the repair), the print, the device drawer, or the export. The unit's requester sees both, linked."""
+def test_a_failed_vendor_pm_without_repair_coverage_does_not_lead_to_the_in_house_repair(client, make_user, world):
+    """A vendor's failed PM on a device whose contract covers PM only opens a repair for CE to assign: the vendor neither reaches it
+    nor reads its number, in the toast, the PM's drawer (its history names the repair), the print, the device drawer, or the export.
+    The unit's requester sees both, linked."""
+    from apps.contracts.models import Contract, ContractType, Coverage
+
     vent = world["devices"]["ICU-VENT-1"]
+    today = date.today()
+    vent.contract = Contract.objects.create(reference="SC-PM-ONLY", vendor=A_VENDOR, type=ContractType.OEM, coverage=Coverage.PM_ONLY,
+                                            start_on=today - timedelta(days=100), end_on=today + timedelta(days=200))
+    vent.save()
     pm = create_work_order(asset=vent, type=WoType.PM, priority="normal", problem="Scheduled preventive maintenance", source=Source.PM_PLANNER)
     assign(pm, vendor_name=A_VENDOR)
     change_status(pm, WoStatus.IN_PROGRESS)
@@ -467,3 +474,18 @@ def test_scoped_text_leaves_facility_users_and_their_own_numbers_alone(make_user
     assert scoped_text(vendor, text) == f"See {a.number} and {HIDDEN}."
     assert scoped_text(make_user("technician"), text) == text
     assert scoped_text(vendor, "") == "" and scoped_text(vendor, "No numbers") == "No numbers"
+
+
+def test_a_failed_vendor_pm_with_repair_coverage_sends_the_repair_to_the_vendor(client, make_user, world):
+    """No contract (the manufacturer's field service, time and materials): the vendor who found the failure does the repair, and it is
+    in their share: they reach it, and the toast names it."""
+    vent = world["devices"]["ICU-VENT-1"]
+    pm = create_work_order(asset=vent, type=WoType.PM, priority="normal", problem="Scheduled preventive maintenance", source=Source.PM_PLANNER)
+    assign(pm, vendor_name=A_VENDOR)
+    change_status(pm, WoStatus.IN_PROGRESS)
+    sign_in(client, make_user, "vendor", company="Hamilton Medical")
+    r = client.post(f"/work-orders/{pm.number}/complete/", {"resolution": "Flow sensor reads 20% high", "pm_result": "fail", "shown_tag_out": "1"}, **HX)
+    repair = WorkOrder.objects.get(follow_up_of=pm)
+    assert repair.vendor_service and repair.vendor_name == A_VENDOR
+    assert json.loads(r["HX-Trigger"])["toast"]["value"] == f"{pm.number} completed: PM failed; {repair.number} opened for the repair"
+    assert client.get(f"/work-orders/{repair.number}/", **HX).status_code == 200

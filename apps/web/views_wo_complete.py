@@ -79,8 +79,8 @@ def _offers(wo, user) -> dict:
     """A failed PM's options, as the modal offers them: the repair a failure goes to, and whether tagging out applies."""
     if wo.type != WoType.PM:
         return {"own_repair": None, "other_repair": None, "offer_open_repair": False, "offer_tag_out": False}
-    own = completion.own_open_repair(wo)
-    other = None if own else completion.other_open_repair(wo)
+    own = completion.own_open_repair(wo, user)
+    other = None if own else completion.other_open_repair(wo, user)
     return {"own_repair": own, "other_repair": other, "offer_open_repair": other is not None,
             "own_repair_number": _number(user, own), "other_repair_number": _number(user, other),
             "offer_tag_out": wo.asset.status in completion.HOLDABLE, "already_out": wo.asset.status != AssetStatus.IN_SERVICE}

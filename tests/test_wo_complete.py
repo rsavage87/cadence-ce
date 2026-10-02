@@ -327,10 +327,14 @@ def test_a_failed_pm_opens_its_follow_up_repair_and_tags_the_device_out(ctx, ven
 def test_the_follow_up_is_unassigned_unless_the_pms_technician_is_active_and_credentialed(ctx, vent, vent_model, techs):
     with_procedure(vent_model)
     fail = results("fail", "pass", "pass", "pass")
-    for tech, vendor in ((techs["tom"], ""), (None, "Hamilton Service")):  # Tom has no ventilator credential; a vendor PM goes to a manager
-        wo = started(vent, tech=tech, vendor=vendor)
-        fu = complete_work_order(wo, pm_result=PmResult.FAIL, results=fail, tag_out=False).follow_up
-        assert fu is not None and fu.assigned_to is None and not fu.vendor_service and fu.status_history.count() == 1
+    # Tom has no ventilator credential: a manager assigns it.
+    wo = started(vent, tech=techs["tom"])
+    fu = complete_work_order(wo, pm_result=PmResult.FAIL, results=fail, tag_out=False).follow_up
+    assert fu is not None and fu.assigned_to is None and not fu.vendor_service and fu.status_history.count() == 1
+    # A vendor's PM: the same vendor does the repair (no contract here: field service, time and materials; slice 16).
+    wo = started(vent, vendor="Hamilton Service")
+    fu = complete_work_order(wo, pm_result=PmResult.FAIL, results=fail, tag_out=False).follow_up
+    assert fu.vendor_service and fu.vendor_name == "Hamilton Service" and fu.assigned_to is None
     techs["dana"].is_active = False
     techs["dana"].save()
     wo = started(vent, tech=techs["dana"])
