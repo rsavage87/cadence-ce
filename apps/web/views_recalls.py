@@ -3,9 +3,10 @@ Recalls and alerts screen (slice 6): one card per alert match, grouped by pills,
 buttons and the recall work-order batch. Views parse input, call apps.recalls.services, and render.
 
 Every POST answers with the body (#rc-body) re-rendered for the same ?view= and ?match= the page
-showed (card buttons carry them in their URL; the page-head button relies on HX-Current-URL), and
+showed (card buttons carry them in their URL; the page-head buttons rely on HX-Current-URL), and
 toasts. The body also listens for `recalls-changed from:body` so a change made elsewhere on the
-page can refresh it; nothing fires it yet.
+page can refresh it; nothing fires it yet. Check FDA feed (slice 15) also sends the page head's
+sub line out of band: the newest notice date and the last check can change.
 """
 from urllib.parse import urlencode, urlsplit
 
@@ -16,6 +17,7 @@ from django.urls import reverse
 from django.views.decorators.http import require_POST
 
 from apps.accounts.models import Level, Module
+from apps.recalls import feeds
 from apps.recalls import permissions as rc_perms
 from apps.recalls import services as rc
 from apps.recalls.models import AlertMatch
@@ -103,9 +105,14 @@ def _render_body(request):
 def recalls(request):
     if is_partial(request, "rc-body"):
         return _render_body(request)
-    ctx = {**_body_context(request), "feed_at": rc.feed_imported_at(), "can_match": request.user.has_level(rc_perms.MODULE, rc_perms.MATCH_LEVEL),
+    ctx = {**_body_context(request), **_feed_context(), "can_match": request.user.has_level(rc_perms.MODULE, rc_perms.MATCH_LEVEL),
            "can_view_reports": request.user.has_level(Module.REPORTS, Level.VIEW)}  # the Response log button prints the recall report
     return render(request, "web/recalls.html", ctx)
+
+
+def _feed_context() -> dict:
+    """The page head's sub line: when the newest FDA notice arrived and when the feed last answered (both global)."""
+    return {"feed_at": rc.feed_imported_at(), "checked_at": feeds.last_checked()}
 
 
 @require_POST
@@ -146,3 +153,37 @@ def recall_work_orders(request, pk):
 def recall_match(request):
     n = rc.rematch()
     return toast(_render_body(request), f"{n} new match{'' if n == 1 else 'es'}" if n else "No new matches")
+
+
+def _plural(n: int, word: str, plural: str = "") -> str:
+    return f"{n} {word if n == 1 else plural or word + 's'}"
+
+
+def _check_message(check: feeds.Check) -> str:
+    """The mock's "Checked ECRI and FDA feeds: no new alerts", for the one feed that is connected."""
+    matches = f"{_plural(check.matches, 'new match', 'new matches')} for your inventory"
+    if check.result is None:
+        held = f"The FDA recall feed was checked at {feeds.clock(check.checked_at)}; it can be checked again at {feeds.clock(check.again_at)}."
+        return f"{held} {matches[0].upper()}{matches[1:]}." if check.matches else f"{held} No new matches."
+    r = check.result
+    if r.new:
+        message = f"Checked the FDA recall feed: {_plural(r.new, 'new notice')}, " + (matches if check.matches else "none match your inventory")
+    elif check.matches:
+        message = f"Checked the FDA recall feed: no new notices, {matches}"
+    else:
+        message = "Checked the FDA recall feed: no new alerts"
+    if r.truncated:
+        message += f" (openFDA sent {r.returned:,} of {r.total:,} recalls)"
+    return message
+
+
+@require_POST
+@web_view(rc_perms.MODULE, rc_perms.MATCH_LEVEL)
+def recall_check_feed(request):
+    """Check FDA feed: fetch the last 30 days from openFDA (at most once per feeds.CHECK_COOLDOWN, whoever asks), store them, and
+    match them to this facility. At the level of Match alerts to inventory, which it extends with the fetch."""
+    try:
+        message = _check_message(feeds.check_feed())
+    except feeds.FeedError as e:
+        message = f"Could not check the FDA recall feed: {e}. Nothing changed; the daily import will try again."
+    return toast(render(request, "web/_recalls_check.html", {**_body_context(request), **_feed_context()}), message)

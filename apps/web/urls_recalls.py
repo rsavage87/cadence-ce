@@ -8,6 +8,7 @@ from . import views_recalls as v
 urlpatterns = [
     path("", v.recalls, name="recalls"),
     path("match/", v.recall_match, name="recall_match"),
+    path("check-feed/", v.recall_check_feed, name="recall_check_feed"),
     path("<uuid:pk>/status/", v.recall_status, name="recall_status"),
     path("<uuid:pk>/work-orders/", v.recall_work_orders, name="recall_work_orders"),
 ]

@@ -1,0 +1,2 @@
+{# The Recalls page head's sub line. Check FDA feed sends it again out of band (oob) so the newest notice date and the last check stay current. #}
+<p class="sub" id="rc-feed"{% if oob %} hx-swap-oob="true"{% endif %}>Alerts are matched to the inventory by manufacturer and model · newest FDA notice imported {% if feed_at %}{{ feed_at|date:"M j, Y" }}{% else %}never{% endif %}{% if checked_at %} · FDA feed checked {{ checked_at|date:"M j, g:i A" }}{% endif %} · ECRI alerts need a licensed feed (not connected)</p>

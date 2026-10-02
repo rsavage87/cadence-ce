@@ -5,10 +5,11 @@
 <div class="page-head">
   <div>
     <h1>Recalls and alerts</h1>
-    <p class="sub">Alerts are matched to the inventory by manufacturer and model · newest FDA notice imported {% if feed_at %}{{ feed_at|date:"M j, Y" }}{% else %}never{% endif %} · ECRI alerts need a licensed feed (not connected)</p>
+    {% include "web/_recalls_feed.html" %}
   </div>
   <div class="actions">
-    {# The mock's "Check feeds" only toasts and is left out: the feed is imported daily (import_openfda, run by the scheduler). #}
+    {# The mock's Check feeds: only the FDA feed is connected, so it is named for it. It fetches now; the daily import (import_openfda) still runs. #}
+    {% if can_match %}<button class="btn" type="button" hx-post="{% url 'web:recall_check_feed' %}" hx-target="#rc-body" hx-swap="outerHTML" hx-disabled-elt="this" title="Fetch the FDA device recalls posted in the last 30 days and match them to your inventory">{% icon "sync" %} Check FDA feed</button>{% endif %}
     {% if can_view_reports %}<a class="btn" href="{% url 'web:report_print' 'recall' %}" target="_blank" rel="noopener" title="Print the recall response log, or save it as a PDF">{% icon "dl" %} Response log</a>{% endif %}
     {% if can_match %}<button class="btn" type="button" hx-post="{% url 'web:recall_match' %}" hx-target="#rc-body" hx-swap="outerHTML">{% icon "sync" %} Match alerts to inventory</button>{% endif %}
   </div>
