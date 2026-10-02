@@ -3,6 +3,10 @@ HTMX web UI. Views parse input, call services, and render; they never set status
 
 Drawers (device, work order) and the new work order modal are partials swapped into #drawer and
 #modal-card. The same URLs render a full page when opened directly, so links and reloads work.
+
+Slice 16: a scoped user (apps.workorders.scoping: a vendor technician's company, a clinical requester's unit) sees only their share
+of the facility. The views here that admit them (web_view's `scoped=True`) narrow every list, count, and search to it, and a device
+or work order outside it is a 404, as another facility's is. The rest refuse them (closed by default).
 """
 from datetime import date, timedelta
 from urllib.parse import urlencode
@@ -27,12 +31,13 @@ from apps.facility.services import asset_request_url, get_settings
 from apps.recalls.models import AlertMatch
 from apps.reports.services import overview_page
 from apps.workorders import permissions as wo_perms
+from apps.workorders import scoping
 from apps.workorders import services as wo_services
 from apps.workorders.models import ALLOWED_TRANSITIONS, OPEN_STATUSES, Source, WorkOrder, WoStatus, WoType
 
 from . import asset_tabs
 from . import overview as ov
-from .context_processors import NAV
+from .context_processors import nav_entries
 from .decorators import web_view
 from .forms import (
     VENDOR,
@@ -59,12 +64,13 @@ def _parse_month(params, today: date) -> tuple[int, int]:
     return year, month
 
 
-@web_view()
+@web_view(scoped=True)  # admits a scoped user only to send them on: the Overview is the whole facility's
 def overview(request):
-    if not request.user.has_level(Module.REPORTS, Level.VIEW):
-        # The Overview is the home page; send people without report access to the first screen they can use.
-        for _key, _label, _icon, url_name, module in NAV:
-            if request.user.has_level(module, Level.VIEW):
+    if scoping.is_scoped(request.user) or not request.user.has_level(Module.REPORTS, Level.VIEW):
+        # The Overview is the home page; send people without report access, or who see only their share of the facility, to the
+        # first screen they can use.
+        for key, _label, _icon, url_name, _module in nav_entries(request.user):
+            if key != "overview":
                 return redirect(url_name)
         raise PermissionDenied
     today = date.today()
@@ -91,16 +97,23 @@ EQUIPMENT_COLUMNS = [("tag", "Asset tag", ""), ("device", "Device", ""), ("locat
                      ("next_pm", "Next PM", ""), ("age", "Age", ""), ("support", "Support", ""), ("cost", "Acquisition", "num")]
 
 
+def scoped_assets(user):
+    """A scoped user's devices (apps.workorders.scoping), or None for the whole facility (what the services take without one)."""
+    return scoping.assets(user) if scoping.is_scoped(user) else None
+
+
 def _equipment_context(request) -> dict:
-    options = asset_filter_options()
+    mine = scoped_assets(request.user)  # the list, its filters, and the page head's counts over the user's devices only
+    options = asset_filter_options(mine)
     f = parse_asset_filters(request.GET, options)
-    page = Paginator(filter_assets(f), PAGE_SIZE).get_page(request.GET.get("page"))
+    page = Paginator(filter_assets(f, qs=mine), PAGE_SIZE).get_page(request.GET.get("page"))
     bucket_label = FleetBucket(f.bucket).label if f.bucket else ""
     return {"nav_active": "equipment", "list_url": reverse("web:equipment"), "f": f, "options": options, "page": page, "bucket_label": bucket_label,
-            "summary": fleet_summary(), "sort_columns": EQUIPMENT_COLUMNS, "can_add_device": eq_perms.can_add(request.user)}
+            "summary": fleet_summary(qs=mine), "sort_columns": EQUIPMENT_COLUMNS,
+            "can_add_device": eq_perms.can_add(request.user) and mine is None}  # asset_new refuses scoped users
 
 
-@web_view(Module.EQUIPMENT, Level.VIEW)
+@web_view(Module.EQUIPMENT, Level.VIEW, scoped=True)
 def equipment(request):
     ctx = _equipment_context(request)
     if is_partial(request, "eq-table"):  # the page head's counts come along, so a device added or retired shows there too
@@ -114,68 +127,85 @@ def _model_recalls(device_model_id) -> list:
 
 
 def asset_drawer_context(request, asset) -> dict:
-    """Also used by the contracts screen to re-render the device drawer after its support editor saves."""
-    can_view_recalls = request.user.has_level(Module.RECALLS, Level.VIEW)
+    """Also used by the contracts screen to re-render the device drawer after its support editor saves.
+
+    A scoped user gets the Overview and Work orders tabs only, every figure in them over their own work orders. The PM schedule,
+    Costs, and Recalls tabs are the PM schedule's, the Reports', and the Recalls screen's views of the device (every work order on
+    it, the facility's spend, the model's notices) and link into those screens, which refuse them; so do the changes the drawer
+    offers (new work order, edit, status, support, the contract and model links), and none is shown to them."""
+    user = request.user
+    scoped = scoping.is_scoped(user)
+    can_view_recalls = user.has_level(Module.RECALLS, Level.VIEW) and not scoped
     # Tabs a role cannot use do not exist for it: PM schedule needs PM View, Costs needs Reports View (service spend, contract
     # share, and replacement outlook are the Reports' figures; a vendor technician or clinical requester has no business with
     # them), Recalls needs recalls View. The mock's order: Overview, PM schedule, Work orders, Costs, Recalls.
-    tabs = [t for t, ok in (("overview", True), ("pm", request.user.has_level(Module.PM, Level.VIEW)), ("wo", True),
-                            ("costs", request.user.has_level(Module.REPORTS, Level.VIEW)), ("recalls", can_view_recalls)) if ok]
+    tabs = [t for t, ok in (("overview", True), ("pm", user.has_level(Module.PM, Level.VIEW) and not scoped), ("wo", True),
+                            ("costs", user.has_level(Module.REPORTS, Level.VIEW) and not scoped), ("recalls", can_view_recalls)) if ok]
     tab = request.GET.get("tab") if request.GET.get("tab") in tabs else "overview"
-    summary = asset_service_summary(asset)
+    summary = asset_service_summary(asset, work_orders=scoping.work_orders(user) if scoped else None)
     recalls = _model_recalls(asset.device_model_id) if can_view_recalls else []
     return {"asset": asset, "tab": tab, "summary": summary, "recent": summary["work_orders"][:4], "qualified": qualified_technicians(asset),
-            "portal_url": asset_request_url(asset), "can_create_wo": request.user.has_level(wo_perms.MODULE, wo_perms.CREATE_LEVEL),
-            "can_view_wo": request.user.has_level(Module.WORKORDERS, Level.VIEW),
+            "portal_url": asset_request_url(asset), "can_create_wo": user.has_level(wo_perms.MODULE, wo_perms.CREATE_LEVEL) and not scoped,
+            "can_view_wo": user.has_level(Module.WORKORDERS, Level.VIEW), "scoped": scoped,
             "can_view_recalls": can_view_recalls, "recalls": recalls, "tabs": tabs,
             "open_recall": any(m.status == AlertMatch.Status.NEEDS_ACTION for m in recalls),
             # slice 12: editing the device and its status buttons; the PM schedule and Costs tabs (apps/web/asset_tabs.py)
-            "can_edit_device": eq_perms.can_edit(request.user), "status_actions": eq_services.status_actions(asset, request.user),
+            "can_edit_device": eq_perms.can_edit(user) and not scoped, "status_actions": [] if scoped else eq_services.status_actions(asset, user),
             **(asset_tabs.pm_tab(asset) if tab == "pm" else asset_tabs.costs_tab(asset) if tab == "costs" else {})}
 
 
-@web_view(Module.EQUIPMENT, Level.VIEW)
+def get_asset(request, tag):
+    """One device by tag, as this user may see it: another facility's, or one outside a scoped user's share, is a 404."""
+    qs = Asset.objects.select_related("device_model", "department", "contract", "tenant")
+    return get_object_or_404(scoping.assets(request.user, qs), tag=tag)
+
+
+@web_view(Module.EQUIPMENT, Level.VIEW, scoped=True)
 def asset_detail(request, tag):
-    asset = get_object_or_404(Asset.objects.select_related("device_model", "department", "contract", "tenant"), tag=tag)
+    asset = get_asset(request, tag)
     ctx = asset_drawer_context(request, asset)
     if request.htmx:
         return render(request, "web/_asset_drawer.html", ctx)
     return render(request, "web/equipment.html", {**_equipment_context(request), **ctx, "drawer_template": "web/_asset_drawer.html"})
 
 
-@web_view(Module.EQUIPMENT, Level.VIEW)
+@web_view(Module.EQUIPMENT, Level.VIEW, scoped=True)
 def asset_search(request):
     q = request.GET.get("asset_q", "").strip()
     if len(q) < 2:
         return HttpResponse("")
-    return render(request, "web/_asset_picks.html", {"assets": search_assets(q)})
+    return render(request, "web/_asset_picks.html", {"assets": search_assets(q, qs=scoped_assets(request.user))})
 
 
 # --- Work orders ----------------------------------------------------------------------------------
 
 def _workorders_context(request) -> dict:
+    user = request.user
+    scoped = scoping.is_scoped(user)
+    mine = scoping.work_orders(user)  # the list, the board, and the page head's counts over the user's work orders only
     techs = list(Technician.objects.filter(is_active=True))
     f = parse_work_order_filters(request.GET, {str(t.id) for t in techs})
     mode = "board" if request.GET.get("mode") == "board" else "list"
     today = date.today()
-    open_wos = wo_services.open_work_orders()
-    unassigned_portal = wo_services.unassigned_portal_requests().count()
+    open_wos = scoping.work_orders(user, wo_services.open_work_orders())
+    # The portal requests waiting are a CE manager's to assign, and a scoped user cannot assign: the note is not for them.
+    unassigned_portal = 0 if scoped else wo_services.unassigned_portal_requests().count()
     ctx = {"nav_active": "workorders", "list_url": reverse("web:workorders"), "f": f, "mode": mode, "technicians": techs,
            "types": WoType.choices, "statuses": WoStatus.choices,
            "unassigned_portal": unassigned_portal, "open_count": open_wos.count(),
            # Quoted as written: "(policy: Triage 7 a.m. to 7 p.m.)." keeps the policy's own punctuation intact.
            "portal_policy": get_settings().policy_portal if unassigned_portal else "",
            "past_due": open_wos.filter(due_on__lt=today).count(),
-           "done_7d": WorkOrder.objects.filter(completed_on__gte=today - timedelta(days=wo_services.BOARD_RECENT_DAYS)).count(),
-           "can_create": request.user.has_level(wo_perms.MODULE, wo_perms.CREATE_LEVEL)}
+           "done_7d": mine.filter(completed_on__gte=today - timedelta(days=wo_services.BOARD_RECENT_DAYS)).count(),
+           "can_create": user.has_level(wo_perms.MODULE, wo_perms.CREATE_LEVEL) and not scoped}  # wo_new refuses scoped users
     if mode == "board":
-        ctx["columns"] = wo_services.board_columns(f)
+        ctx["columns"] = wo_services.board_columns(f, qs=mine)
     else:
-        ctx["page"] = Paginator(wo_services.filter_work_orders(f), PAGE_SIZE).get_page(request.GET.get("page"))
+        ctx["page"] = Paginator(wo_services.filter_work_orders(f, qs=mine), PAGE_SIZE).get_page(request.GET.get("page"))
     return ctx
 
 
-@web_view(Module.WORKORDERS, Level.VIEW)
+@web_view(Module.WORKORDERS, Level.VIEW, scoped=True)
 def workorders(request):
     ctx = _workorders_context(request)
     if is_partial(request, "wo-body"):
@@ -197,16 +227,18 @@ WO_ACTIONS = {
 def _wo_drawer_context(request, wo) -> dict:
     from . import views_wo_complete, views_wo_costs  # slice 15's sections; they render this drawer, so imported here
 
+    user = request.user
+    scoped = scoping.is_scoped(user)
     today = date.today()
     unassigned = wo.assigned_to_id is None and not wo.vendor_service
     actions = [] if unassigned else [{"to": to, "label": label, "primary": primary} for to, label, primary in WO_ACTIONS.get(wo.status, [])
-                                     if to in ALLOWED_TRANSITIONS[wo.status] and wo_perms.can_transition(request.user, wo.status, to)]
+                                     if to in ALLOWED_TRANSITIONS[wo.status] and wo_perms.can_transition(user, wo.status, to)]
     is_open = wo.status in OPEN_STATUSES
-    can_assign = is_open and wo_perms.can_assign(request.user)
+    can_assign = is_open and wo_perms.can_assign(user) and not scoped  # wo_assign refuses scoped users
     current = VENDOR if wo.vendor_service else (str(wo.assigned_to_id) if wo.assigned_to_id else "")
     # The Recalls screen is keyed by AlertMatch, so a recall work order links through the match for this alert and the device's model.
     recall_match = (AlertMatch.objects.filter(alert_id=wo.alert_id, device_model_id=wo.asset.device_model_id).first()
-                    if wo.alert_id and request.user.has_level(Module.RECALLS, Level.VIEW) else None)
+                    if wo.alert_id and user.has_level(Module.RECALLS, Level.VIEW) and not scoped else None)
     return {
         "wo": wo, "asset": wo.asset, "is_open": is_open, "unassigned": unassigned, "actions": actions,
         "late_days": (today - wo.due_on).days if is_open and wo.due_on < today else 0,
@@ -214,8 +246,9 @@ def _wo_drawer_context(request, wo) -> dict:
         "qual": qualification(wo.assigned_to, wo.asset) if wo.assigned_to_id else None,
         "can_assign": can_assign, "assign_choices": technician_choices(wo.asset) if can_assign else [], "assign_current": current,
         "assignment_policy": get_settings().policy_assignment if can_assign else "",
-        "can_note": request.user.has_level(wo_perms.MODULE, wo_perms.NOTE_LEVEL),
-        "can_view_asset": request.user.has_level(Module.EQUIPMENT, Level.VIEW),
+        "can_note": user.has_level(wo_perms.MODULE, wo_perms.NOTE_LEVEL),
+        # A work order in a scoped user's share is on a device in it (scoping's rules); checked anyway, the link must never 404.
+        "can_view_asset": user.has_level(Module.EQUIPMENT, Level.VIEW) and scoping.can_see_asset(user, wo.asset),
         "timeline": wo_services.timeline(wo),
         "labor_hours": sum(float(line.hours) for line in wo.labor_lines.all()),
         "is_portal": wo.source == Source.PORTAL,
@@ -225,27 +258,29 @@ def _wo_drawer_context(request, wo) -> dict:
     }
 
 
-def _get_wo(number):
-    return get_object_or_404(WorkOrder.objects.select_related("asset", "asset__device_model", "asset__department", "asset__contract", "assigned_to", "alert")
-                             .prefetch_related("labor_lines", "part_lines", "assigned_to__credentials"), number=number)
+def get_wo(request, number):
+    """One work order by number, as this user may see it: another facility's, or one outside a scoped user's share, is a 404."""
+    qs = (WorkOrder.objects.select_related("asset", "asset__device_model", "asset__department", "asset__contract", "assigned_to", "alert")
+          .prefetch_related("labor_lines", "part_lines", "assigned_to__credentials"))
+    return get_object_or_404(scoping.work_orders(request.user, qs), number=number)
 
 
 def _render_wo_drawer(request, wo, status=200):
-    return render(request, "web/_wo_drawer.html", _wo_drawer_context(request, _get_wo(wo.number)), status=status)
+    return render(request, "web/_wo_drawer.html", _wo_drawer_context(request, get_wo(request, wo.number)), status=status)
 
 
-@web_view(Module.WORKORDERS, Level.VIEW)
+@web_view(Module.WORKORDERS, Level.VIEW, scoped=True)
 def wo_detail(request, number):
-    wo = _get_wo(number)
+    wo = get_wo(request, number)
     if request.htmx:
         return _render_wo_drawer(request, wo)
     return render(request, "web/workorders.html", {**_workorders_context(request), **_wo_drawer_context(request, wo), "drawer_template": "web/_wo_drawer.html"})
 
 
 @require_POST
-@web_view(Module.WORKORDERS, Level.EDIT)
+@web_view(Module.WORKORDERS, Level.EDIT, scoped=True)
 def wo_status(request, number):
-    wo = _get_wo(number)
+    wo = get_wo(request, number)
     to_status = request.POST.get("to", "")
     if not wo_perms.can_transition(request.user, wo.status, to_status):
         raise PermissionDenied
@@ -263,9 +298,9 @@ def wo_status(request, number):
 
 
 @require_POST
-@web_view(wo_perms.MODULE, wo_perms.ASSIGN_LEVEL)
+@web_view(wo_perms.MODULE, wo_perms.ASSIGN_LEVEL)  # not for scoped users: the choices are the facility's technicians
 def wo_assign(request, number):
-    wo = _get_wo(number)
+    wo = get_wo(request, number)
     if wo.status not in OPEN_STATUSES:
         return toast(_render_wo_drawer(request, wo), "Only open work orders can be reassigned.")
     choice = request.POST.get("assignee", "")
@@ -283,9 +318,9 @@ def wo_assign(request, number):
 
 
 @require_POST
-@web_view(wo_perms.MODULE, wo_perms.NOTE_LEVEL)
+@web_view(wo_perms.MODULE, wo_perms.NOTE_LEVEL, scoped=True)
 def wo_note(request, number):
-    wo = _get_wo(number)
+    wo = get_wo(request, number)
     try:
         wo_services.add_note(wo, request.POST.get("text", ""), by=request.user)
         message = "Note added"
@@ -294,7 +329,7 @@ def wo_note(request, number):
     return toast(_render_wo_drawer(request, wo), message)
 
 
-@web_view(wo_perms.MODULE, wo_perms.CREATE_LEVEL)
+@web_view(wo_perms.MODULE, wo_perms.CREATE_LEVEL)  # not for scoped users: a vendor did not ask for the work, and a requester uses the portal
 def wo_new(request):
     can_assign = wo_perms.can_assign(request.user)
     if request.method != "POST":
@@ -324,16 +359,16 @@ def wo_new(request):
 
 # --- Global search --------------------------------------------------------------------------------
 
-@web_view()
+@web_view(scoped=True)
 def search(request):
-    """Topbar search: an exact work order number or asset tag opens it; anything else searches equipment."""
+    """Topbar search: an exact work order number or asset tag opens it; anything else searches equipment. A scoped user's search
+    finds only their share: another number or tag is searched as text in their Equipment list, where it matches nothing of theirs."""
     q = request.GET.get("q", "").strip()
     if q:
-        wo = WorkOrder.objects.filter(number__iexact=q).first()
+        wo = scoping.work_orders(request.user).filter(number__iexact=q).first()
         if wo:
             return redirect("web:wo", number=wo.number)
-        asset = Asset.objects.filter(tag__iexact=q).first()
+        asset = scoping.assets(request.user).filter(tag__iexact=q).first()
         if asset:
             return redirect("web:asset", tag=asset.tag)
     return redirect(f"{reverse('web:equipment')}?{urlencode({'q': q})}" if q else reverse("web:equipment"))
-

@@ -14,6 +14,11 @@ settle: closing it first would detach the form that sent the request, which canc
 
 results_context feeds the drawer's PM results section (_wo_results.html): a completed PM's result and its checklist as recorded,
 and the links between a failed PM and its follow-up repair, both ways.
+
+Slice 16: a scoped user (apps.workorders.scoping) completes the work orders in their share; another is a 404. A repair outside it (a
+vendor's failed PM opens a repair for CE to assign) is neither linked nor named to them: not in the drawer's section, the modal's
+failed-PM options, or the toast; where completion.py wrote its number into the PM's resolution and history, the drawer reads
+"another work order" (templatetags/scoping_tags).
 """
 from datetime import date
 
@@ -22,14 +27,14 @@ from django.shortcuts import render
 from django_htmx.http import retarget, trigger_client_event
 
 from apps.equipment.models import AssetStatus
-from apps.workorders import completion
+from apps.workorders import completion, scoping
 from apps.workorders import permissions as wo_perms
 from apps.workorders.models import OPEN_STATUSES, PmResult, ServiceRequest, Source, WoStatus, WoType
 
 from .decorators import web_view
 from .forms_wo_complete import STEP_CHOICES, CompleteForm
 from .htmx import toast
-from .views import _get_wo, _render_wo_drawer
+from .views import _render_wo_drawer, get_wo
 
 MODAL = "web/_wo_complete.html"
 RESULT_CSS = {PmResult.PASS: "ok", PmResult.PASS_MINOR_REPAIR: "warn", PmResult.FAIL: "crit"}
@@ -39,8 +44,10 @@ STEP_CSS = {completion.PASS: "ok", completion.FAIL: "crit", completion.NA: "neut
 # --- the drawer's section ------------------------------------------------------------------------------------------------------
 
 def results_context(request, wo) -> dict:
-    """Under "pm_record", so nothing collides with the drawer's own keys. One query for a PM's follow-ups, one for a repair's PM."""
+    """Under "pm_record", so nothing collides with the drawer's own keys. One query for a PM's follow-ups, one for a repair's PM.
+    Only the ones in the user's share (apps.workorders.scoping): a link out of it would be a 404, and its number is not theirs."""
     is_pm = wo.type == WoType.PM
+    follow_up_of = wo.follow_up_of if wo.follow_up_of_id else None
     recorded = is_pm and bool(wo.pm_result)
     done = wo.status in completion.DONE_STATUSES
     steps = completion.recorded_steps(wo) if recorded and done else []
@@ -51,8 +58,8 @@ def results_context(request, wo) -> dict:
         "reopened": recorded and wo.status in OPEN_STATUSES,
         "label": wo.get_pm_result_display() if recorded else "", "css": RESULT_CSS.get(wo.pm_result, "neutral"),
         "steps": steps,
-        "follow_ups": list(wo.follow_ups.order_by("opened_on", "number")) if is_pm else [],
-        "follow_up_of": wo.follow_up_of if wo.follow_up_of_id else None,
+        "follow_ups": list(scoping.work_orders(request.user, wo.follow_ups.order_by("opened_on", "number"))) if is_pm else [],
+        "follow_up_of": follow_up_of if follow_up_of is not None and scoping.can_see_work_order(request.user, follow_up_of) else None,
     }}
 
 
@@ -63,13 +70,19 @@ def _require(allowed: bool):
         raise PermissionDenied
 
 
-def _offers(wo) -> dict:
+def _number(user, wo) -> str:
+    """A work order's number for this user: blank when it is outside a scoped user's share (the modal and toast then say "a repair")."""
+    return wo.number if wo is not None and scoping.can_see_work_order(user, wo) else ""
+
+
+def _offers(wo, user) -> dict:
     """A failed PM's options, as the modal offers them: the repair a failure goes to, and whether tagging out applies."""
     if wo.type != WoType.PM:
         return {"own_repair": None, "other_repair": None, "offer_open_repair": False, "offer_tag_out": False}
     own = completion.own_open_repair(wo)
     other = None if own else completion.other_open_repair(wo)
     return {"own_repair": own, "other_repair": other, "offer_open_repair": other is not None,
+            "own_repair_number": _number(user, own), "other_repair_number": _number(user, other),
             "offer_tag_out": wo.asset.status in completion.HOLDABLE, "already_out": wo.asset.status != AssetStatus.IN_SERVICE}
 
 
@@ -111,10 +124,15 @@ def _requester_email(wo) -> bool:
     return bool(sr and sr.requester_email)
 
 
-def _message(wo, done) -> str:
+def _message(request, wo, done) -> str:
     if wo.type != WoType.PM:
         return f"{wo.number} completed"
-    message = f"{wo.number} completed: {completion.result_note(wo.pm_result, done)}"
+    note = completion.result_note(wo.pm_result, done)
+    if done.repair is not None and not _number(request.user, done.repair):
+        # A repair outside the user's share: say what happened without its number.
+        where = "a repair work order opened" if done.follow_up else "recorded on the device's open repair"
+        note = f"{completion.RESULT_NOTES.get(wo.pm_result, '')}; {where}"
+    message = f"{wo.number} completed: {note}"
     if done.tagged_out:
         message += f"; {wo.asset.tag} tagged out of service"
     return message
@@ -124,21 +142,21 @@ def _saved(request, wo, done):
     response = retarget(_render_wo_drawer(request, wo), "#drawer")
     for event in ("wo-changed", *(("devices-changed",) if done.device_changed else ())):
         trigger_client_event(response, event, {})
-    toast(response, _message(wo, done))
+    toast(response, _message(request, wo, done))
     return trigger_client_event(response, "modal-close", {}, after="settle")
 
 
-@web_view(wo_perms.MODULE, wo_perms.RECORD_LEVEL)
+@web_view(wo_perms.MODULE, wo_perms.RECORD_LEVEL, scoped=True)
 def wo_complete(request, number):
     # In progress is the one status a work order is completed from; whether it is in progress now is the modal's to say.
     _require(wo_perms.can_transition(request.user, WoStatus.IN_PROGRESS, WoStatus.COMPLETED))
-    wo = _get_wo(number)  # tenant-scoped: another facility's number is a 404
+    wo = get_wo(request, number)  # another facility's number, or one outside a scoped user's share, is a 404
     today = date.today()
     reason = completion.blocker(wo, today)
     if reason:
         return _modal(request, wo, reason=reason)
     steps = completion.checklist_of(completion.procedure_for(wo))
-    offers = _offers(wo)
+    offers = _offers(wo, request.user)
     kwargs = _form_kwargs(wo, steps, offers)
     if request.method != "POST":
         form = CompleteForm.filled(request.GET, fill=request.GET.get("fill", ""), **kwargs) if "fill" in request.GET else CompleteForm(**kwargs)
@@ -151,7 +169,7 @@ def wo_complete(request, number):
         except ValidationError as e:
             form.add_service_errors(e)
     if done is None:
-        wo = _get_wo(number)  # as it is now: a refusal for its state (completed meanwhile) re-renders as the blocker
+        wo = get_wo(request, number)  # as it is now: a refusal for its state (completed meanwhile) re-renders as the blocker
         reason = completion.blocker(wo, today)
         if not reason and "checklist" in form.errors:
             form = _revised(form, kwargs)

@@ -82,7 +82,9 @@ def test_default_roles_see_the_tabs_their_modules_allow(client, signed_in, vent)
     assert "Service cost by year" in tab(client, vent, "costs").content.decode()
 
     client.logout()
-    signed_in("requester")  # PM: None
+    user = signed_in("requester")  # PM: None
+    user.department = "ICU"  # slice 16: a requester sees their own unit's devices
+    user.save()
     r = tab(client, vent, "pm")
     body = r.content.decode()
     assert r.context["tab"] == "overview" and "?tab=pm" not in body and "Maintenance strategy" not in body
@@ -115,7 +117,12 @@ def test_reports_view_alone_gives_costs_without_the_pm_tab(client, tenant, ctx, 
 @pytest.mark.parametrize("role", ["vendor", "requester"])
 def test_vendor_and_requester_roles_see_no_costs_tab(client, make_user, ctx, vent, role):
     """Their Work orders access does not open the facility's service spend, contract share, or replacement outlook."""
-    client.force_login(make_user(role))
+    user = make_user(role)
+    user.department, user.company = "ICU", "Hamilton Medical"  # slice 16: their unit's devices, or those with their company's work
+    user.save()
+    create_work_order(asset=vent, type="repair", priority="normal", problem="Flow sensor fault", vendor_service=True,
+                      vendor_name="Hamilton Medical field service")
+    client.force_login(user)
     assert "?tab=costs" not in client.get(f"/equipment/{vent.tag}/", **HX).content.decode()
     assert tab(client, vent, "costs").context["tab"] == "overview"
 

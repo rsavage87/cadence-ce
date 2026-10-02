@@ -63,10 +63,12 @@ def fleet_bucket_counts(today: date | None = None) -> dict[str, int]:
     return counts
 
 
-def fleet_summary(today: date | None = None) -> dict:
+def fleet_summary(today: date | None = None, qs=None) -> dict:
+    """The Equipment page head's counts, over `qs` (default the whole fleet; a scoped user's devices, apps.workorders.scoping)."""
     today = today or date.today()
-    active = Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES)
-    return {"total": Asset.objects.count(), "active": active.count(), "under_contract": active.filter(contract__end_on__gte=today).count()}
+    devices = Asset.objects.all() if qs is None else qs
+    active = devices.filter(status__in=Asset.ACTIVE_STATUSES)
+    return {"total": devices.count(), "active": active.count(), "under_contract": active.filter(contract__end_on__gte=today).count()}
 
 
 ACTIVE_STATUS_FILTER = "active"  # every status but retired: what the fleet counts on Overview and Settings mean by "devices"
@@ -104,10 +106,11 @@ SORTS = {
 }
 
 
-def filter_assets(f: AssetFilters, today: date | None = None):
-    """The Equipment table: the mock's toolbar filters, annotated with each device's fleet bucket."""
+def filter_assets(f: AssetFilters, today: date | None = None, qs=None):
+    """The Equipment table: the mock's toolbar filters, annotated with each device's fleet bucket. Over `qs` when given (a scoped
+    user's devices, apps.workorders.scoping), else the whole fleet."""
     today = today or date.today()
-    qs = with_bucket(Asset.objects.select_related("device_model", "department", "contract"), today)
+    qs = with_bucket((Asset.objects.all() if qs is None else qs).select_related("device_model", "department", "contract"), today)
     if f.q:
         q = f.q.strip()
         qs = qs.filter(Q(tag__icontains=q) | Q(serial__icontains=q) | Q(device_model__model__icontains=q) | Q(device_model__manufacturer__icontains=q)
@@ -136,21 +139,24 @@ def filter_assets(f: AssetFilters, today: date | None = None):
     return qs.order_by(*SORTS.get(f.sort, SORTS["tag"])(f.descending))
 
 
-def search_assets(q: str, limit: int = 6):
-    """Device picker for the new work order form: active devices by tag, serial, or model."""
+def search_assets(q: str, limit: int = 6, qs=None):
+    """Device picker for the new work order form: active devices by tag, serial, or model. Among `qs` when given (a scoped user's
+    devices, apps.workorders.scoping), else the whole fleet."""
     q = q.strip()
     if len(q) < 2:
         return Asset.objects.none()
-    return (Asset.objects.exclude(status=AssetStatus.RETIRED).select_related("device_model", "department")
+    return ((Asset.objects.all() if qs is None else qs).exclude(status=AssetStatus.RETIRED).select_related("device_model", "department")
             .filter(Q(tag__icontains=q) | Q(serial__icontains=q) | Q(device_model__model__icontains=q) | Q(device_model__description__icontains=q))[:limit])
 
 
-def asset_service_summary(asset, today: date | None = None) -> dict:
-    """Work orders opened on this device in the trailing 182 days, with completed cost and its annualized share of acquisition."""
+def asset_service_summary(asset, today: date | None = None, work_orders=None) -> dict:
+    """Work orders opened on this device in the trailing 182 days, with completed cost and its annualized share of acquisition.
+    Among `work_orders` when given (a scoped user's, apps.workorders.scoping), so every figure counts only those; else all of them."""
     from apps.workorders.models import WorkOrder, WoType
 
     today = today or date.today()
-    wos = list(WorkOrder.objects.filter(asset=asset, opened_on__gte=today - timedelta(days=182)).select_related("assigned_to")
+    base = WorkOrder.objects.all() if work_orders is None else work_orders
+    wos = list(base.filter(asset=asset, opened_on__gte=today - timedelta(days=182)).select_related("assigned_to")
                .prefetch_related("labor_lines", "part_lines").order_by("-opened_on", "-created_at"))
     cost = sum(w.total_cost() for w in wos if w.completed_on)
     acquisition = float(asset.acquisition_cost)

@@ -355,13 +355,16 @@ def test_a_device_with_an_older_pm_than_its_install_date_stays_editable(client, 
 
 
 def test_edit_needs_equipment_edit(client, signed_in, vent):
-    signed_in("requester")
+    requester = signed_in("requester")
+    requester.department = "ICU"  # slice 16: a requester sees their own unit's devices
+    requester.save()
     assert client.get(f"/equipment/{vent.tag}/edit/", **HX).status_code == 403
     assert client.post(f"/equipment/{vent.tag}/edit/", edit_post(vent, room="99"), **HX).status_code == 403
     vent.refresh_from_db()
     assert vent.room == ""
-    drawer = client.get(f"/equipment/{vent.tag}/", **HX).content.decode()
-    assert "/edit/" not in drawer and "Edit details" not in drawer
+    r = client.get(f"/equipment/{vent.tag}/", **HX)
+    drawer = r.content.decode()
+    assert r.status_code == 200 and "/edit/" not in drawer and "Edit details" not in drawer
 
 
 def test_the_drawer_offers_edit_details_to_equipment_edit(client, signed_in, vent):
@@ -410,8 +413,12 @@ def test_status_buttons_follow_the_status_and_the_role(client, signed_in, vent, 
     client.force_login(make_user("director"))  # Approve: Retire too
     assert drawer_buttons(client.get(url, **HX).content.decode()) == {
         "Return to service": AssetStatus.IN_SERVICE, "Mark missing": AssetStatus.MISSING, "Retire": AssetStatus.RETIRED}
-    client.force_login(make_user("requester"))  # Equipment View: none
-    assert drawer_buttons(client.get(url, **HX).content.decode()) == {}
+    requester = make_user("requester")  # Equipment View: none
+    requester.department = "ICU"  # slice 16: a requester sees their own unit's devices
+    requester.save()
+    client.force_login(requester)
+    r = client.get(url, **HX)
+    assert r.status_code == 200 and drawer_buttons(r.content.decode()) == {}
 
 
 def test_tag_out_and_return_to_service(client, signed_in, vent):

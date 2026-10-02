@@ -1,4 +1,4 @@
-{% load web recalls_tags %}
+{% load web recalls_tags scoping_tags %}
 {% with dm=asset.device_model %}
 <div class="dr-h">
   <div>
@@ -46,14 +46,14 @@
   <div class="sec"><div class="note">Waiting for a CE manager to assign this work order.</div></div>
   {% endif %}
 
-  <div class="sec"><h3>Problem</h3><div style="white-space:pre-line">{{ wo.problem }}</div></div>
-  {% if wo.resolution %}<div class="sec"><h3>Resolution</h3><div style="white-space:pre-line">{{ wo.resolution }}</div></div>{% endif %}
+  <div class="sec"><h3>Problem</h3><div style="white-space:pre-line">{% shown_text wo.problem %}</div></div>
+  {% if wo.resolution %}<div class="sec"><h3>Resolution</h3><div style="white-space:pre-line">{% shown_text wo.resolution %}</div></div>{% endif %}
   {% include "web/_wo_results.html" %}
 
   {% include "web/_wo_costs.html" %}
 
   <div class="sec"><h3>Timeline</h3>
-    <ul class="tl">{% for e in timeline %}<li><div>{{ e.text }}</div><div class="w">{{ e.at|date:"M j, Y g:i A" }} · {{ e.who }}</div></li>{% endfor %}</ul>
+    <ul class="tl">{% for e in timeline %}<li><div>{% shown_text e.text %}</div><div class="w">{{ e.at|date:"M j, Y g:i A" }} · {{ e.who }}</div></li>{% endfor %}</ul>
     {% if can_note %}
     <form style="display:flex;gap:8px;margin-top:12px" hx-post="{% url 'web:wo_note' wo.number %}" hx-target="#drawer">
       <input name="text" maxlength="1000" required placeholder="Add a note (no patient information)" aria-label="Add a note" style="flex:1;font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line-2);border-radius:6px;padding:7px 9px;min-width:0">

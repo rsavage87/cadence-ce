@@ -84,7 +84,11 @@ def test_signed_out_is_sent_to_sign_in(client, pm):
 
 @pytest.mark.parametrize("role", ["director", "manager", "technician", "vendor"])
 def test_roles_with_work_orders_edit_open_and_post_it(client, signed_in, repair, role):
-    signed_in(role)
+    user = signed_in(role)
+    if role == "vendor":  # slice 16: a vendor technician sees and completes their company's work orders only
+        assign(repair, vendor_name="Hamilton Medical field service")
+        user.company = "Hamilton Medical"
+        user.save()
     assert client.get(url(repair), **HX).status_code == 200
     r = client.post(url(repair), {"resolution": "Replaced the flow sensor"}, **HX)
     repair.refresh_from_db()

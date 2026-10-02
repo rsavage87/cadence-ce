@@ -2,6 +2,7 @@
 Adding and changing devices from the Equipment screen and the device drawer (slice 12): Add device, Edit details, and the drawer's
 status buttons. Views parse input, call apps.equipment.services, and render. Who may do what is apps/equipment/permissions.py,
 checked here on every request (the buttons are hidden from roles without it too, but hiding a button is not access control).
+None of these admit a scoped user (slice 16, apps.workorders.scoping): a vendor's or a unit's share is to see, not to change devices.
 
 Every change fires `devices-changed` (the Equipment table re-fetches on it) and toasts. Add device and Edit details are modals
 (#modal-card): a save swaps the device's drawer into #drawer instead (HX-Retarget; the shell opens the drawer on that swap) and
@@ -10,20 +11,20 @@ closes the modal after settle. A status button re-renders the drawer it sits in.
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.http import HttpResponseBadRequest
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import render
 from django.views.decorators.http import require_POST
 from django_htmx.http import retarget, trigger_client_event
 
 from apps.accounts.models import Level, Module
 from apps.equipment import permissions as eq_perms
 from apps.equipment import services as eq
-from apps.equipment.models import Asset, AssetStatus
+from apps.equipment.models import AssetStatus
 from apps.workorders.models import OPEN_STATUSES, WoStatus
 
 from .decorators import web_view
 from .forms_equipment import EditDeviceForm, NewDeviceForm
 from .htmx import toast
-from .views import asset_drawer_context
+from .views import asset_drawer_context, get_asset
 
 DRAWER = "web/_asset_drawer.html"
 
@@ -54,14 +55,9 @@ def _require(allowed: bool):
         raise PermissionDenied
 
 
-def _get_asset(tag):
-    """Tenant-scoped: another facility's tag is a 404."""
-    return get_object_or_404(Asset.objects.select_related("device_model", "department", "contract", "tenant"), tag=tag)
-
-
 def _drawer(request, tag):
     """The device drawer, freshly read. On the tab named by ?tab= in the request's address, else Overview."""
-    return render(request, DRAWER, asset_drawer_context(request, _get_asset(tag)))
+    return render(request, DRAWER, asset_drawer_context(request, get_asset(request, tag)))
 
 
 def _changed(response, *also):
@@ -132,7 +128,7 @@ def _edit_modal(request, form):
 @web_view(Module.EQUIPMENT, Level.VIEW)
 def asset_edit(request, tag):
     _require(eq_perms.can_edit(request.user))
-    asset = _get_asset(tag)
+    asset = get_asset(request, tag)  # another facility's tag is a 404
     if request.method != "POST":
         return _edit_modal(request, EditDeviceForm(asset=asset))
     form = EditDeviceForm(request.POST, asset=asset)  # no tag, status, or contract field: posting them changes nothing
@@ -151,7 +147,7 @@ def asset_edit(request, tag):
 @require_POST
 @web_view(Module.EQUIPMENT, Level.VIEW)
 def asset_status(request, tag):
-    asset = _get_asset(tag)
+    asset = get_asset(request, tag)
     to_status, from_status = request.POST.get("to", ""), asset.status
     _require(eq_perms.can_set_status(request.user, from_status, to_status))
     if to_status not in AssetStatus.values:

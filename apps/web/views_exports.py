@@ -10,6 +10,9 @@ Work orders: the address may carry mode=board (the Export link drops it, the cli
 is what the List view lists for the same address: the status filter and the open-only switch apply as they do there (open-only
 is on unless the address says open=0). The board's toolbar sends neither, so exporting from the board gives the work orders in its
 three open columns; the recent work in its completed and closed columns is in the export with open-only off, as in the List view.
+
+Slice 16: a scoped user (apps.workorders.scoping) exports what their lists show, their own devices and work orders; the contract
+exports are the facility's and refuse them.
 """
 import re
 from datetime import date
@@ -25,6 +28,7 @@ from apps.credentials.models import Technician
 from apps.equipment.models import Asset, AssetStatus
 from apps.equipment.services import FleetBucket, filter_assets
 from apps.recalls.services import alert_label
+from apps.workorders import scoping
 from apps.workorders.models import LABOR_AMOUNT, OPEN_STATUSES, PART_AMOUNT, LaborLine, PartLine, WorkOrder
 from apps.workorders.services import filter_work_orders
 
@@ -32,6 +36,8 @@ from .decorators import web_view
 from .exports import csv_response
 from .forms import asset_filter_options, parse_asset_filters, parse_work_order_filters
 from .forms_contracts import parse_contract_filters
+from .templatetags.scoping_tags import scoped_text
+from .views import scoped_assets
 
 CHUNK = 500  # rows fetched per round trip while streaming
 CENT = Decimal("0.01")
@@ -67,13 +73,15 @@ EQUIPMENT_COLUMNS = ["Tag", "Serial", "Manufacturer", "Model", "Description", "C
                      "Fleet state", "Open work orders"]
 
 
-@web_view(Module.EQUIPMENT, Level.VIEW)
+@web_view(Module.EQUIPMENT, Level.VIEW, scoped=True)
 def equipment_csv(request):
     today = date.today()
-    f = parse_asset_filters(request.GET, asset_filter_options())
-    open_wos = (WorkOrder.objects.filter(asset=OuterRef("pk"), status__in=OPEN_STATUSES).order_by()
+    mine = scoped_assets(request.user)
+    f = parse_asset_filters(request.GET, asset_filter_options(mine))
+    # A scoped user's count of open work orders is of their own, as the device drawer counts them.
+    open_wos = (scoping.work_orders(request.user, WorkOrder.objects.filter(asset=OuterRef("pk"), status__in=OPEN_STATUSES)).order_by()
                 .values("asset").annotate(n=Count("id")).values("n"))
-    assets = filter_assets(f, today).annotate(open_wos=Subquery(open_wos))
+    assets = filter_assets(f, today, qs=mine).annotate(open_wos=Subquery(open_wos))
 
     def rows():
         for a in assets.iterator(chunk_size=CHUNK):
@@ -105,15 +113,18 @@ def _assigned_to(wo) -> str:
     return wo.assigned_to.name if wo.assigned_to_id else ""
 
 
-@web_view(Module.WORKORDERS, Level.VIEW)
+@web_view(Module.WORKORDERS, Level.VIEW, scoped=True)
 def workorders_csv(request):
     today = date.today()
     # The same technicians the list's Assigned filter offers (active ones), so an id the list would drop is dropped here too.
     f = parse_work_order_filters(request.GET, {str(pk) for pk in Technician.objects.filter(is_active=True).values_list("pk", flat=True)})
-    wos = (filter_work_orders(f).prefetch_related(None).select_related("alert").defer("alert__raw")  # the notice's source record is not exported
+    wos = (filter_work_orders(f, qs=scoping.work_orders(request.user))  # a scoped user's own work orders, as their list shows
+           .prefetch_related(None).select_related("alert").defer("alert__raw")  # the notice's source record is not exported
            .annotate(labor_hours=_line_sum(LaborLine, "hours"),
                      labor_amount=_line_sum(LaborLine, LABOR_AMOUNT),  # each line to the cent, as the drawer and the print
                      parts_amount=_line_sum(PartLine, PART_AMOUNT)))
+
+    user, seen = request.user, {}  # a scoped user's problem texts name no work order outside their share (scoping_tags.scoped_text)
 
     def rows():
         for w in wos.iterator(chunk_size=CHUNK):
@@ -121,9 +132,9 @@ def workorders_csv(request):
             dm = a.device_model
             labor, parts = w.labor_amount or 0, w.parts_amount or 0
             yield [w.number, w.get_type_display(), w.get_priority_display(), w.get_status_display(), a.tag, dm.manufacturer, dm.model, dm.category,
-                   a.department.name, w.problem, w.requester, w.get_source_display(), _assigned_to(w), w.opened_on, w.due_on, w.started_on,
-                   w.completed_on, w.status in OPEN_STATUSES and w.due_on < today, w.estimated_hours, _money(w.labor_hours), _money(labor),
-                   _money(parts), _money(Decimal(labor) + Decimal(parts)), alert_label(w.alert) if w.alert_id else ""]
+                   a.department.name, scoped_text(user, w.problem, seen), w.requester, w.get_source_display(), _assigned_to(w), w.opened_on,
+                   w.due_on, w.started_on, w.completed_on, w.status in OPEN_STATUSES and w.due_on < today, w.estimated_hours, _money(w.labor_hours),
+                   _money(labor), _money(parts), _money(Decimal(labor) + Decimal(parts)), alert_label(w.alert) if w.alert_id else ""]
 
     return csv_response(_filename("work-orders", today), WORKORDER_COLUMNS, rows())
 

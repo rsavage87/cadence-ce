@@ -52,10 +52,10 @@
     <div class="full wc-fail">
       <div class="wc-label">If the PM failed</div>
       {% if own_repair %}
-      <div class="hint">{{ own_repair.number }}, the repair this PM opened when it last failed, is still open: the failure is recorded on it.</div>
+      <div class="hint">{% if own_repair_number %}{{ own_repair_number }}, the repair this PM opened when it last failed, is still open{% else %}The repair this PM opened when it last failed is still open{% endif %}: the failure is recorded on it.</div>
       {% elif offer_open_repair %}
       <label class="check-row">{{ form.open_repair }} Open a new repair work order for the failed steps</label><input type="hidden" name="shown_open_repair" value="1">
-      <div class="hint">{{ asset.tag }} already has open repair {{ other_repair.number }}. Clear this to record the failure on it instead.</div>
+      <div class="hint">{{ asset.tag }} already has {% if other_repair_number %}open repair {{ other_repair_number }}{% else %}an open repair work order{% endif %}. Clear this to record the failure on it instead.</div>
       {% if form.open_repair.errors %}<span class="err">{{ form.open_repair.errors|striptags }}</span>{% endif %}
       {% else %}
       <div class="hint">A repair work order is opened for the failed steps{% if follow_up_tech %}, assigned to {{ follow_up_tech.name }}{% else %}, unassigned until a CE manager assigns it{% endif %}.</div>

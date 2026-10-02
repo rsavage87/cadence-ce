@@ -27,10 +27,16 @@ def _one_of(value, allowed) -> str:
     return value if value in allowed else ""
 
 
-def asset_filter_options() -> dict:
+def asset_filter_options(assets=None) -> dict:
+    """The Equipment toolbar's choices. `assets` (a scoped user's devices, apps.workorders.scoping) limits the categories and
+    departments to theirs, so the lists name no other unit; None offers the facility's."""
+    models, departments = DeviceModel.objects.all(), Department.objects.all()
+    if assets is not None:
+        models = models.filter(pk__in=assets.values("device_model_id"))
+        departments = departments.filter(pk__in=assets.values("department_id"))
     return {
-        "categories": list(DeviceModel.objects.order_by("category").values_list("category", flat=True).distinct()),
-        "departments": list(Department.objects.values_list("name", flat=True)),
+        "categories": list(models.order_by("category").values_list("category", flat=True).distinct()),
+        "departments": list(departments.values_list("name", flat=True)),
         "statuses": [(ACTIVE_STATUS_FILTER, "Active (not retired)"), *AssetStatus.choices],
         "risks": RiskClass.choices,
         "supports": SupportFilter.choices,

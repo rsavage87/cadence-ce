@@ -7,6 +7,9 @@ drawer's Request link), so unit staff can scan a device and report a problem. ?t
 Equipment list's own filters pick the devices, in the list's order (its page and the other screens' parameters are ignored).
 
 A completed PM prints its result and its checklist as recorded (slice 15), and a failed PM and its follow-up repair name each other.
+
+Slice 16: a scoped user (apps.workorders.scoping) prints labels for their own devices and their own work orders; another tag or
+number is a 404, and a failed PM and its repair name each other only when both are theirs.
 """
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
@@ -18,7 +21,7 @@ from apps.accounts.models import Level, Module
 from apps.equipment.models import Asset
 from apps.equipment.services import filter_assets
 from apps.facility.services import asset_request_url, get_settings
-from apps.workorders import completion
+from apps.workorders import completion, scoping
 from apps.workorders import services as wo_services
 from apps.workorders.models import OPEN_STATUSES, LaborLine, PartLine, WorkOrder, WoType
 
@@ -50,14 +53,15 @@ def _label(asset) -> dict:
             "qr": qr_svg(url, f"QR code: report a problem with {asset.tag}")}
 
 
-@web_view(Module.EQUIPMENT, Level.VIEW)
+@web_view(Module.EQUIPMENT, Level.VIEW, scoped=True)
 def labels(request):
     tag = request.GET.get("tag", "").strip()
     too_many = 0
+    mine = scoping.assets(request.user) if scoping.is_scoped(request.user) else None  # None: the facility's list, as the services take it
     if tag:
-        assets = [get_object_or_404(Asset.objects.select_related("device_model", "department", "tenant"), tag=tag)]
+        assets = [get_object_or_404(scoping.assets(request.user, Asset.objects.select_related("device_model", "department", "tenant")), tag=tag)]
     else:
-        qs = filter_assets(parse_asset_filters(request.GET, asset_filter_options())).select_related("tenant")
+        qs = filter_assets(parse_asset_filters(request.GET, asset_filter_options(mine)), qs=mine).select_related("tenant")
         assets = list(qs[:LABELS_MAX + 1])
         if len(assets) > LABELS_MAX:
             too_many, assets = qs.count(), []
@@ -108,14 +112,15 @@ def checklist_steps(procedure) -> list[dict]:
     return [_step(s) for s in steps]
 
 
-@web_view(Module.WORKORDERS, Level.VIEW)
+@web_view(Module.WORKORDERS, Level.VIEW, scoped=True)
 def wo_print(request, number):
-    # Tenant-scoped like the drawer's lookup (views._get_wo): another tenant's number is a 404.
+    # Scoped like the drawer's lookup (views.get_wo): another tenant's number, or one outside a scoped user's share, is a 404.
+    user = request.user
     labor_lines = Prefetch("labor_lines", queryset=LaborLine.objects.select_related("technician").order_by("worked_on", "created_at"))
     part_lines = Prefetch("part_lines", queryset=PartLine.objects.order_by("created_at"))
-    wo = get_object_or_404(WorkOrder.objects.select_related("asset", "asset__device_model", "asset__device_model__pm_procedure", "asset__department",
-                                                            "asset__contract", "assigned_to", "alert", "follow_up_of")
-                           .prefetch_related(labor_lines, part_lines), number=number)
+    wo = get_object_or_404(scoping.work_orders(user, WorkOrder.objects.select_related(
+        "asset", "asset__device_model", "asset__device_model__pm_procedure", "asset__department", "asset__contract", "assigned_to", "alert",
+        "follow_up_of").prefetch_related(labor_lines, part_lines)), number=number)
     today = date.today()
     is_open = wo.status in OPEN_STATUSES
     is_pm = wo.type == WoType.PM
@@ -134,7 +139,8 @@ def wo_print(request, number):
         "procedure": procedure, "steps": checklist_steps(procedure),
         "recorded": recorded, "recorded_steps": completion.recorded_steps(wo) if recorded else [],
         "unrecorded": is_pm and wo.status in completion.DONE_STATUSES and not wo.pm_result,  # completed before results were recorded
-        "follow_ups": list(wo.follow_ups.order_by("opened_on", "number")) if is_pm else [],
+        "follow_ups": list(scoping.work_orders(user, wo.follow_ups.order_by("opened_on", "number"))) if is_pm else [],
+        "follow_up_of": wo.follow_up_of if wo.follow_up_of_id and scoping.can_see_work_order(user, wo.follow_up_of) else None,
         "labor": labor, "parts": parts, "labor_hours": sum((line.hours for line, _cost in labor), Decimal(0)),
         "labor_total": labor_total, "parts_total": parts_total, "total": labor_total + parts_total,
         "timeline": wo_services.timeline(wo), "rules": range(RULED_LINES), "blank_rows": range(BLANK_ROWS) if is_open else range(0),
