@@ -495,10 +495,13 @@ button.link{background:none;border:0;padding:0;font:inherit;font-size:12px;font-
   .dv-grid{grid-template-columns:1fr}
 }
 
+/* Slice 18, part B: Scan tag (the modal's code field and camera view on Equipment, the portal's "Open in Cadence" note) */
+
 /* Slice 13: the Reports panel's Schedule button shows a report is emailed; its modal picks how often */
 .btn.sched-on{border-color:var(--accent-line);background:var(--accent-soft);color:var(--accent)}
 .rs-title{margin:0;font-size:13px;color:var(--ink)}
 .rs-form .radio input{padding:0;border:0}
+/* Slice 18, part A: custom reports (the builder, the saved list under the eight reports, a custom report's table) */
 
 /* Slice 15, part A: the work order drawer's labor and part lines (the amount and Remove at the right; notes wrap on a phone) */
 .wo-lines{margin-top:12px}
@@ -529,6 +532,7 @@ button.link{background:none;border:0;padding:0;font:inherit;font-size:12px;font-
 @media (max-width:760px){
   .wc-results{grid-template-columns:1fr}
 }
+/* Slice 18, part C: a model that keeps the manufacturer's schedule by regulation (CMS: imaging, radiologic, medical laser) */
 
 /* Slice 11: printing app pages */
 /* What the browser prints of an app page (the Overview's Export button calls window.print(); any other screen prints from the

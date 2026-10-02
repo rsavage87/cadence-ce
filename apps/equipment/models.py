@@ -67,6 +67,10 @@ class DeviceModel(TenantModel):
     risk_maintenance = models.PositiveSmallIntegerField(null=True, blank=True, help_text="Maintenance requirement, 1 to 5")
     risk_incidents = models.PositiveSmallIntegerField(null=True, blank=True, help_text="Incident history, 0 to 2")
     risk_reviewed_on = models.DateField(null=True, blank=True)
+    # CMS (S&C 14-07): imaging and radiologic equipment and medical lasers are maintained on the manufacturer's schedule, never on an
+    # AEM interval (slice 18; apps.pm.aem refuses them, as it refuses life support). The facility marks which models these are.
+    oem_schedule_required = models.BooleanField(default=False, help_text="Imaging, radiologic, or medical laser equipment: CMS requires the "
+                                                "manufacturer's maintenance schedule, so it never goes on AEM")
     history = HistoricalRecords()
 
     class Meta:

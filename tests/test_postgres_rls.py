@@ -5,13 +5,13 @@ owner (SET LOCAL ROLE cadence_app, for the rest of the test's transaction), befo
 public portal, every screen, the API, scoped users, and the management commands. A query made where no tenant is set sees no rows
 (or fails a write), as in production. tests/test_rls_paths.py stands in for this on SQLite. Skipped on SQLite.
 """
-import os
 from io import StringIO
 from urllib.parse import urlsplit
 
 import pytest
 from django.core.management import call_command
 from django.db import DatabaseError, connection, transaction
+from pg_helpers import as_app_role, needs_postgres
 
 from apps.accounts import invitations, services
 from apps.accounts.models import Role, User
@@ -21,21 +21,9 @@ from apps.tenants.context import tenant_context
 from apps.tenants.models import Tenant
 from apps.workorders.models import WorkOrder
 
-APP_ROLE = "cadence_app"  # tests/conftest.py grants it the app's privileges on the test database
-
-# Skipped only when no PostgreSQL was asked for; asked for and not there (a misconfigured CI job) fails test_the_database_is_postgres.
-pytestmark = pytest.mark.skipif(not os.environ.get("CADENCE_TEST_DATABASE_URL"), reason="row-level security needs PostgreSQL (CADENCE_TEST_DATABASE_URL)")
+pytestmark = needs_postgres
 
 PASSWORD = "Test-Pass-2026-x"
-
-
-def as_app_role():
-    """From here to the end of the test's transaction, act as the runtime role: the policies apply."""
-    with connection.cursor() as cur:
-        cur.execute(f"SET LOCAL ROLE {APP_ROLE}")
-        cur.execute("SELECT current_user, (SELECT rolbypassrls OR rolsuper FROM pg_roles WHERE rolname = current_user)")
-        user, bypass = cur.fetchone()
-    assert user == APP_ROLE and not bypass
 
 
 @pytest.fixture

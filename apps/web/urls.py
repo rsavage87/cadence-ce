@@ -1,7 +1,7 @@
 from django.contrib.auth import views as auth_views
 from django.urls import include, path
 
-from . import views, views_account, views_equipment, views_invite, views_wo_complete, views_wo_costs
+from . import views, views_account, views_equipment, views_invite, views_scan, views_wo_complete, views_wo_costs
 
 app_name = "web"
 
@@ -18,6 +18,7 @@ urlpatterns = [
     path("invite/<uidb64>/<token>/", views_invite.invite_accept, name="invite_accept"),
     path("search/", views.search, name="search"),
     path("search/assets/", views.asset_search, name="asset_search"),
+    path("scan/", views_scan.scan, name="scan"),  # slice 18: Scan tag (not under equipment/: "scan" is not a reserved tag)
     path("equipment/", views.equipment, name="equipment"),
     path("equipment/new/", views_equipment.asset_new, name="asset_new"),  # before the tag route; "new" is a reserved tag
     path("equipment/<str:tag>/", views.asset_detail, name="asset"),
