@@ -14,6 +14,8 @@ print, count, and API endpoint that shows devices or work orders filters through
 checked with can_see_work_order() / can_see_asset(), and one out of scope is a 404 (as another facility's would be).
 Call these inside the request's tenant: the role is a tenant-scoped row.
 """
+import re
+
 from django.db.models import Exists, OuterRef, Q
 
 from apps.accounts.models import DataScope
@@ -81,3 +83,30 @@ def can_see_work_order(user, wo) -> bool:
 
 def can_see_asset(user, asset) -> bool:
     return not is_scoped(user) or assets(user, Asset.objects.filter(pk=asset.pk)).exists()
+
+
+# --- text naming other work orders ------------------------------------------------------------------------------------------------
+#
+# Completing a PM writes its repair's number into the PM's resolution and history, and the repair's problem names the PM
+# (apps.workorders.completion); notes may name others. A scoped user may hold one of the pair without the other, so the number of a
+# work order outside their share reads "another work order" wherever they read the text: the web (templatetags/scoping_tags) and
+# the API (serializers.WorkOrderSerializer).
+
+WO_NUMBER = re.compile(r"\bWO-\d{2}-\d{4,}\b")  # WorkOrder.save's numbers: WO-26-0042
+HIDDEN = "another work order"
+
+
+def shown_text(user, text: str, seen: dict | None = None) -> str:
+    """`text` with every work-order number outside a scoped user's share replaced by HIDDEN; everyone else reads it as written.
+    `seen` caches the answers (one query per distinct number); pass the same dict for a request's many texts."""
+    if not text or not is_scoped(user) or not WO_NUMBER.search(text):
+        return text
+    seen = {} if seen is None else seen
+
+    def shown(match) -> str:
+        number = match.group(0)
+        if number not in seen:
+            seen[number] = work_orders(user).filter(number=number).exists()
+        return number if seen[number] else HIDDEN
+
+    return WO_NUMBER.sub(shown, text)

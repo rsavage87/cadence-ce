@@ -1,10 +1,10 @@
 # Build plan
 
 The mock (`cadence-ce-cmms-mock.html`) is the spec. Each slice below is shippable on its own and ends with green tests.
-Slices 0 to 15 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
+Slices 0 to 16 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
 export and print, devices are added and changed in the product, reports and request confirmations go out by email, each
 device model's PM program (risk score, procedure, AEM interval) is kept in the product, and the work itself (time, parts,
-what was done, a PM's results) is recorded on the work order. What each slice deferred is noted in its row and below.
+what was done, a PM's results) is recorded on the work order; vendors and clinical requesters see only their own share. What each slice deferred is noted in its row and below.
 
 | # | Slice | Mock screen(s) | Code | Status |
 |---|-------|----------------|------|--------|
@@ -23,7 +23,8 @@ what was done, a PM's results) is recorded on the work order. What each slice de
 | 12 | Device management | Equipment (Add device), device drawer (Edit details, Tag out of service, Return to service, PM schedule and Costs tabs) | `equipment` + `web` + `api` | done (the model catalog and AEM approval came in slice 14) |
 | 13 | Email notifications | Reports (Schedule), Settings (portal confirmation to the requester), the request portal | `reports` + `facility` + `portal` + `web` | done (report emails are self-service; text messages and paging still need a provider) |
 | 14 | The PM program | PM schedule (Auto-assign week, the PM library), a model's PM program (AEM, procedure, risk score) | `equipment` + `pm` + `web` | done (no API for procedures, AEM cases, or Auto-assign week yet; OEM library sync needs a library) |
-| 15 | Recording the work | Work order drawer (Cost, Mark completed), device PM history, Settings (labor rates), Recalls (Check feeds) | `workorders` + `recalls` + `web` + `api` | done (vendor accounts are not yet limited to their own company's work orders) |
+| 15 | Recording the work | Work order drawer (Cost, Mark completed), device PM history, Settings (labor rates), Recalls (Check feeds) | `workorders` + `recalls` + `web` + `api` | done (vendor accounts were limited to their company's work orders in slice 16) |
+| 16 | Who sees what | Users and access (company and unit on users, scope on roles), every screen for the vendor technician and the clinical requester | `accounts` + `workorders` + `web` + `api` | done (a custom role chooses its scope; the default vendor and requester scopes are fixed) |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.
@@ -182,3 +183,13 @@ The mock's export and print buttons work since slice 11, and Add device since sl
   transition to completed takes the same fields, and a completed or closed work order cannot be rewritten through the API.
   Reports credit each labor line to the technician on it (vendor time names none). Check FDA feed on Recalls (Recalls Edit)
   fetches the last 30 days from openFDA at most once per 15 minutes for every facility and matches the notices to this facility.
+- Who sees what (slice 16): a role's data scope (`DataScope`: the whole facility; only work orders assigned to the user's company;
+  only the user's unit) narrows every list, drawer, search, count, export, print, and API endpoint through `workorders.scoping`.
+  The vendor technician (company) sees the work orders under their company's name (a contract's vendor, or "<maker> field service")
+  and those devices; the clinical requester (department) sees the devices in their unit and those devices' work orders; a scoped
+  user with no company or unit sees nothing. Closed by default: a web view or API action refuses scoped users unless it opts in
+  and narrows (Equipment and Work orders lists and drawers, search, the work-order lifecycle, CSVs, labels, the work-order print;
+  the API reads devices and work orders and moves work orders along, nothing else). The number of a work order outside their share
+  reads "another work order" in texts, and the facility's technician roster, report emails, and every facility-wide screen stay
+  closed to them. Users and access sets the company or unit (required for scoped roles; units are the facility's departments) and a
+  custom role's scope. A vendor's failed PM sends its repair to the same vendor when their contract covers repairs.

@@ -68,7 +68,8 @@ def test_invite_needs_the_company_a_company_scoped_role_works_for(ctx, role):
     assert not User.objects.filter(email="fse@vendor.example").exists()
     u = services.invite_user(ctx, email="fse@vendor.example", first_name="Fran", last_name="Ek", role=role("vendor"), company="  Philips   Field  Service ",
                              department="External vendor")
-    assert (u.company, u.department) == ("Philips Field Service", "External vendor")
+    # Trimmed at the ends only: scoping matches the name exactly (any case), so inner spacing must stay as the work orders spell it.
+    assert (u.company, u.department) == ("Philips   Field  Service", "External vendor")
 
 
 def test_invite_needs_one_of_the_facilitys_departments_for_a_department_scoped_role(ctx, role, units):
@@ -206,7 +207,8 @@ def test_company_suggestions_are_the_facilitys_vendor_names(ctx, other_tenant, v
         DeviceModel.objects.create(manufacturer="Stryker", model="Power-PRO", description="Stretcher", category="Beds & stretchers")
         Contract.objects.create(reference="SC-9", vendor="Their Vendor Inc", type=ContractType.OEM, start_on="2026-01-01", end_on="2027-01-01", annual_cost=1)
     # Hamilton Medical's contract name covers "Hamilton Medical field service", so that one is not offered on its own
-    assert services.company_suggestions(ctx) == ["Acme Imaging", "BD field service", "Hamilton Medical", "TechCare Biomedical Services"]
+    # Spelled as stored: "bd  FIELD service" (two spaces) is a different name to scoping, so it is offered as it is, to be matched.
+    assert services.company_suggestions(ctx) == ["Acme Imaging", "bd  FIELD service", "BD field service", "Hamilton Medical", "TechCare Biomedical Services"]
 
 
 # --- services: roles --------------------------------------------------------------------------------------------------------

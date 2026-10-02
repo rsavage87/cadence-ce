@@ -38,7 +38,8 @@ def _shell(request):
     name = user.get_full_name() or user.username
     initials = "".join(p[0] for p in name.split()[:2]).upper() or "?"
     return {"nav": items, "user_name": name, "initials": initials, "role": user.role.name if user.role_id else ("Superuser" if user.is_superuser else ""),
-            "technicians": Technician.objects.filter(is_active=True).count()}
+            # the facility's head count, not for a scoped user (a vendor's or a unit's share has no roster in it)
+            "technicians": None if scoping.is_scoped(user) else Technician.objects.filter(is_active=True).count()}
 
 
 def shell(request):

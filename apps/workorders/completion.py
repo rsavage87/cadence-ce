@@ -19,8 +19,9 @@ The rules (complete_work_order checks them all and reports every problem at once
 - The checklist is stored as it was (text, measure, result, reading) in WorkOrder.checklist_results, so revising the procedure
   later never rewrites a PM on record. Completing a reopened PM again records its results anew (the history keeps the old ones).
 - A Fail opens a follow-up repair work order (follow_up_of = the PM; the problem names the PM and its failed steps; priority
-  high for a life-support or high-risk model, else normal; assigned to the PM's technician when they are active and credentialed
-  for the device, else unassigned for a manager). Never a second one: a reopened PM whose repair is still open records the
+  high for a life-support or high-risk model, else normal; follow_up_assignee: a vendor's PM to the same vendor when they do
+  repairs on the device, else the PM's technician when active and credentialed for it, else unassigned for a manager). Never a
+  second one, whoever completes it: a reopened PM whose repair is still open records the
   failure on that repair. With open_repair=False the failure is recorded (as a note) on the device's open repair instead, which
   is allowed only when it has one: no duplicate repair inflates the failure counts that AEM and MTBF read.
 - tag_out (default on for a Fail) takes a device that is in service out of service until its repair is done: through
@@ -261,8 +262,20 @@ def vendor_repairs(asset, today: date) -> bool:
     return contract.coverage not in (Coverage.PM_ONLY, Coverage.PARTS)
 
 
+def follow_up_assignee(pm: WorkOrder, asset, today: date | None = None) -> tuple[str, object]:
+    """Who a failed PM's repair goes to, as (vendor name or "", technician or None): a vendor's PM to the same vendor when they do
+    repairs on this device (vendor_repairs), so the repair is in their share of the work orders too (apps.workorders.scoping);
+    otherwise the PM's technician while active and credentialed; otherwise nobody, for a CE manager to assign. The completion
+    and the modal's hint both read this, so the modal never says one thing and the save do another."""
+    today = today or date.today()
+    if pm.vendor_service and pm.vendor_name and vendor_repairs(asset, today):
+        return pm.vendor_name, None
+    return "", follow_up_technician(pm, asset, today)
+
+
 def follow_up_technician(pm: WorkOrder, asset, today: date | None = None):
-    """Who the follow-up repair goes to: the PM's technician while active and credentialed for the device, else None."""
+    """The in-house technician a failed PM's repair goes to (follow_up_assignee): the PM's technician while active and credentialed
+    for the device, else None."""
     tech = pm.assigned_to if pm.assigned_to_id and not pm.vendor_service else None
     if tech is None or not tech.is_active or not qualification(tech, asset, today or date.today()).ok:
         return None
@@ -310,7 +323,9 @@ def _record_failure(pm: WorkOrder, asset, snapshot, resolution: str, *, open_rep
     Completion.tagged_out says whether the device was in service and is now out."""
     hold = tag_out and asset.status in HOLDABLE
     newly_out = hold and asset.status == AssetStatus.IN_SERVICE
-    existing = own_open_repair(pm, by) or (None if open_repair else other_open_repair(pm, by))
+    # The PM's own open repair whoever completes it (never a second one for one PM, even when that repair is outside the user's share:
+    # only its number is kept from them); another repair to record on only from what the user may see.
+    existing = own_open_repair(pm) or (None if open_repair else other_open_repair(pm, by))
     if existing is not None:
         failed = "; ".join(_failed_lines(snapshot)) or resolution
         services.add_note(existing, f"PM {pm.number} failed on {today:%b} {today.day}, {today.year}: {failed}"[:services.NOTE_MAX_LENGTH], by=by)
@@ -323,14 +338,11 @@ def _record_failure(pm: WorkOrder, asset, snapshot, resolution: str, *, open_rep
     repair = services.create_work_order(asset=asset, type=WoType.REPAIR, priority=follow_up_priority(asset.device_model),
                                         problem=_problem(pm, snapshot, resolution), requester=_requester(by, pm), opened_on=today, created_by=by,
                                         tag_out=hold, follow_up_of=pm)
-    if pm.vendor_service and pm.vendor_name and vendor_repairs(asset, today):
-        # A vendor's PM failed: the repair goes to the same vendor (their contract covers it, or they work time and materials), so it
-        # is in their share of the work orders too (apps.workorders.scoping). Otherwise CE's own technicians take it.
-        services.assign(repair, vendor_name=pm.vendor_name, by=by)
-    else:
-        tech = follow_up_technician(pm, asset, today)
-        if tech is not None:
-            services.assign(repair, technician=tech, by=by)
+    vendor, tech = follow_up_assignee(pm, asset, today)
+    if vendor:
+        services.assign(repair, vendor_name=vendor, by=by)
+    elif tech is not None:
+        services.assign(repair, technician=tech, by=by)
     return Completion(work_order=pm, follow_up=repair, repair=repair, tagged_out=newly_out)
 
 
@@ -385,7 +397,7 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
         snapshot = _steps(steps, results, errors)
     _check_result(locked, pm_result, snapshot, bool(steps), text, errors)
     fail = is_pm and pm_result == PmResult.FAIL
-    if fail and not open_repair and own_open_repair(locked, by) is None and other_open_repair(locked, by) is None:
+    if fail and not open_repair and own_open_repair(locked) is None and other_open_repair(locked, by) is None:
         errors["open_repair"] = f"{asset.tag} has no open repair work order to record the failure on, so a failed PM opens one."
     if errors:
         raise ValidationError(errors)

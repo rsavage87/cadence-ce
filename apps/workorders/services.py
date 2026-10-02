@@ -94,6 +94,7 @@ def assign(wo: WorkOrder, technician=None, vendor_name: str = "", by=None) -> Wo
     from apps.credentials.services import qualification
 
     note = ""
+    vendor_name = (vendor_name or "").strip()  # a stray space from the API would keep it from its company's share (apps.workorders.scoping)
     if vendor_name:
         wo.vendor_service, wo.vendor_name, wo.assigned_to = True, vendor_name, None
         note = f"Assigned to vendor: {vendor_name}"

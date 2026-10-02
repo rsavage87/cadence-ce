@@ -144,7 +144,9 @@ def asset_drawer_context(request, asset) -> dict:
     tab = request.GET.get("tab") if request.GET.get("tab") in tabs else "overview"
     summary = asset_service_summary(asset, work_orders=scoping.work_orders(user) if scoped else None)
     recalls = _model_recalls(asset.device_model_id) if can_view_recalls else []
-    return {"asset": asset, "tab": tab, "summary": summary, "recent": summary["work_orders"][:4], "qualified": qualified_technicians(asset),
+    return {"asset": asset, "tab": tab, "summary": summary, "recent": summary["work_orders"][:4],
+            # The facility's staff and their credentials (the API closes qualified_technicians to scoped users too): not theirs to read.
+            "qualified": [] if scoped else qualified_technicians(asset),
             "portal_url": asset_request_url(asset), "can_create_wo": user.has_level(wo_perms.MODULE, wo_perms.CREATE_LEVEL) and not scoped,
             "can_view_wo": user.has_level(Module.WORKORDERS, Level.VIEW), "scoped": scoped,
             "can_view_recalls": can_view_recalls, "recalls": recalls, "tabs": tabs,
@@ -183,7 +185,7 @@ def _workorders_context(request) -> dict:
     user = request.user
     scoped = scoping.is_scoped(user)
     mine = scoping.work_orders(user)  # the list, the board, and the page head's counts over the user's work orders only
-    techs = list(Technician.objects.filter(is_active=True))
+    techs = [] if scoped else list(Technician.objects.filter(is_active=True))  # the facility's roster is not a scoped user's to read
     f = parse_work_order_filters(request.GET, {str(t.id) for t in techs})
     mode = "board" if request.GET.get("mode") == "board" else "list"
     today = date.today()

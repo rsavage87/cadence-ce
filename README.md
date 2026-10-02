@@ -117,6 +117,9 @@ report (PDF), and the recall response log (Recalls). The Overview prints as it i
   PostgreSQL row-level security enforces the same rule at the database (`manage.py enable_rls`) when the app
   connects as the non-owner role `cadence_app`.
 - Roles map modules to levels (None/View/Request/Edit/Approve/Full); checks are server-side.
+- Some roles see only part of a facility: a vendor technician only the work orders assigned to their company (and those devices),
+  a clinical requester only their own unit's devices and work orders. Every screen, export, print, and API endpoint refuses them
+  unless it narrows what it shows to that share; a custom role can be given either scope on the Roles tab.
 - django-simple-history records every change to assets, work orders, contracts, credentials, and roles.
 - The portal asks for no patient information and is rate-limited per IP.
 - Invitation and password-reset links are signed, single-use, and expire; the reset request never says whether an address has an account.

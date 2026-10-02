@@ -166,7 +166,9 @@ class AssetViewSet(EquipmentWrites, TenantViewSet):
     # Slice 16: a scoped user reads the devices in their share and, at the usual levels (Equipment Edit; Approve to retire), edits
     # only those. Adding and deleting devices stay closed to them (a new device has no work orders, so a company-scoped user could
     # never see it; inventory is the facility-wide roles' work), as do the qualified technicians (the facility's staff, not a device).
-    scoped_actions = frozenset({"list", "retrieve", "update", "partial_update", "change_status"})
+    # Read only, as on the web: a device's status and details are facility-wide (retiring cancels every open PM on it, the facility's
+    # included), so a vendor's or a unit's share is to see devices, never to change them.
+    scoped_actions = frozenset({"list", "retrieve"})
     in_use = "{0.tag} has work orders or service requests, so it cannot be deleted; retire it instead."
     FIXED_ON_UPDATE = {
         "tag": "Asset tags never change: they are on the sticker and in links.",
@@ -223,7 +225,10 @@ class WorkOrderViewSet(TenantViewSet):
     ordering_fields = ["opened_on", "due_on", "priority"]
     # Slice 16: a scoped user reads and works (at the usual levels) only the work orders in their share. Creating is refused to a
     # company-scoped user (create below) and takes only devices in the share; deleting stays closed to them.
-    scoped_actions = frozenset({"list", "retrieve", "create", "update", "partial_update", "transition", "assign"})
+    # As on the web: scoped users read their share and move their work orders through the lifecycle (transition, which completes
+    # through apps.workorders.completion). Opening, editing, and assigning stay the facility's: the web refuses them too (the choices
+    # are the facility's devices and technicians). Leaving create/update out also keeps the browsable API's forms closed to them.
+    scoped_actions = frozenset({"list", "retrieve", "transition"})
 
     def get_queryset(self):
         qs = WorkOrder.objects.select_related("asset", "assigned_to").prefetch_related("labor_lines", "part_lines")

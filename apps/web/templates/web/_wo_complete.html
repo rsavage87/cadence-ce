@@ -58,7 +58,7 @@
       <div class="hint">{{ asset.tag }} already has {% if other_repair_number %}open repair {{ other_repair_number }}{% else %}an open repair work order{% endif %}. Clear this to record the failure on it instead.</div>
       {% if form.open_repair.errors %}<span class="err">{{ form.open_repair.errors|striptags }}</span>{% endif %}
       {% else %}
-      <div class="hint">A repair work order is opened for the failed steps{% if follow_up_tech %}, assigned to {{ follow_up_tech.name }}{% else %}, unassigned until a CE manager assigns it{% endif %}.</div>
+      <div class="hint">A repair work order is opened for the failed steps{% if follow_up_vendor %}, sent to {{ follow_up_vendor }}{% elif follow_up_tech %}, assigned to {{ follow_up_tech.name }}{% else %}, unassigned until a CE manager assigns it{% endif %}.</div>
       {% endif %}
       {% if offer_tag_out %}
       <label class="check-row">{{ form.tag_out }} {% if already_out %}Keep {{ asset.tag }} out of service (it is {{ asset.get_status_display|lower }} now) until the repair is done{% else %}Tag {{ asset.tag }} out of service until the repair is done{% endif %}</label><input type="hidden" name="shown_tag_out" value="1">

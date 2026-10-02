@@ -29,6 +29,7 @@ from apps.jobs.models import JobRun
 from apps.tenants.context import get_current_tenant, tenant_context
 from apps.tenants.models import Tenant
 from apps.web.exports import csv_line
+from apps.workorders.scoping import is_scoped
 
 from .models import ReportSubscription
 from .services import report_meta, run_report
@@ -46,6 +47,7 @@ SKIP_REASONS = {
     "inactive": "account deactivated",
     "no_email": "no email address",
     "no_access": "no Reports View",
+    "scoped": "sees only part of the facility",
     "other_facility": "not in this facility",
     "unknown_report": "report no longer offered",
 }
@@ -69,6 +71,8 @@ def _refusal(user) -> str | None:
         return "Your account has no email address, so there is nowhere to send the report."
     if not user.has_level(Module.REPORTS, Level.VIEW):
         return "You need Reports View to have reports emailed to you."
+    if is_scoped(user):  # slice 16: every report is the whole facility's, which a scoped role never sees (closed by default)
+        return "Your role sees only part of the facility, and every report covers all of it."
     return None
 
 
@@ -178,6 +182,8 @@ def skip_reason(sub: ReportSubscription, tenant) -> str | None:
         return "no_email"
     if not user.has_level(Module.REPORTS, Level.VIEW):
         return "no_access"
+    if is_scoped(user):  # a subscription made before their role was narrowed: never sent, as the web refuses them every report
+        return "scoped"
     return None
 
 

@@ -16,9 +16,9 @@ results_context feeds the drawer's PM results section (_wo_results.html): a comp
 and the links between a failed PM and its follow-up repair, both ways.
 
 Slice 16: a scoped user (apps.workorders.scoping) completes the work orders in their share; another is a 404. A repair outside it (a
-vendor's failed PM opens a repair for CE to assign) is neither linked nor named to them: not in the drawer's section, the modal's
-failed-PM options, or the toast; where completion.py wrote its number into the PM's resolution and history, the drawer reads
-"another work order" (templatetags/scoping_tags).
+vendor's failed PM on a device whose contract leaves repairs out opens a repair for CE to assign) is neither linked nor named to
+them: not in the drawer's section, the modal's failed-PM options, or the toast; where completion.py wrote its number into the PM's
+resolution and history, the drawer reads "another work order" (templatetags/scoping_tags).
 """
 from datetime import date
 
@@ -79,7 +79,7 @@ def _offers(wo, user) -> dict:
     """A failed PM's options, as the modal offers them: the repair a failure goes to, and whether tagging out applies."""
     if wo.type != WoType.PM:
         return {"own_repair": None, "other_repair": None, "offer_open_repair": False, "offer_tag_out": False}
-    own = completion.own_open_repair(wo, user)
+    own = completion.own_open_repair(wo)  # the PM's own repair whoever completes it (its number only if in their share: _number)
     other = None if own else completion.other_open_repair(wo, user)
     return {"own_repair": own, "other_repair": other, "offer_open_repair": other is not None,
             "own_repair_number": _number(user, own), "other_repair_number": _number(user, other),
@@ -111,9 +111,17 @@ def _modal(request, wo, form=None, *, steps=(), offers=None, reason=""):
         "wo": wo, "asset": wo.asset, "dm": wo.asset.device_model, "is_pm": wo.type == WoType.PM, "blocker": reason, "form": form,
         "procedure": procedure, "rows": form.rows() if form is not None else [], "results": form.result_options() if form is not None else [],
         "has_checklist": bool(steps), "step_choices": STEP_CHOICES, "reading_max": completion.READING_MAX, **(offers or {}),
-        "follow_up_tech": completion.follow_up_technician(wo, wo.asset) if wo.type == WoType.PM else None,
+        **_follow_up(wo),
         "requester_emailed": _requester_email(wo),
     })
+
+
+def _follow_up(wo) -> dict:
+    """Who a failed PM's repair would go to, from the rule the completion uses (completion.follow_up_assignee)."""
+    if wo.type != WoType.PM:
+        return {"follow_up_vendor": "", "follow_up_tech": None}
+    vendor, tech = completion.follow_up_assignee(wo, wo.asset)
+    return {"follow_up_vendor": vendor, "follow_up_tech": tech}
 
 
 def _requester_email(wo) -> bool:

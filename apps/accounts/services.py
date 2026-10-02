@@ -100,8 +100,9 @@ def _check_role(tenant, role):
 # --- data scope: the company or department a scoped role's user needs ----------------------------------------------------------
 
 def _clean_company(company) -> str:
-    """Trimmed, with runs of spaces as one: scoping matches the whole name in any letter case, so a stray space would miss."""
-    company = " ".join(str(company or "").split())
+    """Trimmed at the ends, and otherwise exactly as typed: scoping matches the whole name, in any letter case, against the vendor
+    name stored on work orders (a contract's vendor as entered), so collapsing a double space here would make it unmatchable."""
+    company = str(company or "").strip()
     if len(company) > COMPANY_MAX_LENGTH:
         raise ValidationError({"company": f"Keep the company name to {COMPANY_MAX_LENGTH} characters."})
     return company
@@ -182,7 +183,7 @@ def company_suggestions(tenant) -> list[str]:
                   .distinct())
     by_key = {}
     for name in names:
-        name = " ".join(name.split())
+        name = (name or "").strip()  # as stored, inner spacing kept (scoping matches it exactly, any case)
         if name:
             by_key.setdefault(name.upper(), name)
     suffix = FIELD_SERVICE_SUFFIX.upper()

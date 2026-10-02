@@ -20,7 +20,9 @@ HTMX for the web UI (`apps/web`, via django-htmx), pytest. Tests run on SQLite a
 4. **Permissions are server-side.** Web views use `@web_view(Module.X, Level.Y)` (apps/web/decorators.py, which wraps
    `require_level` with `login_required` and the no-tenant guard); API viewsets set `module` and rely on `ModulePermission`.
    Per-action levels live next to the services (`apps/workorders/permissions.py`, `apps/recalls/permissions.py`). Hiding a button
-   is not access control.
+   is not access control. Some roles see only their share of a facility (`apps/workorders/scoping.py`: a vendor technician their
+   company's work orders, a clinical requester their unit's); every web view and API action refuses them unless it opts in
+   (`web_view(..., scoped=True)`, a viewset's `scoped_actions`) and narrows what it shows through `scoping.work_orders` / `assets`.
 5. **State changes go through services** (`apps/workorders/services.py`, `apps/pm/services.py`, `apps/contracts/services.py`,
    `apps/accounts/services.py`, `apps/credentials/services.py`, `apps/recalls/services.py`, `apps/facility/services.py`, `apps/equipment/services.py`,
    `apps/pm/aem.py`, `apps/pm/procedures.py`, `apps/workorders/costs.py`, `apps/workorders/completion.py`), never by setting fields in a
@@ -62,7 +64,9 @@ pytest
 - `apps/tenants` tenant model, context var, middleware, `enable_rls`; `tenant_context()` sets both the ORM scope and the Postgres
   `app.tenant_id` that RLS reads, so the public portal and management commands see the same rows under RLS
 - `apps/core` TenantModel, TenantManager, Sequence, TenantModelAdmin
-- `apps/accounts` User, Role, RolePermission, default roles, `require_level`; `services.py` for invites, role changes, (de)activation, role matrix edits;
+- `apps/accounts` User, Role, RolePermission, default roles, `require_level`; `DataScope`, `Role.scope` (blank: the default by slug, vendor
+  company and requester department) and `User.company`; `services.py` for invites, role changes, (de)activation, role matrix edits, a
+  user's company or department (`set_user_scope`, `set_user_access`) and a custom role's scope;
   `invitations.py` (signed set-password links: `send_invitation`, `is_pending`; a resend replaces the link), `signin.py` (sign-in lockouts and
   password-reset requests, never revealing whether an address has an account), `backends.py` (username or email in any case; a deactivated
   facility cannot sign in), `emails.py` (the one place account emails are sent; a failure returns False, never raises). Links in emails start
@@ -74,7 +78,8 @@ pytest
   change goes through `_save_model`, which locks the row and tells `apps.pm.aem.model_changed`), `permissions.py` (Edit to add, edit,
   tag out, and add or edit models; Approve to retire or reinstate, and to score a model or change its risk class)
 - `apps/contracts` Contract with add/remove device operations and cost allocation; `services.py` for create/update/renew/delete, status, filters, KPI summary
-- `apps/workorders` WorkOrder and lines, ServiceRequest, lifecycle services; `costs.py` the only writer of labor and part lines (rates from
+- `apps/workorders` WorkOrder and lines, ServiceRequest, lifecycle services; `scoping.py` who sees which devices and work orders inside a
+  facility (scope_of, work_orders, assets, can_see_*, and shown_text, which masks other work orders' numbers); `costs.py` the only writer of labor and part lines (rates from
   Settings, a different rate at Approve, nothing on a closed or cancelled work order); `completion.py` completing with the resolution
   and a PM's step results (`complete_work_order`: the screen's Mark completed and the API's transition to completed both use it; a
   failed PM opens or names its repair and holds the device out until that repair is done); a line's cost is hours × rate or

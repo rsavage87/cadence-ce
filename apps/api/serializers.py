@@ -5,6 +5,7 @@ from apps.credentials.models import Credential, Technician
 from apps.equipment.models import Asset, Department, DeviceModel
 from apps.recalls.models import Alert, AlertMatch
 from apps.recalls.services import progress as recall_progress
+from apps.workorders import scoping
 from apps.workorders.models import LaborLine, PartLine, WorkOrder
 
 
@@ -72,6 +73,22 @@ class WorkOrderSerializer(serializers.ModelSerializer):
                   "pm_result", "checklist_results", "follow_up_of"]
         # Slice 15: what a completion recorded (transition to completed, apps.workorders.completion) is read here, never written.
         read_only_fields = ["number", "status", "started_on", "completed_on", "resolution", "pm_result", "checklist_results", "follow_up_of"]
+
+    def to_representation(self, instance):
+        """As a scoped user (apps.workorders.scoping) may read it, the same as the web's drawer: the number of a work order outside
+        their share reads "another work order" in the problem and the resolution, and a link to one (follow_up_of) is left out."""
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if user is None or not scoping.is_scoped(user):
+            return data
+        seen = self.context.setdefault("_scoped_numbers", {})
+        for field in ("problem", "resolution"):
+            if field in data:
+                data[field] = scoping.shown_text(user, data[field], seen)
+        if data.get("follow_up_of") and not scoping.can_see_work_order(user, instance.follow_up_of):
+            data["follow_up_of"] = None
+        return data
 
 
 class ContractSerializer(serializers.ModelSerializer):

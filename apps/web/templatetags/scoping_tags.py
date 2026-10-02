@@ -5,32 +5,17 @@ resolution and history, and the repair's problem names the PM (apps.workorders.c
 "another work order" wherever these show it: the work order drawer, its print, the device drawer's lists, and the CSV export.
 Everyone else reads the text as written.
 """
-import re
-
 from django import template
 
 from apps.workorders import scoping
+from apps.workorders.scoping import HIDDEN, WO_NUMBER  # noqa: F401 (the tests and the templates' callers read them here)
 
 register = template.Library()
 
-WO_NUMBER = re.compile(r"\bWO-\d{2}-\d{4,}\b")  # WorkOrder.save's numbers: WO-26-0042
-HIDDEN = "another work order"
-
 
 def scoped_text(user, text: str, seen: dict | None = None) -> str:
-    """`text` with every work-order number outside a scoped user's share replaced by HIDDEN. `seen` caches the answers (one query
-    per distinct number); pass the same dict for a request's many texts."""
-    if not text or not scoping.is_scoped(user) or not WO_NUMBER.search(text):
-        return text
-    seen = {} if seen is None else seen
-
-    def shown(match) -> str:
-        number = match.group(0)
-        if number not in seen:
-            seen[number] = scoping.work_orders(user).filter(number=number).exists()
-        return number if seen[number] else HIDDEN
-
-    return WO_NUMBER.sub(shown, text)
+    """apps.workorders.scoping.shown_text, which the API shares."""
+    return scoping.shown_text(user, text, seen)
 
 
 @register.simple_tag(takes_context=True)

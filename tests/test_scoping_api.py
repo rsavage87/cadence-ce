@@ -216,30 +216,34 @@ def test_search_and_ordering_cannot_widen_the_requesters_share(client, person, w
 
 # --- single records and actions on them --------------------------------------------------------------------------------------
 
+def before_problem(world) -> str:
+    return world["_ham_vent_problem"]
+
+
 def test_the_vendor_works_only_their_companys_work_orders(client, person, world, theirs):
     person("vendor", company="hamilton medical")  # work orders: Edit
     wos_out, assets_out = out_of_share(world, "vendor")
     before = {w.id: (w.status, w.problem, w.vendor_service, w.vendor_name) for w in wos_out}
+    world["_ham_vent_problem"] = world["wos"]["ham_vent"].problem
     for w in wos_out + [theirs["wo"]]:
         assert client.get(wo_url(w)).status_code == 404, w.problem
-        assert patch(client, wo_url(w), {"problem": "Mine now"}).status_code == 404
+        assert patch(client, wo_url(w), {"problem": "Mine now"}).status_code == 403  # editing is closed to scoped users anyway
         assert post(client, wo_url(w, "transition/"), {"status": WoStatus.IN_PROGRESS}).status_code == 404
-        assert post(client, wo_url(w, "assign/"), {"vendor_name": "Hamilton Medical"}).status_code == 404
+        assert post(client, wo_url(w, "assign/"), {"vendor_name": "Hamilton Medical"}).status_code == 403
     for a in assets_out + [theirs["asset"]]:
         assert client.get(asset_url(a)).status_code == 404
     for w in wos_out:
         w.refresh_from_db()
         assert (w.status, w.problem, w.vendor_service, w.vendor_name) == before[w.id]
-    # Their own: read, update, and move along; assigning still needs Approve.
+    # Their own: read it and move it along, as on the web; editing and assigning stay the facility's (the web refuses them too).
     mine = world["wos"]["ham_vent"]
     assert client.get(wo_url(mine)).status_code == 200 and client.get(asset_url(world["assets"]["vent"])).status_code == 200
-    assert patch(client, wo_url(mine), {"problem": "Flow sensor fault, replaced"}).status_code == 200
+    assert patch(client, wo_url(mine), {"problem": "Flow sensor fault, replaced"}).status_code == 403
     assert post(client, wo_url(mine, "transition/"), {"status": WoStatus.IN_PROGRESS}).status_code == 200
     assert post(client, wo_url(mine, "assign/"), {"vendor_name": "Acme Biomedical"}).status_code == 403
-    # Reassigning by PATCH is refused as for everyone (the assign action), so the vendor cannot move work out of or into the share.
-    assert patch(client, wo_url(mine), {"vendor_name": "Acme Biomedical"}).status_code == 400
+    assert patch(client, wo_url(mine), {"vendor_name": "Acme Biomedical"}).status_code == 403
     mine.refresh_from_db()
-    assert (mine.status, mine.vendor_name) == (WoStatus.IN_PROGRESS, "Hamilton Medical field service")
+    assert (mine.status, mine.vendor_name, mine.problem) == (WoStatus.IN_PROGRESS, "Hamilton Medical field service", before_problem(world))
 
 
 def test_the_requester_reads_only_their_units_work(client, person, world, theirs):
@@ -258,81 +262,77 @@ def test_the_requester_reads_only_their_units_work(client, person, world, theirs
     assert patch(client, asset_url(world["assets"]["pump"]), {"room": "4"}).status_code == 403
 
 
-def test_a_scoped_role_with_approve_assigns_only_in_its_share(client, person, custom_role, world):
+def test_a_scoped_role_cannot_assign_whatever_its_levels(client, person, custom_role, world, techs):
+    """As on the web (wo_assign refuses scoped users: the choices are the facility's technicians), even with Approve: no handing work
+    to the facility's staff by id, nor moving it into another company's share."""
     person(custom_role("vendor-lead", DataScope.COMPANY, ALL_FULL), company="Hamilton Medical")
-    assert post(client, wo_url(world["wos"]["acme_card"], "assign/"), {"vendor_name": "Hamilton Medical"}).status_code == 404
-    r = post(client, wo_url(world["wos"]["ham_card"], "assign/"), {"vendor_name": "Hamilton Medical field service"})
-    assert r.status_code == 200 and r.json()["vendor_name"] == "Hamilton Medical field service"
-    world["wos"]["acme_card"].refresh_from_db()
-    assert world["wos"]["acme_card"].vendor_name == "Acme Biomedical"
+    for w, body in ((world["wos"]["ham_card"], {"vendor_name": "Acme Biomedical"}), (world["wos"]["ham_card"], {"technician": str(techs["dana"].id)}),
+                    (world["wos"]["acme_card"], {"vendor_name": "Hamilton Medical"})):
+        assert post(client, wo_url(w, "assign/"), body).status_code == 403
+    for key, vendor in (("ham_card", "Hamilton Medical"), ("acme_card", "Acme Biomedical")):
+        world["wos"][key].refresh_from_db()
+        assert world["wos"][key].vendor_name.upper().startswith(vendor.upper()) and world["wos"][key].assigned_to_id is None
 
 
 # --- creating work orders ---------------------------------------------------------------------------------------------------
 
-def test_a_company_scoped_user_cannot_create_work_orders(client, person, custom_role, world):
+def test_scoped_users_cannot_create_work_orders(client, person, custom_role, world):
+    """As on the web (New work order refuses scoped users), whatever their levels."""
     before = WorkOrder.objects.count()
     body = {"asset": str(world["assets"]["vent"].id), "problem": "Alarm", "type": "repair", "priority": "normal", "due_on": TODAY.isoformat()}
-    person("vendor", company="Hamilton Medical")  # work orders: Edit, which would otherwise allow it
-    r = post(client, WOS, body)
-    assert r.status_code == 403 and "assigned to your company" in r.json()["detail"]
-    person(custom_role("vendor-lead", DataScope.COMPANY, ALL_FULL), company="Hamilton Medical")
-    assert post(client, WOS, body).status_code == 403
+    for role, field in (("vendor", {"company": "Hamilton Medical"}), (custom_role("vendor-lead", DataScope.COMPANY, ALL_FULL), {"company": "Hamilton Medical"}),
+                        (custom_role("unit-lead", DataScope.DEPARTMENT, ALL_FULL), {"department": "ICU"})):
+        person(role, **field)
+        assert post(client, WOS, body).status_code == 403
     assert WorkOrder.objects.count() == before
 
 
-def test_a_department_scoped_user_creates_only_on_their_units_devices(client, person, custom_role, world, theirs):
-    before = WorkOrder.objects.count()
-    a = world["assets"]
-
-    def body(asset):
-        return {"asset": str(asset.id), "problem": "Alarm", "type": "repair", "priority": "normal", "due_on": (TODAY + timedelta(days=7)).isoformat()}
-
-    person("requester", department="ICU")  # work orders: Request, so not through the API, as before
-    assert post(client, WOS, body(a["vent"])).status_code == 403
-    person(custom_role("unit-lead", DataScope.DEPARTMENT, {"workorders": Level.EDIT, "equipment": Level.VIEW}), department="ICU")
-    for asset in (a["card_mon"], a["card_pump"], theirs["asset"]):
-        r = post(client, WOS, body(asset))
-        # Read as an unknown device, word for word as another facility's: the refusal does not say the device exists.
-        assert r.status_code == 400 and r.json() == {"asset": [f'Invalid pk "{asset.id}" - object does not exist.']}, asset.tag
-    assert WorkOrder.objects.count() == before
-    r = post(client, WOS, body(a["vent"]))
-    assert r.status_code == 201 and r.json()["asset_tag"] == "CE-10001", r.content
-    created = WorkOrder.objects.get(pk=r.json()["id"])
-    # It cannot then be moved onto a device outside the unit; within it, it can.
-    assert patch(client, wo_url(created), {"asset": str(a["card_mon"].id)}).status_code == 400
-    assert patch(client, wo_url(created), {"asset": str(a["pump"].id)}).status_code == 200
-    created.refresh_from_db()
-    assert created.asset == a["pump"]
+def test_the_browsable_api_offers_scoped_users_no_forms(client, person, world):
+    """Opening an API address in the browser renders HTML forms for the actions a user may take, with every device and technician
+    in their selects: none for scoped users, whose actions are reading and moving their own work along."""
+    person("vendor", company="Hamilton Medical")
+    for url in (WOS, wo_url(world["wos"]["ham_vent"]), ASSETS, asset_url(world["assets"]["vent"])):
+        body = client.get(url, HTTP_ACCEPT="text/html").content.decode()
+        for tag in ("CE-10002", "CE-20001"):
+            assert f"{tag} ·" not in body, (url, tag)
+        assert "Dana Whitfield" not in body and "Tom Okafor" not in body
 
 
 # --- devices ----------------------------------------------------------------------------------------------------------------
 
-def test_scoped_device_edits_stay_at_their_levels_and_in_the_share(client, person, custom_role, world):
+def test_scoped_users_never_change_devices_whatever_their_levels(client, person, custom_role, world):
+    """As on the web: a device's details and status are the facility's (retiring cancels every open PM on it, the facility's too)."""
     a = world["assets"]
-    person(custom_role("unit-tech", DataScope.DEPARTMENT, {"equipment": Level.EDIT, "workorders": Level.VIEW}), department="ICU")
-    assert patch(client, asset_url(a["vent"]), {"room": "ICU-4"}).status_code == 200
-    assert post(client, asset_url(a["vent"], "status/"), {"to": AssetStatus.OUT_OF_SERVICE}).status_code == 200
-    assert post(client, asset_url(a["vent"], "status/"), {"to": AssetStatus.RETIRED}).status_code == 403  # Approve, as before
-    for other in (a["card_mon"], a["card_pump"]):
-        assert patch(client, asset_url(other), {"room": "Mine"}).status_code == 404
-        assert post(client, asset_url(other, "status/"), {"to": AssetStatus.OUT_OF_SERVICE}).status_code == 404
-    r = patch(client, asset_url(a["pump"]), {"department": str(world["cardio"].id)})
-    assert r.status_code == 403 and "whole facility" in r.json()["detail"]
-    assert patch(client, asset_url(a["pump"]), {"department": str(world["icu"].id), "room": "ICU-5"}).status_code == 200  # unchanged is fine
-    for x in a.values():
-        x.refresh_from_db()
-    assert (a["vent"].room, a["vent"].status, a["pump"].department_id, a["pump"].room) == ("ICU-4", AssetStatus.OUT_OF_SERVICE, world["icu"].id, "ICU-5")
-    assert {x.room for x in (a["card_mon"], a["card_pump"])} == {""}
-    assert {x.status for x in (a["card_mon"], a["card_pump"])} == {AssetStatus.IN_SERVICE}
+    for role, field in ((custom_role("unit-tech", DataScope.DEPARTMENT, ALL_FULL), {"department": "ICU"}),
+                        (custom_role("vendor-eq", DataScope.COMPANY, ALL_FULL), {"company": "Hamilton Medical"})):
+        person(role, **field)
+        assert patch(client, asset_url(a["vent"]), {"room": "ICU-4"}).status_code == 403
+        assert post(client, asset_url(a["vent"], "status/"), {"to": AssetStatus.OUT_OF_SERVICE}).status_code == 403
+        assert post(client, asset_url(a["vent"], "status/"), {"to": AssetStatus.RETIRED}).status_code == 403
+    a["vent"].refresh_from_db()
+    assert (a["vent"].room, a["vent"].status) == ("", AssetStatus.IN_SERVICE)
 
 
-def test_a_company_scoped_device_edit_reaches_only_its_companys_devices(client, person, custom_role, world):
-    a = world["assets"]
-    person(custom_role("vendor-eq", DataScope.COMPANY, {"equipment": Level.EDIT, "workorders": Level.EDIT}), company="Hamilton Medical")
-    assert patch(client, asset_url(a["card_pump"]), {"room": "C-2"}).status_code == 200
-    assert patch(client, asset_url(a["pump"]), {"room": "C-2"}).status_code == 404  # same model, no Hamilton work on it
-    a["pump"].refresh_from_db()
-    assert a["pump"].room == ""
+def test_a_scoped_user_reads_work_order_texts_as_the_web_shows_them(client, person, world, techs):
+    """An in-house PM fails; CE gives its repair to Hamilton. The vendor reads the repair, but the PM's number in its problem reads
+    "another work order" and the link to the PM is left out, as in the web drawer."""
+    from apps.pm.models import PmProcedure
+    from apps.workorders.completion import complete_work_order
+    from apps.workorders.services import assign, change_status, create_work_order
+
+    vent = world["assets"]["vent"]
+    vent.device_model.pm_procedure = PmProcedure.objects.create(code="P-1", name="PM", checklist=["Inspect"])
+    vent.device_model.save()
+    pm = create_work_order(asset=vent, type="pm", priority="normal", problem="Scheduled PM")
+    assign(pm, technician=techs["dana"])
+    change_status(pm, WoStatus.IN_PROGRESS)
+    repair = complete_work_order(pm, pm_result="fail", results=[{"result": "fail"}], resolution="Flow sensor reads high").follow_up
+    assign(repair, vendor_name="Hamilton Medical")
+    person("vendor", company="Hamilton Medical")
+    data = client.get(wo_url(repair)).json()
+    assert pm.number not in data["problem"] and "another work order" in data["problem"] and data["follow_up_of"] is None
+    listed = [w for w in client.get(WOS).json()["results"] if w["id"] == str(repair.id)][0]
+    assert pm.number not in listed["problem"] and listed["follow_up_of"] is None
 
 
 # --- every other endpoint is closed to scoped users, whatever their levels ----------------------------------------------------
@@ -421,5 +421,5 @@ def test_only_work_orders_and_devices_opt_in():
     """A view that names scoped actions must narrow its rows to the share and have a leak test here."""
     opted = {cls for _p, cls in _api_views() if getattr(cls, "scoped_actions", None)}
     assert opted == {AssetViewSet, WorkOrderViewSet}
-    assert WorkOrderViewSet.scoped_actions == {"list", "retrieve", "create", "update", "partial_update", "transition", "assign"}
-    assert AssetViewSet.scoped_actions == {"list", "retrieve", "update", "partial_update", "change_status"}
+    assert WorkOrderViewSet.scoped_actions == {"list", "retrieve", "transition"}
+    assert AssetViewSet.scoped_actions == {"list", "retrieve"}

@@ -37,12 +37,12 @@
     <div><dt>Last PM</dt><dd>{{ asset.last_pm_on|date:"M j, Y"|default:"—" }}</dd></div><div><dt>Next PM</dt><dd>{{ asset.next_pm_on|date:"M j, Y"|default:"—" }}</dd></div>
   </dl></div>
 
-  <div class="sec"><h3>Who can service this <span>credentials on file</span></h3>
+  {% if not scoped %}<div class="sec"><h3>Who can service this <span>credentials on file</span></h3>
     {% if qualified %}<div class="list">{% for t, q in qualified %}
       <div class="li static"><span class="rail {% if q.expiring %}warn{% else %}ok{% endif %}"></span><div class="bd"><div class="t">{{ t.name }}</div><div class="s">{{ t.title|default:"Technician" }} · {{ q.via }}{% if q.expiring %} · expires in {{ q.expires_on|days_until }} d{% endif %}</div></div></div>
     {% endfor %}</div>
     {% else %}<div class="note">No in-house technician is credentialed for this device{% if asset.contract %}; {{ asset.contract.vendor }} covers it under {{ asset.contract.reference }}.{% else %}. Add a credential for a technician, or assign vendor service.{% endif %}</div>{% endif %}
-  </div>
+  </div>{% endif %}
 
   <div class="sec"><h3>Service, last 6 months <span>{{ summary.work_orders|length }} work order{{ summary.work_orders|length|pluralize }}</span></h3>
     <div class="stats">
