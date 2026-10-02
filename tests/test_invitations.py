@@ -276,7 +276,7 @@ def test_resend_invite_is_tenant_isolated(client, invitee, role, make_user, othe
     theirs = make_user("director", tenant_=other_tenant)
     client.force_login(theirs)
     assert client.post(f"/users/{invitee.pk}/resend-invite/", **HX).status_code == 404
-    their_invitee = services.invite_user(other_tenant, email="new@other.example", first_name="N", last_name="O", role=role("requester", other_tenant))
+    their_invitee = services.invite_user(other_tenant, email="new@other.example", first_name="N", last_name="O", role=role("technician", other_tenant))
     client.force_login(make_user("director"))
     assert client.post(f"/users/{their_invitee.pk}/resend-invite/", **HX).status_code == 404
     assert mailoutbox == []
@@ -331,7 +331,7 @@ def test_send_invitation_rotates_invited_at(invitee, mailoutbox):
 
 def test_a_withdrawn_invitation_stays_dead_after_reactivation(ctx, role):
     """Deactivating a pending invitation withdraws it for good: reactivating the account does not revive the old link."""
-    user = services.invite_user(ctx, email="wrong@riverside.example", first_name="W", last_name="R", role=role("requester"))
+    user = services.invite_user(ctx, email="wrong@riverside.example", first_name="W", last_name="R", role=role("technician"))
     invitations.send_invitation(user)
     uidb64, token = invitations.invitation_url(user).rstrip("/").split("/")[-2:]
     assert invitations.user_for_link(uidb64, token) == user

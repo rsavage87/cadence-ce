@@ -1,0 +1,5 @@
+{# Slice 16: Invite user's and Edit's company and department fields, laid out for the chosen role's scope (forms_users.ScopeFieldsMixin). #}
+{% if form.shows_company %}<label class="full">Company they work for{{ form.company }}{% if form.company.errors %}<span class="err">{{ form.company.errors|striptags }}</span>{% endif %}
+  <datalist id="{{ company_list_id }}">{% for c in form.company_suggestions %}<option value="{{ c }}"></option>{% endfor %}</datalist></label>{% endif %}
+<label class="full">{% if form.scope == "department" %}Their unit{% else %}Department{% endif %}{{ form.department }}{% if form.department.errors %}<span class="err">{{ form.department.errors|striptags }}</span>{% endif %}</label>
+{% if form.scope_hint %}<div class="full hint">{{ form.scope_hint }}</div>{% endif %}

@@ -1,0 +1,14 @@
+{% load web %}
+{# Edit on a Users row (slice 16): role, company, and department in one change. Choosing a role re-renders the form for it. #}
+{% with name=target.get_full_name|default:target.username %}
+<div class="modal-h"><h2>Edit {{ name }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+<form id="ue-form" hx-post="{% url 'web:user_edit' target.pk %}" hx-target="#modal-card">
+  <div class="form">
+    {% if form.non_field_errors %}<div class="full"><span class="err">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    <label class="full">Role{{ form.role }}{% if form.role.field.disabled %}<span class="hint">You cannot change your own role.</span>{% endif %}{% if form.role.errors %}<span class="err">{{ form.role.errors|striptags }}</span>{% endif %}</label>
+    {% include "web/_user_scope_fields.html" %}
+  </div>
+  <div class="hint" style="padding:0 16px 12px">{{ target.email }}</div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Save changes</button></div>
+</form>
+{% endwith %}

@@ -30,7 +30,7 @@ class RoleAdmin(TenantModelAdmin):
 class UserAdmin(BaseUserAdmin):
     list_display = ("username", "email", "first_name", "last_name", "tenant", "role", "is_active", "is_invited")
     list_filter = ("tenant", "role", "is_active", "is_staff")
-    fieldsets = BaseUserAdmin.fieldsets + (("Cadence", {"fields": ("tenant", "role", "department", "phone", "is_invited")}),)
+    fieldsets = BaseUserAdmin.fieldsets + (("Cadence", {"fields": ("tenant", "role", "department", "company", "phone", "is_invited")}),)
     add_fieldsets = BaseUserAdmin.add_fieldsets + (("Cadence", {"fields": ("tenant", "role", "email", "first_name", "last_name")}),)
 
     def get_queryset(self, request):

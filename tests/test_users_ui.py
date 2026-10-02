@@ -43,13 +43,13 @@ def other_roles(other_tenant):
 
 # --- services -----------------------------------------------------------------------------------
 
-def test_invite_creates_an_invited_user_and_optional_technician(ctx, role):
+def test_invite_creates_an_invited_user_and_optional_technician(ctx, role, dept):
     u = services.invite_user(ctx, email="  Maria.Santos@Riverside.example ", first_name="Maria", last_name="Santos", role=role("requester"),
                              department="ICU", create_technician=True)
     assert u.username == u.email == "maria.santos@riverside.example" and u.tenant == ctx and u.is_invited and u.is_active
     assert not u.has_usable_password() and services.user_status(u) == "invited"
     assert u.technician.name == "Maria Santos" and u.technician.title == "BMET I" and u.technician.tenant == ctx
-    plain = services.invite_user(ctx, email="d@riverside.example", first_name="Devon", last_name="Park", role=role("requester"))
+    plain = services.invite_user(ctx, email="d@riverside.example", first_name="Devon", last_name="Park", role=role("requester"), department="ICU")
     assert not Technician.objects.filter(user=plain).exists()
 
 
@@ -125,7 +125,7 @@ def test_create_role_copies_levels_and_keeps_slugs_unique(ctx, role):
     assert r.level_for(Module.CONTRACTS) == Level.NONE
 
 
-def test_list_users_filters_and_counts(ctx, role, make_user, other_roles):
+def test_list_users_filters_and_counts(ctx, role, make_user, other_roles, dept):
     kim = make_user("director", username="kim@riverside.example")
     kim.first_name, kim.last_name, kim.department = "Kim", "Alvarez", "Clinical Engineering"
     kim.save()
@@ -200,7 +200,7 @@ def test_users_filters_and_partial(client, signed_in, make_user, role):
     signed_in("director")
     tom = make_user("technician", username="tom@riverside.example")
     services.invite_user(tom.tenant, email="maria@riverside.example", first_name="Maria", last_name="Santos",
-                         role=role("requester"), department="Central Sterile")
+                         role=role("analyst"), department="Central Sterile")
     services.deactivate_user(tom)
     partial = client.get("/users/?status=invited", **hx("users-body"))
     body = partial.content.decode()
@@ -273,7 +273,8 @@ def test_invite_user_modal_and_creation(client, signed_in, role, dept, mailoutbo
     assert modal.status_code == 200 and "<html" not in body and "Resend" not in body
     assert "They get an email with a link to set their password. The link works for 7 days." in body and "Send invitation</button>" in body
     assert f'<option value="{role("requester").id}" selected>' in body and 'name="create_technician"' in body
-    assert '<option value="Clinical Engineering" selected>' in body and '<option value="ICU">' in body and '<option value="External vendor">' in body
+    # slice 16: the clinical requester (the default role) is department-scoped, so its unit is one of the facility's departments
+    assert '<option value="" selected>Choose their unit</option>' in body and '<option value="ICU">' in body and "External vendor" not in body
     r = client.post("/users/invite/", {"first_name": "Maria", "last_name": "Santos", "email": "MSantos@riverside.example", "role": str(role("requester").id),
                                        "department": "ICU", "create_technician": "on"}, **HX)
     assert r.status_code == 200 and r.content == b""
@@ -382,12 +383,12 @@ def test_invite_does_not_reveal_accounts_at_other_tenants(ctx, role, make_user, 
 
     make_user("requester", tenant_=other_roles, username="shared@vendor.example")  # username is global; this address lives elsewhere
     with pytest.raises(ValidationError) as e:
-        services.invite_user(ctx, email="shared@vendor.example", first_name="S", last_name="V", role=role("requester"))
+        services.invite_user(ctx, email="shared@vendor.example", first_name="S", last_name="V", role=role("technician"))
     assert "cannot be used" in str(e.value) and "member" not in str(e.value)
     other = make_user("requester", tenant_=other_roles, username="fse-b")
     other.email = "fse@vendor.example"
     other.save()
-    invited = services.invite_user(ctx, email="fse@vendor.example", first_name="F", last_name="S", role=role("requester"))
+    invited = services.invite_user(ctx, email="fse@vendor.example", first_name="F", last_name="S", role=role("technician"))
     assert invited.tenant_id == ctx.id  # an email-only match at another tenant is not this tenant's business
 
 
@@ -446,7 +447,7 @@ def test_summary_counts_only_signed_in_active_users(client, ctx, signed_in, role
     from apps.accounts import services
 
     signed_in("director")
-    services.invite_user(ctx, email="new@riverside.example", first_name="N", last_name="U", role=role("requester"))
+    services.invite_user(ctx, email="new@riverside.example", first_name="N", last_name="U", role=role("technician"))
     assert "1 active user " in client.get("/users/").content.decode()
 
 
@@ -484,11 +485,11 @@ def _row(body, user):
 
 def test_resend_invite_shows_only_for_pending_invitations(client, ctx, signed_in, role, make_user):
     signed_in("director")
-    pending = services.invite_user(ctx, email="p@riverside.example", first_name="Pat", last_name="Pending", role=role("requester"))
-    set_in_admin = services.invite_user(ctx, email="a@riverside.example", first_name="Ada", last_name="Admin", role=role("requester"))
+    pending = services.invite_user(ctx, email="p@riverside.example", first_name="Pat", last_name="Pending", role=role("technician"))
+    set_in_admin = services.invite_user(ctx, email="a@riverside.example", first_name="Ada", last_name="Admin", role=role("technician"))
     set_in_admin.set_password("Test-Pass-2026-x")  # shown as Invited until the first sign-in, but no link can set a password now
     set_in_admin.save()
-    withdrawn = services.invite_user(ctx, email="w@riverside.example", first_name="Wes", last_name="Withdrawn", role=role("requester"))
+    withdrawn = services.invite_user(ctx, email="w@riverside.example", first_name="Wes", last_name="Withdrawn", role=role("technician"))
     services.deactivate_user(withdrawn)
     member = make_user("technician")
     body = client.get("/users/?status=invited", **hx("users-body")).content.decode()
@@ -504,7 +505,7 @@ def test_resend_invite_shows_only_for_pending_invitations(client, ctx, signed_in
 
 def test_resend_invite_is_hidden_from_users_view(client, ctx, signed_in, role):
     signed_in("manager")
-    pending = services.invite_user(ctx, email="p@riverside.example", first_name="Pat", last_name="Pending", role=role("requester"))
+    pending = services.invite_user(ctx, email="p@riverside.example", first_name="Pat", last_name="Pending", role=role("technician"))
     body = client.get("/users/").content.decode()
     assert "Pat Pending" in body and "Resend invite" not in body
     assert client.post(f"/users/{pending.pk}/resend-invite/", **HX).status_code == 403

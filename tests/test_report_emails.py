@@ -142,7 +142,7 @@ def test_set_subscription_refuses_who_cannot_receive_it(ctx, tenant, person):
 def test_turning_off_works_after_access_is_lost(ctx, tenant, person):
     tom = person("technician")
     subs.set_subscription(tom, "cosr", "weekly")
-    account_services.set_user_role(tom, _role(tenant, "requester"))
+    account_services.set_user_role(tom, _role(tenant, "vendor"), company="Acme Service")  # no Reports access; slice 16: with the company it needs
     tom.refresh_from_db()
     assert subs.set_subscription(tom, "cosr", None) is None and ReportSubscription.objects.count() == 0
 
@@ -220,7 +220,7 @@ def test_the_email_says_what_it_is_and_carries_the_screens_csv(client, ctx, tena
 def test_send_report_email_refuses_who_may_not_receive_it_and_a_failed_send_is_not_stamped(ctx, tenant, person, mailoutbox, monkeypatch):
     tom = person("technician")
     sub = subs.set_subscription(tom, "cosr", "weekly")
-    account_services.set_user_role(tom, _role(tenant, "requester"))
+    account_services.set_user_role(tom, _role(tenant, "vendor"), company="Acme Service")  # no Reports access; slice 16: with the company it needs
     sub = ReportSubscription.objects.select_related("user").get(pk=sub.pk)
     with pytest.raises(ValidationError, match="no Reports View"):
         subs.send_report_email(sub, MON)
@@ -261,7 +261,7 @@ def two_facilities(tenant, other_tenant, person):
     _subscribe(other_tenant, people["oli"], "spend", "monthly")
     _subscribe(closed, people["cal"], "spend", "weekly")
     with tenant_context(tenant):
-        account_services.set_user_role(people["tom"], _role(tenant, "requester"))
+        account_services.set_user_role(people["tom"], _role(tenant, "vendor"), company="Acme Service")  # no Reports access; slice 16: with the company it needs
         account_services.deactivate_user(people["dee"])
     people["nia"].email = ""
     people["nia"].save(update_fields=["email"])

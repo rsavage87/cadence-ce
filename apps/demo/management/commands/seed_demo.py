@@ -16,7 +16,7 @@ from apps.contracts.models import Contract, ContractType, Coverage
 from apps.credentials.models import Credential, Scope, Technician
 from apps.credentials.services import qualified_technicians
 from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, RiskClass
-from apps.facility.services import update_settings
+from apps.facility.services import labor_rates, update_settings
 from apps.pm import aem
 from apps.pm.dates import add_months
 from apps.pm.models import PmProcedure
@@ -81,9 +81,22 @@ USERS = [
     ("Maria", "Santos", "msantos", "requester", "Central Sterile", "invited", None),
     ("Jordan", "Lee", "jlee", "analyst", "Finance", "active", 100),
     ("Sam", "Whitaker", "swhitaker", "analyst", "Quality and Patient Safety", "active", 40),
-    ("Philips", "field service", "fse-riverside@philips.example", "vendor", "External vendor", "active", 170),
+    ("Philips", "field service", "fse-{slug}@philips.example", "vendor", "External vendor", "active", 170),  # at the vendor's own domain
     ("Chris", "Nolan", "cnolan", "technician", "Clinical Engineering", "deactivated", 2700),
 ]
+# Slice 16: the vendor technician sees only the work orders assigned to their company. The patient monitors' OEM contract names
+# Philips, so work orders dispatched to their service carry that name (web.forms.vendor_name_for). The requesters' departments above
+# are the demo's Departments (DEPTS), so each sees their own unit.
+VENDOR_COMPANY = "Philips"
+# Vendor service on contract devices, recent enough to leave the history above (and the AEM evidence drawn from it) as it was:
+# device model, opened days ago, where it stands, problem. The C-arm's goes to Siemens Healthineers, which the Philips technician never sees.
+VENDOR_WORK = [
+    ("IntelliVue MX750", 2, "open", "No waveform on lead II"),
+    ("IntelliVue MX750", 6, "in_progress", "Screen flickers intermittently"),
+    ("IntelliVue MX750", 24, "closed", "Error code on startup"),
+    ("Cios Spin", 4, "open", "Error code on startup"),
+]
+VENDOR_RESOLUTION = "Vendor replaced the main board under contract and verified operation per OEM procedure."
 PROBLEMS = ["Battery will not hold charge", "Occlusion alarm with no occlusion", "Screen flickers intermittently", "Error code on startup",
             "Pump door latch loose", "No waveform on lead II"]
 # Every demo procedure's checklist; the electrical safety step records the leakage current (slice 15 records each PM's results).
@@ -141,9 +154,9 @@ class Command(BaseCommand):
             # the rest of the staff: demo accounts without a password (an administrator sets one in Admin), technicians linked by name
             tech_by_name = {t.name: t for t in techs}
             for first, last, local, slug, dept, status, hours in USERS:
-                email = f"{local}@{domain}"
+                email = local.format(slug=opts["slug"]) if "@" in local else f"{local}@{domain}"
                 u = User(username=email, email=email, first_name=first, last_name=last, tenant=tenant, role=Role.objects.get(slug=slug), department=dept,
-                         is_invited=status == "invited", is_active=status != "deactivated",
+                         company=VENDOR_COMPANY if slug == "vendor" else "", is_invited=status == "invited", is_active=status != "deactivated",
                          last_login=timezone.now() - timedelta(hours=hours) if hours is not None else None)
                 u.set_unusable_password()
                 u.save()
@@ -227,6 +240,7 @@ class Command(BaseCommand):
                     set_status(match, AlertMatch.Status.IN_PROGRESS, today=today - timedelta(days=closed_days_ago + 7))
                     set_status(match, AlertMatch.Status.CLOSED, note=note, today=today - timedelta(days=closed_days_ago))
             self._approved_aem(domain, today)
+            self._vendor_work(today)
         self.stdout.write(self.style.SUCCESS(f"Seeded {tenant.name}: {len(assets)} devices, {len(techs)} technicians. Sign in as {kim} / DemoPass-2026"))
 
     @staticmethod
@@ -259,6 +273,27 @@ class Command(BaseCommand):
         complete_work_order(repair, resolution=FAIL_REPAIR, today=done + timedelta(days=2))
         change_status(repair, "closed", as_of=done + timedelta(days=2))
         return wo
+
+    @staticmethod
+    def _vendor_work(today: date) -> None:
+        """Repairs dispatched to the vendor on the contract (through the work-order services like any other): what the demo vendor
+        technician works on. One device each, the first in service by tag, so the demo stays the same from run to run."""
+        used = set()
+        for model, days_ago, state, problem in VENDOR_WORK:
+            candidates = Asset.objects.filter(device_model__model=model, contract__isnull=False).exclude(pk__in=used).select_related("contract").order_by("tag")
+            asset = candidates.filter(status=AssetStatus.IN_SERVICE).first() or candidates.first()
+            used.add(asset.pk)
+            opened = today - timedelta(days=days_ago)
+            wo = create_work_order(asset=asset, type=WoType.REPAIR, priority=Priority.NORMAL, problem=problem, requester="Unit staff", opened_on=opened)
+            assign(wo, vendor_name=asset.contract.vendor)
+            if state == "open":
+                continue
+            change_status(wo, "in_progress", as_of=opened + timedelta(days=1))
+            if state == "closed":
+                done = opened + timedelta(days=3)
+                LaborLine.objects.create(work_order=wo, worked_on=done, hours=Decimal("2.5"), rate=labor_rates()["vendor"], description="Vendor service")
+                complete_work_order(wo, resolution=VENDOR_RESOLUTION, today=done)
+                change_status(wo, "closed", as_of=done)
 
     def _approved_aem(self, domain: str, today: date) -> None:
         """One AEM interval in force, as the mock's PM library shows for the patient monitors: proposed by a technician with the
