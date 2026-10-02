@@ -1,9 +1,10 @@
 # Build plan
 
 The mock (`cadence-ce-cmms-mock.html`) is the spec. Each slice below is shippable on its own and ends with green tests.
-Slices 0 to 14 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
-export and print, devices are added and changed in the product, reports and request confirmations go out by email, and each
-device model's PM program (risk score, procedure, AEM interval) is kept in the product. What each slice deferred is noted in its row and below.
+Slices 0 to 15 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
+export and print, devices are added and changed in the product, reports and request confirmations go out by email, each
+device model's PM program (risk score, procedure, AEM interval) is kept in the product, and the work itself (time, parts,
+what was done, a PM's results) is recorded on the work order. What each slice deferred is noted in its row and below.
 
 | # | Slice | Mock screen(s) | Code | Status |
 |---|-------|----------------|------|--------|
@@ -18,10 +19,11 @@ device model's PM program (risk score, procedure, AEM interval) is kept in the p
 | 8 | Settings | Integrations, portal settings, editable policy, risk scoring | `facility` + `web` | done (connectors, paging, photo upload, and email or text confirmation deferred) |
 | 9 | PM schedule UI | PM schedule (calendar, create work orders for a day) | `pm` + `web` | done (Route sheets came in slice 11 and Auto-assign week in slice 14; OEM library sync deferred) |
 | 10 | Sign-in and invitations | Users and access (Invite user, Resend invite), sign-in page | `accounts` + `web` | done (shared lockout counters across workers need Redis; email is sent in the request) |
-| 11 | Exports and printing | Export (CSV) on Equipment, Work orders, Contracts, a contract's Device list; Label, Print, Route sheets, report PDF, Response log, Overview Export | `web` | done (PDFs come from the browser's print dialog; Scan tag, Check feeds, and Custom report still deferred; Add device, Schedule, and Auto-assign week came later) |
+| 11 | Exports and printing | Export (CSV) on Equipment, Work orders, Contracts, a contract's Device list; Label, Print, Route sheets, report PDF, Response log, Overview Export | `web` | done (PDFs come from the browser's print dialog; Scan tag and Custom report still deferred; Add device, Schedule, Auto-assign week, and Check feeds came later) |
 | 12 | Device management | Equipment (Add device), device drawer (Edit details, Tag out of service, Return to service, PM schedule and Costs tabs) | `equipment` + `web` + `api` | done (the model catalog and AEM approval came in slice 14) |
 | 13 | Email notifications | Reports (Schedule), Settings (portal confirmation to the requester), the request portal | `reports` + `facility` + `portal` + `web` | done (report emails are self-service; text messages and paging still need a provider) |
 | 14 | The PM program | PM schedule (Auto-assign week, the PM library), a model's PM program (AEM, procedure, risk score) | `equipment` + `pm` + `web` | done (no API for procedures, AEM cases, or Auto-assign week yet; OEM library sync needs a library) |
+| 15 | Recording the work | Work order drawer (Cost, Mark completed), device PM history, Settings (labor rates), Recalls (Check feeds) | `workorders` + `recalls` + `web` + `api` | done (vendor accounts are not yet limited to their own company's work orders) |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.
@@ -168,3 +170,15 @@ The mock's export and print buttons work since slice 11, and Add device since sl
   nobody is credentialed for stay unassigned, overdue ones are pointed at (Create on their day, or Work orders). Create and
   Auto-assign take one planner lock per facility, so a double click does nothing twice. The API's model PATCH needs Equipment
   Approve for a new risk class and PM Edit for a new procedure.
+- Recording the work (slice 15): the work order drawer's Cost section lists the labor lines (date, who, hours, rate) and part lines
+  (description, part number, quantity, unit cost, PO): Log time and Add part at Work orders Edit (`workorders.costs`), each line
+  priced to the cent, the rate from Settings (in-house $82, vendor $215 by default) unless an Approve user sets another; nothing is
+  added to or removed from a closed or cancelled work order, and one technician logs at most 24 hours a day. Mark completed asks
+  what was done (`workorders.completion`); for a PM it records every checklist step (pass, fail, N/A, a reading where the
+  procedure asks for one) as the checklist was then, and the result (Pass, Pass with minor repair, Fail) must agree with the
+  steps. A failed PM opens a repair (high priority for life support and high risk, with the PM's technician when credentialed)
+  or names the repair already open, and holds the device out of service until that repair is done: a device goes back into
+  service only when no open repair holds it. The drawer, the print, and the device's PM history show the results; the API's
+  transition to completed takes the same fields, and a completed or closed work order cannot be rewritten through the API.
+  Reports credit each labor line to the technician on it (vendor time names none). Check FDA feed on Recalls (Recalls Edit)
+  fetches the last 30 days from openFDA at most once per 15 minutes for every facility and matches the notices to this facility.

@@ -179,7 +179,8 @@ def test_the_other_open_repair_and_a_device_not_in_service_change_the_options(cl
     signed_in("technician")
     body = client.get(url(pm), **HX).content.decode()
     assert 'name="open_repair" id="wc-open_repair" checked' in body and f"CE-10001 already has open repair {other.number}" in body
-    assert "CE-10001 is in repair, so there is nothing to tag out." in body and 'name="tag_out"' not in body
+    # In repair: the failed PM still holds it out until its repair is done (finishing the other repair cannot return it).
+    assert "Keep CE-10001 out of service (it is in repair now) until the repair is done" in body and 'name="tag_out"' in body
 
 
 def test_errors_come_back_with_what_was_typed(client, signed_in, pm):
@@ -262,7 +263,8 @@ def test_a_failed_pm_opens_its_repair_and_links_both_ways(client, signed_in, pm,
 
 def test_an_unchecked_tag_out_leaves_the_device_in_service(client, signed_in, pm, vent):
     signed_in("technician")
-    r = client.post(url(pm), post_data(steps=("fail", "pass", "pass", "pass"), pm_result="fail"), **HX)  # tag_out not sent: unchecked
+    # tag_out not sent while the modal showed it (shown_tag_out): unchecked
+    r = client.post(url(pm), post_data(steps=("fail", "pass", "pass", "pass"), pm_result="fail", shown_tag_out="1"), **HX)
     vent.refresh_from_db()
     assert vent.status == AssetStatus.IN_SERVICE and "tagged out" not in triggers(r)["toast"]["value"]
 
@@ -279,9 +281,12 @@ def test_options_not_offered_are_not_taken_from_the_post(client, signed_in, pm, 
 def test_a_failure_recorded_on_the_open_repair(client, signed_in, pm, vent, techs):
     other = create_work_order(asset=vent, type="repair", priority="normal", problem="Intermittent alarm", assigned_to=techs["dana"])
     signed_in("technician")
-    r = client.post(url(pm), post_data(steps=("fail", "pass", "pass", "pass"), pm_result="fail"), **HX)  # open_repair unchecked
-    assert triggers(r)["toast"]["value"] == f"{pm.number} completed: PM failed; recorded on open repair {other.number}"
-    assert not WorkOrder.objects.filter(follow_up_of=pm).exists() and other.notes.count() == 1
+    # open_repair unchecked while the modal showed it
+    r = client.post(url(pm), post_data(steps=("fail", "pass", "pass", "pass"), pm_result="fail", shown_open_repair="1", shown_tag_out="1",
+                                       tag_out="on"), **HX)
+    assert triggers(r)["toast"]["value"] == f"{pm.number} completed: PM failed; recorded on open repair {other.number}; CE-10001 tagged out of service"
+    other.refresh_from_db()
+    assert other.follow_up_of == pm and WorkOrder.objects.filter(follow_up_of=pm).count() == 1 and other.notes.count() == 1
 
 
 def test_a_repair_answers_with_its_resolution(client, signed_in, repair):
@@ -420,3 +425,60 @@ def test_pm_history_reads_the_repairs_in_one_query_only_when_a_pm_failed(ctx, ve
     history = asset_tabs.pm_history(vent)
     with django_assert_num_queries(1):
         asset_tabs.history_rows(history)
+
+
+# --- slice 15 review ---------------------------------------------------------------------------------------------------------------
+
+def test_a_failed_pm_holds_a_device_already_out_until_its_own_repair_is_done(procedure, vent, techs):
+    """The ventilator is out with a tagged-out portal repair when its PM fails: finishing that repair must not put a device that
+    failed its PM back in use while the PM's repair is open."""
+    from apps.workorders.completion import complete_work_order
+
+    portal = create_work_order(asset=vent, type="repair", priority="high", problem="Alarm speaker crackles", tag_out=True, assigned_to=techs["dana"])
+    pm = started(vent, tech=techs["dana"])
+    done = complete_work_order(pm, pm_result=PmResult.FAIL, results=[{"result": "pass"}, {"result": "fail", "reading": "184 µA"},
+                                                                    {"result": "pass", "reading": "95 min"}, {"result": "pass"}], open_repair=True)
+    follow_up = done.follow_up
+    assert follow_up.tagged_out and not done.tagged_out  # held, not newly tagged out: it was out already
+    change_status(portal, WoStatus.IN_PROGRESS)
+    complete_work_order(portal, resolution="Replaced the alarm speaker")
+    vent.refresh_from_db()
+    assert vent.status == AssetStatus.OUT_OF_SERVICE  # the PM's repair still holds it
+    change_status(follow_up, WoStatus.IN_PROGRESS)
+    complete_work_order(follow_up, resolution="Replaced the leaking power supply; leakage 40 µA")
+    vent.refresh_from_db()
+    assert vent.status == AssetStatus.IN_SERVICE  # the last hold returns it
+
+
+def test_an_option_that_appeared_after_the_modal_opened_takes_its_default(client, signed_in, pm, vent, techs):
+    """The modal showed neither checkbox (no other repair; the device in service). A repair opened meanwhile must not turn the
+    unseen "Open a new repair work order" into a decline."""
+    signed_in("technician")
+    other = create_work_order(asset=vent, type="repair", priority="normal", problem="Cracked bezel", assigned_to=techs["dana"])
+    r = client.post(url(pm), post_data(steps=("fail", "pass", "pass", "pass"), pm_result="fail", shown_tag_out="1", tag_out="on"), **HX)
+    follow_up = WorkOrder.objects.get(follow_up_of=pm, type="repair")
+    assert follow_up != other and f"{follow_up.number} opened for the repair" in triggers(r)["toast"]["value"] and not other.notes.exists()
+
+
+def test_after_a_checklist_revision_the_next_save_can_succeed(client, signed_in, pm):
+    signed_in("technician")
+    stale = post_data()
+    proc = PmProcedure.objects.get(code="HM-G5-PM6")
+    proc.checklist = ["Visual inspection", "Alarm verification"]
+    proc.save()
+    r = client.post(url(pm), {**stale, "resolution": "All good"}, **HX)
+    body = r.content.decode()
+    assert "The procedure&#x27;s checklist was revised while this was open" in body or "checklist was revised" in body
+    current = checklist_signature(completion.checklist_of(proc))
+    assert f'value="{current}"' in body and 'value="pass" aria-label="Step 1: Pass" checked' not in body  # fresh signature, steps unanswered
+    r = client.post(url(pm), {"signature": current, "step_1": "pass", "step_2": "pass", "pm_result": "pass"}, **HX)
+    pm.refresh_from_db()
+    assert pm.status == WoStatus.COMPLETED and [s["text"] for s in pm.checklist_results] == ["Visual inspection", "Alarm verification"]
+
+
+@pytest.mark.parametrize("template", ["_wo_labor.html", "_wo_part.html", "_wo_complete.html"])
+def test_the_modal_forms_send_once(template):
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parent.parent / "apps/web/templates/web" / template).read_text()
+    assert 'hx-sync="this:drop"' in text and 'hx-disabled-elt="find button[type=submit]"' in text

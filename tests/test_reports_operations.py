@@ -38,7 +38,8 @@ def closed_wo(asset, type, tech, opened, completed, due=None, hours=None, **extr
     wo = create_work_order(asset=asset, type=type, priority="normal", problem=f"{type} work", opened_on=opened, due_on=due or opened + timedelta(days=5),
                            assigned_to=tech, **extra)
     if hours is not None:
-        LaborLine.objects.create(work_order=wo, technician=tech, hours=Decimal(str(hours)), rate=82)
+        # Vendor time names no technician (apps.workorders.costs), and the report counts each line for the technician it names.
+        LaborLine.objects.create(work_order=wo, technician=None if extra.get("vendor_service") else tech, hours=Decimal(str(hours)), rate=82)
     change_status(wo, "in_progress", as_of=opened)
     change_status(wo, "completed", as_of=completed)
     return wo

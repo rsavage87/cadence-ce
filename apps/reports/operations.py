@@ -45,11 +45,13 @@ def report_tech(today: date) -> dict:
             s["repairs"] += 1
             # The service refuses to complete before opening; clamp anyway so a bad row can never pull the average below zero.
             s["turnaround_total"] += max(0, (w["completed_on"] - w["opened_on"]).days)
-    hours = (LaborLine.objects.filter(work_order__assigned_to__in=technicians, work_order__vendor_service=False, work_order__status__in=DONE_WO_STATUSES,
+    # Hours by who logged them (each labor line names its technician; vendor time names none), on work orders closed in the window:
+    # time logged before a reassignment stays with the technician who did it, and a vendor's time is never anyone's.
+    hours = (LaborLine.objects.filter(technician__in=technicians, work_order__status__in=DONE_WO_STATUSES,
                                       work_order__completed_on__gte=since, work_order__completed_on__lte=today)
-             .order_by().values("work_order__assigned_to_id").annotate(h=Sum("hours")))
+             .order_by().values("technician_id").annotate(h=Sum("hours")))
     for row in hours:
-        stats[row["work_order__assigned_to_id"]]["hours"] = float(row["h"] or 0)
+        stats[row["technician_id"]]["hours"] = float(row["h"] or 0)
     open_now = (WorkOrder.objects.filter(assigned_to__in=technicians, vendor_service=False, status__in=OPEN_STATUSES)
                 .order_by().values("assigned_to_id").annotate(n=Count("id")))
     for row in open_now:

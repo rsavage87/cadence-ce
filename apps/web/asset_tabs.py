@@ -14,7 +14,7 @@ slice's files are split by owner. Each runs a fixed number of queries however lo
 from datetime import date
 from decimal import Decimal
 
-from django.db.models import DecimalField, F, Sum
+from django.db.models import DecimalField, Sum
 from django.db.models.functions import Coalesce, ExtractYear
 
 from apps.equipment.models import AssetStatus, RiskClass
@@ -22,7 +22,7 @@ from apps.pm.dates import add_months
 from apps.pm.models import AemDecision, AemStatus
 from apps.pm.schedule import DEFAULT_PM_HOURS, planned_technicians
 from apps.reports.fleet import REPLACEMENT_MARKUP, _repairs_in_window, replacement_score
-from apps.workorders.models import OPEN_STATUSES, LaborLine, PartLine, PmResult, WorkOrder, WoStatus, WoType
+from apps.workorders.models import LABOR_AMOUNT, OPEN_STATUSES, PART_AMOUNT, LaborLine, PartLine, PmResult, WorkOrder, WoStatus, WoType
 
 from . import charts
 from .templatetags.web import money, money_k
@@ -188,8 +188,7 @@ def cost_by_year(asset, years: list[int]) -> dict[int, float]:
         return out
     money_field = DecimalField(max_digits=14, decimal_places=2)
     window = {"work_order__asset": asset, "work_order__completed_on__gte": date(years[0], 1, 1), "work_order__completed_on__lte": date(years[-1], 12, 31)}
-    for model, expr in ((LaborLine, Sum(F("hours") * F("rate"), output_field=money_field)),
-                        (PartLine, Sum(F("quantity") * F("unit_cost"), output_field=money_field))):
+    for model, expr in ((LaborLine, Sum(LABOR_AMOUNT, output_field=money_field)), (PartLine, Sum(PART_AMOUNT, output_field=money_field))):
         rows = model.objects.filter(**window).annotate(year=ExtractYear("work_order__completed_on")).order_by().values("year").annotate(v=expr)
         for row in rows:
             if row["year"] in out:

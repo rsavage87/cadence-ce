@@ -35,7 +35,8 @@ IMPORT_TIMEOUT = 30  # seconds: the daily import can wait
 CHECK_DAYS = 30  # the same window as the daily import
 CHECK_TIMEOUT = (3.05, 10)  # seconds to connect, then to wait for each read: a web request must not hang on a slow openFDA
 CHECK_COOLDOWN = timedelta(minutes=15)  # at most 96 checks a day, whatever the number of facilities
-CHECK_JOB = "check_fda_feed"  # the check's JobRun rows
+CHECK_JOB = "check_fda_feed"  # the check's JobRun rows: one per day, the latest attempt (its status is that attempt's)
+CHECK_OK_JOB = "check_fda_feed_ok"  # one per day, the day's last check that succeeded (a later failure never hides it)
 DAILY_JOB = "import_openfda"  # the daily import's key in apps.jobs.services.DAILY_JOBS: its runs fetch the feed too
 OUTPUT_LIMIT = 20_000  # characters of the day's check log kept, as for the daily jobs
 
@@ -60,6 +61,7 @@ class Check(NamedTuple):
     matches: int  # new matches for the current facility
     checked_at: datetime  # when the feed was fetched: now, or the last fetch when held back
     again_at: datetime | None  # held back: when the feed may be fetched again
+    last_failed: bool = False  # held back: the last fetch did not get an answer
 
 
 def parse_date(s):
@@ -177,8 +179,22 @@ def last_fetch() -> datetime | None:
 
 
 def last_checked() -> datetime | None:
-    """When the feed last answered: the latest check or daily import that finished well (the Recalls page head)."""
-    return JobRun.objects.filter(job__in=(CHECK_JOB, DAILY_JOB), status=JobRun.Status.SUCCEEDED).aggregate(at=Max("finished_at"))["at"]
+    """When the feed last answered: the latest check or daily import that finished well (the Recalls page head). A check's own
+    row says how its latest attempt went, so a failed or running attempt would hide the day's earlier success: the successes
+    are kept on a row of their own (CHECK_OK_JOB)."""
+    return JobRun.objects.filter(job__in=(CHECK_OK_JOB, DAILY_JOB), status=JobRun.Status.SUCCEEDED).aggregate(at=Max("finished_at"))["at"]
+
+
+def last_fetch_failed() -> bool:
+    """Whether the latest fetch (a check or the daily import) failed."""
+    row = JobRun.objects.filter(job__in=(CHECK_JOB, DAILY_JOB)).order_by("-started_at").values("status").first()
+    return bool(row) and row["status"] == JobRun.Status.FAILED
+
+
+def _succeeded(now: datetime) -> None:
+    done = timezone.now()
+    JobRun.objects.update_or_create(job=CHECK_OK_JOB, run_on=timezone.localdate(now),
+                                    defaults={"started_at": now, "finished_at": done, "status": JobRun.Status.SUCCEEDED})
 
 
 class _Claim(NamedTuple):
@@ -230,7 +246,7 @@ def check_feed(now: datetime | None = None) -> Check:
     now = now or timezone.now()
     claim = _claim(now)
     if claim.run_id is None:
-        return Check(None, _match_here(), claim.last, claim.last + CHECK_COOLDOWN)
+        return Check(None, _match_here(), claim.last, claim.last + CHECK_COOLDOWN, last_fetch_failed())
     stamp = f"{clock(now)} {get_current_tenant().slug}"
     try:
         result = import_recalls(days=CHECK_DAYS, limit=MAX_LIMIT, timeout=CHECK_TIMEOUT)
@@ -240,4 +256,5 @@ def check_feed(now: datetime | None = None) -> Check:
         raise
     _record(claim.run_id, JobRun.Status.SUCCEEDED,
             f"{stamp}: {result.new} new alerts, {result.returned} records returned (openFDA total {result.total}); {matches} new matches")
+    _succeeded(now)
     return Check(result, matches, now, None)

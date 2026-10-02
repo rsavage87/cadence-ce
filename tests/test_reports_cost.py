@@ -7,6 +7,7 @@ from csvutil import csv_text
 
 from apps.contracts.models import Contract, ContractType
 from apps.contracts.services import add_asset
+from apps.credentials.models import Technician
 from apps.equipment.models import Asset, Department, DeviceModel, SupportType
 from apps.reports.cost import report_contract, report_cosr, report_spend
 from apps.reports.services import ANNUALIZE, TRAILING_DAYS, cost_of_service, overview_kpis, run_report
@@ -32,7 +33,9 @@ def done(asset, type, completed_on, hours=0, parts=0, vendor=False, rate=82):
     """A work order opened two days before `completed_on` and completed that day, with optional labor and part lines."""
     wo = create_work_order(asset=asset, type=type, priority="normal", problem="Test", opened_on=completed_on - timedelta(days=2), vendor_service=vendor)
     if hours:
-        LaborLine.objects.create(work_order=wo, hours=hours, rate=rate)
+        # As apps.workorders.costs records it: in-house time names a technician, vendor time none (cost_of_service splits by the line).
+        tech = None if vendor else Technician.objects.get_or_create(name="Shop Tech")[0]
+        LaborLine.objects.create(work_order=wo, technician=tech, hours=hours, rate=rate)
     if parts:
         PartLine.objects.create(work_order=wo, description="Part", quantity=1, unit_cost=parts)
     change_status(wo, "in_progress", as_of=completed_on - timedelta(days=1))

@@ -35,7 +35,7 @@ from apps.reports.services import REPORTS, overview_kpis, report_meta, run_repor
 from apps.tenants.context import get_current_tenant
 from apps.workorders import permissions as wo_perms
 from apps.workorders import services as wo_services
-from apps.workorders.models import WorkOrder, WoStatus
+from apps.workorders.models import OPEN_STATUSES, WorkOrder, WoStatus
 
 from . import serializers as s
 from .permissions import ModulePermission
@@ -227,6 +227,16 @@ class WorkOrderViewSet(TenantViewSet):
         wo, d = serializer.instance, serializer.validated_data
         if any(f in d and d[f] != getattr(wo, f) for f in self.ASSIGNMENT_FIELDS):
             raise DRFValidationError({"assigned_to": "Use POST /api/v1/work-orders/{id}/assign/ to change the assignment."})
+        # Slice 15: what was done is recorded by completing (transition to completed, apps.workorders.completion), and a completed
+        # or closed work order is the record: its fields stay as they are until it is reopened. A device with labor or parts
+        # already on its work order keeps them (they are that device's cost).
+        if "resolution" in self.request.data:
+            raise DRFValidationError({"resolution": ["The resolution is recorded when the work order is completed (transition to completed)."]})
+        changed = [f for f, v in d.items() if v != getattr(wo, f)]
+        if changed and wo.status not in OPEN_STATUSES:
+            raise DRFValidationError({"detail": f"{wo.number} is {wo.get_status_display().lower()}: what it records stays as it is. Reopen it first."})
+        if "asset" in changed and (wo.labor_lines.exists() or wo.part_lines.exists()):
+            raise DRFValidationError({"asset": [f"{wo.number} has labor or parts on file for {wo.asset.tag}; it stays with that device."]})
         serializer.save()
 
     @action(detail=True, methods=["post"])

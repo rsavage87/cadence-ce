@@ -296,9 +296,14 @@ def test_nothing_is_sent_once_email_is_turned_off(ctx, email_on, vent, mailoutbo
 def test_the_done_notice_from_the_web_ui(client, signed_in, email_on, vent, mailoutbox, django_capture_on_commit_callbacks):
     sr = _request(vent)
     signed_in("director")
+    from apps.credentials.models import Technician
+    from apps.workorders.services import assign
+
+    assign(sr.work_order, technician=Technician.objects.create(name="Dana Whitfield"))  # completing needs someone who did the work
     with django_capture_on_commit_callbacks(execute=True):
-        for to in ("in_progress", "completed"):
-            assert client.post(f"/work-orders/{sr.work_order.number}/status/", {"to": to}, **HX).status_code == 200
+        assert client.post(f"/work-orders/{sr.work_order.number}/status/", {"to": "in_progress"}, **HX).status_code == 200
+        r = client.post(f"/work-orders/{sr.work_order.number}/complete/", {"resolution": "Replaced the flow sensor"}, **HX)  # Mark completed
+        assert r.status_code == 200
     assert len(mailoutbox) == 1
     m, today = mailoutbox[0], date.today()
     assert m.to == [EMAIL] and m.subject == f"Request {sr.number} done: CE-10001, ICU ventilator"

@@ -80,9 +80,12 @@ def _on_completed(wo: WorkOrder, as_of):
     elif wo.type == WoType.REPAIR and (asset.status == AssetStatus.IN_REPAIR or (asset.status == AssetStatus.OUT_OF_SERVICE and wo.tagged_out)):
         # Back in service only when this repair is why it was out: tagged out with the request (the portal's checkbox), or marked in
         # repair. A device out of service for another reason (awaiting incoming inspection, quarantined by hand) stays out until
-        # someone returns it from its drawer.
-        asset.status = AssetStatus.IN_SERVICE
-        asset.save(update_fields=["status", "updated_at"])
+        # someone returns it from its drawer. And only when no other open repair holds it out too (a second tagged-out request, or
+        # the repair a failed PM opened: apps.workorders.completion): the last of them returns it.
+        held = WorkOrder.objects.filter(asset=asset, type=WoType.REPAIR, status__in=OPEN_STATUSES, tagged_out=True).exclude(pk=wo.pk)
+        if not held.exists():
+            asset.status = AssetStatus.IN_SERVICE
+            asset.save(update_fields=["status", "updated_at"])
 
 
 @transaction.atomic

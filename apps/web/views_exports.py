@@ -15,7 +15,7 @@ import re
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 
-from django.db.models import Count, DecimalField, ExpressionWrapper, F, FilteredRelation, OuterRef, Q, Subquery, Sum
+from django.db.models import Count, DecimalField, F, FilteredRelation, OuterRef, Q, Subquery, Sum
 from django.shortcuts import get_object_or_404
 
 from apps.accounts.models import Level, Module
@@ -25,7 +25,7 @@ from apps.credentials.models import Technician
 from apps.equipment.models import Asset, AssetStatus
 from apps.equipment.services import FleetBucket, filter_assets
 from apps.recalls.services import alert_label
-from apps.workorders.models import OPEN_STATUSES, LaborLine, PartLine, WorkOrder
+from apps.workorders.models import LABOR_AMOUNT, OPEN_STATUSES, PART_AMOUNT, LaborLine, PartLine, WorkOrder
 from apps.workorders.services import filter_work_orders
 
 from .decorators import web_view
@@ -112,8 +112,8 @@ def workorders_csv(request):
     f = parse_work_order_filters(request.GET, {str(pk) for pk in Technician.objects.filter(is_active=True).values_list("pk", flat=True)})
     wos = (filter_work_orders(f).prefetch_related(None).select_related("alert").defer("alert__raw")  # the notice's source record is not exported
            .annotate(labor_hours=_line_sum(LaborLine, "hours"),
-                     labor_amount=_line_sum(LaborLine, ExpressionWrapper(F("hours") * F("rate"), output_field=AMOUNT)),
-                     parts_amount=_line_sum(PartLine, ExpressionWrapper(F("quantity") * F("unit_cost"), output_field=AMOUNT))))
+                     labor_amount=_line_sum(LaborLine, LABOR_AMOUNT),  # each line to the cent, as the drawer and the print
+                     parts_amount=_line_sum(PartLine, PART_AMOUNT)))
 
     def rows():
         for w in wos.iterator(chunk_size=CHUNK):

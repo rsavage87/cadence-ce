@@ -20,14 +20,14 @@ from apps.contracts.models import Contract, ContractType
 from apps.equipment.models import Asset, SupportType
 from apps.pm.dates import month_bounds
 from apps.reports.services import ANNUALIZE, TRAILING_DAYS, _shift_month, cost_of_service
-from apps.workorders.models import LaborLine, PartLine, WoType
+from apps.workorders.models import LABOR_AMOUNT, PART_AMOUNT, LaborLine, PartLine, WoType
 
 BENCHMARK_PCT = 6.0  # the mock's red marker: midpoint of the 5 to 7% cost-of-service benchmark
 SPEND_MONTHS = 6
 
 _MONEY = DecimalField(max_digits=14, decimal_places=2)
-_LABOR = Sum(F("hours") * F("rate"), output_field=_MONEY)
-_PARTS = Sum(F("quantity") * F("unit_cost"), output_field=_MONEY)
+_LABOR = Sum(LABOR_AMOUNT, output_field=_MONEY)  # each line to the cent (apps.workorders.models)
+_PARTS = Sum(PART_AMOUNT, output_field=_MONEY)
 
 
 def _completed_cost_by(group: str | Expression, today: date, since: date, wo_type: str | None = None) -> dict:

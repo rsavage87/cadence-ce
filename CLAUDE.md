@@ -23,7 +23,7 @@ HTMX for the web UI (`apps/web`, via django-htmx), pytest. Tests run on SQLite a
    is not access control.
 5. **State changes go through services** (`apps/workorders/services.py`, `apps/pm/services.py`, `apps/contracts/services.py`,
    `apps/accounts/services.py`, `apps/credentials/services.py`, `apps/recalls/services.py`, `apps/facility/services.py`, `apps/equipment/services.py`,
-   `apps/pm/aem.py`, `apps/pm/procedures.py`), never by setting fields in a
+   `apps/pm/aem.py`, `apps/pm/procedures.py`, `apps/workorders/costs.py`, `apps/workorders/completion.py`), never by setting fields in a
    view or calling model helpers like
    `Contract.add_assets` directly. Services validate, write status history, and keep the asset in sync.
 6. **No PHI by design.** The portal never asks for patient identifiers. Don't add free-text fields that invite them.
@@ -74,7 +74,12 @@ pytest
   change goes through `_save_model`, which locks the row and tells `apps.pm.aem.model_changed`), `permissions.py` (Edit to add, edit,
   tag out, and add or edit models; Approve to retire or reinstate, and to score a model or change its risk class)
 - `apps/contracts` Contract with add/remove device operations and cost allocation; `services.py` for create/update/renew/delete, status, filters, KPI summary
-- `apps/workorders` WorkOrder and lines, ServiceRequest, lifecycle services
+- `apps/workorders` WorkOrder and lines, ServiceRequest, lifecycle services; `costs.py` the only writer of labor and part lines (rates from
+  Settings, a different rate at Approve, nothing on a closed or cancelled work order); `completion.py` completing with the resolution
+  and a PM's step results (`complete_work_order`: the screen's Mark completed and the API's transition to completed both use it; a
+  failed PM opens or names its repair and holds the device out until that repair is done); a line's cost is hours × rate or
+  quantity × unit cost to the cent, half up (`LABOR_AMOUNT`, `PART_AMOUNT`, `line_cents` in `models.py`), wherever lines are added up;
+  `permissions.py` (Edit to record labor, parts, and completion; Approve to assign, close, or charge a different rate)
 - `apps/pm` PmProcedure, PM generation, on-time math, month helpers; `schedule.py` the PM schedule's read models (month calendar,
   a day's devices, suggested technicians, `planned_technicians` (who does each device due on a day: the day panel, route sheets, and
   the device drawer's PM tab share it), 30-day outlook, 7-day workload, PM library); `services.create_pm_work_orders_for_day` and
@@ -84,7 +89,9 @@ pytest
   `permissions.py` (View to see; Edit for procedures and AEM proposals; Approve to create a day's work orders and to decide or end
   AEM; Auto-assign week also needs work-order assign)
 - `apps/recalls` Alert (global), AlertMatch (per tenant), matching, openFDA importer; `services.py` dispositions and recall work-order batches,
-  `permissions.py` (review at Edit, close/reopen at Approve). ECRI import is deferred (license).
+  `permissions.py` (review at Edit, close/reopen at Approve); `feeds.py` the openFDA fetch shared by `import_openfda` and the Recalls
+  screen's Check FDA feed (one fetch per 15 minutes for everyone, kept in apps.jobs' `JobRun`; a check matches only its own facility).
+  ECRI import is deferred (license).
 - `apps/credentials` Technician, Credential, qualification and coverage services, credential add/renew/sign-off/remove
 - `apps/portal` public request form (`/r/<tenant-slug>/`); `notifications.py` the requester's confirmation and done emails (only at the
   facility's work email domains, never the problem text)
@@ -95,7 +102,7 @@ pytest
 - `apps/reports` report emails (`ReportSubscription`, `subscriptions.py`, the daily `send_report_emails`; self-service only), overview KPIs, the Overview bundle (`overview_page`), attention list, nav counts, `cost_of_service`; the eight Reports
   (`REPORTS` catalog and `run_report` in `services.py`; the numbers in `cost.py`, `fleet.py`, `operations.py`, read-only, `today` passed in)
 - `apps/web` HTMX UI: one views/urls/forms module per screen (`views.py` Overview, Equipment, Work orders; `views_contracts.py`;
-  `views_users.py` Users and Roles tabs; `views_account.py` sign-in, password reset and change; `views_invite.py` accepting an invitation; `views_credentials.py`; `views_recalls.py`; `views_reports.py` with the CSV download; `views_settings.py`; `views_pm.py` with `pm_panels.py` for its lower panels; `views_pm_week.py` Auto-assign week; `views_models.py` the device model drawer (PM program tab, Add model, Edit details, risk score) with `views_procedures.py` and `views_aem.py` for its Procedure and AEM tabs; `views_exports.py` the list CSVs; `views_print.py` asset labels and the
+  `views_users.py` Users and Roles tabs; `views_account.py` sign-in, password reset and change; `views_invite.py` accepting an invitation; `views_credentials.py`; `views_recalls.py`; `views_reports.py` with the CSV download; `views_settings.py`; `views_pm.py` with `pm_panels.py` for its lower panels; `views_pm_week.py` Auto-assign week; `views_wo_costs.py` and `views_wo_complete.py` the work order drawer's labor and parts and its Mark completed; `views_models.py` the device model drawer (PM program tab, Add model, Edit details, risk score) with `views_procedures.py` and `views_aem.py` for its Procedure and AEM tabs; `views_exports.py` the list CSVs; `views_print.py` asset labels and the
   work-order print, with `qr.py`; `views_print_sheets.py` PM route sheets and report PDFs), templates,
   `charts.py` (SVG geometry: line, stacked bars, hbars with a benchmark marker, donut), `overview.py` and `reports_*.py` (chart geometry
   and display values for the Overview and the Reports; services never import them), `htmx.py` helpers, shell

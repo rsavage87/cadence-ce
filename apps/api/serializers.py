@@ -71,7 +71,7 @@ class WorkOrderSerializer(serializers.ModelSerializer):
                   "problem", "resolution", "estimated_hours", "tagged_out", "is_late", "total_cost", "labor_lines", "part_lines", "updated_at",
                   "pm_result", "checklist_results", "follow_up_of"]
         # Slice 15: what a completion recorded (transition to completed, apps.workorders.completion) is read here, never written.
-        read_only_fields = ["number", "status", "started_on", "completed_on", "pm_result", "checklist_results", "follow_up_of"]
+        read_only_fields = ["number", "status", "started_on", "completed_on", "resolution", "pm_result", "checklist_results", "follow_up_of"]
 
 
 class ContractSerializer(serializers.ModelSerializer):

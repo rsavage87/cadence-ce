@@ -10,7 +10,7 @@ KPI math for the Overview. Definitions match the mock so the demo and the produc
 """
 from datetime import date, timedelta
 
-from django.db.models import Count, DecimalField, F, Q, Sum
+from django.db.models import Count, DecimalField, Q, Sum
 from django.db.models.functions import Coalesce, TruncMonth
 
 from apps.contracts.models import Contract
@@ -20,7 +20,7 @@ from apps.facility.services import kpi_targets
 from apps.pm.dates import month_bounds
 from apps.pm.services import overdue_assets, pm_on_time_rate, pm_on_time_series
 from apps.recalls.models import AlertMatch
-from apps.workorders.models import OPEN_STATUSES, LaborLine, PartLine, Priority, WorkOrder, WoStatus, WoType
+from apps.workorders.models import LABOR_AMOUNT, OPEN_STATUSES, PART_AMOUNT, LaborLine, PartLine, Priority, WorkOrder, WoStatus, WoType
 from apps.workorders.services import PRIORITY_RANK, unassigned_portal_requests
 
 TRAILING_DAYS = 182  # the "6 months" every service-cost figure annualizes from (365/182): the Overview tile and the cost reports agree
@@ -81,11 +81,17 @@ def cost_of_service(today: date, acquisition: float | None = None) -> dict:
     since = today - timedelta(days=TRAILING_DAYS)
     money = DecimalField(max_digits=14, decimal_places=2)
     by_vendor = {False: 0.0, True: 0.0}
-    for model, expr in ((LaborLine, Sum(F("hours") * F("rate"), output_field=money)), (PartLine, Sum(F("quantity") * F("unit_cost"), output_field=money))):
-        rows = (model.objects.filter(work_order__completed_on__gte=since, work_order__completed_on__lte=today)
-                .order_by().values("work_order__vendor_service").annotate(v=expr))
-        for row in rows:
-            by_vendor[bool(row["work_order__vendor_service"])] += float(row["v"] or 0)
+    # Labor by the line: a line with a technician is in-house time, one without is the vendor's (apps.workorders.costs), whatever the
+    # work order's assignment says now. Parts by the work order.
+    amount = LABOR_AMOUNT  # each line to the cent (apps.workorders.models)
+    labor = LaborLine.objects.filter(work_order__completed_on__gte=since, work_order__completed_on__lte=today).aggregate(
+        in_house=Sum(amount, filter=Q(technician__isnull=False), output_field=money), vendor=Sum(amount, filter=Q(technician__isnull=True), output_field=money))
+    by_vendor[False] += float(labor["in_house"] or 0)
+    by_vendor[True] += float(labor["vendor"] or 0)
+    parts = (PartLine.objects.filter(work_order__completed_on__gte=since, work_order__completed_on__lte=today)
+             .order_by().values("work_order__vendor_service").annotate(v=Sum(PART_AMOUNT, output_field=money)))
+    for row in parts:
+        by_vendor[bool(row["work_order__vendor_service"])] += float(row["v"] or 0)
     in_house, vendor_tm = by_vendor[False] * ANNUALIZE, by_vendor[True] * ANNUALIZE
     contracts = float(Contract.objects.filter(end_on__gte=today).aggregate(s=Sum("annual_cost"))["s"] or 0)
     total = in_house + vendor_tm + contracts

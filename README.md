@@ -95,6 +95,14 @@ into life support leaves it. Ending an AEM, or approving a shorter interval, bri
 every PM due in the next 7 days on a credentialed technician's plate, as the schedule's plan suggests; it needs PM Approve and
 the right to assign work orders.
 
+## Recording the work
+A work order's drawer records the time spent (Log time: who, when, hours, at the Settings labor rate) and the parts used (Add part),
+and its Cost section adds them up; reports and the Overview use the same figures. Mark completed asks what was done; on a PM it
+records each checklist step as pass, fail, or not applicable, with the readings the procedure asks for, and the overall result.
+A failed PM opens a repair work order and keeps the device out of service until that repair is done. The work-order print and the
+device's PM history show the recorded results. Recalls' Check FDA feed fetches new FDA recall notices on demand (at most every 15
+minutes) and matches them to your inventory.
+
 ## Exports and printing
 Equipment, Work orders, and Contracts download as CSV with the filters on screen (Export), and a contract's covered devices
 from its drawer (Device list); every report downloads as CSV too. The files open cleanly in Excel (UTF-8, ISO dates, plain

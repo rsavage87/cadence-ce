@@ -263,36 +263,49 @@ def _problem(pm: WorkOrder, snapshot: list[dict], resolution: str) -> str:
     return text + (f"\n{resolution}" if resolution else "")
 
 
+# A failed PM holds the device out of service until its repair is done: tagged out when it is in service, and kept out when it is
+# already out (another tagged-out repair, or in repair), so finishing that other repair cannot put it back in use
+# (services._on_completed returns a device only when no other open repair holds it). On loan, missing, or retired: nothing to hold.
+HOLDABLE = (AssetStatus.IN_SERVICE, AssetStatus.OUT_OF_SERVICE, AssetStatus.IN_REPAIR)
+
+
 def _tag_out_on(repair: WorkOrder, asset, pm: WorkOrder, by) -> None:
-    """Tag the device out on a repair already open: that repair is now why it is out (completing it returns the device, as for a
-    repair opened with the tag-out), and the device moves through equipment's status rules."""
+    """Hold the device out on a repair already open: that repair is now why it is out (completing it returns the device, as for a
+    repair opened with the tag-out). A device in service moves through equipment's status rules; one already out stays out."""
     from apps.equipment.services import set_status  # equipment.services imports this app inside its functions; keep it one way
 
     repair.tagged_out = True
     repair.save(update_fields=["tagged_out", "updated_at"])
+    held = "tagged out of service" if asset.status == AssetStatus.IN_SERVICE else "held out of service"
     WorkOrderStatusHistory.objects.create(tenant=repair.tenant, work_order=repair, from_status=repair.status, to_status=repair.status, changed_by=by,
-                                          note=f"Device tagged out of service: PM {pm.number} failed")
-    set_status(asset, AssetStatus.OUT_OF_SERVICE, by=by, note=f"Tagged out: PM {pm.number} failed")
-    asset.__dict__.pop("_change_reason", None)  # the PM's own save of the device's dates comes next; it is not the tag-out
+                                          note=f"Device {held}: PM {pm.number} failed")
+    if asset.status == AssetStatus.IN_SERVICE:
+        set_status(asset, AssetStatus.OUT_OF_SERVICE, by=by, note=f"Tagged out: PM {pm.number} failed")
+        asset.__dict__.pop("_change_reason", None)  # the PM's own save of the device's dates comes next; it is not the tag-out
 
 
 def _record_failure(pm: WorkOrder, asset, snapshot, resolution: str, *, open_repair: bool, tag_out: bool, by, today: date) -> Completion:
-    """Open the follow-up repair (or record the failure on the repair already open), and tag the device out when asked."""
-    tag_out = tag_out and asset.status == AssetStatus.IN_SERVICE
+    """Open the follow-up repair (or record the failure on the repair already open), and hold the device out when asked (HOLDABLE).
+    Completion.tagged_out says whether the device was in service and is now out."""
+    hold = tag_out and asset.status in HOLDABLE
+    newly_out = hold and asset.status == AssetStatus.IN_SERVICE
     existing = own_open_repair(pm) or (None if open_repair else other_open_repair(pm))
     if existing is not None:
         failed = "; ".join(_failed_lines(snapshot)) or resolution
         services.add_note(existing, f"PM {pm.number} failed on {today:%b} {today.day}, {today.year}: {failed}"[:services.NOTE_MAX_LENGTH], by=by)
-        if tag_out:
+        if existing.follow_up_of_id is None:  # the PM and the repair its failure is on name each other (drawer, print, PM history)
+            existing.follow_up_of = pm
+            existing.save(update_fields=["follow_up_of", "updated_at"])
+        if hold:
             _tag_out_on(existing, asset, pm, by)
-        return Completion(work_order=pm, repair=existing, tagged_out=tag_out)
+        return Completion(work_order=pm, repair=existing, tagged_out=newly_out)
     repair = services.create_work_order(asset=asset, type=WoType.REPAIR, priority=follow_up_priority(asset.device_model),
                                         problem=_problem(pm, snapshot, resolution), requester=_requester(by, pm), opened_on=today, created_by=by,
-                                        tag_out=tag_out, follow_up_of=pm)
+                                        tag_out=hold, follow_up_of=pm)
     tech = follow_up_technician(pm, asset, today)
     if tech is not None:
         services.assign(repair, technician=tech, by=by)
-    return Completion(work_order=pm, follow_up=repair, repair=repair, tagged_out=tag_out)
+    return Completion(work_order=pm, follow_up=repair, repair=repair, tagged_out=newly_out)
 
 
 def _default_resolution(pm_result: str, procedure, snapshot: list[dict], done: Completion) -> str:

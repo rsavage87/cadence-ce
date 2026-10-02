@@ -1,7 +1,10 @@
 from datetime import date
+from decimal import ROUND_HALF_UP, Decimal
 
 from django.conf import settings
 from django.db import models
+from django.db.models import DecimalField, F
+from django.db.models.functions import Round
 from simple_history.models import HistoricalRecords
 
 from apps.core.models import Sequence, TenantModel
@@ -129,13 +132,24 @@ class WorkOrder(TenantModel):
         return (self.turnaround_days or 0) if self.type == WoType.REPAIR else 0
 
     def labor_cost(self) -> float:
-        return sum(float(line.hours) * float(line.rate) for line in self.labor_lines.all())
+        return float(sum((line_cents(line.hours * line.rate) for line in self.labor_lines.all()), Decimal(0)))
 
     def parts_cost(self) -> float:
-        return sum(float(p.quantity) * float(p.unit_cost) for p in self.part_lines.all())
+        return float(sum((line_cents(p.quantity * p.unit_cost) for p in self.part_lines.all()), Decimal(0)))
 
     def total_cost(self) -> float:
         return self.labor_cost() + self.parts_cost()
+
+
+# One rule for what a labor or part line costs, wherever lines are added up (the drawer, the print, the CSV, the reports, the
+# Overview): hours × rate and quantity × unit cost, each line to the cent (half up) before any total, so every screen agrees.
+LINE_MONEY = DecimalField(max_digits=14, decimal_places=2)
+LABOR_AMOUNT = Round(F("hours") * F("rate"), 2, output_field=LINE_MONEY)
+PART_AMOUNT = Round(F("quantity") * F("unit_cost"), 2, output_field=LINE_MONEY)
+
+
+def line_cents(amount) -> Decimal:
+    return Decimal(amount).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 class WorkOrderStatusHistory(TenantModel):

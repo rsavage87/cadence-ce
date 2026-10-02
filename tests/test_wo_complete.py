@@ -382,7 +382,8 @@ def test_a_failure_can_be_recorded_on_the_repair_already_open(ctx, vent, vent_pm
     assert note.text == f"PM {vent_pm.number} failed on {TODAY:%b} {TODAY.day}, {TODAY.year}: 2. Leakage current (reading 42 µA)"
     repair.refresh_from_db()
     vent.refresh_from_db()
-    assert repair.tagged_out and repair.follow_up_of is None and vent.status == AssetStatus.OUT_OF_SERVICE
+    # The repair the failure is on names the PM (the drawer, the print, and the PM history link them both ways).
+    assert repair.tagged_out and repair.follow_up_of == vent_pm and vent.status == AssetStatus.OUT_OF_SERVICE
     assert repair.status_history.last().note == f"Device tagged out of service: PM {vent_pm.number} failed"
     assert vent_pm.status_history.last().note == f"PM failed; recorded on open repair {repair.number}"
     assert vent_pm.resolution == f"PM failed on step 2; recorded on repair {repair.number}."

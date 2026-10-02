@@ -163,7 +163,9 @@ def _check_message(check: feeds.Check) -> str:
     """The mock's "Checked ECRI and FDA feeds: no new alerts", for the one feed that is connected."""
     matches = f"{_plural(check.matches, 'new match', 'new matches')} for your inventory"
     if check.result is None:
-        held = f"The FDA recall feed was checked at {feeds.clock(check.checked_at)}; it can be checked again at {feeds.clock(check.again_at)}."
+        tried = (f"The FDA recall feed did not answer at {feeds.clock(check.checked_at)}" if check.last_failed
+                 else f"The FDA recall feed was checked at {feeds.clock(check.checked_at)}")
+        held = f"{tried}; it can be checked again at {feeds.clock(check.again_at)}."
         return f"{held} {matches[0].upper()}{matches[1:]}." if check.matches else f"{held} No new matches."
     r = check.result
     if r.new:

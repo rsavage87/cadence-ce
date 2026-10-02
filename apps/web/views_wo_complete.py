@@ -70,7 +70,20 @@ def _offers(wo) -> dict:
     own = completion.own_open_repair(wo)
     other = None if own else completion.other_open_repair(wo)
     return {"own_repair": own, "other_repair": other, "offer_open_repair": other is not None,
-            "offer_tag_out": wo.asset.status == AssetStatus.IN_SERVICE}
+            "offer_tag_out": wo.asset.status in completion.HOLDABLE, "already_out": wo.asset.status != AssetStatus.IN_SERVICE}
+
+
+def _revised(form, kwargs) -> CompleteForm:
+    """The checklist was revised while the modal was open: show the steps as they are now, unanswered, with their signature (so the
+    next save is checked against what is on screen), keeping the resolution, the result, and the options."""
+    data = form.data.copy()
+    for key in [k for k in data if k.startswith(("step_", "reading_"))]:
+        del data[key]
+    data["signature"] = completion.checklist_signature(kwargs["steps"])
+    fresh = CompleteForm(data, **kwargs)
+    fresh.is_valid()
+    fresh._errors.setdefault("checklist", fresh.error_class()).extend(form.errors["checklist"])
+    return fresh
 
 
 def _form_kwargs(wo, steps, offers) -> dict:
@@ -140,5 +153,7 @@ def wo_complete(request, number):
     if done is None:
         wo = _get_wo(number)  # as it is now: a refusal for its state (completed meanwhile) re-renders as the blocker
         reason = completion.blocker(wo, today)
+        if not reason and "checklist" in form.errors:
+            form = _revised(form, kwargs)
         return _modal(request, wo, None if reason else form, steps=steps, offers=offers, reason=reason)
     return _saved(request, wo, done)  # the service refreshed wo

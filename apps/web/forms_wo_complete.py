@@ -28,6 +28,10 @@ class CompleteForm(forms.Form):
     open_repair = forms.BooleanField(required=False, initial=True)
     tag_out = forms.BooleanField(required=False, initial=True)
     signature = forms.CharField(required=False, widget=forms.HiddenInput)
+    # Which failed-PM options were on screen when the modal was filled in (the template posts these next to each checkbox): the
+    # device can change while the modal is open, and an option not shown was never declined.
+    shown_open_repair = forms.CharField(required=False)
+    shown_tag_out = forms.CharField(required=False)
 
     def __init__(self, *args, steps=(), is_pm=False, offer_open_repair=False, offer_tag_out=False, **kwargs):
         """`steps`: the checklist the modal shows, as completion.checklist_of gives it. The two offers say whether the failed-PM
@@ -51,7 +55,8 @@ class CompleteForm(forms.Form):
         """An unbound form showing `params` (the modal's values, sent back to re-render it) with every unanswered step set to
         `fill`: "Mark the rest pass" without saving anything."""
         form = cls(**kwargs)
-        initial = {name: params.get(name, "") for name in form.fields if name not in ("open_repair", "tag_out", "signature")}
+        initial = {name: params.get(name, "") for name in form.fields
+                   if name not in ("open_repair", "tag_out", "signature", "shown_open_repair", "shown_tag_out")}
         initial.update(open_repair="open_repair" in params, tag_out="tag_out" in params)
         if params.get("signature"):  # the checklist the values were typed against, so a revision since is still caught on save
             initial["signature"] = params["signature"]
@@ -93,8 +98,8 @@ class CompleteForm(forms.Form):
         if self.is_pm:
             kwargs.update(pm_result=d["pm_result"],
                           results=[{"result": d[f"step_{n}"], "reading": d[f"reading_{n}"]} for n in range(1, len(self.steps) + 1)],
-                          open_repair=d["open_repair"] if self.offer_open_repair else True,
-                          tag_out=d["tag_out"] if self.offer_tag_out else False)
+                          open_repair=d["open_repair"] if self.offer_open_repair and d["shown_open_repair"] else True,
+                          tag_out=d["tag_out"] if self.offer_tag_out and d["shown_tag_out"] else self.offer_tag_out)
         return kwargs
 
     def add_service_errors(self, error):

@@ -12,7 +12,7 @@ from apps.equipment.models import Asset, AssetStatus, DeviceModel, RiskClass
 from apps.facility.services import compliance_targets
 from apps.pm.dates import month_bounds
 from apps.reports.services import TRAILING_DAYS
-from apps.workorders.models import LaborLine, PartLine, WorkOrder, WoStatus, WoType
+from apps.workorders.models import LABOR_AMOUNT, PART_AMOUNT, LaborLine, PartLine, WorkOrder, WoStatus, WoType
 
 CLASS_ORDER = (RiskClass.LIFE_SUPPORT, RiskClass.HIGH, RiskClass.MEDIUM, RiskClass.LOW)
 MTBF_LIMIT = 12
@@ -90,7 +90,7 @@ def report_mtbf(today: date) -> dict:
         # The same repairs as `done` (type, window, not cancelled, completed), reached from the lines so no work order is instantiated.
         line_filter = {"work_order__type": WoType.REPAIR, "work_order__opened_on__gte": since, "work_order__opened_on__lte": today,
                        "work_order__completed_on__isnull": False}
-        for model, expr in ((LaborLine, Sum(F("hours") * F("rate"), output_field=money)), (PartLine, Sum(F("quantity") * F("unit_cost"), output_field=money))):
+        for model, expr in ((LaborLine, Sum(LABOR_AMOUNT, output_field=money)), (PartLine, Sum(PART_AMOUNT, output_field=money))):
             rows = (model.objects.filter(**line_filter).exclude(work_order__status=WoStatus.CANCELLED)
                     .order_by().values("work_order__asset__device_model").annotate(v=expr))
             for row in rows:
