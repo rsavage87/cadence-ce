@@ -156,9 +156,13 @@ def test_technician_moves_work_but_cannot_close_it(client, signed_in, wo, techs)
     assign(wo, technician=techs["dana"])
     r = client.post(f"/work-orders/{wo.number}/status/", {"to": "in_progress"}, **HX)
     assert r.status_code == 200 and "wo-changed" in r["HX-Trigger"]
-    client.post(f"/work-orders/{wo.number}/status/", {"to": "completed"}, **HX)
+    # Completing goes through Mark completed (the resolution), never the plain status buttons.
+    r = client.post(f"/work-orders/{wo.number}/status/", {"to": "completed"}, **HX)
     wo.refresh_from_db()
-    assert wo.status == WoStatus.COMPLETED and wo.completed_on == date.today()
+    assert wo.status == WoStatus.IN_PROGRESS and "Complete WO-" in r["HX-Trigger"] and "with Mark completed" in r["HX-Trigger"]
+    client.post(f"/work-orders/{wo.number}/complete/", {"resolution": "Replaced the flow sensor; tested OK"}, **HX)
+    wo.refresh_from_db()
+    assert wo.status == WoStatus.COMPLETED and wo.completed_on == date.today() and wo.resolution == "Replaced the flow sensor; tested OK"
     assert client.post(f"/work-orders/{wo.number}/status/", {"to": "closed"}, **HX).status_code == 403
     assert "Review and close" not in client.get(f"/work-orders/{wo.number}/", **HX).content.decode()
 
@@ -166,15 +170,16 @@ def test_technician_moves_work_but_cannot_close_it(client, signed_in, wo, techs)
 def test_manager_closes_work(client, signed_in, wo, techs):
     signed_in("manager")
     assign(wo, technician=techs["dana"])
-    for to in ("in_progress", "completed", "closed"):
-        client.post(f"/work-orders/{wo.number}/status/", {"to": to}, **HX)
+    client.post(f"/work-orders/{wo.number}/status/", {"to": "in_progress"}, **HX)
+    client.post(f"/work-orders/{wo.number}/complete/", {"resolution": "Replaced the flow sensor"}, **HX)
+    client.post(f"/work-orders/{wo.number}/status/", {"to": "closed"}, **HX)
     wo.refresh_from_db()
     assert wo.status == WoStatus.CLOSED
 
 
 def test_illegal_transition_is_reported_not_applied(client, signed_in, wo):
     signed_in("manager")
-    r = client.post(f"/work-orders/{wo.number}/status/", {"to": "completed"}, **HX)
+    r = client.post(f"/work-orders/{wo.number}/status/", {"to": "closed"}, **HX)
     wo.refresh_from_db()
     assert r.status_code == 200 and wo.status == WoStatus.OPEN and "Cannot move" in r["HX-Trigger"]
 
@@ -263,8 +268,12 @@ def test_api_applies_the_same_close_and_assign_rules(client, signed_in, wo, tech
     signed_in("technician")
     assert client.post(f"/api/v1/work-orders/{wo.id}/assign/", {"technician": str(techs["dana"].id)}).status_code == 403
     assign(wo, technician=techs["dana"])
-    for to in ("in_progress", "completed"):
-        assert client.post(f"/api/v1/work-orders/{wo.id}/transition/", {"status": to}).status_code == 200
+    assert client.post(f"/api/v1/work-orders/{wo.id}/transition/", {"status": "in_progress"}).status_code == 200
+    # Completing takes the resolution, as the drawer's Mark completed does (apps.workorders.completion).
+    r = client.post(f"/api/v1/work-orders/{wo.id}/transition/", {"status": "completed"})
+    assert r.status_code == 400 and "resolution" in r.json()
+    r = client.post(f"/api/v1/work-orders/{wo.id}/transition/", {"status": "completed", "resolution": "Replaced the flow sensor"})
+    assert r.status_code == 200 and r.json()["resolution"] == "Replaced the flow sensor" and r.json()["status"] == "completed"
     assert client.post(f"/api/v1/work-orders/{wo.id}/transition/", {"status": "closed"}).status_code == 403
     signed_in("manager")
     assert client.post(f"/api/v1/work-orders/{wo.id}/transition/", {"status": "closed"}).status_code == 200

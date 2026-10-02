@@ -27,8 +27,6 @@ from .models import (
 )
 
 URGENCY_TO_PRIORITY = {Urgency.CRITICAL: Priority.CRITICAL, Urgency.HIGH: Priority.HIGH, Urgency.NORMAL: Priority.NORMAL}
-IN_HOUSE_RATE = 82.0
-VENDOR_RATE = 215.0
 
 
 @transaction.atomic

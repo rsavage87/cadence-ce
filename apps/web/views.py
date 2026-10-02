@@ -250,6 +250,9 @@ def wo_status(request, number):
     if not wo_perms.can_transition(request.user, wo.status, to_status):
         raise PermissionDenied
     try:
+        if to_status == WoStatus.COMPLETED:
+            # Completing records the resolution and a PM's results: the drawer's Mark completed (views_wo_complete), never this.
+            raise ValidationError(f"Complete {wo.number} with Mark completed: it records what was done.")
         wo_services.change_status(wo, to_status, by=request.user)
         message = f"{wo.number}: {wo.get_status_display().lower()}"
     except ValidationError as e:

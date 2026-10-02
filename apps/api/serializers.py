@@ -68,8 +68,10 @@ class WorkOrderSerializer(serializers.ModelSerializer):
         model = WorkOrder
         fields = ["id", "number", "asset", "asset_tag", "type", "priority", "status", "source", "requester", "callback", "reported_location",
                   "assigned_to", "assigned_to_name", "vendor_service", "vendor_name", "opened_on", "due_on", "started_on", "completed_on",
-                  "problem", "resolution", "estimated_hours", "tagged_out", "is_late", "total_cost", "labor_lines", "part_lines", "updated_at"]
-        read_only_fields = ["number", "status", "started_on", "completed_on"]
+                  "problem", "resolution", "estimated_hours", "tagged_out", "is_late", "total_cost", "labor_lines", "part_lines", "updated_at",
+                  "pm_result", "checklist_results", "follow_up_of"]
+        # Slice 15: what a completion recorded (transition to completed, apps.workorders.completion) is read here, never written.
+        read_only_fields = ["number", "status", "started_on", "completed_on", "pm_result", "checklist_results", "follow_up_of"]
 
 
 class ContractSerializer(serializers.ModelSerializer):
@@ -142,4 +144,6 @@ class FacilitySettingsSerializer(serializers.Serializer):
     target_uptime_pct = serializers.DecimalField(max_digits=6, decimal_places=2, required=False)
     target_mttr_days = serializers.DecimalField(max_digits=6, decimal_places=2, required=False)
     repair_budget_monthly = serializers.DecimalField(max_digits=14, decimal_places=2, required=False, allow_null=True)
+    labor_rate = serializers.DecimalField(max_digits=14, decimal_places=2, required=False)  # slice 15; the service checks the range
+    vendor_labor_rate = serializers.DecimalField(max_digits=14, decimal_places=2, required=False)
     updated_at = serializers.DateTimeField(read_only=True, allow_null=True)

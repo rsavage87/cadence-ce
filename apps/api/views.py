@@ -35,7 +35,7 @@ from apps.reports.services import REPORTS, overview_kpis, report_meta, run_repor
 from apps.tenants.context import get_current_tenant
 from apps.workorders import permissions as wo_perms
 from apps.workorders import services as wo_services
-from apps.workorders.models import WorkOrder
+from apps.workorders.models import WorkOrder, WoStatus
 
 from . import serializers as s
 from .permissions import ModulePermission
@@ -235,6 +235,20 @@ class WorkOrderViewSet(TenantViewSet):
         to_status = request.data.get("status")
         if not wo_perms.can_transition(request.user, wo.status, to_status):
             raise PermissionDenied("Closing or reopening a closed work order needs Approve access.")
+        if to_status == WoStatus.COMPLETED:
+            # As the drawer's Mark completed: the resolution, and for a PM its result and one {"result", "reading"} per checklist step.
+            from apps.workorders.completion import complete_work_order
+
+            d = request.data
+            kwargs = {"resolution": d.get("resolution", ""), "pm_result": d.get("pm_result", ""), "results": d.get("results")}
+            for flag in ("open_repair", "tag_out"):
+                if flag in d:
+                    kwargs[flag] = str(d[flag]).lower() in ("1", "true", "on", "yes")
+            try:
+                complete_work_order(wo, by=request.user, **kwargs)
+            except ValidationError as e:
+                return Response(e.message_dict if hasattr(e, "error_dict") else {"detail": " ".join(e.messages)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(self.get_serializer(wo).data)
         try:
             wo_services.change_status(wo, to_status, by=request.user, note=request.data.get("note", ""))
         except (ValidationError, KeyError) as e:
