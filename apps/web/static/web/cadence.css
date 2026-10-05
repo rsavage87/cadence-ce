@@ -570,6 +570,14 @@ button.link{background:none;border:0;padding:0;font:inherit;font-size:12px;font-
 .wo-cost-add{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 #set-targets .set-sub{margin:16px 0 8px}
 /* Slice 20, part C: the Notifications page (the account menu) */
+/* One column as wide as the password page's and a little more; each switch row reads its name, then what it sends */
+.ntf-panel{max-width:620px}
+.note.ntf-panel{margin-bottom:14px}
+.ntf-where strong{color:var(--ink);font-weight:600;word-break:break-all}
+.ntf-rows .set-row{align-items:flex-start}
+.ntf-rows .set-row .tog{flex:none;margin-top:2px}
+.ntf-rows .ntf-name{color:var(--ink);font-weight:500}
+.ntf-rows .set-row.off .ntf-name{color:var(--ink-2)}
 
 /* Slice 15, part B: completing a work order (web/_wo_complete.html): pass / fail / N/A per step, the result, a failed PM's options */
 .wc-title{margin:0;font-size:13px;color:var(--ink)}

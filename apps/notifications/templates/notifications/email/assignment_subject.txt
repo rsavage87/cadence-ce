@@ -1,0 +1,1 @@
+{% autoescape off %}{% if count == 1 %}{% with w=work_orders.0 %}Assigned to you: {{ w.number }} · {{ w.tag }}, {{ w.description }} · due {{ w.due_on|date:"M j" }}{% endwith %}{% else %}Assigned to you: {{ count }} work orders at {{ facility }}{% endif %}{% endautoescape %}

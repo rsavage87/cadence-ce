@@ -1,0 +1,15 @@
+{% comment %}The Notifications page's switches (web/notifications.html). Each switch saves only itself as it is flipped (its own hx-post,
+   with the hidden 0 before it so an unticked box still posts a value), and the rows swap as one (#ntf-form); the ids let htmx put focus
+   back after the swap. A switch the user is not offered is shown off and disabled, with the reason.{% endcomment %}
+<div class="set-rows ntf-rows" id="ntf-form">
+  {% if refused %}<div class="note warn" role="status">{{ refused }}</div>{% else %}
+  {% for row in rows %}
+  <div class="set-row{% if not row.offered %} off{% endif %}{% if forloop.last %} last{% endif %}">
+    <span class="lbl"><span class="ntf-name" id="ntf-{{ row.kind }}-name">{{ row.label }}</span><span class="why" id="ntf-{{ row.kind }}-help">{{ row.help }}{% if not row.offered %} {{ not_offered }}{% elif row.kind == "assignments" and not is_technician %} Work is assigned to technicians, and your account is not linked to an active technician profile, so none comes to you yet.{% endif %}</span></span>
+    <label class="tog">
+      {% if row.offered %}<input type="hidden" id="ntf-{{ row.kind }}-off" name="{{ row.kind }}" value="0">{% endif %}<input type="checkbox" id="ntf-{{ row.kind }}" name="{{ row.kind }}" value="1" aria-labelledby="ntf-{{ row.kind }}-name" aria-describedby="ntf-{{ row.kind }}-help"{% if row.on %} checked{% endif %}{% if row.offered %} hx-post="{% url 'web:notifications' %}" hx-trigger="change" hx-include="#ntf-{{ row.kind }}-off" hx-target="#ntf-form" hx-swap="outerHTML" hx-sync="#ntf-form:replace"{% else %} disabled{% endif %}><span class="sw"></span>{% if row.on %}On{% else %}Off{% endif %}
+    </label>
+  </div>
+  {% endfor %}
+  {% endif %}
+</div>

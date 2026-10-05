@@ -12,6 +12,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import F, Q
 
 from apps.equipment.models import Asset, AssetStatus, RiskClass
+from apps.notifications import assignments
 from apps.workorders.models import OPEN_STATUSES, Priority, Source, WorkOrder, WoStatus, WoType
 from apps.workorders.services import create_work_order
 
@@ -65,7 +66,8 @@ def create_pm_work_orders_for_day(day: date, by=None, assign_to_technicians: boo
     (credentialed, least loaded; the same pick the day panel and the workload show, see schedule.suggestions_for_day),
     recorded like any assignment; devices nobody is
     credentialed for, or every device when the caller may not assign, are left unassigned for a manager. The day's devices are
-    locked first, so a double click, or Auto-assign week running at the same moment, cannot give a device two PM work orders."""
+    locked first, so a double click, or Auto-assign week running at the same moment, cannot give a device two PM work orders. Slice 20:
+    each technician given work is emailed once, listing all of it (apps.notifications.assignments.batch)."""
     from apps.workorders.services import assign
 
     from .schedule import day_devices, suggestions_for_day
@@ -76,12 +78,13 @@ def create_pm_work_orders_for_day(day: date, by=None, assign_to_technicians: boo
     needing = [a for a in devices if not a.has_open_pm]
     suggested = suggestions_for_day(day, needing, today) if assign_to_technicians else {}
     assigned = 0
-    for asset in needing:
-        wo = _create_pm(asset, today, by=by)
-        tech = suggested.get(asset.id)
-        if tech is not None:
-            assign(wo, technician=tech, by=by)
-            assigned += 1
+    with assignments.batch():  # slice 20: each technician gets one email listing their new PMs, once this commits
+        for asset in needing:
+            wo = _create_pm(asset, today, by=by)
+            tech = suggested.get(asset.id)
+            if tech is not None:
+                assign(wo, technician=tech, by=by)
+                assigned += 1
     return PmBatch(len(needing), assigned, len(devices) - len(needing))
 
 
@@ -229,20 +232,22 @@ def assign_week(*, by=None, today: date | None = None) -> WeekAssignment:
     generate_pm creates, or with a deactivated technician) is assigned to the suggested technician; one with the vendor or an active
     technician is left alone. Nobody credentialed: the work order is created if missing and left unassigned. Assignments are recorded
     like any other (workorders.services.assign). The planner lock is taken first (lock_planner), so a second request (a double click)
-    waits, then finds everything on someone's plate and does nothing. Returns what was done."""
+    waits, then finds everything on someone's plate and does nothing. Slice 20: each technician given work is emailed once, listing
+    all of it (apps.notifications.assignments.batch). Returns what was done."""
     from apps.workorders.services import assign
 
     today = today or date.today()
     lock_planner()
     result, steps = _week_steps(today)
     waiting = _first_open_pms([asset.id for asset, w, tech in steps if w is not None and tech is not None])
-    for asset, w, tech in steps:
-        if w is None:
-            wo = _create_pm(asset, today, by=by)
-        else:
-            wo = waiting.get(asset.id)  # None only if it was closed a moment ago, after the plan was read
-        if wo is not None and tech is not None:
-            assign(wo, technician=tech, by=by)
+    with assignments.batch():  # slice 20: each technician gets one email listing the week's PMs now theirs, once this commits
+        for asset, w, tech in steps:
+            if w is None:
+                wo = _create_pm(asset, today, by=by)
+            else:
+                wo = waiting.get(asset.id)  # None only if it was closed a moment ago, after the plan was read
+            if wo is not None and tech is not None:
+                assign(wo, technician=tech, by=by)
     return result
 
 

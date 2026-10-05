@@ -1,0 +1,26 @@
+{% extends "web/base.html" %}
+{% block title %}Notifications{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Notifications</h1>
+    <p class="sub">The emails Cadence CE sends you about your own work. Only you choose them, and they go only to you.</p>
+  </div>
+</div>
+{% if refused %}
+<div class="note warn ntf-panel" role="status">{{ refused }}</div>
+{% else %}
+{% if email %}
+<div class="note ntf-panel ntf-where">Emails go to <strong>{{ email }}</strong>, your account's address.</div>
+{% else %}
+<div class="note warn ntf-panel ntf-where" role="status">Your account has no email address, so Cadence CE cannot email you. Ask whoever manages Users and access to add one; the choices below apply once it is there.</div>
+{% endif %}
+<div class="panel ntf-panel" id="ntf">
+  <div class="panel-h"><h2>Emails</h2><span class="sub">Changes save as you make them</span></div>
+  <div class="panel-b">
+    {% include "web/_notifications_form.html" %}
+    <div class="hint">These emails never include what was reported on a work order or who reported it: open the work order in Cadence CE to read it.</div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

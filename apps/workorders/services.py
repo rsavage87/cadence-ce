@@ -1,5 +1,10 @@
 """
 Work order lifecycle. Views and the API call these; they never change status fields directly.
+
+Slice 20: assigning work to a technician (assign, or create_work_order with assigned_to) announces it through
+apps.notifications.assignments, which emails the technician's account once the transaction commits (their choice, at most once per
+work order, never the problem text). Callers that assign many at once wrap the loop in assignments.batch(), so each technician gets one
+email listing them all.
 """
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -9,6 +14,7 @@ from django.db import transaction
 from django.db.models import Case, Q, Value, When
 
 from apps.equipment.models import AssetStatus
+from apps.notifications import assignments
 from apps.pm.dates import add_months
 
 from .models import (
@@ -45,6 +51,8 @@ def create_work_order(*, asset, type, priority, problem, requester="", source=So
     if tag_out and asset.status == AssetStatus.IN_SERVICE:
         asset.status = AssetStatus.OUT_OF_SERVICE
         asset.save(update_fields=["status", "updated_at"])
+    if assigned_to is not None and not vendor_service:
+        assignments.announce(wo, assigned_to, by=created_by)  # slice 20: the technician is emailed once this commits
     return wo
 
 
@@ -112,6 +120,8 @@ def assign(wo: WorkOrder, technician=None, vendor_name: str = "", by=None) -> Wo
         note = f"Assigned to {technician.name}" + ("" if q.ok else " (override: not credentialed for this device)")
     wo.save(update_fields=["vendor_service", "vendor_name", "assigned_to", "updated_at"])
     WorkOrderStatusHistory.objects.create(tenant=wo.tenant, work_order=wo, from_status=wo.status, to_status=wo.status, changed_by=by, note=note)
+    if technician is not None and not vendor_name:
+        assignments.announce(wo, technician, by=by)  # slice 20: emailed once this commits, at most once per work order and person
     return wo
 
 

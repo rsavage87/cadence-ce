@@ -1,0 +1,15 @@
+{% autoescape off %}Hello {{ name|default:email }},
+
+{% if count == 1 %}A work order at {{ facility }} is assigned to you in Cadence CE.{% else %}{{ count }} work orders at {{ facility }} are assigned to you in Cadence CE.{% endif %}
+{% for w in work_orders %}
+{{ w.number }} · {{ w.type }} · {{ w.priority }} priority
+Device: {{ w.tag }} · {{ w.description }}
+Department: {{ w.department }}
+Due: {{ w.due_on|date:"l, M j, Y" }}
+Open it: {{ w.url }}
+{% endfor %}
+This email does not repeat what was reported. Open the work order in Cadence CE to read it (you may be asked to sign in), and please keep patient information out of any reply.
+
+Work orders assigned to you are emailed to {{ email }}. To stop these emails, turn off "Work orders assigned to me" on your Notifications page:
+{{ preferences_url }}
+{% endautoescape %}
