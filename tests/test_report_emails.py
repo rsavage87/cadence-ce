@@ -169,12 +169,14 @@ def test_never_twice_on_one_day_nor_for_a_day_already_passed():
     assert not subs.is_due(ReportSubscription(frequency="weekly", last_sent_on=MON2), MON)  # a catch-up run for an older day
 
 
-def test_the_first_email_is_today_until_todays_run_and_then_the_next_sending_day(db):
+def test_the_first_email_is_today_until_todays_run_and_then_the_next_sending_day(ctx, other_tenant):
     assert subs.first_send_on("weekly", THU) == MON and subs.first_send_on("monthly", THU) == MON
     assert subs.first_send_on("monthly", date(2026, 10, 6)) == date(2026, 11, 2)
     assert subs.first_send_on("weekly", MON) == MON and subs.first_send_on("monthly", MON) == MON  # today's run has not happened
     assert subs.first_send_on("weekly", MON, last_sent_on=MON) == MON2
-    JobRun.objects.create(job=subs.JOB, run_on=MON)
+    JobRun.objects.create(job=subs.JOB, facility=other_tenant, run_on=MON)  # slice 21: another facility's run is not this one's
+    assert subs.first_send_on("weekly", MON) == MON
+    JobRun.objects.create(job=subs.JOB, facility=ctx, run_on=MON)
     assert subs.first_send_on("weekly", MON) == MON2 and subs.first_send_on("monthly", MON) == date(2026, 11, 2)
 
 
@@ -389,7 +391,7 @@ def test_the_daily_job_runs_the_command_once_a_day(tenant, person, clock, mailou
     _subscribe(tenant, person("analyst"), "cosr", "weekly")
     clock(MON)
     runs = jobs.run_daily_jobs(day=MON, jobs=["report_emails"])
-    assert [(r.job, r.status) for r in runs] == [("report_emails", "succeeded")]
+    assert [(r.job, r.facility, r.run_on, r.status) for r in runs] == [("report_emails", tenant, MON, "succeeded")]  # the facility's run
     assert "riverside: 1 due, 1 sent" in runs[0].output and len(mailoutbox) == 1
     assert jobs.run_daily_jobs(day=MON, jobs=["report_emails"]) == []  # the day's run is the lock
 
@@ -503,7 +505,7 @@ def test_a_schedule_turned_on_after_todays_run_starts_next_time(tenant, person, 
     clock(MON)
     _subscribe(tenant, kim, "cosr", "weekly")
     assert subs.send_due(MON)["sent"] == 1
-    JobRun.objects.create(job=subs.JOB, run_on=MON)
+    JobRun.objects.create(job=subs.JOB, facility=tenant, run_on=MON)  # the facility's run for its Monday
     _subscribe(tenant, kim, "cosr", None)
     _subscribe(tenant, kim, "cosr", "weekly")
     assert subs.send_due(MON)["sent"] == 0 and subs.send_due(date(2026, 10, 6))["sent"] == 0 and len(mailoutbox) == 1

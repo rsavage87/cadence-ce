@@ -15,7 +15,8 @@ is found and run by key through apps.reports.services.find_report and run_any. A
 sent only to someone who can see them (apps/reports/permissions.py); deleting one deletes its subscriptions.
 
 send_due starts with no tenant (the daily job): it reads only the Tenant table (a system table) before it enters each facility's
-tenant_context, which is what row-level security on PostgreSQL requires.
+tenant_context, which is what row-level security on PostgreSQL requires. Slice 21: each facility's day is its own (its time zone):
+the daily job sends one facility's emails on that facility's day, so its Mondays are the facility's Mondays.
 """
 import logging
 from collections import Counter
@@ -60,7 +61,8 @@ SKIP_REASONS = {
 
 
 def local_today() -> date:
-    """Today in TIME_ZONE: the day the daily jobs run for (apps.jobs uses the same clock)."""
+    """Today on the clock in effect: inside a facility (tenant_context, a signed-in request) the facility's today in its time zone,
+    the day its daily job runs for (apps.jobs); outside any, the server's (TIME_ZONE)."""
     return timezone.localdate()
 
 
@@ -161,7 +163,8 @@ def first_send_on(frequency: str, today: date, last_sent_on: date | None = None)
     """When the next email for `frequency` arrives: today if today is a sending day and today's run has not happened yet (and it
     was not sent today already), otherwise the next sending day."""
     sent_today = last_sent_on is not None and last_sent_on >= today
-    ran_today = JobRun.objects.filter(job=JOB, run_on=today).exists()  # a system table: no tenant needed
+    # This facility's run for its day (slice 21: one run per facility and local day); a system table, readable with no tenant set.
+    ran_today = JobRun.objects.filter(job=JOB, facility=get_current_tenant(), run_on=today).exists()
     return next_due_on(frequency, today + timedelta(days=1) if sent_today or ran_today else today)
 
 
@@ -265,16 +268,23 @@ def _send_facility(tenant, today: date, counts: dict) -> None:
         counts["sent" if sent else "failed"] += 1
 
 
-def send_due(today: date) -> dict:
-    """Send every report email due `today`, facility by facility (active facilities only). Returns what happened:
-    {"day", "sent", "failed", "skipped", "tenants": [{"slug", "name", "due", "sent", "failed", "skipped": Counter of SKIP_REASONS
-    keys, "error"}]}; "error" is set when a facility could not be worked through at all (its emails count as one failure)."""
+def send_due(today: date | None = None, facility=None) -> dict:
+    """Send every report email due `today`, facility by facility (active facilities only; only `facility` when given, as the daily
+    job does). With no `today`, each facility's own today (its time zone): a facility's Monday is its own. Returns what happened:
+    {"day" (`today`, or None), "sent", "failed", "skipped", "tenants": [{"slug", "name", "day" (the facility's), "due", "sent",
+    "failed", "skipped": Counter of SKIP_REASONS keys, "error"}]}; "error" is set when a facility could not be worked through at
+    all (its emails count as one failure)."""
     summary = {"day": today, "sent": 0, "failed": 0, "skipped": 0, "tenants": []}
-    for tenant in Tenant.objects.filter(is_active=True).order_by("slug"):  # a system table: read before any tenant is set
-        counts = {"slug": tenant.slug, "name": tenant.name, "due": 0, "sent": 0, "failed": 0, "skipped": Counter(), "error": ""}
+    tenants = Tenant.objects.filter(is_active=True).order_by("slug")  # a system table: read before any tenant is set
+    if facility is not None:
+        tenants = tenants.filter(pk=facility.pk)
+    for tenant in tenants:
+        counts = {"slug": tenant.slug, "name": tenant.name, "day": today, "due": 0, "sent": 0, "failed": 0, "skipped": Counter(),
+                  "error": ""}
         try:
             with tenant_context(tenant):
-                _send_facility(tenant, today, counts)
+                counts["day"] = today or local_today()  # inside the facility's context: its today
+                _send_facility(tenant, counts["day"], counts)
         except Exception as e:  # e.g. the database went away mid-run: the next facility still gets its emails
             log.exception("Report emails for %s failed", tenant.slug)
             counts["error"] = f"{type(e).__name__}: {e}"

@@ -590,7 +590,7 @@ def test_the_daily_job_runs_the_command_once_a_day(tenant, crew, mailoutbox):
     assert [key for key, _cmd, _opts in jobs.DAILY_JOBS][-2:] == ["report_emails", daily.JOB]
     mailoutbox.clear()
     runs = jobs.run_daily_jobs(day=MON, jobs=[daily.JOB])
-    assert [(r.job, r.status) for r in runs] == [(daily.JOB, "succeeded")]
+    assert [(r.job, r.facility, r.run_on, r.status) for r in runs] == [(daily.JOB, tenant, MON, "succeeded")]  # the facility's run
     assert "riverside: 1 digest sent" in runs[0].output and len(mailoutbox) == 1
     assert jobs.run_daily_jobs(day=MON, jobs=[daily.JOB]) == []  # the day's run is the lock
 

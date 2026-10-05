@@ -1,6 +1,7 @@
 """Scheduled daily jobs: each runs at most once per local day (a claimed JobRun row is the lock), a failure is recorded and does
 not stop the next job, the scheduler runs when the daily time has passed (catching up after a restart), tolerates the database
-being unavailable, and the two jobs keep going across tenants."""
+being unavailable, and the two jobs keep going across tenants. Slice 21: generate_pm runs per facility (its row names the facility),
+the openFDA import once for everyone; tests/test_jobs_facilities.py covers facilities in other time zones."""
 from datetime import date, datetime, timedelta
 from io import StringIO
 from zoneinfo import ZoneInfo
@@ -10,6 +11,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.db import OperationalError
+from django.utils import timezone
 
 from apps.accounts.models import create_default_roles
 from apps.equipment.models import Asset, Department, DeviceModel
@@ -72,28 +74,37 @@ def two_jobs(monkeypatch):
 ALL_JOBS = list(jobs.DAILY_JOBS)  # read when this file is imported, before the fixture above pins the list
 
 
+@pytest.fixture(autouse=True)
+def _due_all_day(settings):
+    """run_daily_jobs runs only what is due (slice 21): with the daily time at midnight every job is due on any real clock, as these
+    tests about the runner expect. The tests about when jobs are due set their own time."""
+    settings.SCHEDULER_DAILY_AT = "00:00"
+
+
 def test_the_daily_jobs_include_the_report_emails_and_the_staff_notifications():
     assert [key for key, _cmd, _opts in ALL_JOBS] == ["generate_pm", "import_openfda", "report_emails", "staff_notifications"]
+    assert jobs.FACILITY_JOBS == {"generate_pm", "report_emails", "staff_notifications"}  # the openFDA import is everyone's
 
 
 @pytest.fixture
 def due_pump(tenant, dept, pump_model):
     """A pump due in five days: inside generate_pm's 21-day lead."""
-    return Asset.objects.create(tag="CE-DUE", device_model=pump_model, department=dept, next_pm_on=date.today() + timedelta(days=5))
+    return Asset.objects.create(tag="CE-DUE", device_model=pump_model, department=dept, next_pm_on=timezone.localdate() + timedelta(days=5))
 
 
 def test_both_jobs_run_and_are_recorded(due_pump, tenant, fda):
     runs = jobs.run_daily_jobs()
     assert [(r.job, r.status) for r in runs] == [("generate_pm", "succeeded"), ("import_openfda", "succeeded")]
     assert "riverside: 1 PM work orders created" in runs[0].output and "Imported 1 new alerts" in runs[1].output
-    assert all(r.finished_at and r.run_on == date.today() for r in runs)
+    assert all(r.finished_at and r.run_on == timezone.localdate() for r in runs)  # riverside is in the server's zone (New York)
+    assert (runs[0].facility, runs[1].facility) == (tenant, None)  # generate_pm is the facility's run; the import is everyone's
     with tenant_context(tenant):
         assert WorkOrder.objects.filter(asset=due_pump, type=WoType.PM).count() == 1
     assert Alert.objects.filter(external_id="97001").exists()
     assert fda[0]["limit"] == 1000  # the daily import asks for openFDA's maximum page
 
 
-def test_a_job_runs_once_a_day_unless_forced(due_pump, tenant, fda):
+def test_a_job_runs_once_a_day_unless_forced(due_pump, tenant, fda, monkeypatch):
     jobs.run_daily_jobs()
     assert jobs.run_daily_jobs() == [] and len(fda) == 1  # a second scheduler, or a restart, finds today's rows and does nothing
     with tenant_context(tenant):
@@ -102,7 +113,9 @@ def test_a_job_runs_once_a_day_unless_forced(due_pump, tenant, fda):
     assert [r.job for r in forced] == ["generate_pm"] and JobRun.objects.filter(job="generate_pm").count() == 1
     with tenant_context(tenant):
         assert WorkOrder.objects.filter(asset=due_pump).count() == 1
-    tomorrow = jobs.run_daily_jobs(day=date.today() + timedelta(days=1))
+    now = timezone.now()
+    monkeypatch.setattr(timezone, "now", lambda: now + timedelta(days=1))
+    tomorrow = jobs.run_daily_jobs()
     assert len(tomorrow) == 2  # a new day, new runs
 
 
@@ -118,7 +131,8 @@ def test_a_failing_job_is_recorded_and_the_next_one_still_runs(db, monkeypatch, 
 def test_run_daily_jobs_command_reports_and_skips(due_pump, fda):
     out = StringIO()
     call_command("run_daily_jobs", stdout=out)
-    assert "generate_pm: succeeded" in out.getvalue() and "import_openfda: succeeded" in out.getvalue()
+    today = f"{timezone.localdate():%Y-%m-%d}"
+    assert out.getvalue().splitlines() == [f"generate_pm (riverside, {today}): succeeded", f"import_openfda ({today}): succeeded"]
     out = StringIO()
     call_command("run_daily_jobs", stdout=out)
     assert "Nothing to run" in out.getvalue()
@@ -130,10 +144,10 @@ def at(hour, minute=0, day=date(2026, 9, 29)):
     return datetime(day.year, day.month, day.day, hour, minute, tzinfo=NY)
 
 
-def test_due_after_the_daily_time_until_every_job_has_run(db, settings):
+def test_due_after_the_daily_time_until_every_job_has_run(tenant, settings):
     settings.SCHEDULER_DAILY_AT = "02:30"
     assert jobs.is_due(at(2, 29)) is False and jobs.is_due(at(2, 30)) is True and jobs.is_due(at(23, 59)) is True
-    JobRun.objects.create(job="generate_pm", run_on=date(2026, 9, 29))
+    JobRun.objects.create(job="generate_pm", facility=tenant, run_on=date(2026, 9, 29))
     assert jobs.is_due(at(9)) is True  # one job still pending (a restart between the two)
     JobRun.objects.create(job="import_openfda", run_on=date(2026, 9, 29))
     assert jobs.is_due(at(9)) is False and jobs.is_due(at(3, day=date(2026, 9, 30))) is True
@@ -158,7 +172,7 @@ def test_scheduler_once_runs_when_due_and_not_before(due_pump, settings, monkeyp
     settings.SCHEDULER_DAILY_AT = "00:00"
     out = StringIO()
     call_command("scheduler", "--once", stdout=out)
-    assert "generate_pm: succeeded" in out.getvalue() and JobRun.objects.count() == 2
+    assert "generate_pm (riverside, " in out.getvalue() and "): succeeded" in out.getvalue() and JobRun.objects.count() == 2
     settings.SCHEDULER_DAILY_AT = "23:59"
     JobRun.objects.all().delete()
     monkeypatch.setattr(jobs.timezone, "now", lambda: at(12))
@@ -183,7 +197,7 @@ def test_generate_pm_keeps_going_when_one_tenant_fails(due_pump, tenant, other_t
     with tenant_context(other_tenant):
         dm = DeviceModel.objects.create(manufacturer="X", model="Y", description="Z", category="C")
         Asset.objects.create(tag="THEIRS", device_model=dm, department=Department.objects.create(name="ICU"),
-                             next_pm_on=date.today() + timedelta(days=3))
+                             next_pm_on=timezone.localdate() + timedelta(days=3))
     import apps.pm.management.commands.generate_pm as cmd
 
     real = cmd.generate_pm_work_orders
@@ -238,18 +252,20 @@ def test_force_reruns_a_finished_job(due_pump):
     assert [r.pk for r in again] == [first.pk] and JobRun.objects.get(pk=first.pk).status == "succeeded"
 
 
-def test_a_run_left_running_is_taken_over_once_stale(due_pump, settings):
+def test_a_run_left_running_is_taken_over_once_stale(due_pump, tenant, settings):
     settings.SCHEDULER_DAILY_AT = "00:00"
     now = jobs.timezone.now()
-    fresh = JobRun.objects.create(job="generate_pm", run_on=jobs.timezone.localdate(), started_at=now - timedelta(hours=1))
-    assert "generate_pm" not in jobs.pending_jobs(fresh.run_on) and jobs.run_daily_jobs(jobs=["generate_pm"]) == []  # maybe still going
+    fresh = JobRun.objects.create(job="generate_pm", facility=tenant, run_on=jobs.timezone.localdate(), started_at=now - timedelta(hours=1))
+    JobRun.objects.create(job="import_openfda", run_on=fresh.run_on, status="succeeded")
+    assert "generate_pm" not in jobs.pending_jobs(fresh.run_on, facility=tenant) and jobs.run_daily_jobs(jobs=["generate_pm"]) == []
+    assert jobs.is_due() is False  # maybe still going
     JobRun.objects.filter(pk=fresh.pk).update(started_at=now - jobs.STALE_AFTER - timedelta(minutes=1))
-    assert "generate_pm" in jobs.pending_jobs(fresh.run_on) and jobs.is_due() is True
+    assert "generate_pm" in jobs.pending_jobs(fresh.run_on, facility=tenant) and jobs.is_due() is True
     [run] = jobs.run_daily_jobs(jobs=["generate_pm"])
     assert run.pk == fresh.pk and run.status == "succeeded" and run.output.startswith("Took over a run that started")
 
 
-def test_two_schedulers_claiming_at_once_run_a_job_once(db, monkeypatch):
+def test_two_schedulers_claiming_at_once_run_a_job_once(tenant, monkeypatch):
     """Between one scheduler finding no row and inserting it, the other inserts first: the unique constraint makes the loser skip."""
     real_create = JobRun.objects.create
     raced = []
@@ -257,7 +273,7 @@ def test_two_schedulers_claiming_at_once_run_a_job_once(db, monkeypatch):
     def racing_create(**kw):
         if not raced:
             raced.append(kw["job"])
-            JobRun.objects.bulk_create([JobRun(job=kw["job"], run_on=kw["run_on"])])  # the other scheduler got there first
+            JobRun.objects.bulk_create([JobRun(job=kw["job"], facility=kw["facility"], run_on=kw["run_on"])])  # the other scheduler got there first
         return real_create(**kw)
 
     monkeypatch.setattr(JobRun.objects, "create", racing_create)
@@ -267,7 +283,7 @@ def test_two_schedulers_claiming_at_once_run_a_job_once(db, monkeypatch):
     assert raced == ["generate_pm"] and "generate_pm" not in ran and [r.job for r in runs] == ["import_openfda"]
 
 
-def test_a_lost_connection_while_recording_does_not_skip_the_next_job(db, monkeypatch):
+def test_a_lost_connection_while_recording_does_not_skip_the_next_job(tenant, monkeypatch):
     real_update = jobs.JobRun.objects.filter
     failures = []
 
@@ -291,7 +307,7 @@ def test_a_lost_connection_while_recording_does_not_skip_the_next_job(db, monkey
     assert set(JobRun.objects.values_list("status", flat=True)) == {"succeeded"}  # the retry on a fresh connection recorded it
 
 
-def test_a_stop_during_a_job_is_recorded_and_honoured(db, monkeypatch):
+def test_a_stop_during_a_job_is_recorded_and_honoured(tenant, monkeypatch):
     def stopped(command, **kw):
         raise SystemExit(0)  # what the scheduler's SIGTERM handler raises
 

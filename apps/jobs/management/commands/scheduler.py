@@ -1,7 +1,8 @@
 """
-Run the daily jobs every day at SCHEDULER_DAILY_AT (local time in TIME_ZONE). Meant for one long-running process, the
-docker-compose `scheduler` service. If it starts after that time and today's jobs have not run (a restart, a deploy, an
-outage), it runs them at once. A second copy is harmless: each job's daily run is claimed in the database first.
+Run the daily jobs every day at SCHEDULER_DAILY_AT: each facility's jobs at that time on its own clock (Tenant.timezone), the openFDA
+import at that time on the server's (TIME_ZONE). Meant for one long-running process, the docker-compose `scheduler` service, which
+checks every minute (apps.jobs.services.is_due). If it starts after that time and a day's jobs have not run (a restart, a deploy, an
+outage), it runs them at once. A second copy is harmless: each job's run for its facility and day is claimed in the database first.
 
     python manage.py scheduler              # runs until stopped
     python manage.py scheduler --once       # check once, run if due, exit (for tests and debugging)
@@ -14,7 +15,7 @@ from django.core.management.base import BaseCommand
 from django.db import DatabaseError, close_old_connections, connection
 from django.db.migrations.executor import MigrationExecutor
 
-from apps.jobs.services import daily_at, is_due, run_daily_jobs
+from apps.jobs.services import daily_at, is_due, label, run_daily_jobs
 
 log = logging.getLogger("cadence.scheduler")
 
@@ -45,8 +46,8 @@ class Command(BaseCommand):
                 return
             if is_due():
                 for run in run_daily_jobs():
-                    log.info("daily job %s: %s", run.job, run.status)
-                    self.stdout.write(f"{run.job}: {run.get_status_display().lower()}")
+                    log.info("daily job %s: %s", label(run), run.status)
+                    self.stdout.write(f"{label(run)}: {run.get_status_display().lower()}")
         except DatabaseError:
             log.exception("scheduler: database unavailable; retrying at the next check")
 
@@ -58,7 +59,8 @@ class Command(BaseCommand):
         if opts["once"]:
             self.tick()
             return
-        self.stdout.write(f"Scheduler started: daily jobs at {at:%H:%M} local time, checking every {opts['interval']} s")
+        self.stdout.write(f"Scheduler started: daily jobs at {at:%H:%M}, each facility's local time for its jobs and the server's for the "
+                          f"openFDA import, checking every {opts['interval']} s")
         while True:
             self.tick()
             time.sleep(max(1, opts["interval"]))

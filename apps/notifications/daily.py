@@ -25,7 +25,8 @@ and ask the reader to sign in. Never a work order's problem, requester, callback
 templates get plain values built here, never the records (CLAUDE.md, "No PHI").
 
 send_due starts with no tenant (the daily job): it reads only the Tenant table (a system table) before it enters each facility's
-tenant_context, which row-level security on PostgreSQL requires.
+tenant_context, which row-level security on PostgreSQL requires. Slice 21: each facility's day is its own (its time zone): the
+daily job sends one facility's emails on that facility's day, so "due today" and "the next seven days" are the facility's.
 """
 import logging
 from collections import Counter
@@ -85,7 +86,8 @@ KIND_WORDS = {Kind.DIGEST.value: "digest", Kind.CONTRACT.value: "contract remind
 
 
 def local_today() -> date:
-    """Today in TIME_ZONE: the day the daily jobs run for (apps.jobs uses the same clock)."""
+    """Today on the clock in effect: inside a facility (tenant_context) the facility's today in its time zone, the day its daily job
+    runs for (apps.jobs); outside any, the server's (TIME_ZONE)."""
     return timezone.localdate()
 
 
@@ -338,18 +340,24 @@ def _send_facility(tenant, today: date, counts: dict) -> None:
         counts["reminded"] += listed if outcome == "sent" else 0
 
 
-def send_due(today: date) -> dict:
-    """Send the digests and contract reminders due `today`, facility by facility (active facilities only). Returns what happened:
-    {"day", "sent", "failed", "skipped", "tenants": [{"slug", "name", "digests" (sent), "quiet" (chosen, nothing to list),
-    "reminders" (emails sent), "reminded" (contracts they listed), "contracts" (in a reminder stage), "failed", "skipped": Counter
-    of (kind, SKIP_REASONS key), "error"}]}; "error" is set when a facility could not be worked through at all (one failure)."""
+def send_due(today: date | None = None, facility=None) -> dict:
+    """Send the digests and contract reminders due `today`, facility by facility (active facilities only; only `facility` when
+    given, as the daily job does). With no `today`, each facility's own today (its time zone). Returns what happened:
+    {"day" (`today`, or None), "sent", "failed", "skipped", "tenants": [{"slug", "name", "day" (the facility's), "digests" (sent),
+    "quiet" (chosen, nothing to list), "reminders" (emails sent), "reminded" (contracts they listed), "contracts" (in a reminder
+    stage), "failed", "skipped": Counter of (kind, SKIP_REASONS key), "error"}]}; "error" is set when a facility could not be
+    worked through at all (one failure)."""
     summary = {"day": today, "sent": 0, "failed": 0, "skipped": 0, "tenants": []}
-    for tenant in Tenant.objects.filter(is_active=True).order_by("slug"):  # a system table: read before any tenant is set
-        counts = {"slug": tenant.slug, "name": tenant.name, "digests": 0, "quiet": 0, "reminders": 0, "reminded": 0, "contracts": 0,
-                  "failed": 0, "skipped": Counter(), "error": ""}
+    tenants = Tenant.objects.filter(is_active=True).order_by("slug")  # a system table: read before any tenant is set
+    if facility is not None:
+        tenants = tenants.filter(pk=facility.pk)
+    for tenant in tenants:
+        counts = {"slug": tenant.slug, "name": tenant.name, "day": today, "digests": 0, "quiet": 0, "reminders": 0, "reminded": 0,
+                  "contracts": 0, "failed": 0, "skipped": Counter(), "error": ""}
         try:
             with tenant_context(tenant):
-                _send_facility(tenant, today, counts)
+                counts["day"] = today or local_today()  # inside the facility's context: its today
+                _send_facility(tenant, counts["day"], counts)
         except Exception as e:  # e.g. the database went away mid-run: the next facility still gets its emails
             log.exception("Staff notifications for %s failed", tenant.slug)
             counts["error"] = f"{type(e).__name__}: {e}"
