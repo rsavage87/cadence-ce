@@ -142,3 +142,34 @@ def create_default_roles(tenant):
             if was_created:
                 created.append(role)
     return created
+
+
+class AccessEvent(TenantModel):
+    """One change to who can do what in a facility (slice 20): an invitation, a user's role, unit, or company, deactivating and
+    reactivating an account, and a role's levels and scope. apps.accounts.services writes one row per change, beside its log line,
+    and the Users and access tab's change log (apps.core.history) reads them with the records' own histories. Never edited."""
+
+    class Action(models.TextChoices):
+        INVITED = "invited", "Invited"
+        INVITATION_RESENT = "invitation_resent", "Invitation resent"
+        ROLE_CHANGED = "role_changed", "Role changed"
+        SCOPE_CHANGED = "scope_changed", "Company or unit changed"
+        DEACTIVATED = "deactivated", "Deactivated"
+        REACTIVATED = "reactivated", "Reactivated"
+        ROLE_CREATED = "role_created", "Role added"
+        ROLE_LEVEL_CHANGED = "role_level_changed", "Role access changed"
+        ROLE_SCOPE_CHANGED = "role_scope_changed", "What a role sees changed"
+
+    at = models.DateTimeField(auto_now_add=True)
+    action = models.CharField(max_length=30, choices=Action.choices)
+    by = models.ForeignKey("accounts.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="+", help_text="Who made the change")
+    user = models.ForeignKey("accounts.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="+", help_text="Whose account changed")
+    role = models.ForeignKey(Role, on_delete=models.SET_NULL, null=True, blank=True, related_name="+", help_text="Which role changed, or was given")
+    detail = models.CharField(max_length=300, blank=True, help_text="What changed, in words: 'Technician → CE manager', 'Contracts: View → Edit'")
+
+    class Meta:
+        ordering = ["-at"]
+        indexes = [models.Index(fields=["tenant", "at"])]
+
+    def __str__(self):
+        return f"{self.get_action_display()}: {self.detail}"

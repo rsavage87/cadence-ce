@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     "apps.facility",
     "apps.jobs",
     "apps.reports",
+    "apps.notifications",
     "apps.api",
     "apps.demo",
     "apps.web",

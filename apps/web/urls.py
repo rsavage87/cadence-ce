@@ -1,7 +1,7 @@
 from django.contrib.auth import views as auth_views
 from django.urls import include, path
 
-from . import views, views_account, views_equipment, views_invite, views_scan, views_wo_complete, views_wo_costs
+from . import views, views_account, views_equipment, views_invite, views_notifications, views_scan, views_wo_complete, views_wo_costs
 
 app_name = "web"
 
@@ -15,6 +15,7 @@ urlpatterns = [
     path("password-reset/done/", views_account.password_reset_complete, name="password_reset_complete"),
     path("password-reset/<uidb64>/<token>/", views_account.password_reset_confirm, name="password_reset_confirm"),
     path("account/password/", views_account.password_change, name="password_change"),
+    path("account/notifications/", views_notifications.notifications, name="notifications"),  # slice 20: the emails a user gets
     path("invite/<uidb64>/<token>/", views_invite.invite_accept, name="invite_accept"),
     path("search/", views.search, name="search"),
     path("search/assets/", views.asset_search, name="asset_search"),

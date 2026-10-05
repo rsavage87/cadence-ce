@@ -511,6 +511,8 @@ button.link{background:none;border:0;padding:0;font:inherit;font-size:12px;font-
 .scan-cam [data-scan-status]:empty{display:none}
 .scan-page{max-width:560px}
 
+/* Slice 20, part A: History tabs (a record's changes in the device, work order, contract, and model drawers) */
+
 /* Slice 13: the Reports panel's Schedule button shows a report is emailed; its modal picks how often */
 .btn.sched-on{border-color:var(--accent-line);background:var(--accent-soft);color:var(--accent)}
 .rs-title{margin:0;font-size:13px;color:var(--ink)}
@@ -557,6 +559,8 @@ button.link{background:none;border:0;padding:0;font:inherit;font-size:12px;font-
   .cr-dates select,.cr-dates label{flex:1 1 100%}
 }
 
+/* Slice 20, part B: the change log (Users and access) */
+
 /* Slice 15, part A: the work order drawer's labor and part lines (the amount and Remove at the right; notes wrap on a phone) */
 .wo-lines{margin-top:12px}
 .wo-lines .lbl{font-size:12px;color:var(--ink-3)}
@@ -565,6 +569,8 @@ button.link{background:none;border:0;padding:0;font:inherit;font-size:12px;font-
 .wo-lines .li .r{display:flex;align-items:center;gap:4px;color:var(--ink);font-weight:500}
 .wo-cost-add{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 #set-targets .set-sub{margin:16px 0 8px}
+/* Slice 20, part C: the Notifications page (the account menu) */
+
 /* Slice 15, part B: completing a work order (web/_wo_complete.html): pass / fail / N/A per step, the result, a failed PM's options */
 .wc-title{margin:0;font-size:13px;color:var(--ink)}
 .wc-sec{padding:0 16px 4px}
@@ -589,6 +595,7 @@ button.link{background:none;border:0;padding:0;font:inherit;font-size:12px;font-
 /* Slice 18, part C: a model that keeps the manufacturer's schedule by regulation (CMS: imaging, radiologic, medical laser) */
 /* The model form's checkbox reads as the field's label, its hint below it */
 .form .dm-mark .check-row{color:var(--ink);font-weight:500}
+/* Slice 20, part D: (the daily emails need no screen CSS; keep this marker for any) */
 
 /* Slice 11: printing app pages */
 /* What the browser prints of an app page (the Overview's Export button calls window.print(); any other screen prints from the
