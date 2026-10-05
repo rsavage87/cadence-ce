@@ -1,6 +1,7 @@
 import uuid
 
 from django.db import models
+from simple_history.models import HistoricalRecords
 
 
 class Tenant(models.Model):
@@ -9,9 +10,11 @@ class Tenant(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=200)
     slug = models.SlugField(max_length=60, unique=True, help_text="Used in the public request portal URL.")
-    timezone = models.CharField(max_length=64, default="America/New_York")
+    timezone = models.CharField(max_length=64, default="America/New_York",
+                                help_text="The facility's IANA time zone: its today, its local times, and when its daily jobs run (slice 21)")
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    history = HistoricalRecords()  # slice 21: a change of time zone (or name) is audited; the change log reads it as the facility's
 
     class Meta:
         ordering = ["name"]

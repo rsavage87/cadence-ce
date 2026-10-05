@@ -5,6 +5,7 @@ from django.conf import settings
 from django.db import models
 from django.db.models import DecimalField, F
 from django.db.models.functions import Round
+from django.utils import timezone
 from simple_history.models import HistoricalRecords
 
 from apps.core.models import Sequence, TenantModel
@@ -76,7 +77,7 @@ class WorkOrder(TenantModel):
     assigned_to = models.ForeignKey("credentials.Technician", on_delete=models.SET_NULL, null=True, blank=True, related_name="work_orders")
     vendor_service = models.BooleanField(default=False, help_text="Dispatched to the vendor rather than an in-house technician")
     vendor_name = models.CharField(max_length=120, blank=True)
-    opened_on = models.DateField(default=date.today)
+    opened_on = models.DateField(default=timezone.localdate)  # the facility's today (its time zone is active inside it)
     due_on = models.DateField()
     started_on = models.DateField(null=True, blank=True)
     completed_on = models.DateField(null=True, blank=True)
@@ -166,7 +167,7 @@ class WorkOrderStatusHistory(TenantModel):
 class LaborLine(TenantModel):
     work_order = models.ForeignKey(WorkOrder, on_delete=models.CASCADE, related_name="labor_lines")
     technician = models.ForeignKey("credentials.Technician", on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
-    worked_on = models.DateField(default=date.today)
+    worked_on = models.DateField(default=timezone.localdate)
     hours = models.DecimalField(max_digits=6, decimal_places=2)
     rate = models.DecimalField(max_digits=8, decimal_places=2, help_text="Hourly rate applied (in-house or vendor)")
     description = models.CharField(max_length=200, blank=True)

@@ -641,6 +641,7 @@ button.link{background:none;border:0;padding:0;font:inherit;font-size:12px;font-
 /* The model form's checkbox reads as the field's label, its hint below it */
 .form .dm-mark .check-row{color:var(--ink);font-weight:500}
 /* Slice 20, part D: (the daily emails need no screen CSS; keep this marker for any) */
+/* Slice 21, part C: the facility's time zone (Settings) */
 
 /* Slice 11: printing app pages */
 /* What the browser prints of an app page (the Overview's Export button calls window.print(); any other screen prints from the

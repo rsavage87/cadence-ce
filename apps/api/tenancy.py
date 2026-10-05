@@ -10,7 +10,7 @@ rendered, since the browsable API queries while it renders (form choices, filter
 """
 from rest_framework.exceptions import ParseError, PermissionDenied
 
-from apps.tenants.context import get_current_tenant, reset_current_tenant, set_current_tenant, set_db_tenant
+from apps.tenants.context import get_current_tenant, reset_current_tenant, set_current_tenant, set_db_tenant, zone_override
 from apps.tenants.middleware import resolve_tenant
 
 NO_TENANT = "Pick a tenant first (Admin, Tenants)."
@@ -34,6 +34,7 @@ def bad_text(value) -> bool:
 
 class TenantAPIMixin:
     _tenant_token = None
+    _zone = None
     needs_facility = True  # every view but the API's root, which lists links only
 
     def initial(self, request, *args, **kwargs):
@@ -51,6 +52,8 @@ class TenantAPIMixin:
         tenant = resolve_tenant(request)
         request._request.tenant = tenant
         self._tenant_token = set_current_tenant(tenant)
+        self._zone = zone_override(tenant)  # the facility's time zone (slice 21), until the response is rendered
+        self._zone.__enter__()
         set_db_tenant(tenant)
 
     def dispatch(self, request, *args, **kwargs):
@@ -61,6 +64,8 @@ class TenantAPIMixin:
                 response.render()
             return response
         finally:
+            if self._zone is not None:
+                self._zone.__exit__(None, None, None)
             if self._tenant_token is not None:
                 reset_current_tenant(self._tenant_token)
                 try:

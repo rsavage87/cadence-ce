@@ -10,7 +10,7 @@ Tenant resolution: the signed-in user's tenant; superusers without a tenant can 
 by storing `tenant_id` in the session (Admin -> Tenants). Public portal views resolve the
 tenant from the URL themselves with `tenant_context()`, which sets both as well.
 """
-from .context import reset_current_tenant, set_current_tenant, set_db_tenant
+from .context import reset_current_tenant, set_current_tenant, set_db_tenant, zone_override
 from .models import Tenant
 
 
@@ -37,7 +37,8 @@ class TenantMiddleware:
         token = set_current_tenant(tenant)
         try:
             set_db_tenant(tenant)
-            return self.get_response(request)
+            with zone_override(tenant):  # the facility's time zone (slice 21): its today, its local times
+                return self.get_response(request)
         finally:
             reset_current_tenant(token)
             try:
