@@ -197,7 +197,7 @@ def test_the_mark_is_audited(c_arm, people):
     entry = c_arm.history.filter(oem_schedule_required=True).order_by("history_date", "history_id").first()
     assert entry.history_user == people["director"] and entry.history_change_reason == eq.OEM_SCHEDULE_MARKED
     latest = c_arm.history.first()  # the AEM's end is its own entry, after the mark
-    assert latest.aem_interval_months is None and latest.history_change_reason.startswith("AEM ended: The model is now marked as imaging")
+    assert latest.aem_interval_months is None and latest.history_change_reason == "AEM ended"  # the why is on the decision
     mark(c_arm, people["director"], False)
     latest = c_arm.history.first()
     assert not latest.oem_schedule_required and latest.history_change_reason == eq.OEM_SCHEDULE_CLEARED
@@ -211,7 +211,8 @@ def test_marking_ends_an_interval_on_file_without_a_recorded_approval(ctx, dept,
     assert pump_model.aem_effect == {**NO_EFFECT, "ended": True, "moved": 1, "rule": "oem_schedule"}
     pump_model.refresh_from_db()
     pump.refresh_from_db()
-    assert pump_model.aem_interval_months is None and pump.next_pm_on == TODAY and not AemDecision.objects.exists()
+    assert pump_model.aem_interval_months is None and pump.next_pm_on == TODAY
+    assert list(AemDecision.objects.values_list("status", flat=True)) == [AemStatus.ENDED]  # the old interval's end, recorded as a case
 
 
 def test_clearing_the_mark_changes_no_interval(c_arm, people):

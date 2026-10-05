@@ -9,9 +9,11 @@ GET /api/v1/change-log/   Users View. Read only. Refused (403) to scoped users (
                           roles, settings, custom_reports, or access, among those the user's role can view (the others are a 400).
     ?since=, ?until=      YYYY-MM-DD, the facility's local days, inclusive.
     ?who=<user id>        The changes one person in the facility made.
-    ?offset=, ?limit=     Newest first, `limit` entries (50 unless given, 1 to 200) from `offset` (0 unless given, at most 10,000:
-                          further back, narrow the dates).
-    Returns {"results": [...], "more": whether older entries follow, "offset", "limit", "next": the next page's URL or null}.
+    ?limit=, ?after=      Newest first, `limit` entries (50 unless given, 1 to 200), after the cursor `after` (none: the newest).
+                          Follow "next" for older pages: its cursor is the last entry returned, so changes saved meanwhile never
+                          repeat or skip entries.
+    Returns {"results": [...], "more": whether older entries follow, "limit", "after": the cursor this page read after (or null),
+    "next": the next page's URL or null}.
     Each entry: at (ISO 8601 in the facility's time zone), who ("Cadence" for a nightly job or an import), who_id (null then),
     area, area_label, record (the record in a few words), url (its page in the web app, or null), action (added, changed, or
     deleted; an access change's own: invited, invitation_resent, role_changed, scope_changed, deactivated, reactivated,
@@ -25,12 +27,12 @@ from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.response import Response
 
 from apps.accounts.models import AccessEvent, Module, User
-from apps.core.history import ACCESS, ALL_AREAS, change_log, readable_areas
+from apps.core.history import ACCESS, ALL_AREAS, change_log, parse_cursor, readable_areas
 from apps.tenants.context import get_current_tenant
 
 from .base import ApiViewSet, _parse_day
 
-DEFAULT_LIMIT, MAX_LIMIT, MAX_OFFSET = 50, 200, 10_000
+DEFAULT_LIMIT, MAX_LIMIT = 50, 200
 ACCESS_ACTIONS = {str(label): value for value, label in AccessEvent.Action.choices}  # an access entry's words back to its slug
 
 
@@ -85,23 +87,25 @@ class ChangeLogViewSet(ApiViewSet):
                 errors["who"] = ["The id of a user in this facility."]
         else:
             who = None
-        offset = _number(params, "offset", 0, 0, MAX_OFFSET, errors)
+        after = params.get("after") or None
+        if after is not None and parse_cursor(after) is None:
+            errors["after"] = ["A cursor from a page's \"next\"."]
         limit = _number(params, "limit", DEFAULT_LIMIT, 1, MAX_LIMIT, errors)
         if errors:
             raise DRFValidationError(errors)
-        return {"areas": [area] if area else None, "since": days["since"], "until": days["until"], "who": who, "offset": offset, "limit": limit}
+        return {"areas": [area] if area else None, "since": days["since"], "until": days["until"], "who": who, "after": after, "limit": limit}
 
     def list(self, request):
         f = self._filters(request)
-        entries, more = change_log(request.user, **f)
-        following = f["offset"] + f["limit"]
+        entries, following = change_log(request.user, **f)
         next_url = None
-        if more and following <= MAX_OFFSET:
+        if following is not None:
             query = request.query_params.copy()
-            query["offset"] = str(following)
+            query.pop("offset", None)
+            query["after"] = following
             next_url = request.build_absolute_uri(f"{request.path}?{query.urlencode()}")
-        return Response({"results": [_entry(e, request) for e in entries], "more": more, "offset": f["offset"], "limit": f["limit"],
-                         "next": next_url})
+        return Response({"results": [_entry(e, request) for e in entries], "more": following is not None, "limit": f["limit"],
+                         "after": f["after"], "next": next_url})
 
 
 def register(router):

@@ -2,13 +2,18 @@
 The change log (slice 20, part B): the Users and access tab's Change log (/users/log/), its CSV and printable page, and
 GET /api/v1/change-log/. The facility's changes newest first, across the areas the reader's role can view (apps.core.history), the
 access events apps.accounts.services writes among them; Users View, and never a scoped user's whatever their levels; filters in the
-address, a page of 50 with Show older; another facility's changes never; and the same as the runtime role under row-level security.
+address, a page of 50 with Show older (a cursor: the last entry shown, so changes saved meanwhile never repeat or skip one); another
+facility's changes never, nor the name of anyone of another facility; a device model's link only for a reader who may open it (PM
+View); and the same as the runtime role under row-level security.
 """
 from datetime import date, timedelta
+from decimal import Decimal
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import pytest
 from csvutil import csv_rows, csv_text
 from django.utils import timezone
+from django.utils.html import escape
 from pg_helpers import as_app_role, needs_postgres
 from rest_framework.authtoken.models import Token
 from simple_history.utils import update_change_reason
@@ -17,7 +22,8 @@ from apps.accounts import services
 from apps.accounts.models import AccessEvent, DataScope, Level, Module, Role, User, create_default_roles
 from apps.api.tenancy import NO_TENANT
 from apps.contracts import services as ct
-from apps.contracts.models import Contract
+from apps.contracts.models import Contract, ContractType
+from apps.core import history
 from apps.equipment import services as eq
 from apps.equipment.models import Asset, Department, DeviceModel
 from apps.tenants.context import tenant_context
@@ -157,7 +163,7 @@ def test_filters_by_area_dates_and_who(client, kim, world):
     assert client.get(LOG + f"?from={TODAY + timedelta(days=1)}").context["entries"] == []
     assert "No changes match these filters." in client.get(LOG + f"?from={TODAY + timedelta(days=1)}").content.decode()
     # what cannot be used is dropped, never an error
-    junk = client.get(LOG + "?area=bogus&from=2026-13-01&to=yesterday&who=abc&page=x")
+    junk = client.get(LOG + "?area=bogus&from=2026-13-01&to=yesterday&who=abc&after=x&page=2")
     assert junk.status_code == 200 and junk.context["f"] == views_change_log.LogFilters()
     # the form swaps the list alone
     body = client.get(LOG + "?area=devices", **hx("log-body"))
@@ -188,6 +194,50 @@ def test_another_facilitys_changes_never_show(client, kim, world, other_tenant, 
     assert "PM schedule: View → Edit" in client.get(LOG).content.decode()
 
 
+def test_someone_of_another_facility_is_never_named(client, kim, world, other_tenant, make_user):
+    """A change recorded for a user of another facility (the public form, before it recorded nobody) reads as "Someone outside this
+    facility", with no id, on the tab, the CSV, the printable page, and the API."""
+    create_default_roles(other_tenant)
+    stranger = make_user("director", tenant_=other_tenant, username="sandra@other.example")
+    stranger.first_name, stranger.last_name = "Sandra", "Stranger"
+    stranger.save()
+    Asset.history.filter(id=world["asset"].pk, room="14").update(history_user=stranger)
+    AccessEvent.objects.create(action=AccessEvent.Action.ROLE_CHANGED, by=stranger, user=world["tom"], role=role("manager"), detail="Technician → CE manager")
+    client.force_login(kim)
+    r = client.get(LOG)
+    outside = [e for e in r.context["entries"] if e.who == history.OUTSIDE]
+    assert {e.area for e in outside} == {"devices", "access"} and all(e.who_id is None for e in outside)
+    html = r.content.decode()
+    assert '<td class="clog-who">Someone outside this facility</td>' in html and "Stranger" not in html and "Sandra" not in html
+    assert stranger.pk not in [pk for pk, _ in r.context["people"]]
+    data = client.get(API).json()["results"]
+    theirs = [e for e in data if e["who"] == history.OUTSIDE]
+    assert {e["area"] for e in theirs} == {"devices", "access"} and all(e["who_id"] is None for e in theirs)
+    assert "Stranger" not in str(data) and "Sandra" not in str(data)
+    assert "Stranger" not in csv_text(client.get(CSV)) and "Stranger" not in client.get(PRINT).content.decode()
+    assert any(e["who"] == "Technician User" and e["who_id"] == world["tom"].pk for e in data)  # this facility's people by name
+
+
+def test_a_device_model_links_only_for_a_reader_with_pm_view(client, kim, auditor, world, vent_model):
+    """A device model opens in the PM program's drawer (PM View): a reader with Equipment View alone gets its entries without the
+    link, on the tab and in the API; a director gets the link."""
+    url = f"/pm/models/{vent_model.pk}/"
+    client.force_login(auditor)  # Users View and Equipment View, no PM View
+    assert client.get(url, **hx("drawer")).status_code == 403  # where the link would go
+    r = client.get(LOG + "?area=device_models")
+    models = r.context["entries"]
+    assert models and all(e.area == "device_models" and e.url is None for e in models)
+    html = r.content.decode()
+    assert "Hamilton Medical Hamilton-G5" in html and url not in html
+    api = client.get(API + "?area=device_models").json()["results"]
+    assert api and all(e["url"] is None for e in api)
+    assert all(e.url == "/equipment/CE-10001/" for e in client.get(LOG + "?area=devices").context["entries"])  # links they may follow stay
+    client.force_login(kim)  # PM View: the model opens in its drawer over the log
+    r = client.get(LOG + "?area=device_models")
+    assert r.context["entries"] and all(e.url == url for e in r.context["entries"]) and f'href="{url}"' in r.content.decode()
+    assert {e["url"] for e in client.get(API + "?area=device_models").json()["results"]} == {f"http://testserver{url}"}
+
+
 # --- paging ---------------------------------------------------------------------------------------------------------------------
 
 @pytest.fixture
@@ -201,31 +251,89 @@ def many(ctx, kim):
     shift(Role, 1)
 
 
+def after_of(url: str) -> str:
+    """The cursor a Show older link or the API's next carries (?after=)."""
+    return parse_qs(urlparse(url).query)["after"][0]
+
+
 def test_a_page_of_50_then_show_older_adds_the_rest(client, kim, many):
     client.force_login(kim)
     r = client.get(LOG)
     assert len(r.context["entries"]) == 50 and r.context["more"] and r.context["entries"][0].changes[0].after == "Change 59"
+    cursor = r.context["next_after"]
+    assert history.parse_cursor(cursor)[0] == r.context["entries"][-1].at  # the last entry shown
     html = r.content.decode()
-    assert 'id="log-more"' in html and 'hx-get="/users/log/?page=2" hx-target="#log-more" hx-swap="outerHTML"' in html
-    older = client.get(LOG + "?area=access&page=2", **hx("log-more"))
+    assert 'id="log-more"' in html and f'hx-get="{escape("/users/log/?" + urlencode({"after": cursor}))}" hx-target="#log-more" hx-swap="outerHTML"' in html
+    assert "Back to the newest" not in html
+    # the filters ride along
+    filtered = client.get(LOG + "?area=access")
+    access_cursor = filtered.context["next_after"]
+    assert f'hx-get="{escape("/users/log/?" + urlencode({"area": "access", "after": access_cursor}))}"' in filtered.content.decode()
+    older = client.get(LOG + "?" + urlencode({"area": "access", "after": access_cursor}), **hx("log-more"))
     rows = older.content.decode()
     assert older.status_code == 200 and "<table" not in rows and rows.count("<tr>") == 10 and "Change 09" in rows and "Change 00" in rows
     assert 'id="log-more"' not in rows and "Change 10" not in rows
-    # the filters ride along
-    filtered = client.get(LOG + "?area=access").content.decode()
-    assert 'hx-get="/users/log/?area=access&amp;page=2"' in filtered
     # without JavaScript, the next page opens on its own
-    page2 = client.get(LOG + "?area=access&page=2")
-    assert len(page2.context["entries"]) == 10 and "Back to the newest" in page2.content.decode()
+    page2 = client.get(LOG + "?" + urlencode({"area": "access", "after": access_cursor}))
+    html2 = page2.content.decode()
+    assert len(page2.context["entries"]) == 10 and page2.context["f"].after == access_cursor and "Back to the newest" in html2
+    assert 'href="/users/log/?area=access">Back to the newest</a>' in html2 and "No changes" not in html2
 
 
-def test_the_log_reaches_back_so_far_then_asks_for_dates(client, kim, many, monkeypatch):
-    monkeypatch.setattr(views_change_log, "MAX_PAGE", 1)
+def test_show_older_reaches_any_depth_and_a_bad_cursor_reads_the_newest(client, kim, many, monkeypatch):
+    """No cap on how far back Show older goes: each page continues after the last entry shown, every entry once."""
+    monkeypatch.setattr(views_change_log, "PAGE", 7)
     client.force_login(kim)
-    r = client.get(LOG + "?page=5")
-    assert r.context["f"].page == 1 and not r.context["more"] and r.context["at_limit"]
-    html = r.content.decode()
-    assert 'id="log-more"' not in html and "narrow the dates to see older ones" in html
+    seen, after, pages = [], None, 0
+    while True:
+        r = client.get(LOG + "?" + urlencode({"area": "access", **({"after": after} if after else {})}))
+        seen += [e.changes[0].after for e in r.context["entries"]]
+        pages += 1
+        if not r.context["more"]:
+            assert 'id="log-more"' not in r.content.decode()
+            break
+        after = r.context["next_after"]
+    assert pages == 9 and seen == [f"Change {n:02d}" for n in range(59, -1, -1)]  # 60 access events, 7 to a page
+    for bad in ("nonsense", "2", "2026-10-05T12:00:00~11~1"):
+        r = client.get(LOG + "?" + urlencode({"area": "access", "after": bad}))
+        assert r.status_code == 200 and r.context["f"].after is None and r.context["entries"][0].changes[0].after == "Change 59"
+        assert "Back to the newest" not in r.content.decode()
+
+
+def test_a_save_between_two_pages_repeats_and_skips_nothing(client, kim, many, monkeypatch):
+    monkeypatch.setattr(views_change_log, "PAGE", 5)
+    client.force_login(kim)
+    first = client.get(LOG + "?area=access")
+    assert [e.changes[0].after for e in first.context["entries"]] == [f"Change {n}" for n in range(59, 54, -1)]
+    services.set_role_level(role("analyst"), "pm", Level.EDIT, by=kim)  # a new access change while page 1 is on screen
+    older = client.get(LOG + "?" + urlencode({"area": "access", "after": first.context["next_after"]}), **hx("log-more"))
+    assert [e.changes[0].after for e in older.context["entries"]] == [f"Change {n}" for n in range(54, 49, -1)]
+
+
+def test_saves_that_show_nothing_never_leave_an_empty_page_that_says_there_is_nothing(client, kim, dept, vent_model, monkeypatch):
+    """A contract's type change re-saves each device it covers for its support type, which the log never shows. A page reads past
+    those saves to fill itself; past MAX_ROUNDS windows it can come back empty, and then it says Show older, never "No changes"."""
+    contract = ct.create_contract(reference="SC-9", vendor="Philips", type=ContractType.OEM, start_on=TODAY - timedelta(days=30),
+                                  end_on=TODAY + timedelta(days=300), annual_cost=Decimal("1200"), by=kim)
+    fleet = [Asset.objects.create(tag=f"CE-3{n:03d}", device_model=vent_model, department=dept) for n in range(6)]
+    for asset in fleet:
+        ct.add_asset(contract, asset)  # shown: each device's contract
+    ct.update_contract(contract, type=ContractType.THIRD_PARTY, by=kim)  # 6 saves of nothing shown, the newest in the devices area
+    client.force_login(kim)
+    monkeypatch.setattr(views_change_log, "PAGE", 3)
+    full = client.get(LOG + "?area=devices")  # 2 windows of nothing shown, then the devices' contract
+    assert len(full.context["entries"]) == 3 and full.context["more"] and all(e.changes[0].field == "Contract" for e in full.context["entries"])
+    monkeypatch.setattr(history, "MAX_ROUNDS", 1)  # one window of 3 saves, all of nothing shown
+    empty = client.get(LOG + "?area=devices")
+    html = empty.content.decode()
+    assert empty.context["entries"] == [] and empty.context["more"] and 'id="log-more"' in html
+    assert "No changes recorded yet." not in html and "No changes match these filters." not in html
+    nxt = client.get(LOG + "?" + urlencode({"area": "devices", "after": empty.context["next_after"]}), **hx("log-more"))
+    assert nxt.context["entries"] == [] and nxt.context["more"]  # the other 3 saves of nothing shown
+    nxt = client.get(LOG + "?" + urlencode({"area": "devices", "after": nxt.context["next_after"]}), **hx("log-more"))
+    assert [e.changes[0].field for e in nxt.context["entries"]] == ["Contract"] * 3
+    data = client.get(API + "?area=devices&limit=3").json()  # the API says the same: more, with where to go on
+    assert data["results"] == [] and data["more"] and after_of(data["next"])
 
 
 # --- CSV and print --------------------------------------------------------------------------------------------------------------
@@ -269,7 +377,7 @@ def test_the_printable_page(client, kim, world, monkeypatch):
 def test_the_api_lists_entries_as_json(client, kim, world):
     client.force_login(kim)
     data = client.get(API).json()
-    assert set(data) == {"results", "more", "offset", "limit", "next"} and data["more"] is False and data["next"] is None
+    assert set(data) == {"results", "more", "limit", "after", "next"} and data["more"] is False and data["next"] is None and data["after"] is None
     assert all(set(e) == ENTRY_FIELDS for e in data["results"])
     first = data["results"][0]
     assert first["area"] == "access" and first["action"] == "role_level_changed" and first["action_label"] == "Role access changed"
@@ -290,16 +398,32 @@ def test_the_api_filters_and_pages(client, kim, world, many):
     assert {e["area"] for e in client.get(API + f"?until={week_ago}").json()["results"]} == {"devices"}
     assert "devices" not in {e["area"] for e in client.get(API + f"?since={week_ago}&until={TODAY}").json()["results"]}
     page = client.get(API + "?area=access&limit=40").json()
-    assert len(page["results"]) == 40 and page["more"] and page["next"] == "http://testserver/api/v1/change-log/?area=access&limit=40&offset=40"
+    cursor = after_of(page["next"])
+    assert len(page["results"]) == 40 and page["more"] and page["after"] is None and history.parse_cursor(cursor) is not None
+    assert page["next"] == "http://testserver/api/v1/change-log/?" + urlencode({"area": "access", "limit": "40", "after": cursor})
     rest = client.get(page["next"]).json()
-    assert len(rest["results"]) == 21 and not rest["more"] and rest["next"] is None and rest["offset"] == 40
+    assert len(rest["results"]) == 21 and not rest["more"] and rest["next"] is None and rest["after"] == cursor
     assert 61 + 4 < len(client.get(API + "?limit=200").json()["results"]) <= 200
+    assert client.get(API + "?area=access&limit=40&offset=40").json()["results"] == page["results"]  # offset is no parameter now: ignored
+
+
+def test_the_apis_next_after_a_new_change_repeats_nothing(client, kim, world, many):
+    client.force_login(kim)
+    everything = client.get(API + "?area=access&limit=200").json()["results"]
+    page = client.get(API + "?area=access&limit=10").json()
+    assert page["results"] == everything[:10]
+    services.set_role_level(role("analyst"), "contracts", Level.EDIT, by=kim)  # saved while the client pages
+    rest = client.get(page["next"]).json()
+    assert rest["results"] == everything[10:20] and rest["after"] == after_of(page["next"])
+    assert after_of(rest["next"]) != after_of(page["next"])
+    newest = client.get(API + "?area=access&limit=1").json()["results"][0]
+    assert newest["changes"][0]["after"] == "Contracts: View → Edit" and newest not in rest["results"]
 
 
 @pytest.mark.parametrize("query, field", [
     ("area=bogus", "area"), ("since=2026-13-01", "since"), ("until=10/05/2026", "until"), ("since=2026-10-05&until=2026-10-01", "until"),
-    ("who=abc", "who"), ("who=999999", "who"), ("limit=0", "limit"), ("limit=201", "limit"), ("offset=-1", "offset"), ("offset=10001", "offset"),
-    ("limit=ten", "limit"),
+    ("who=abc", "who"), ("who=999999", "who"), ("limit=0", "limit"), ("limit=201", "limit"), ("after=40", "after"), ("after=nonsense", "after"),
+    ("after=2026-10-05T12:00:00~0~1", "after"), ("after=2026-10-05T12:00:00%2B00:00~99~1", "after"), ("limit=ten", "limit"),
 ])
 def test_the_api_refuses_a_bad_parameter_by_name(client, kim, query, field):
     client.force_login(kim)
@@ -336,7 +460,9 @@ def test_the_change_log_as_the_runtime_role(client, kim, world, other_tenant, ma
     assert page.status_code == 200
     html = page.content.decode()
     assert "Technician → CE manager" in html and "Room" in html and "SC-2291" in html and "Contracts: View → Edit" not in html
-    assert client.get(LOG + "?page=2", **hx("log-more")).status_code == 200
+    long_after = history.cursor_text((timezone.now() + timedelta(minutes=1), 0, 0))  # everything is older than this
+    older = client.get(LOG + "?" + urlencode({"after": long_after}), **hx("log-more"))
+    assert older.status_code == 200 and "Technician → CE manager" in older.content.decode() and "Contracts: View → Edit" not in older.content.decode()
     assert "Technician → CE manager" in csv_text(client.get(CSV)) and "CE-10001" in client.get(PRINT).content.decode()
     data = client.get(API).json()
     assert data["results"][0]["changes"][0]["after"] == "Technician → CE manager"

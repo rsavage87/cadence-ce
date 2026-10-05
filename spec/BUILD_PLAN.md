@@ -1,11 +1,12 @@
 # Build plan
 
 The mock (`cadence-ce-cmms-mock.html`) is the spec. Each slice below is shippable on its own and ends with green tests.
-Slices 0 to 19 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
+Slices 0 to 20 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
 export and print, devices are added and changed in the product, reports and request confirmations go out by email, each
 device model's PM program (risk score, procedure, AEM interval) is kept in the product, and the work itself (time, parts,
 what was done, a PM's results) is recorded on the work order; vendors and clinical requesters see only their own share; facilities
-build their own reports, and a label opens its device with Scan tag; and the API covers what the screens do, by session or token. What each slice deferred is noted in its row and below.
+build their own reports, and a label opens its device with Scan tag; the API covers what the screens do, by session or token; every record's changes and every access change can be read back;
+and staff get the emails they choose about their own work. What each slice deferred is noted in its row and below.
 
 | # | Slice | Mock screen(s) | Code | Status |
 |---|-------|----------------|------|--------|
@@ -29,6 +30,7 @@ build their own reports, and a label opens its device with Scan tag; and the API
 | 17 | The suite on PostgreSQL | (none: CI) | `tests` + CI | done (CI's test-postgres job runs every test on PostgreSQL 16 and the row-level security tests as the runtime role) |
 | 18 | Custom reports, Scan tag, the CMS rule | Reports (Custom report), Equipment (Scan tag), a model's PM program (AEM) | `reports` + `equipment` + `pm` + `portal` + `web` | done (custom reports, Scan, and Check FDA feed reached the API in slice 19) |
 | 19 | The API, complete | (none: `/api/v1/` for every screen's actions) | `api` + `accounts` | done (token sign-in resolves the facility; every API write goes through the services) |
+| 20 | History and notifications | Every drawer (History), Users and access (Change log), the account menu (Notifications) | `core` + `accounts` + `notifications` + `web` + `api` | done (times read in the server's TIME_ZONE; a facility's own time zone is not used yet) |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.
@@ -251,3 +253,22 @@ The mock's export and print buttons work since slice 11, Add device since slice 
   last-director check locks the facility's director rows, so two requests at once cannot both remove one; a pending director
   invitation can always be withdrawn; a risk-score part too large for a number and a custom report's date period that is not text
   are 400s, not 500s. The API never imports apps.web: helpers both doors share live in the services.
+- History and notifications (slice 20): `apps/core/history.py` reads django-simple-history's tables into words (each field's before
+  and after, labels and values as the screens show them, a foreign key by the record it names or its last name "(deleted)", the
+  reason a service recorded, who: the request's user or "Cadence" for a job) for the History tab or section of the device, work
+  order (with its labor and part lines), contract, and device model (with its AEM cases) drawers, and the Change log tab on Users and
+  access (Users View: every area the reader's role can view, plus every access change, which `apps.accounts.services` now records as
+  `AccessEvent` rows: invitations, role and unit changes, deactivations, a role's levels and scope), with filters, CSV, print, and
+  `/api/v1/change-log/`. Scoped users see no history. `apps/notifications`: each user chooses on the account menu's Notifications
+  page (and `/api/v1/notification-preferences/`) whether to get an email when a work order is assigned to them (one per batch, after
+  the commit, never twice), a morning digest of their due and overdue work and PMs this week, and contract reminders (90, 30, 7 days
+  before the end and once after, with catch-up; Contracts Edit); `send_staff_notifications` is the fourth daily job. No email carries
+  what a requester typed. Rules settled in review: history never names someone of another facility (a signed-in user of another
+  facility who sends this facility's public form is recorded as nobody, and any such name reads "Someone outside this facility");
+  pages continue after the last entry shown (a cursor in the URL and the API's `next`), so changes saved between pages never repeat
+  or skip entries, and saves that change no shown field are read past so a page is never empty while older entries exist; a device
+  model's history keeps the AEM end reason off (it stays on the decision, which needs PM View; ending an interval that had no recorded
+  approval records it as an ended case, so its reason is kept too); a link that needs more than the
+  area's View (a device model opens in the PM program's drawer) is left off for a reader without it; AEM cases of a deleted model are
+  named from its last record; everyone who can be sent an email can open Notifications and turn it off (a Contracts Edit user without
+  Work orders View sees only contract reminders); the daily job reopens a connection that broke before the next facility.

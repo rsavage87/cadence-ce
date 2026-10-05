@@ -5,5 +5,5 @@
     <div class="w"><time datetime="{{ e.at|date:'c' }}">{{ e.at|date:"M j, Y g:i A" }}</time> · {{ e.who }}</div>
     {% if e.changes %}<dl class="hist-c">{% for c in e.changes %}<div><dt>{{ c.field }}</dt><dd>{% if e.action == "changed" %}<span class="was">{{ c.before }}</span> <span class="to" aria-label="changed to">→</span> {{ c.after }}{% else %}{{ c.after }}{% endif %}</dd></div>{% endfor %}</dl>{% endif %}
   </li>{% endwith %}{% endfor %}
-</ol>{% elif hist.first %}<div class="empty">No changes on record.</div>{% endif %}
+</ol>{% elif hist.first and not hist.more_url %}<div class="empty">No changes on record.</div>{% endif %}
 {% if hist.more_url %}<div id="hist-more" class="hist-more"><button class="btn sm" type="button" hx-get="{{ hist.more_url }}" hx-target="#hist-more" hx-swap="outerHTML">Show older</button></div>{% endif %}

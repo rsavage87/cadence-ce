@@ -46,8 +46,14 @@ def _flag(value):
 class NotificationPreferenceViewSet(ApiViewSet):
     """The requesting user's own preferences, on the list's URL: GET reads them, PUT sets them."""
 
-    module = Module.WORKORDERS
-    write_level = Level.VIEW  # the page's level: anyone who views work orders chooses their own emails
+    write_level = Level.VIEW  # choosing one's own emails changes nothing of the facility's: the module's View is enough
+
+    @property
+    def module(self):
+        """The module whose View lets someone choose here: Work orders, or Contracts for someone who gets only contract reminders
+        (ns.refusal then checks the exact rule: Work orders View or Contracts Edit)."""
+        user = self.request.user
+        return Module.CONTRACTS if not user.has_level(Module.WORKORDERS, Level.VIEW) and user.has_level(Module.CONTRACTS, Level.VIEW) else Module.WORKORDERS
 
     @classmethod
     def as_view(cls, actions=None, **initkwargs):

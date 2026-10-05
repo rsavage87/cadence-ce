@@ -364,6 +364,31 @@ def test_reminders_are_per_person(tenant, floor, editors, mailoutbox):
     assert daily.send_due(MON)["sent"] == 1 and [m.to for m in mailoutbox] == [["nia@riverside.example"]]
 
 
+def test_contracts_edit_without_work_orders_view_turns_reminders_off_and_gets_none(client, tenant, floor, mailoutbox):
+    """Contract reminders go to whoever has Contracts Edit, Work orders View or not; such a person may now open the Notifications page
+    (apps.notifications.services.refusal), and once they turn the reminders off there, the job sends them none."""
+    with tenant_context(tenant):
+        clerk = Role.objects.create(name="Contracts clerk", slug="contracts-clerk")
+        clerk.set_levels({"contracts": Level.EDIT})
+        _contract("SC-1", MON + timedelta(days=25), [floor["vent"]])
+    cora = _person(tenant, "contracts-clerk", "cora@riverside.example")  # keeps the default: on
+    otto = _person(tenant, "contracts-clerk", "otto@riverside.example")
+    client.force_login(otto)
+    r = client.post("/account/notifications/", {"contract_reminders": "0"}, HTTP_HX_REQUEST="true", HTTP_HX_TARGET="ntf-form")
+    assert r.status_code == 200
+    with tenant_context(tenant):
+        assert NotificationPreference.objects.get(user=otto).contract_reminders is False
+    mailoutbox.clear()
+    summary = daily.send_due(MON)
+    assert [m.to for m in mailoutbox] == [[cora.email]] and _to(mailoutbox, otto.email) == []
+    [river] = summary["tenants"]
+    assert river["reminders"] == 1 and not river["skipped"] and river["digests"] == 0  # no digest: neither has Work orders View
+    assert [row[0] for row in _sent(tenant)] == [cora.username]
+    client.post("/account/notifications/", {"contract_reminders": "1"}, HTTP_HX_REQUEST="true", HTTP_HX_TARGET="ntf-form")  # back on
+    mailoutbox.clear()
+    assert daily.send_due(MON)["sent"] == 1 and [m.to for m in mailoutbox] == [[otto.email]]  # the stage they have not had yet
+
+
 # --- never twice, and a failure retried ---------------------------------------------------------------------------------
 
 def test_two_runs_at_once_send_each_email_once(tenant, crew, contracts, editors, mailoutbox, monkeypatch):
@@ -484,6 +509,39 @@ def test_a_facility_that_cannot_be_worked_through_does_not_stop_the_next(tenant,
         call_command("send_staff_notifications", stdout=out)
     assert "other: failed: RuntimeError: database went away" in out.getvalue()
     assert [m.to for m in mailoutbox] == [["kim@riverside.example"]]
+
+
+@pytest.mark.parametrize("usable, closed", [(True, 0), (False, 1)])
+def test_after_a_failed_facility_the_connection_is_closed_only_when_it_broke(tenant, floor, editors, other_facility, mailoutbox, monkeypatch,
+                                                                          usable, closed):
+    """A connection that broke is not reopened on its own outside a request, so the next facility gets a new one; a usable one is
+    kept (closing it would throw away the caller's transaction for nothing)."""
+
+    class Connection:
+        def __init__(self):
+            self.closes = 0
+
+        def is_usable(self):
+            return usable
+
+        def close(self):
+            self.closes += 1
+
+    fake = Connection()
+    monkeypatch.setattr(daily, "connection", fake)
+    with tenant_context(tenant):
+        _contract("OURS-1", MON + timedelta(days=30), [floor["vent"]])
+    real = daily._send_facility
+
+    def send_facility(tenant_, today, counts):
+        if tenant_.slug == "other":
+            raise RuntimeError("database went away")
+        return real(tenant_, today, counts)
+
+    monkeypatch.setattr(daily, "_send_facility", send_facility)
+    mailoutbox.clear()
+    summary = daily.send_due(MON)
+    assert fake.closes == closed and summary["failed"] == 1 and [m.to for m in mailoutbox] == [["kim@riverside.example"]]
 
 
 # --- the command and the daily job --------------------------------------------------------------------------------------

@@ -2,10 +2,12 @@
 /api/v1/notification-preferences/).
 
 Defaults until the first save (assignments on, the digest off, contract reminders on), the first save creates the row and later ones
-change only what changed, contract reminders only with Contracts Edit (shown off and disabled otherwise, and turning them on refused),
-where the emails go (or that there is no address), each switch saving only itself, the account menu's link, and every refusal: scoped
-users (whatever their levels), a role without Work orders View, someone not of the facility, bad values, unknown fields. The rows stay
-in their facility, and on PostgreSQL the page and the API work as the runtime role under the policies.
+change only what changed, each kind offered exactly to those it may be sent to (contract reminders with Contracts Edit, the work order
+emails with Work orders View; a kind not offered is shown off and disabled with its reason, and turning it on refused), so someone with
+Contracts Edit and no Work orders View chooses their contract reminders here too; where the emails go (or that there is no address),
+the digest's caveat for someone who is not a technician, each switch saving only itself, the account menu's link, and every refusal:
+scoped users (whatever their levels), a role offered no kind at all, someone not of the facility, bad values, unknown fields. The rows
+stay in their facility, and on PostgreSQL the page and the API work as the runtime role under the policies.
 """
 import json
 
@@ -26,6 +28,7 @@ API = "/api/v1/notification-preferences/"
 HX = {"HTTP_HX_REQUEST": "true", "HTTP_HX_TARGET": "ntf-form"}
 DEFAULTS = {"assignments": True, "daily_digest": False, "contract_reminders": True}
 PART_OF = "part of this facility"  # ModulePermission's refusal of a scoped user
+DIGEST_CAVEAT = "The digest lists work assigned to you as a technician"  # the digest's row, for someone without a technician profile
 
 
 def toast_of(r) -> str:
@@ -106,7 +109,7 @@ def test_contract_reminders_need_contracts_edit(ctx, make_user):
     assert not ns.offered(tech, "contract_reminders") and ns.offered(manager, "contract_reminders")
     with pytest.raises(ValidationError) as e:
         ns.set_preferences(tech, contract_reminders=True)
-    assert e.value.message_dict == {"contract_reminders": [ns.NOT_OFFERED]} and saved(tech) is None
+    assert e.value.message_dict == {"contract_reminders": [ns.NOT_OFFERED["contract_reminders"]]} and saved(tech) is None
     ns.set_preferences(tech, contract_reminders=False, daily_digest=True)  # off is what they get already: accepted, nothing stored for it
     assert saved(tech) == {**DEFAULTS, "daily_digest": True}
     ns.set_preferences(manager, contract_reminders=False)
@@ -131,8 +134,11 @@ def test_who_may_choose(ctx, tenant, other_tenant, make_user):
     assert ns.refusal(make_user("technician")) is None and ns.refusal(make_user("analyst")) is None
     for slug in ("vendor", "requester"):  # scoped by default
         assert "only part of the facility" in ns.refusal(make_user(slug))
-    no_wo = custom_user(tenant, custom_role("contracts-only", {"contracts": Level.EDIT}))
-    assert "Work orders View" in ns.refusal(no_wo)
+    contracts_only = custom_user(tenant, custom_role("contracts-only", {"contracts": Level.EDIT}))  # offered contract reminders alone
+    assert ns.refusal(contracts_only) is None and ns.can_choose(contracts_only)
+    for slug, levels in (("contracts-view", {"contracts": Level.VIEW}), ("reports-only", {"reports": Level.VIEW})):  # offered nothing
+        why = ns.refusal(custom_user(tenant, custom_role(slug, levels)))
+        assert "Work orders View" in why and "Contracts Edit" in why
     root = User.objects.create_superuser(username="root", password="Test-Pass-2026-x", email="root@example.com")
     assert "Only people in this facility" in ns.refusal(root)
     with pytest.raises(ValidationError):
@@ -162,9 +168,12 @@ def test_the_page_shows_the_switches_and_where_the_emails_go(client, ctx, person
     assert f"Emails go to <strong>{user.email}</strong>" in body
     assert " checked" in switch(body, "assignments") and " checked" not in switch(body, "daily_digest")
     contracts = switch(body, "contract_reminders")
-    assert " disabled" in contracts and " checked" not in contracts and "hx-post" not in contracts and ns.NOT_OFFERED in body
+    assert " disabled" in contracts and " checked" not in contracts and "hx-post" not in contracts and ns.NOT_OFFERED["contract_reminders"] in body
+    assert ns.NOT_OFFERED["assignments"] not in body  # offered: no reason under them
     assert 'id="ntf-contract_reminders-off"' not in body  # a disabled switch posts nothing
     assert "not linked to an active technician profile" in body  # make_user's technician has no profile
+    digest = body[body.index('id="ntf-daily_digest-help"'):body.index('id="ntf-contract_reminders-name"')]
+    assert DIGEST_CAVEAT in digest  # the digest lists a technician's work: none comes to them yet
     for kind in ("assignments", "daily_digest"):
         assert f'hx-post="{URL}"' in switch(body, kind) and f'hx-include="#ntf-{kind}-off"' in switch(body, kind)
 
@@ -175,8 +184,8 @@ def test_contracts_edit_is_offered_contract_reminders(client, ctx, person, techs
     techs["dana"].save(update_fields=["user", "updated_at"])
     body = client.get(URL).content.decode()
     contracts = switch(body, "contract_reminders")
-    assert " checked" in contracts and " disabled" not in contracts and ns.NOT_OFFERED not in body
-    assert "not linked to an active technician profile" not in body
+    assert " checked" in contracts and " disabled" not in contracts and not any(why in body for why in ns.NOT_OFFERED.values())
+    assert "not linked to an active technician profile" not in body and DIGEST_CAVEAT not in body
 
 
 def test_the_page_says_when_there_is_no_address(client, ctx, person):
@@ -199,7 +208,7 @@ def test_each_switch_saves_itself(client, ctx, person):
     r = client.post(URL, {"assignments": "maybe"}, **HX)
     assert toast_of(r) == "Choose on or off." and saved(user)["assignments"] is False
     r = client.post(URL, {"contract_reminders": "1"}, **HX)
-    assert toast_of(r) == ns.NOT_OFFERED and saved(user)["contract_reminders"] is True  # stored default, still not offered
+    assert toast_of(r) == ns.NOT_OFFERED["contract_reminders"] and saved(user)["contract_reminders"] is True  # stored default, still not offered
     assert toast_of(client.post(URL, {}, **HX)) == "Nothing to save"
 
 
@@ -228,12 +237,49 @@ def test_scoped_users_are_refused_the_page(client, ctx, person, slug, fields):
     assert saved(user) is None
 
 
-def test_a_scoped_role_with_full_levels_and_a_role_without_work_orders_view_are_refused(client, ctx, tenant):
+def test_a_scoped_role_with_full_levels_and_a_role_offered_nothing_are_refused(client, ctx, tenant):
     full = custom_role("scoped-full", {m: Level.FULL for m in ("equipment", "workorders", "contracts", "users", "settings")}, DataScope.COMPANY)
-    for role in (full, custom_role("contracts-only", {"contracts": Level.EDIT})):
+    nothing = (custom_role("reports-only", {"reports": Level.VIEW}), custom_role("contracts-view", {"contracts": Level.VIEW, "reports": Level.FULL}))
+    for role in (full, *nothing):
         client.force_login(custom_user(tenant, role))
-        assert client.get(URL).status_code == 403 and client.post(URL, {"assignments": "0"}, **HX).status_code == 403
+        assert client.get(URL).status_code == 403, role.slug
+        assert client.post(URL, {"assignments": "0"}, **HX).status_code == 403 and client.post(URL, {"contract_reminders": "0"}, **HX).status_code == 403
+        if role in nothing:  # the account menu does not offer it either
+            menu = client.get("/reports/")
+            assert menu.status_code == 200 and ">Notifications</a>" not in menu.content.decode()
     assert not NotificationPreference.objects.exists()
+
+
+def test_contracts_edit_without_work_orders_view_chooses_contract_reminders(client, ctx, tenant):
+    """Someone who gets contract reminders and no work order emails (Contracts Edit, no Work orders View) can turn them off: the page
+    opens with the reminders offered and the work order emails disabled with their reason."""
+    user = custom_user(tenant, custom_role("contracts-only", {"contracts": Level.EDIT}))
+    assert [k for k in ns.KINDS if ns.offered(user, k)] == ["contract_reminders"]
+    assert ns.shown(user) == {"assignments": False, "daily_digest": False, "contract_reminders": True}
+    client.force_login(user)
+    r = client.get(URL)
+    body = r.content.decode()
+    assert r.status_code == 200 and f"Emails go to <strong>{user.email}</strong>" in body
+    contracts = switch(body, "contract_reminders")
+    assert " checked" in contracts and " disabled" not in contracts and f'hx-post="{URL}"' in contracts
+    for kind in ("assignments", "daily_digest"):
+        assert " disabled" in switch(body, kind) and " checked" not in switch(body, kind) and f'id="ntf-{kind}-off"' not in body
+        help_text = body[body.index(f'id="ntf-{kind}-help"'):]
+        assert help_text.index(ns.NOT_OFFERED[kind]) < help_text.index("</span>")  # each disabled row says why
+    assert ns.NOT_OFFERED["contract_reminders"] not in body and DIGEST_CAVEAT not in body
+    assert f'href="{URL}">Notifications</a>' in client.get("/contracts/").content.decode()  # the account menu offers it
+    r = client.post(URL, {"contract_reminders": "0"}, **HX)
+    assert toast_of(r) == "Contract reminders off" and saved(user)["contract_reminders"] is False and ns.shown(user)["contract_reminders"] is False
+    r = client.post(URL, {"assignments": "1"}, **HX)
+    assert toast_of(r) == ns.NOT_OFFERED["assignments"] and saved(user)["assignments"] is True  # refused: the stored default, not offered
+    r = client.post(URL, {"daily_digest": "0"}, **HX)  # off is what they get already: accepted, nothing stored for it
+    assert r.status_code == 200 and saved(user)["daily_digest"] is False
+    # The service says the same
+    with pytest.raises(ValidationError) as e:
+        ns.set_preferences(user, daily_digest=True)
+    assert e.value.message_dict == {"daily_digest": [ns.NOT_OFFERED["daily_digest"]]}
+    ns.set_preferences(user, contract_reminders=True, assignments=False)
+    assert saved(user) == {"assignments": True, "daily_digest": False, "contract_reminders": True}
 
 
 def test_someone_not_of_the_facility_is_told_so(client, ctx, tenant):
@@ -284,7 +330,7 @@ def test_the_api_with_contracts_edit_and_a_token(client, ctx, make_user):
     ({"contract_reminders_offered": True}, {"contract_reminders_offered": [
         "contract_reminders_offered is shown, not set here: send it as GET shows it, or leave it out."]}),
     ({}, {"detail": "Send any of assignments, daily_digest, contract_reminders: true or false."}),
-    ({"contract_reminders": True}, {"contract_reminders": [ns.NOT_OFFERED]}),
+    ({"contract_reminders": True}, {"contract_reminders": [ns.NOT_OFFERED["contract_reminders"]]}),
 ])
 def test_the_api_refuses_bad_bodies(client, ctx, person, body, errors):
     user = person("technician")
@@ -309,9 +355,24 @@ def test_the_api_refuses_scoped_users(client, ctx, person, slug, fields):
     assert saved(user) is None
 
 
-def test_the_api_refuses_a_role_without_work_orders_view_and_a_user_with_no_facility(client, ctx, tenant):
-    client.force_login(custom_user(tenant, custom_role("contracts-only", {"contracts": Level.EDIT})))
-    assert client.get(API).status_code == 403 and put(client, {"assignments": False}).status_code == 403
+def test_the_api_for_contracts_edit_without_work_orders_view(client, ctx, tenant):
+    user = custom_user(tenant, custom_role("contracts-only", {"contracts": Level.EDIT}))
+    client.force_login(user)
+    shown = {"email": user.email, "assignments": False, "daily_digest": False, "contract_reminders": True, "contract_reminders_offered": True}
+    assert client.get(API).json() == shown
+    r = put(client, {"contract_reminders": False})
+    assert r.status_code == 200 and r.json() == {**shown, "contract_reminders": False} and saved(user)["contract_reminders"] is False
+    r = put(client, {"assignments": True})
+    assert r.status_code == 400 and r.json() == {"assignments": [ns.NOT_OFFERED["assignments"]]}
+    r = put(client, client.get(API).json())  # what GET showed, sent back: the work order kinds are off, which they already are
+    assert r.status_code == 200 and r.json() == {**shown, "contract_reminders": False}
+
+
+def test_the_api_refuses_a_role_offered_nothing_and_a_user_with_no_facility(client, ctx, tenant):
+    for role in (custom_role("reports-only", {"reports": Level.VIEW}), custom_role("contracts-view", {"contracts": Level.VIEW})):
+        client.force_login(custom_user(tenant, role))
+        assert client.get(API).status_code == 403 and put(client, {"assignments": False}).status_code == 403, role.slug
+        assert put(client, {"contract_reminders": False}).status_code == 403
     client.logout()
     root = User.objects.create_superuser(username="root", password="Test-Pass-2026-x", email="root@example.com")
     token = {"HTTP_AUTHORIZATION": f"Token {Token.objects.create(user=root).key}"}

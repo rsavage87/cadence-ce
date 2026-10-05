@@ -8,9 +8,10 @@ Users View, and never a scoped user's (web_view refuses them: the log is the who
 Filters, all in the address (the form swaps the list and pushes the URL): area (one of those the role can view), from and to (local
 days, inclusive), and who (a person in the facility). A filter the reader cannot use (an area their role cannot view, someone outside
 the facility, a day that is not one) is dropped, as the list screens drop theirs. The list shows PAGE entries; Show older adds the
-next page below it (HTMX), or opens that page on its own without JavaScript. It reaches MAX_ENTRIES back; past that, narrow the
-dates. Export CSV writes what the filters on screen give, newest first, at most CSV_LIMIT entries (apps.web.exports.csv_response);
-Print opens up to PRINT_LIMIT of them on paper (web/print_base.html).
+next page below it (HTMX), or opens that page on its own without JavaScript. Its ?after= is the last entry shown
+(apps.core.history.cursor_text), so changes saved meanwhile never repeat or skip entries on the next page. Export CSV writes what
+the filters on screen give, newest first, at most CSV_LIMIT entries (apps.web.exports.csv_response); Print opens up to PRINT_LIMIT
+of them on paper (web/print_base.html).
 """
 import re
 from dataclasses import dataclass
@@ -21,7 +22,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts.models import Level, Module, User
-from apps.core.history import ACCESS, change_log, readable_areas
+from apps.core.history import ACCESS, change_log, parse_cursor, readable_areas
 
 from .decorators import web_view
 from .exports import csv_response
@@ -29,8 +30,6 @@ from .htmx import is_partial
 from .views_users import tabs_context
 
 PAGE = 50
-MAX_ENTRIES = 10_000
-MAX_PAGE = MAX_ENTRIES // PAGE
 CSV_LIMIT = 10_000
 PRINT_LIMIT = 500
 # The areas whose records open in the drawer, over the log; the rest (roles, settings, custom reports) open their own page.
@@ -45,7 +44,7 @@ class LogFilters:
     since: date | None = None
     until: date | None = None
     who: int | None = None
-    page: int = 1
+    after: str | None = None  # the page's cursor: the last entry of the page before it
 
     def query(self) -> dict:
         """change_log's keyword arguments for these filters."""
@@ -75,9 +74,10 @@ def _int(value) -> int | None:
 
 def parse_log_filters(params, area_keys: set[str], people: set[int]) -> LogFilters:
     who = _int(params.get("who"))
-    page = _int(params.get("page")) or 1
+    after = params.get("after") or None
     return LogFilters(area=params.get("area", "") if params.get("area", "") in area_keys else "", since=_day(params.get("from")),
-                      until=_day(params.get("to")), who=who if who in people else None, page=min(max(page, 1), MAX_PAGE))
+                      until=_day(params.get("to")), who=who if who in people else None,
+                      after=after if after and parse_cursor(after) is not None else None)
 
 
 def _people(request) -> list[tuple[int, str]]:
@@ -116,10 +116,9 @@ def _filter_words(f: LogFilters, areas, people) -> str:
 
 def _list_context(request) -> dict:
     f, areas, people = _filters(request)
-    entries, more = change_log(request.user, **f.query(), limit=PAGE, offset=(f.page - 1) * PAGE)
-    return {"f": f, "areas": [(a.key, a.label) for a in areas], "people": people, "entries": entries, "more": more and f.page < MAX_PAGE,
-            "at_limit": more and f.page >= MAX_PAGE, "next_page": f.page + 1, "page_size": PAGE, "max_entries": f"{MAX_ENTRIES:,}",
-            "list_url": reverse("web:change_log"), "drawer_areas": DRAWER_AREAS}
+    entries, following = change_log(request.user, **f.query(), limit=PAGE, after=f.after)
+    return {"f": f, "areas": [(a.key, a.label) for a in areas], "people": people, "entries": entries, "more": following is not None,
+            "next_after": following, "page_size": PAGE, "list_url": reverse("web:change_log"), "drawer_areas": DRAWER_AREAS}
 
 
 @web_view(Module.USERS, Level.VIEW)

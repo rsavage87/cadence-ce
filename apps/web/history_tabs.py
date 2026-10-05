@@ -8,9 +8,10 @@ Who: View on the record's module (apps.core.history.AREAS) and not scoped (apps.
 clinical requester sees no history, though the device and work order drawers admit them). The drawers offer the tab only to them,
 and the views refuse everyone else with a 403 (`require`) whenever history is asked for, a partial or the whole drawer.
 
-Pages: the latest PAGE entries, then "Show older" (HTMX, the element #hist-more) swaps in the next PAGE with the next button. The
-HTMX partials are the entries alone (#hist for a section's first page, #hist-more after it); opened directly, the same URL renders
-the screen with the drawer open on its history, from the newest through the page asked for (at most DIRECT_MAX entries).
+Pages: the latest PAGE entries, then "Show older" (HTMX, the element #hist-more) swaps in the next PAGE with the next button.
+?older= carries the page's cursor (apps.core.history.cursor_text: the last entry shown), so a change saved meanwhile never makes the
+next page repeat or skip entries. The HTMX partials are the entries alone (#hist for a section's first page, #hist-more after it);
+opened directly, the same URL renders the screen with the drawer open on its history at that page.
 """
 from urllib.parse import urlencode
 
@@ -22,8 +23,6 @@ from apps.core import history
 from .htmx import is_partial
 
 PAGE = 50
-OLDER_MAX = 10_000  # an offset past any real history (saves of one record); bigger ones are read as this
-DIRECT_MAX = 500  # opened directly with ?older=, the drawer shows at most this many entries; Show older goes on from there
 ENTRIES = "web/_history_entries.html"
 PARTIALS = ("hist", "hist-more")  # a section's first page, and Show older
 
@@ -57,14 +56,6 @@ def wants_entries(request) -> bool:
     return any(is_partial(request, p) for p in PARTIALS)
 
 
-def _older(params) -> int:
-    try:
-        n = int(params.get("older", 0))
-    except (TypeError, ValueError):
-        return 0
-    return min(max(n, 0), OLDER_MAX)
-
-
 def _title(entry, own_area: str) -> str:
     if entry.area == own_area:
         return entry.action_label
@@ -73,16 +64,17 @@ def _title(entry, own_area: str) -> str:
 
 def context(request, obj, area_key: str, url: str, *, tab: bool) -> dict:
     """{"hist": ...} for the drawer's history (or the entries partial): `url` is the record's drawer URL. Callers check `require`
-    first. A partial reads the page asked for; the drawer (or the page opened directly) reads from the newest through it."""
-    older = _older(request.GET)
-    offset, limit = (older, PAGE) if wants_entries(request) else (0, min(older + PAGE, DIRECT_MAX))
+    first. The page after ?older= (a cursor; anything else reads as the newest)."""
+    after = request.GET.get("older") or None
+    if after is not None and history.parse_cursor(after) is None:
+        after = None
     related = {key: {field: obj.pk} for key, field in RELATED.get(area_key, {}).items() if allowed(request.user, key)}
-    entries, following = history.record_history(obj, related, limit=limit, offset=offset)
+    entries, following = history.record_history(obj, related, limit=PAGE, after=after)
     rows = [{"e": e, "title": _title(e, area_key)} for e in entries]
     more_url = None
     if following is not None:
-        more_url = f"{url}?{urlencode({'tab': 'history'} if tab else {'history': 1})}&older={following}"
-    return {"hist": {"rows": rows, "more_url": more_url, "first": offset == 0}}
+        more_url = f"{url}?" + urlencode({**({"tab": "history"} if tab else {"history": 1}), "older": following})
+    return {"hist": {"rows": rows, "more_url": more_url, "first": after is None}}
 
 
 def entries_response(request, obj, area_key: str, url: str, *, tab: bool):

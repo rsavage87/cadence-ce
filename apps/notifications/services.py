@@ -30,7 +30,13 @@ LABELS = {
 }
 SHORT = {"assignments": "Assignment emails", "daily_digest": "Daily digest", "contract_reminders": "Contract reminders"}
 CONTRACTS_LEVEL = Level.EDIT  # contract reminders ask the reader to renew or let a contract end: Contracts Edit acts on that
-NOT_OFFERED = "Contract reminders go to people who can edit contracts (Contracts Edit)."
+WORK_LEVEL = Level.VIEW  # assignment emails and the digest are about work orders: Work orders View opens them
+# Why a kind is not offered: whoever gets an email can always choose it, so each kind is offered exactly to those it may be sent to.
+NOT_OFFERED = {
+    "assignments": "Work order emails go to people who can view work orders (Work orders View).",
+    "daily_digest": "Work order emails go to people who can view work orders (Work orders View).",
+    "contract_reminders": "Contract reminders go to people who can edit contracts (Contracts Edit).",
+}
 
 
 def preferences_for(user) -> NotificationPreference:
@@ -59,8 +65,8 @@ def refusal(user) -> str | None:
         return "Only people in this facility choose the emails it sends them."
     if is_scoped(user):
         return "Your role sees only part of the facility, and these emails are about the whole facility's work."
-    if not user.has_level(Module.WORKORDERS, Level.VIEW):
-        return "You need Work orders View to get emails about work orders."
+    if not any(offered(user, kind) for kind in KINDS):
+        return "These emails are about work orders (Work orders View) and service contracts (Contracts Edit), and your role has neither."
     return None
 
 
@@ -70,10 +76,13 @@ def can_choose(user) -> bool:
 
 
 def offered(user, kind: str) -> bool:
-    """Whether `user` is offered the emails of `kind`: contract reminders need Contracts Edit; the others, everyone who may choose."""
+    """Whether `user` is offered the emails of `kind`: contract reminders need Contracts Edit, the work order emails Work orders View.
+    The daily jobs send each kind only to those it is offered to (apps.notifications.daily), so whoever gets one can turn it off."""
     if kind not in KINDS:
         raise ValueError(kind)
-    return kind != "contract_reminders" or user.has_level(Module.CONTRACTS, CONTRACTS_LEVEL)
+    if kind == "contract_reminders":
+        return user.has_level(Module.CONTRACTS, CONTRACTS_LEVEL)
+    return user.has_level(Module.WORKORDERS, WORK_LEVEL)
 
 
 def shown(user, prefs: NotificationPreference | None = None) -> dict:
@@ -88,8 +97,8 @@ def shown(user, prefs: NotificationPreference | None = None) -> dict:
 def set_preferences(user, **choices) -> NotificationPreference:
     """Save `user`'s own choices: any of KINDS, each True or False; the kinds left out keep what they were. Creates their row on the
     first save. Raises ValidationError for an unknown kind, a value that is not True or False, a user who may not choose (refusal),
-    and turning on contract reminders without Contracts Edit. Turning them off without it is accepted and changes nothing: they are
-    already off for that user, and what was saved applies again if they are given Contracts Edit."""
+    and turning on a kind the user is not offered (offered). Turning one off is accepted and changes nothing: it is already off for
+    that user, and what was saved applies again if they are given the access."""
     unknown = sorted(set(choices) - set(KINDS))
     if unknown:
         raise ValidationError(f"Unknown notification: {', '.join(unknown)}.")
@@ -99,10 +108,11 @@ def set_preferences(user, **choices) -> NotificationPreference:
     why = refusal(user)
     if why:
         raise ValidationError(why)
-    if not offered(user, "contract_reminders"):
-        if choices.get("contract_reminders"):
-            raise ValidationError({"contract_reminders": NOT_OFFERED})
-        choices.pop("contract_reminders", None)
+    for kind in KINDS:
+        if not offered(user, kind):
+            if choices.get(kind):
+                raise ValidationError({kind: NOT_OFFERED[kind]})
+            choices.pop(kind, None)
     prefs = preferences_for(user)
     if prefs._state.adding:  # the first save: the row starts with these choices and the defaults for the rest
         for kind, value in choices.items():

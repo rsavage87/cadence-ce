@@ -9,11 +9,10 @@ service says so again). Each switch saves only itself as it is flipped (its own 
 earlier never writes back a switch nobody touched in it; the POST answers with the switches re-rendered and a toast. A POST without
 HTMX saves and comes back to the page.
 """
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.shortcuts import redirect, render
 from django.urls import reverse
 
-from apps.accounts.models import Level, Module
 from apps.credentials.models import Technician
 from apps.notifications import services as ns
 
@@ -46,7 +45,7 @@ def _ctx(request) -> dict:
     now = ns.shown(user)
     rows = [{"kind": kind, "label": ns.LABELS[kind], "help": help_text, "on": now[kind], "offered": ns.offered(user, kind)}
             for kind, help_text in ROWS]
-    return {"rows": rows, "email": user.email, "not_offered": ns.NOT_OFFERED,
+    return {"rows": rows, "email": user.email, "not_offered": ns.NOT_OFFERED,  # a dict: the template reads the row's own reason
             "is_technician": Technician.objects.filter(user=user, is_active=True).exists()}
 
 
@@ -57,8 +56,10 @@ def _message(choices: dict) -> str:
     return "Notifications saved"
 
 
-@web_view(Module.WORKORDERS, Level.VIEW)
+@web_view()  # scoped users are refused by web_view; the rest by ns.refusal: Work orders View or Contracts Edit
 def notifications(request):
+    if ns.refusal(request.user) and request.user.tenant_id == getattr(request.tenant, "id", None):
+        raise PermissionDenied
     if request.method == "POST":
         choices = _choices(request.POST)
         try:

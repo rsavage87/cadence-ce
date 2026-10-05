@@ -269,6 +269,9 @@ def _save(obj, by, reason: str) -> None:
     obj.save()
 
 
+LEGACY_RATIONALE = "An AEM interval on file before Cadence recorded AEM approvals; recorded when it was ended."
+
+
 def _set_interval(dm: DeviceModel, months: int | None, by, reason: str, *also) -> None:
     """Set the model's AEM interval (the one place it is written), and on the caller's copies of the row too."""
     dm.aem_interval_months = months
@@ -455,8 +458,16 @@ def end(target: AemDecision | DeviceModel, *, by=None, reason: str, today: date 
         current.status = AemStatus.ENDED
         current.ended_by, current.ended_on, current.end_reason = by, today, reason
         _save(current, by, "Ended")
+    else:
+        # An interval on file without a recorded approval has no case to keep why it ended: record one, ended, so the reason is kept
+        # where every AEM reason is (the decision, PM View), never on the model's own history (Equipment View).
+        legacy = AemDecision(device_model=dm, interval_months=dm.aem_interval_months, oem_interval_months=dm.oem_pm_interval_months,
+                             status=AemStatus.ENDED, rationale=LEGACY_RATIONALE, proposed_on=today, ended_by=by, ended_on=today, end_reason=reason)
+        _save(legacy, by, "Ended")
     label = "AEM ended" if current is not None else "AEM on file without a recorded approval ended"
-    _set_interval(dm, None, by, f"{label}: {reason}", target if given is None else given.device_model)
+    # The model's own history says only that the AEM ended; the typed reason stays on the AEM decision, whose history needs PM View
+    # (the model's needs only Equipment View).
+    _set_interval(dm, None, by, label, target if given is None else given.device_model)
     if pull_in is None:
         pull_in = end_moves_devices(dm)
     return _pull_in(dm, by=by, today=today) if pull_in else 0

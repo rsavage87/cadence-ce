@@ -14,7 +14,5 @@
 </tr>
 {% endfor %}
 {% if more %}
-<tr id="log-more" class="clog-more"><td colspan="5">{% query request.GET page=next_page as older %}<a class="btn sm" href="{{ list_url }}{{ older }}" hx-get="{{ list_url }}{{ older }}" hx-target="#log-more" hx-swap="outerHTML">Show older</a></td></tr>
-{% elif at_limit %}
-<tr class="clog-more"><td colspan="5"><span class="muted">That is {{ max_entries }} changes back; narrow the dates to see older ones.</span></td></tr>
+<tr id="log-more" class="clog-more"><td colspan="5">{% query request.GET after=next_after page=None as older %}<a class="btn sm" href="{{ list_url }}{{ older }}" hx-get="{{ list_url }}{{ older }}" hx-target="#log-more" hx-swap="outerHTML">Show older</a></td></tr>
 {% endif %}

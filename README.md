@@ -36,9 +36,10 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
 ```
 
 ## Daily jobs
-Two jobs run once a day: `generate_pm` (PM work orders coming due within `PM_LEAD_DAYS`, 21 by default, for every tenant) and
-`import_openfda` (the last 30 days of FDA device recalls, matched to every tenant's inventory). `docker compose up` starts a
-`scheduler` service that runs both at `SCHEDULER_DAILY_AT` (default 02:30, local time in `DJANGO_TIME_ZONE`). If it starts after
+Four jobs run once a day: `generate_pm` (PM work orders coming due within `PM_LEAD_DAYS`, 21 by default, for every tenant),
+`import_openfda` (the last 30 days of FDA device recalls, matched to every tenant's inventory), `send_report_emails` (scheduled
+reports), and `send_staff_notifications` (the daily digest and contract reminders). `docker compose up` starts a `scheduler` service
+that runs them at `SCHEDULER_DAILY_AT` (default 02:30, local time in `DJANGO_TIME_ZONE`). If it starts after
 that time and today's jobs have not run, it runs them at once.
 
 Each job runs at most once per local day, recorded in Admin under Scheduled jobs with what it printed. A second scheduler or a
@@ -121,6 +122,21 @@ Scan tag on Equipment opens a device from its label: a handheld barcode scanner 
 the browser can (Chrome and Edge on Android and desktop; on an iPhone, the camera app opens the label's link), or type the tag.
 It reads a label's QR code link, a device link, or a plain tag, and opens only devices the user may see. Someone signed in to
 Cadence who opens a label's link on their phone gets an "Open in Cadence" link on the request page.
+
+## History and the change log
+Every device, work order (with its labor and parts), contract, and device model has a History tab or section: each change, newest
+first, with when, who, each field's before and after, and the reason the product recorded. Users and access has a Change log tab
+across the facility (devices, models, work orders, contracts, PM procedures and AEM decisions, credentials, roles, settings, custom
+reports, and every access change: invitations, role changes, deactivations, a role's levels and what it sees), filtered by area,
+dates, and person, downloadable as CSV and printable; the API serves it at `/api/v1/change-log/`. Each person sees only the areas
+their role can view, and vendor technicians and clinical requesters see no history at all.
+
+## Notifications
+The account menu's Notifications page chooses the emails Cadence sends you: when a work order is assigned to you (on by default;
+a batch, such as a day's PMs or Auto-assign week, sends one email listing them all), a morning digest of your work due or overdue
+and your PMs this week (off by default), and reminders 90, 30, and 7 days before a service contract ends and once after (for people
+who can edit contracts). The digest and reminders go out with the daily jobs; nothing is ever sent twice. These emails never carry
+what a requester typed (the problem, who asked, where): open the work order in Cadence to read it.
 
 ## API
 `/api/v1/` serves what the screens do, with the same permissions, refusals, and services behind them, by the web session or a

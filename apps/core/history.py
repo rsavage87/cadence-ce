@@ -86,6 +86,7 @@ class Area:
     name: object  # (historical record) -> str
     url: object = None  # (historical record) -> str | None
     select: tuple = ()  # the historical rows' foreign keys `name` and `url` read, joined in the same query
+    url_module: str | None = None  # the module whose View following `url` needs, when it is not `module` (the change log drops the link)
 
     @property
     def model(self):
@@ -104,24 +105,47 @@ def _safe(fn):
     return wrapped
 
 
+def _last_name(model_path: str, pk, namer) -> str:
+    """A related row deleted since, by its last name on record in this tenant ("(deleted)" after it), or "(deleted)" alone."""
+    from django.apps import apps
+
+    last = _rows(apps.get_model(model_path).history.model).filter(id=pk).order_by("-history_date", "-history_id").first()
+    return f"{namer(last)} {DELETED}" if last is not None else DELETED
+
+
 def _wo_number(rec) -> str:
-    return rec.work_order.number
+    wo = rec.work_order
+    return wo.number if wo is not None else _last_name("workorders.WorkOrder", rec.work_order_id, lambda r: r.number)
+
+
+def _wo_url(rec):
+    return reverse("web:wo", args=[rec.work_order.number]) if rec.work_order is not None else None
+
+
+def _aem_name(rec) -> str:
+    dm = rec.device_model
+    if dm is None:  # the model was deleted since (its AEM cases with it): the LEFT JOIN gives None, not an error
+        return "AEM · " + _last_name("equipment.DeviceModel", rec.device_model_id, lambda r: f"{r.manufacturer} {r.model}")
+    return f"AEM · {dm.manufacturer} {dm.model}"
+
+
+def _aem_url(rec):
+    return reverse("web:pm_model", args=[rec.device_model_id]) + "?tab=aem" if rec.device_model is not None else None
 
 
 AREAS = {a.key: a for a in (
     Area("devices", "Devices", "equipment.Asset", "equipment", _safe(lambda r: r.tag), _safe(lambda r: reverse("web:asset", args=[r.tag]))),
     Area("device_models", "Device models", "equipment.DeviceModel", "equipment", _safe(lambda r: f"{r.manufacturer} {r.model}"),
-         _safe(lambda r: reverse("web:pm_model", args=[r.id]))),
+         _safe(lambda r: reverse("web:pm_model", args=[r.id])), url_module="pm"),  # the model drawer is the PM program's (PM View)
     Area("work_orders", "Work orders", "workorders.WorkOrder", "workorders", _safe(lambda r: r.number), _safe(lambda r: reverse("web:wo", args=[r.number]))),
-    Area("labor", "Labor", "workorders.LaborLine", "workorders", _safe(lambda r: f"{_wo_number(r)} labor"),
-         _safe(lambda r: reverse("web:wo", args=[_wo_number(r)])), select=("work_order",)),
-    Area("parts", "Parts", "workorders.PartLine", "workorders", _safe(lambda r: f"{_wo_number(r)} part"),
-         _safe(lambda r: reverse("web:wo", args=[_wo_number(r)])), select=("work_order",)),
+    Area("labor", "Labor", "workorders.LaborLine", "workorders", _safe(lambda r: f"{_wo_number(r)} labor"), _safe(_wo_url),
+         select=("work_order",)),
+    Area("parts", "Parts", "workorders.PartLine", "workorders", _safe(lambda r: f"{_wo_number(r)} part"), _safe(_wo_url),
+         select=("work_order",)),
     Area("contracts", "Contracts", "contracts.Contract", "contracts", _safe(lambda r: f"{r.reference} · {r.vendor}"),
          _safe(lambda r: reverse("web:contract", args=[r.id]))),
     Area("procedures", "PM procedures", "pm.PmProcedure", "pm", _safe(lambda r: r.code)),
-    Area("aem", "AEM decisions", "pm.AemDecision", "pm", _safe(lambda r: f"AEM · {r.device_model}"),
-         _safe(lambda r: reverse("web:pm_model", args=[r.device_model_id]) + "?tab=aem"), select=("device_model",)),
+    Area("aem", "AEM decisions", "pm.AemDecision", "pm", _safe(_aem_name), _safe(_aem_url), select=("device_model",)),
     Area("credentials", "Credentials", "credentials.Credential", "users", _safe(lambda r: f"{r.technician} · credential"), select=("technician",)),
     Area("roles", "Roles", "accounts.Role", "users", _safe(lambda r: r.name), _safe(lambda r: reverse("web:roles"))),
     Area("settings", "Settings", "facility.FacilitySettings", "settings", _safe(lambda r: "Settings"), _safe(lambda r: reverse("web:settings"))),
@@ -254,11 +278,22 @@ def _shown_fields(model) -> list:
     return [f for f in model._meta.concrete_fields if f.name not in hidden]
 
 
-def _who(rec) -> tuple[str, int | None]:
-    user = getattr(rec, "history_user", None)
+OUTSIDE = "Someone outside this facility"
+
+
+def _person(user) -> tuple[str, int | None]:
+    """Who made a change, as this facility may read it: one of its people (or a platform superuser, who belongs to none) by name;
+    anyone else (another facility's user who sent this facility's public request form while signed in there) unnamed."""
     if user is None:
         return SYSTEM, None
+    tenant = get_current_tenant()
+    if user.tenant_id is not None and (tenant is None or user.tenant_id != tenant.id):
+        return OUTSIDE, None
     return (user.get_full_name() or user.username), user.pk
+
+
+def _who(rec) -> tuple[str, int | None]:
+    return _person(getattr(rec, "history_user", None))
 
 
 # How a related row is named, live or as its last historical record (whose __str__ is simple_history's, not the model's).
@@ -591,112 +626,149 @@ def entries_for_rows(area_key: str, rows, limit: int = 200) -> list[Entry]:
     return _entries(area, _pairs(area, recs, _previous(history_model, recs)))
 
 
-def _merged(sources: list[tuple], start: int, n: int) -> list[tuple]:
-    """Saves `start` to `start + n` (one more when there is one, to tell) of `sources` [(area, historical rows)] interleaved newest
-    first, as (area, record). Each source reads at most start + n + 1 rows."""
-    picked = []
-    for i, (area, qs) in enumerate(sources):
-        for rec in qs.order_by("-history_date", "-history_id")[: start + n + 1]:
-            picked.append(((rec.history_date, -i, rec.history_id), area, rec))
-    picked.sort(key=lambda t: t[0], reverse=True)
-    return [(area, rec) for _key, area, rec in picked[start: start + n + 1]]
+# --- pages: newest first, continued after the last entry shown (a cursor, not a count, so saves made between two pages never make
+# the next one repeat or skip entries) ----------------------------------------------------------------------------------------------
+
+RANKS = {key: i for i, key in enumerate(ALL_AREAS)}  # ties in time read in this order, so every save has one place in the list
 
 
-def record_history(obj, related: dict | None = None, *, limit: int = 50, offset: int = 0) -> tuple[list[Entry], int | None]:
-    """A page of `obj`'s history, newest first, with the changes of the rows that belong to it interleaved by time: `related` maps
-    an area key to lookups on that area's historical rows ({"labor": {"work_order_id": wo.pk}}), so a row deleted since keeps its
-    history here. A page starts `offset` saves in and holds up to `limit` entries (saves that touched none of the shown fields
-    show nothing and are read past, up to MAX_ROUNDS windows). Returns (entries, the offset of the next page, or None when nothing
-    is older)."""
-    area = area_of(type(obj))
-    if area is None:
-        return [], None
-    sources = [(area, _history_rows(area).filter(id=obj.pk))]
-    sources += [(AREAS[key], _related_rows(AREAS[key], lookups)) for key, lookups in (related or {}).items()]
+def _source(area: Area, qs) -> tuple:
+    """(area, rows, the rows' time field, their id field) for _read."""
+    if area is ACCESS:
+        return area, qs, "at", "pk"
+    return area, qs, "history_date", "history_id"
+
+
+def cursor_text(key: tuple) -> str:
+    """A page's continuation as text for a URL: the (time, area rank, id) of the last save it read."""
+    at, rank, pk = key
+    return f"{at.isoformat()}~{rank}~{pk}"
+
+
+def parse_cursor(text) -> tuple | None:
+    """cursor_text's key back, or None for anything that is not one (a hand-edited URL starts from the newest)."""
+    import uuid
+
+    try:
+        at_text, rank_text, pk_text = str(text).split("~")
+        at = datetime.fromisoformat(at_text)
+        rank = int(rank_text)
+        if timezone.is_naive(at) or not 0 <= rank < len(RANKS):
+            return None
+        key = list(RANKS)[rank]
+        pk = uuid.UUID(pk_text) if key == ACCESS.key else int(pk_text)
+    except (TypeError, ValueError):
+        return None
+    return at, rank, pk
+
+
+def _older(qs, rank: int, date_field: str, pk_field: str, cursor: tuple | None):
+    """`qs`'s rows that come after `cursor` in the list's order: newest first, ties by area rank (highest first), then by id."""
+    if cursor is None:
+        return qs
+    at, c_rank, c_pk = cursor
+    if rank > c_rank:
+        return qs.filter(**{f"{date_field}__lt": at})
+    if rank < c_rank:
+        return qs.filter(**{f"{date_field}__lte": at})
+    return qs.filter(Q(**{f"{date_field}__lt": at}) | Q(**{date_field: at, f"{pk_field}__lt": c_pk}))
+
+
+def _built(window: list) -> dict:
+    """{(area key, row id): its entry, or None for a save that changed none of the shown fields} for a window of (key, area, row)."""
+    by_area: dict = {}
+    for _key, area, row in window:
+        by_area.setdefault(area.key, []).append(row)
+    out: dict = {}
+    for key, rows in by_area.items():
+        area = ALL_AREAS[key]
+        if area is ACCESS:
+            out.update({(key, r.pk): e for r, e in zip(rows, _access_entries(rows))})
+            continue
+        prevs = _previous(area.model.history.model, rows)
+        for rec, entry in zip(rows, _build(area, _pairs(area, rows, prevs))):  # one batch per area: its names in one query each
+            out[(key, rec.history_id)] = entry
+    return out
+
+
+def _read(sources: list[tuple], limit: int, after: tuple | None) -> tuple[list[Entry], tuple | None]:
+    """Up to `limit` entries of `sources` (from _source) after `after`, newest first, and the key to continue from (None when
+    nothing older is left). Saves that show nothing are read past, up to MAX_ROUNDS windows of `limit` saves, so a page is never
+    empty while older entries exist within reach; each window costs one query per source and the batch builds."""
+    limit = max(int(limit), 1)
     entries: list[Entry] = []
-    cursor = max(int(offset), 0)
-    size = max(int(limit), 1)
+    cursor = after
     for _round in range(MAX_ROUNDS):
-        window = _merged(sources, cursor, size)
-        more = len(window) > size
-        window = window[:size]
-        by_area: dict = {}
-        for a, rec in window:
-            by_area.setdefault(a.key, []).append(rec)
-        built: dict = {}
-        for key, recs in by_area.items():
-            a = AREAS[key]
-            prevs = _previous(a.model.history.model, recs)
-            for rec, entry in zip(recs, _build(a, _pairs(a, recs, prevs))):
-                built[(key, rec.history_id)] = entry
-        for i, (a, rec) in enumerate(window):
-            entry = built[(a.key, rec.history_id)]
-            if entry is None:
-                continue
-            entries.append(entry)
-            if len(entries) >= limit:  # the page is full at this save: the next page starts right after it
-                return entries, (cursor + i + 1) if (more or i + 1 < len(window)) else None
-        cursor += len(window)
+        window = []
+        for area, qs, date_field, pk_field in sources:
+            rank = RANKS[area.key]
+            for row in _older(qs, rank, date_field, pk_field, cursor).order_by(f"-{date_field}", f"-{pk_field}")[: limit + 1]:
+                window.append(((getattr(row, date_field), rank, getattr(row, pk_field)), area, row))
+        window.sort(key=lambda t: t[0], reverse=True)
+        more = len(window) > limit
+        window = window[:limit]
+        built = _built(window)
+        for i, (key, area, row) in enumerate(window):
+            cursor = key
+            entry = built.get((area.key, row.pk if area is ACCESS else row.history_id))
+            if entry is not None:
+                entries.append(entry)
+            if len(entries) >= limit:
+                return entries, (key if more or i + 1 < len(window) else None)
         if not more:
             return entries, None
     return entries, cursor
 
 
+def record_history(obj, related: dict | None = None, *, limit: int = 50, after: str | None = None) -> tuple[list[Entry], str | None]:
+    """A page of `obj`'s history, newest first, with the changes of the rows that belong to it interleaved by time: `related` maps
+    an area key to lookups on that area's historical rows ({"labor": {"work_order_id": wo.pk}}), so a row deleted since keeps its
+    history here. A page holds up to `limit` entries after the cursor `after` (cursor_text of the last one shown; None for the
+    newest). Returns (entries, the next page's cursor, or None when nothing is older)."""
+    area = area_of(type(obj))
+    if area is None:
+        return [], None
+    sources = [_source(area, _history_rows(area).filter(id=obj.pk))]
+    sources += [_source(AREAS[key], _related_rows(AREAS[key], lookups)) for key, lookups in (related or {}).items()]
+    entries, following = _read(sources, limit, parse_cursor(after) if after else None)
+    return entries, cursor_text(following) if following else None
+
+
 def _access_entries(events: list) -> list[Entry]:
     out = []
     for e in events:
-        who = (e.by.get_full_name() or e.by.username) if e.by_id else SYSTEM
+        who, who_id = _person(e.by if e.by_id else None)
         out.append(Entry(at=e.at, area=ACCESS.key, area_label=ACCESS.label, record=ACCESS.name(e) or (e.role.name if e.role_id else ""),
-                         url=None, who=who, who_id=e.by_id, action=e.get_action_display(), reason="",
+                         url=None, who=who, who_id=who_id, action=e.get_action_display(), reason="",
                          changes=[Change("", "", e.detail)] if e.detail else []))
     return out
 
 
 def change_log(user, *, areas: list[str] | None = None, since: date | None = None, until: date | None = None, who: int | None = None,
-               limit: int = 50, offset: int = 0) -> tuple[list[Entry], bool]:
+               limit: int = 50, after: str | None = None) -> tuple[list[Entry], str | None]:
     """The facility's changes, newest first, across the areas `user` can view (or those of `areas` among them), between `since`
-    and `until` (local days, inclusive), made by the user with id `who`; one page of `limit` from `offset`. Returns (entries, more):
-    `more` says a later page has entries. Each area reads at most offset + limit + 1 rows, so a page costs the same however long
-    the history is."""
+    and `until` (local days, inclusive), made by the user with id `who`: a page of up to `limit` entries after the cursor `after`
+    (None for the newest). Returns (entries, the next page's cursor or None when nothing is older). A link that needs more than the
+    area's View (a device model opens in the PM program's drawer) is left off for a reader without it."""
     from apps.accounts.models import AccessEvent
 
     allowed = [a for a in readable_areas(user) if areas is None or a.key in areas]
-    window = offset + limit + 1
-    picked = []
+    sources = []
     for area in allowed:
         if area is ACCESS:
-            qs = AccessEvent.objects.select_related("by", "user", "role")
-            date_field, who_field = "at", "by_id"
+            qs, date_field, who_field = AccessEvent.objects.select_related("by", "user", "role"), "at", "by_id"
         else:
-            qs = _history_rows(area)
-            date_field, who_field = "history_date", "history_user_id"
+            qs, date_field, who_field = _history_rows(area), "history_date", "history_user_id"
         if since:
             qs = qs.filter(**{f"{date_field}__date__gte": since})
         if until:
             qs = qs.filter(**{f"{date_field}__date__lte": until})
         if who is not None:
             qs = qs.filter(**{who_field: who})
-        tie = "-pk" if area is ACCESS else "-history_id"
-        for row in qs.order_by(f"-{date_field}", tie)[:window]:
-            picked.append((getattr(row, date_field), area, row))
-    picked.sort(key=lambda t: t[0], reverse=True)
-    page = picked[offset: offset + limit]
-    more = len(picked) > offset + limit
-    entries = []
-    by_area: dict = {}
-    for at, area, row in page:
-        by_area.setdefault(area.key, []).append(row)
-    built: dict = {}
-    for key, rows in by_area.items():
-        area = ALL_AREAS[key]
-        if area is ACCESS:
-            built.update({("access", r.pk): e for r, e in zip(rows, _access_entries(rows))})
-            continue
-        prevs = _previous(area.model.history.model, rows)
-        for rec, entry in zip(rows, _build(area, _pairs(area, rows, prevs))):  # one batch per area: its names in one query each
-            built[(key, rec.history_id)] = entry
-    for at, area, row in page:
-        entry = built.get((area.key, row.pk if area is ACCESS else row.history_id))
-        if entry is not None:
-            entries.append(entry)
-    return entries, more
+        sources.append(_source(area, qs))
+    entries, following = _read(sources, limit, parse_cursor(after) if after else None)
+    for entry in entries:
+        follow = ALL_AREAS[entry.area].url_module
+        if entry.url and follow and not user.has_level(follow, 1):
+            entry.url = None
+    return entries, cursor_text(following) if following else None

@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 
 from django.conf import settings
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connection, transaction
 from django.db.models import Count, Q
 from django.urls import reverse
 from django.utils import timezone
@@ -354,6 +354,8 @@ def send_due(today: date) -> dict:
             log.exception("Staff notifications for %s failed", tenant.slug)
             counts["error"] = f"{type(e).__name__}: {e}"
             counts["failed"] += 1
+            if not connection.is_usable():  # a connection that broke is not reopened on its own outside a request: the next facility needs one
+                connection.close()
         summary["tenants"].append(counts)
         summary["sent"] += counts["digests"] + counts["reminders"]
         summary["failed"] += counts["failed"]

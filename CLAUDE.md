@@ -49,7 +49,8 @@ python manage.py seed_demo                                         # small ficti
 python manage.py generate_pm                                       # PM work-order generation; the scheduler runs it daily
 python manage.py import_assets --tenant riverside inventory.csv --dry-run
 python manage.py import_openfda --days 30                         # FDA recall import; the scheduler runs it daily
-python manage.py run_daily_jobs                                    # both daily jobs, each at most once per local day (cron-safe)
+python manage.py send_staff_notifications                          # the daily digest and contract reminders; the scheduler runs it daily
+python manage.py run_daily_jobs                                    # every daily job, each at most once per local day (cron-safe)
 python manage.py scheduler                                         # long-running: runs them at SCHEDULER_DAILY_AT (docker-compose `scheduler`)
 python manage.py enable_rls --database=migrate                     # Postgres only, run after migrate
 pytest
@@ -70,9 +71,13 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
 ## Where things are
 - `apps/tenants` tenant model, context var, middleware, `enable_rls`; `tenant_context()` sets both the ORM scope and the Postgres
   `app.tenant_id` that RLS reads, so the public portal and management commands see the same rows under RLS
-- `apps/core` TenantModel, TenantManager, Sequence, TenantModelAdmin
+- `apps/core` TenantModel, TenantManager, Sequence, TenantModelAdmin; `history.py` a record's changes in words from django-simple-history
+  (`record_history`, `entries_for_rows`) and the facility's change log (`change_log`) across the areas a role can view (`can_read`,
+  `readable_areas`: none for scoped users). The historical tables' managers are not tenant-scoped, so every query there filters on the
+  current tenant (`_rows`)
 - `apps/accounts` User, Role, RolePermission, default roles, `require_level`; `DataScope`, `Role.scope` (blank: the default by slug, vendor
-  company and requester department) and `User.company`; `services.py` for invites, role changes, (de)activation (deleting the user's API
+  company and requester department) and `User.company`; `AccessEvent` (one row per change to who may do what, written by the
+  services through `record_access_event`, in the change's transaction); `services.py` for invites, role changes, (de)activation (deleting the user's API
   tokens), role matrix edits (nobody grants a role more access than their own; a facility keeps a director who can sign in), a
   user's company or department (`set_user_scope`, `set_user_access`) and a custom role's scope;
   `invitations.py` (signed set-password links: `send_invitation`, `is_pending`; a resend replaces the link), `signin.py` (sign-in lockouts and
@@ -123,7 +128,9 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   one; `permissions.py` (Reports View runs, Reports Edit builds; a source also needs Work orders or Equipment View). `services.find_report`,
   `run_any`, and `csv_filename` are the one lookup by key for the screen, CSV, print page, Schedule, and report emails
 - `apps/web` HTMX UI: one views/urls/forms module per screen (`views.py` Overview, Equipment, Work orders; `views_contracts.py`;
-  `views_users.py` Users and Roles tabs; `views_account.py` sign-in, password reset and change; `views_invite.py` accepting an invitation; `views_credentials.py`; `views_recalls.py`; `views_reports.py` with the CSV download and `views_custom_reports.py` the custom report builder (with `reports_custom.py`); `views_settings.py`; `views_pm.py` with `pm_panels.py` for its lower panels; `views_pm_week.py` Auto-assign week; `views_wo_costs.py` and `views_wo_complete.py` the work order drawer's labor and parts and its Mark completed; `views_models.py` the device model drawer (PM program tab, Add model, Edit details, risk score) with `views_procedures.py` and `views_aem.py` for its Procedure and AEM tabs; `views_exports.py` the list CSVs; `views_scan.py` Scan tag (with `static/web/scan.js`, the camera where the browser reads codes); `views_print.py` asset labels and the
+  `views_users.py` Users and Roles tabs; `views_account.py` sign-in, password reset and change; `views_invite.py` accepting an invitation; `views_credentials.py`; `views_recalls.py`; `views_reports.py` with the CSV download and `views_custom_reports.py` the custom report builder (with `reports_custom.py`); `views_settings.py`; `views_pm.py` with `pm_panels.py` for its lower panels; `views_pm_week.py` Auto-assign week; `views_wo_costs.py` and `views_wo_complete.py` the work order drawer's labor and parts and its Mark completed; `views_models.py` the device model drawer (PM program tab, Add model, Edit details, risk score) with `views_procedures.py` and `views_aem.py` for its Procedure and AEM tabs; `views_exports.py` the list CSVs; `views_scan.py` Scan tag (with `static/web/scan.js`, the camera where the browser reads codes); `history_tabs.py` the
+  History tab or section of the device, work order, contract, and model drawers; `views_change_log.py` Users and access's Change log
+  (with its CSV and print); `views_notifications.py` the account menu's Notifications page; `views_print.py` asset labels and the
   work-order print, with `qr.py`; `views_print_sheets.py` PM route sheets and report PDFs), templates,
   `charts.py` (SVG geometry: line, stacked bars, hbars with a benchmark marker, donut), `overview.py` and `reports_*.py` (chart geometry
   and display values for the Overview and the Reports; services never import them), `htmx.py` helpers, shell
@@ -140,4 +147,9 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   deactivated-facility refusal sign-in has)
 - `apps/jobs` the daily jobs (`services.DAILY_JOBS`, `run_daily_jobs`, `is_due`), `JobRun` (a system table, not tenant-scoped: one row per
   job per local day is the lock against double runs), and the `scheduler` / `run_daily_jobs` commands
+- `apps/notifications` emails to staff about their own work: `NotificationPreference` (per user, audited; `services.preferences_for`,
+  `wants`, `set_preferences`), `NotificationSent` (each email once: claimed before sending, released if the send failed),
+  `assignments.py` (announce a technician's new work order after commit; `batch()` sends each technician one email for a batch,
+  `quiet()` sends none, as the seed does), `daily.py` the digest and contract reminders (`send_staff_notifications`, a daily job). No
+  email carries free text a requester typed
 - `apps/demo` seed data

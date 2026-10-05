@@ -15,12 +15,15 @@ facility, a role without Equipment View, a share that leaves the device out, or 
 without their role (apps.accounts.backends.get_user: the role is a tenant-scoped row), so the role is read only for a member of
 this facility and only inside its tenant_context, where row-level security shows it; another facility's user's role is never read.
 """
+from contextlib import contextmanager
+
 from django.conf import settings
 from django.core.cache import caches
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.csrf import csrf_protect
+from simple_history.models import HistoricalRecords
 
 from apps.accounts.models import Level, Module
 from apps.core.http import client_ip
@@ -64,6 +67,23 @@ def _open_in_cadence(request, tenant, asset) -> dict | None:
     return {"name": user.get_full_name() or user.username, "url": reverse("web:asset", args=[asset.tag])}
 
 
+@contextmanager
+def _anonymous_history():
+    """The public form's changes (the work order, a device tagged out) are recorded as nobody's: whoever happens to be signed in in
+    this browser (perhaps at another facility) did not sign them, and the form is anonymous (simple_history otherwise records the
+    request's user; slice 20's History and change log show it)."""
+    context = HistoricalRecords.context
+    had = hasattr(context, "request")
+    saved = getattr(context, "request", None)
+    if had:
+        del context.request
+    try:
+        yield
+    finally:
+        if had:
+            context.request = saved
+
+
 @csrf_protect
 def request_form(request, tenant_slug):
     tenant = get_object_or_404(Tenant, slug=tenant_slug, is_active=True)
@@ -91,11 +111,12 @@ def request_form(request, tenant_slug):
                 return HttpResponse(f"Too many requests from this location. Please call {shop}.", status=429)
             form = ServiceRequestForm(request.POST, require_callback=facility.portal_require_callback, email_domains=email_domains)
             if form.is_valid():
-                sr = create_service_request(asset=form.asset, department=form.cleaned_data["department"], problem=form.cleaned_data["problem"],
-                                            urgency=form.cleaned_data["urgency"], requester_name=form.cleaned_data["requester_name"],
-                                            callback=form.cleaned_data["callback"], room=form.cleaned_data["room"],
-                                            tagged_out=form.cleaned_data["tagged_out"], ip=ip,
-                                            requester_email=form.cleaned_data.get("requester_email", ""))
+                with _anonymous_history():
+                    sr = create_service_request(asset=form.asset, department=form.cleaned_data["department"], problem=form.cleaned_data["problem"],
+                                                urgency=form.cleaned_data["urgency"], requester_name=form.cleaned_data["requester_name"],
+                                                callback=form.cleaned_data["callback"], room=form.cleaned_data["room"],
+                                                tagged_out=form.cleaned_data["tagged_out"], ip=ip,
+                                                requester_email=form.cleaned_data.get("requester_email", ""))
                 response = redirect("portal:done", tenant_slug=tenant.slug, number=sr.number)
                 # The facility and the number: request numbers repeat across facilities, so a cookie from one must not open another's
                 response.set_signed_cookie(SENT_COOKIE, _sent_value(tenant, sr), salt=SENT_SALT, max_age=SENT_MAX_AGE, path=f"/r/{tenant.slug}/",

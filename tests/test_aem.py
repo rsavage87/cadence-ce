@@ -380,7 +380,7 @@ def test_ending_goes_back_to_the_oem_interval_and_pulls_next_pms_in(fleet, monit
     assert (d.status, d.ended_by, d.ended_on, d.end_reason) == (AemStatus.ENDED, people["manager"], TODAY, "Repairs rose at 24 months")
     monitor.refresh_from_db()
     assert monitor.aem_interval_months is None and monitor.pm_interval_months == 12
-    assert monitor.history.first().history_change_reason == "AEM ended: Repairs rose at 24 months"
+    assert monitor.history.first().history_change_reason == "AEM ended"  # the typed reason stays on the decision (PM View), not the model
     for a in (long, installed, overdue, retired):
         a.refresh_from_db()
     assert long.next_pm_on == TODAY  # 12 months after its last PM has passed
@@ -409,8 +409,10 @@ def test_ending_an_interval_on_file_without_a_recorded_approval(ctx, dept, pump_
     assert aem.end(pump_model, by=people["manager"], reason="No approval on record") == 1
     pump_model.refresh_from_db()
     p.refresh_from_db()
-    assert pump_model.aem_interval_months is None and p.next_pm_on == TODAY and not AemDecision.objects.exists()
-    assert pump_model.history.first().history_change_reason == "AEM on file without a recorded approval ended: No approval on record"
+    assert pump_model.aem_interval_months is None and p.next_pm_on == TODAY
+    ended = AemDecision.objects.get()  # the interval had no case: its end is recorded as one, so the reason is kept (PM View)
+    assert (ended.status, ended.end_reason, ended.interval_months, ended.ended_by) == (AemStatus.ENDED, "No approval on record", 18, people["manager"])
+    assert pump_model.history.first().history_change_reason == "AEM on file without a recorded approval ended"
 
 
 def test_pull_in_plan_is_what_ending_moves(fleet, monitor, people, dept):
