@@ -14,14 +14,16 @@ security tests, `tests/test_postgres_rls.py`).
 1. **Every business table inherits `apps.core.models.TenantModel`.** Query through `Model.objects` (tenant-scoped).
    `Model.unscoped` is only for tenant bootstrap, cross-tenant jobs, and tests, and each use gets a comment saying why.
 2. **Code that runs before a tenant is set never touches a tenant-scoped table**: loading the signed-in user
-   (`backends.get_user`), signed-out pages, and management commands before `tenant_context()`. No `select_related("role")`
-   there: under row-level security the row is hidden or the query fails, and SQLite tests cannot tell (`tests/test_rls_paths.py`
+   (`backends.get_user`), API token authentication, signed-out pages, and management commands before `tenant_context()`. No
+   `select_related("role")` there: under row-level security the row is hidden or the query fails, and SQLite tests cannot tell (`tests/test_rls_paths.py`
    stands in for the policy on SQLite, `tests/test_postgres_rls.py` runs the real policies as the runtime role on PostgreSQL; add
    new signed-out paths and commands to both).
 3. **Never write `queryset = Model.objects.all()` at class level** (admin, DRF, forms): it is evaluated at import time
    with no tenant in context and stays empty. Resolve querysets inside the request (`get_queryset`).
 4. **Permissions are server-side.** Web views use `@web_view(Module.X, Level.Y)` (apps/web/decorators.py, which wraps
    `require_level` with `login_required` and the no-tenant guard); API viewsets set `module` and rely on `ModulePermission`.
+   Every API view inherits `TenantAPIMixin` (apps/api/tenancy.py): the middleware runs before DRF checks a token, so the API sets
+   the tenant itself once DRF has authenticated, before the permission check (tests/test_api_tokens.py walks the API URLs).
    Per-action levels live next to the services (`apps/workorders/permissions.py`, `apps/recalls/permissions.py`). Hiding a button
    is not access control. Some roles see only their share of a facility (`apps/workorders/scoping.py`: a vendor technician their
    company's work orders, a clinical requester their unit's); every web view and API action refuses them unless it opts in
@@ -126,7 +128,9 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   and display values for the Overview and the Reports; services never import them), `htmx.py` helpers, shell
   context processor. Drawers and modals are partials swapped into `#drawer` / `#modal-card`; the same URLs render a full page
   when opened directly. List wrappers that re-fetch themselves carry `hx-disinherit="hx-swap"` (a test enforces it).
-- `apps/api` DRF viewsets under `/api/v1/`
+- `apps/api` DRF viewsets under `/api/v1/`, by session or token (`Authorization: Token <key>`); `tenancy.py` (`TenantAPIMixin`: the
+  tenant from the session or token user, set after authentication and restored once the response is rendered), `authentication.py`
+  (DRF's token check plus the deactivated-facility refusal sign-in has)
 - `apps/jobs` the daily jobs (`services.DAILY_JOBS`, `run_daily_jobs`, `is_due`), `JobRun` (a system table, not tenant-scoped: one row per
   job per local day is the lock against double runs), and the `scheduler` / `run_daily_jobs` commands
 - `apps/demo` seed data

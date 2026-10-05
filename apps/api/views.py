@@ -1,5 +1,6 @@
 """
-REST API. Every viewset resolves its queryset per request through the tenant-scoped manager;
+REST API. Every view inherits TenantAPIMixin (apps/api/tenancy.py), which sets the tenant once DRF has authenticated the
+session or the token. Every viewset resolves its queryset per request through the tenant-scoped manager;
 never put `queryset = Model.objects.all()` on the class (it would be evaluated at import time
 with no tenant in context and stay empty).
 
@@ -13,7 +14,7 @@ from datetime import date
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import ProtectedError
-from rest_framework import status, viewsets
+from rest_framework import routers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import MethodNotAllowed, NotFound, PermissionDenied
 from rest_framework.exceptions import ValidationError as DRFValidationError
@@ -44,9 +45,14 @@ from apps.workorders.models import OPEN_STATUSES, WorkOrder, WoStatus
 
 from . import serializers as s
 from .permissions import ModulePermission
+from .tenancy import TenantAPIMixin
 
 
-class TenantViewSet(viewsets.ModelViewSet):
+class APIRootView(TenantAPIMixin, routers.APIRootView):
+    """The /api/v1/ index. It reads no tenant rows, but every API view sets the tenant the same way."""
+
+
+class TenantViewSet(TenantAPIMixin, viewsets.ModelViewSet):
     model = None
     module = None
     permission_classes = [IsAuthenticated, ModulePermission]
@@ -399,7 +405,7 @@ class AlertMatchViewSet(TenantViewSet):
         return Response({"created": batch.created, "unassigned": batch.unassigned, **self.get_serializer(match).data})
 
 
-class OverviewViewSet(viewsets.ViewSet):
+class OverviewViewSet(TenantAPIMixin, viewsets.ViewSet):
     permission_classes = [IsAuthenticated, ModulePermission]
     module = "reports"
 
@@ -411,7 +417,7 @@ class OverviewViewSet(viewsets.ViewSet):
         return Response(overview_kpis(year, month))
 
 
-class ReportViewSet(viewsets.ViewSet):
+class ReportViewSet(TenantAPIMixin, viewsets.ViewSet):
     """The Reports screen's tables as JSON: the list names them, `/<key>/` returns one (columns and rows, as the CSV download)."""
 
     permission_classes = [IsAuthenticated, ModulePermission]
@@ -449,7 +455,7 @@ def _hours(h) -> str:
     return f"{h:.2f}"
 
 
-class PmViewSet(viewsets.ViewSet):
+class PmViewSet(TenantAPIMixin, viewsets.ViewSet):
     """The PM schedule as JSON (slice 9): GET calendar/?y=&m= (the month grid), GET day/?day=YYYY-MM-DD (the day plan with each
     device's suggested technician), POST create-for-day/ {"day": ...} (one PM work order per device due that day without an open
     one; PM Approve, like the nightly `generate`). Reads need PM View. The numbers come from apps.pm.schedule and the batch from
@@ -509,7 +515,7 @@ class PmViewSet(viewsets.ViewSet):
         return Response({"created": batch.created, "assigned": batch.assigned, "skipped": batch.skipped})
 
 
-class FacilitySettingsView(APIView):
+class FacilitySettingsView(TenantAPIMixin, APIView):
     """GET the tenant's settings (defaults until first saved); PATCH any of them (Settings Edit). POST .../reset-policy/
     restores the default policy text. Every change goes through apps.facility.services, which validates and audits it."""
 

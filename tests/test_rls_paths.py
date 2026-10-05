@@ -5,8 +5,8 @@ On PostgreSQL a tenant-scoped table only shows a tenant's rows while `app.tenant
 SQLite, where set_db_tenant does nothing, so a query made too early passes here and fails in production. The `rls` fixture
 stands in for the policy: it records what set_db_tenant was last told and notes every query that touches a tenant-scoped
 table while no tenant is set. Covered: loading the signed-in user on every request, signing in, the password-reset request,
-accepting an invitation, the public portal (signed out, and opened from a label while signed in), and the bootstrap and seed
-commands.
+accepting an invitation, the public portal (signed out, and opened from a label while signed in), API requests by token, and
+the bootstrap and seed commands.
 """
 import re
 from io import StringIO
@@ -16,9 +16,12 @@ import pytest
 from django.core.management import call_command
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
+from rest_framework.authtoken.models import Token
 
 from apps.accounts import invitations, services
 from apps.accounts.models import Role, create_default_roles
+from apps.equipment.models import Department
+from apps.tenants.context import tenant_context
 from apps.tenants.management.commands.enable_rls import tenant_scoped_tables
 
 
@@ -54,6 +57,7 @@ def rls(monkeypatch):
     guard = _Rls()
     monkeypatch.setattr("apps.tenants.context.set_db_tenant", guard.set_db_tenant)
     monkeypatch.setattr("apps.tenants.middleware.set_db_tenant", guard.set_db_tenant)
+    monkeypatch.setattr("apps.api.tenancy.set_db_tenant", guard.set_db_tenant)
     return guard
 
 
@@ -136,6 +140,24 @@ def test_the_portal_with_a_signed_in_user(client, rls, tenant, other_tenant, mak
         r = client.get(f"/r/riverside/?asset={vent.tag}")
     assert r.status_code == 200 and "in Cadence" not in r.content.decode() and rls.violations == []
     assert [q["sql"] for q in queries.captured_queries if '"accounts_role"' in q["sql"]] == []
+
+
+def test_api_requests_by_token_and_by_session(client, rls, tenant, make_user):
+    """A token request reaches the API with no tenant (the middleware saw no user). The view sets it once DRF has checked the
+    token, before the permission check reads the role, and keeps it while the browsable API renders its forms."""
+    user = make_user("director")
+    with tenant_context(tenant):
+        Department.objects.create(name="ICU")
+    token = {"HTTP_AUTHORIZATION": f"Token {Token.objects.create(user=user).key}"}
+    with rls:
+        r = client.get("/api/v1/departments/", **token)
+        assert r.status_code == 200 and [d["name"] for d in r.json()["results"]] == ["ICU"]
+        assert client.post("/api/v1/departments/", {"name": "Radiology"}, content_type="application/json", **token).status_code == 201
+        assert client.get("/api/v1/assets/", HTTP_ACCEPT="text/html", **token).status_code == 200
+    client.force_login(user)
+    with rls:
+        assert client.get("/api/v1/departments/").json()["count"] == 2
+    assert rls.violations == []
 
 
 def test_bootstrap_tenant_with_invite(rls, db, mailoutbox):

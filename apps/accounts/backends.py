@@ -33,6 +33,12 @@ def find_account(login: str):
     return matches[0] if len(matches) == 1 else None
 
 
+def facility_is_active(user) -> bool:
+    """No facility (a platform superuser), or an active one. Signing in, every request's user load, and API tokens
+    (apps.api.authentication) all check it."""
+    return user.tenant_id is None or user.tenant.is_active
+
+
 class UsernameOrEmailBackend(ModelBackend):
     def authenticate(self, request, username=None, password=None, **kwargs):
         if username is None:
@@ -64,6 +70,4 @@ class UsernameOrEmailBackend(ModelBackend):
 
     def user_can_authenticate(self, user):
         """Active, and (unless the account belongs to no facility) its facility is active. Also checked on every request."""
-        if not super().user_can_authenticate(user):
-            return False
-        return user.tenant_id is None or user.tenant.is_active
+        return super().user_can_authenticate(user) and facility_is_active(user)
