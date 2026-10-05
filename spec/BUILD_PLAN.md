@@ -1,11 +1,11 @@
 # Build plan
 
 The mock (`cadence-ce-cmms-mock.html`) is the spec. Each slice below is shippable on its own and ends with green tests.
-Slices 0 to 18 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
+Slices 0 to 19 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
 export and print, devices are added and changed in the product, reports and request confirmations go out by email, each
 device model's PM program (risk score, procedure, AEM interval) is kept in the product, and the work itself (time, parts,
 what was done, a PM's results) is recorded on the work order; vendors and clinical requesters see only their own share; facilities
-build their own reports, and a label opens its device with Scan tag. What each slice deferred is noted in its row and below.
+build their own reports, and a label opens its device with Scan tag; and the API covers what the screens do, by session or token. What each slice deferred is noted in its row and below.
 
 | # | Slice | Mock screen(s) | Code | Status |
 |---|-------|----------------|------|--------|
@@ -23,11 +23,12 @@ build their own reports, and a label opens its device with Scan tag. What each s
 | 11 | Exports and printing | Export (CSV) on Equipment, Work orders, Contracts, a contract's Device list; Label, Print, Route sheets, report PDF, Response log, Overview Export | `web` | done (PDFs come from the browser's print dialog; Add device, Schedule, Auto-assign week, Check feeds, Scan tag, and Custom report came later) |
 | 12 | Device management | Equipment (Add device), device drawer (Edit details, Tag out of service, Return to service, PM schedule and Costs tabs) | `equipment` + `web` + `api` | done (the model catalog and AEM approval came in slice 14) |
 | 13 | Email notifications | Reports (Schedule), Settings (portal confirmation to the requester), the request portal | `reports` + `facility` + `portal` + `web` | done (report emails are self-service; text messages and paging still need a provider) |
-| 14 | The PM program | PM schedule (Auto-assign week, the PM library), a model's PM program (AEM, procedure, risk score) | `equipment` + `pm` + `web` | done (no API for procedures, AEM cases, or Auto-assign week yet; OEM library sync needs a library) |
+| 14 | The PM program | PM schedule (Auto-assign week, the PM library), a model's PM program (AEM, procedure, risk score) | `equipment` + `pm` + `web` | done (their API came in slice 19; OEM library sync needs a library) |
 | 15 | Recording the work | Work order drawer (Cost, Mark completed), device PM history, Settings (labor rates), Recalls (Check feeds) | `workorders` + `recalls` + `web` + `api` | done (vendor accounts were limited to their company's work orders in slice 16) |
 | 16 | Who sees what | Users and access (company and unit on users, scope on roles), every screen for the vendor technician and the clinical requester | `accounts` + `workorders` + `web` + `api` | done (a custom role chooses its scope; the default vendor and requester scopes are fixed) |
 | 17 | The suite on PostgreSQL | (none: CI) | `tests` + CI | done (CI's test-postgres job runs every test on PostgreSQL 16 and the row-level security tests as the runtime role) |
-| 18 | Custom reports, Scan tag, the CMS rule | Reports (Custom report), Equipment (Scan tag), a model's PM program (AEM) | `reports` + `equipment` + `pm` + `portal` + `web` | done (the API serves the eight standard reports, not custom ones) |
+| 18 | Custom reports, Scan tag, the CMS rule | Reports (Custom report), Equipment (Scan tag), a model's PM program (AEM) | `reports` + `equipment` + `pm` + `portal` + `web` | done (custom reports, Scan, and Check FDA feed reached the API in slice 19) |
+| 19 | The API, complete | (none: `/api/v1/` for every screen's actions) | `api` + `accounts` | done (token sign-in resolves the facility; every API write goes through the services) |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.
@@ -208,8 +209,8 @@ The mock's export and print buttons work since slice 11, Add device since slice 
   skips and reports a value too long for its column, and the API answers 400 for an over-long note or vendor name; the nightly
   PM generation takes the planner lock and a recall batch locks its match, so overlapping runs never create duplicates; the
   admin refuses to delete a user, a recall notice, or a facility (several facilities' rows point at them; deactivate instead);
-  the portal's case-insensitive department match picks by code point, so every collation agrees. Not covered: the API with token
-  authentication, which does not resolve the facility yet (a separate fix).
+  the portal's case-insensitive department match picks by code point, so every collation agrees. The API with token
+  authentication did not resolve the facility then; slice 19 fixed it and tests it as the runtime role.
 - Custom reports, Scan tag, and the CMS rule (slice 18): Reports' "+ Custom report" (Reports Edit: the director and Finance and
   quality by default) builds a report from one source (work orders, devices, labor lines, part lines): columns, filters (choices,
   departments, categories, technicians, yes/no, and one date range, a relative period resolved against the run's day so a scheduled
@@ -233,3 +234,20 @@ The mock's export and print buttons work since slice 11, Add device since slice 
   (shown checked), so a save never widens it; Edit is not offered to a builder who cannot see the report's source; a scanned link's
   tag is decoded once more than the request's NUL check sees, so one with a control character is no tag; going back to a scanned
   device's pushed URL renders the whole page.
+- The API, complete (slice 19): token sign-in resolves the facility (`apps/api/tenancy.py` TenantAPIMixin sets the ORM scope and
+  `app.tenant_id` after DRF authenticates, before the permission check reads the role, and restores them once the response is
+  rendered; a deactivated user's or facility's token is refused); before, a token request saw no facility and on PostgreSQL every one
+  failed. `/api/v1/` now covers what the screens do, one module per area under `apps/api/` (each registers its routes): a work order's
+  labor, parts, and notes; contracts through their services (renew, add and remove devices, delete); the PM schedule's Auto-assign
+  week, PM procedures, a model's procedure, risk score, AEM cases and decisions; custom reports (build and run) and the user's own
+  report emails; Scan; Check FDA feed; users, roles, technicians (read only: Invite user adds them), and credentials. Each endpoint has
+  the door of the screen that does the same thing and calls the same service; writes that used to save rows directly (contracts,
+  technicians, credentials) go through the services. Vendor technicians and clinical requesters reach only labor, parts, notes, and
+  Scan beyond what slice 16 opened. The account services now refuse handing out more access than one's own role has (inviting,
+  changing a user's role, copying a role, raising a module's level, widening what a role sees, reactivating an account), moving or
+  deactivating an account with more access than one's own, and leaving a facility without a director who can sign in; deactivating
+  deletes the user's API tokens. Rules settled in review: every API view but the root refuses a user with no facility (a token can
+  never pick one) with "Pick a tenant first", and refuses a body holding a NUL or a lone surrogate (PostgreSQL stores neither); the
+  last-director check locks the facility's director rows, so two requests at once cannot both remove one; a pending director
+  invitation can always be withdrawn; a risk-score part too large for a number and a custom report's date period that is not text
+  are 400s, not 500s. The API never imports apps.web: helpers both doors share live in the services.

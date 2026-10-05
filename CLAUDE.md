@@ -72,7 +72,8 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `app.tenant_id` that RLS reads, so the public portal and management commands see the same rows under RLS
 - `apps/core` TenantModel, TenantManager, Sequence, TenantModelAdmin
 - `apps/accounts` User, Role, RolePermission, default roles, `require_level`; `DataScope`, `Role.scope` (blank: the default by slug, vendor
-  company and requester department) and `User.company`; `services.py` for invites, role changes, (de)activation, role matrix edits, a
+  company and requester department) and `User.company`; `services.py` for invites, role changes, (de)activation (deleting the user's API
+  tokens), role matrix edits (nobody grants a role more access than their own; a facility keeps a director who can sign in), a
   user's company or department (`set_user_scope`, `set_user_access`) and a custom role's scope;
   `invitations.py` (signed set-password links: `send_invitation`, `is_pending`; a resend replaces the link), `signin.py` (sign-in lockouts and
   password-reset requests, never revealing whether an address has an account), `backends.py` (username or email in any case; a deactivated
@@ -128,9 +129,15 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   and display values for the Overview and the Reports; services never import them), `htmx.py` helpers, shell
   context processor. Drawers and modals are partials swapped into `#drawer` / `#modal-card`; the same URLs render a full page
   when opened directly. List wrappers that re-fetch themselves carry `hx-disinherit="hx-swap"` (a test enforces it).
-- `apps/api` DRF viewsets under `/api/v1/`, by session or token (`Authorization: Token <key>`); `tenancy.py` (`TenantAPIMixin`: the
-  tenant from the session or token user, set after authentication and restored once the response is rendered), `authentication.py`
-  (DRF's token check plus the deactivated-facility refusal sign-in has)
+- `apps/api` DRF viewsets under `/api/v1/`, by session or token (`Authorization: Token <key>`), one module per area, each registering its
+  routes (`urls.py` calls them): `base.py` (`TenantViewSet` for a model, `ApiViewSet` over services, `_via_service`: a ValidationError
+  becomes a 400 keyed by field), `views.py` devices, models, departments, work orders, Settings; `views_work.py` a work order's labor,
+  parts, notes; `views_contracts.py`; `views_pm.py` PM schedule, Auto-assign week, procedures, risk score, AEM; `views_reports.py` the
+  Overview, reports, custom reports, report emails; `views_recalls.py` with Check FDA feed; `views_scan.py`; `views_users.py` users,
+  roles, technicians, credentials; serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
+  same thing and calls the same service; the API never imports apps.web. `tenancy.py` (`TenantAPIMixin`: the tenant from the session or
+  token user, set after authentication and restored once the response is rendered), `authentication.py` (DRF's token check plus the
+  deactivated-facility refusal sign-in has)
 - `apps/jobs` the daily jobs (`services.DAILY_JOBS`, `run_daily_jobs`, `is_due`), `JobRun` (a system table, not tenant-scoped: one row per
   job per local day is the lock against double runs), and the `scheduler` / `run_daily_jobs` commands
 - `apps/demo` seed data

@@ -44,6 +44,8 @@ from .tenancy import TenantAPIMixin
 class APIRootView(TenantAPIMixin, routers.APIRootView):
     """The /api/v1/ index. It reads no tenant rows, but every API view sets the tenant the same way."""
 
+    needs_facility = False
+
 
 class EquipmentWrites:
     """Equipment writes need the levels in apps.equipment.permissions, the same doors as the Equipment screen. Deleting a row that

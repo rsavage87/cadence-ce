@@ -118,14 +118,28 @@ def _check_role(tenant, role):
 # The Users and Roles tabs and the API (apps/api/views_users.py) share these: a custom role with Users Full can manage accounts,
 # but only up to its own access, so it can never make itself or anyone a director, nor copy or raise a role past its own levels.
 
-def _check_grant(by, role) -> None:
-    """`by` may give `role` (invite, change a user's role, copy it into a new role) only if they have every module's access it has."""
+def _exceeds(by, role) -> str:
+    """The first module where `role` has more access than `by` (by its label), or "" when `by` has all of its access."""
     if by is None or by.is_superuser:
-        return
-    for module in Module.values:
-        if role.level_for(module) > by.level_for(module):
-            raise ValidationError(f"You can give only a role whose access you have yourself: {role.name} has more "
-                                  f"{Module(module).label} access than your role.")
+        return ""
+    return next((Module(m).label for m in Module.values if role.level_for(m) > by.level_for(m)), "")
+
+
+def _check_grant(by, role) -> None:
+    """`by` may give `role` (invite, change a user's role, copy it, change what it sees, reactivate an account holding it) only if
+    they have every module's access it has."""
+    module = _exceeds(by, role)
+    if module:
+        raise ValidationError(f"You can give only a role whose access you have yourself: {role.name} has more {module} access than your role.")
+
+
+def _check_outranks(by, user) -> None:
+    """`by` may deactivate an account or change its role only if they have all the access the account's role has: a Users Full
+    clerk manages the accounts below them, never a director's."""
+    module = _exceeds(by, user.role) if user.role_id else ""
+    if module:
+        raise ValidationError(f"You can change only accounts whose access you have yourself: {user.get_full_name() or user.username} "
+                              f"has more {module} access than your role.")
 
 
 def _active_directors(tenant):
@@ -134,10 +148,17 @@ def _active_directors(tenant):
 
 
 def _check_keeps_a_director(user) -> None:
-    """A facility always keeps a director who can sign in: refuse to deactivate or move the last one."""
-    if user.role_id and user.role.is_system and user.is_active and not _active_directors(user.tenant).exclude(pk=user.pk).exists():
-        raise ValidationError(f"{user.get_full_name() or user.username} is this facility's only {user.role.name}; give someone else that "
-                              "role first.")
+    """A facility always keeps a director who can sign in: refuse to deactivate or move the last one. Run inside the caller's
+    transaction: the facility's director rows are locked first, so two requests removing the last two directors at once cannot both
+    see the other one still there. A pending invitation is not a director who can sign in, so withdrawing or moving one is never
+    refused here."""
+    if not (user.role_id and user.role.is_system and user.is_active) or (user.is_invited and user.last_login is None):
+        return
+    list(User.objects.select_for_update(of=("self",)).filter(tenant=user.tenant, is_active=True, role__is_system=True).order_by("pk")
+         .values_list("pk", flat=True))
+    if not _active_directors(user.tenant).exclude(pk=user.pk).exists():
+        raise ValidationError(f"{user.get_full_name() or user.username} is this facility's only {user.role.name} who can sign in; give "
+                              "someone else that role first.")
 
 
 # --- data scope: the company or department a scoped role's user needs ----------------------------------------------------------
@@ -277,6 +298,7 @@ def _new_values(user, company, department) -> tuple[str, str]:
     return new_company, new_department
 
 
+@transaction.atomic
 def set_user_role(user, role, *, company=None, department=None, by=None) -> User:
     """Give `user` another role. A company- or department-scoped role needs the user's company or department: the one on the
     account, or `company` / `department` given here (None keeps the account's), checked and saved with the role in one change."""
@@ -285,6 +307,7 @@ def set_user_role(user, role, *, company=None, department=None, by=None) -> User
         raise ValidationError("You cannot change your own role.")
     _check_grant(by, role)
     if role.pk != user.role_id:
+        _check_outranks(by, user)
         _check_keeps_a_director(user)
     company, department = _scoped_values(user.tenant, role, *_new_values(user, company, department))
     before = {"role": user.role.slug if user.role_id else "", "company": user.company, "department": user.department}
@@ -317,11 +340,13 @@ def set_user_access(user, *, role, company=None, department=None, by=None) -> Us
     return set_user_scope(user, company=company, department=department, by=by)
 
 
+@transaction.atomic
 def deactivate_user(user, by=None) -> User:
     if by is not None and by.pk == user.pk:
         raise ValidationError("You cannot deactivate your own account.")
     if user.is_superuser:
         raise ValidationError("Superusers are managed in Admin.")
+    _check_outranks(by, user)
     _check_keeps_a_director(user)
     user.is_active = False
     fields = ["is_active"]
@@ -339,6 +364,8 @@ def deactivate_user(user, by=None) -> User:
 def reactivate_user(user, by=None) -> User:
     if user.is_superuser:
         raise ValidationError("Superusers are managed in Admin.")
+    if user.role_id:
+        _check_grant(by, user.role)  # bringing back an account gives its role again
     user.is_active = True
     user.save(update_fields=["is_active"])
     return user
@@ -384,6 +411,7 @@ def set_role_scope(role, scope, by=None) -> Role:
     if by is not None and by.role_id == role.pk:
         raise ValidationError("You cannot change what your own role sees.")
     if role.scope != scope:
+        _check_grant(by, role)  # what a role sees is part of the access it gives
         role.scope = scope
         role._history_user = by
         role.save(update_fields=["scope", "updated_at"])

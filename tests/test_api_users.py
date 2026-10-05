@@ -507,7 +507,10 @@ def test_a_users_full_holder_cannot_raise_themself(client, ctx, person, member, 
     assert r.status_code == 400 and r.json() == {"detail": "You can give only a role whose access you have yourself: CE manager has more "
                                                            "Equipment access than your role."}
     clerk = custom_role("Contracts clerk", {"contracts": Level.EDIT})
-    assert patch(client, user_url(tom), {"role": str(clerk.id)}).json()["role_name"] == "Contracts clerk"
+    r = patch(client, user_url(tom), {"role": str(clerk.id)})  # nor move an account whose role has more access than theirs
+    assert r.status_code == 400 and "You can change only accounts whose access you have yourself" in r.json()["detail"]
+    viewer = member(custom_role("Contracts viewer", {"contracts": Level.VIEW}))
+    assert patch(client, user_url(viewer), {"role": str(clerk.id)}).json()["role_name"] == "Contracts clerk"
     r = post(client, ROLES, {"name": "Copy of Director", "copy_from": str(role("director").id)})
     assert r.status_code == 400 and "access you have yourself" in str(r.json())
     r = patch(client, role_url(clerk), {"levels": {"settings": Level.FULL}})

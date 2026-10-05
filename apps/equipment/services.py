@@ -255,7 +255,7 @@ def _check_numbers(*, acquisition_cost=_UNSET, condition=_UNSET) -> None:
 def _whole(value, field: str, low: int, high: int, message: str) -> int:
     try:
         n = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):  # OverflowError: a JSON number too large becomes infinity
         raise ValidationError({field: message})
     if not low <= n <= high or str(value).strip() not in (str(n), f"{n}.0"):
         raise ValidationError({field: message})

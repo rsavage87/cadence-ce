@@ -122,6 +122,21 @@ the browser can (Chrome and Edge on Android and desktop; on an iPhone, the camer
 It reads a label's QR code link, a device link, or a plain tag, and opens only devices the user may see. Someone signed in to
 Cadence who opens a label's link on their phone gets an "Open in Cadence" link on the request page.
 
+## API
+`/api/v1/` serves what the screens do, with the same permissions, refusals, and services behind them, by the web session or a
+token (`Authorization: Token <key>`; create one with `python manage.py drf_create_token <username>`). Every endpoint is documented in
+its module's docstring under `apps/api/`, and the browsable API (open `/api/v1/` signed in) lists them:
+- devices, device models, departments, work orders (`views.py`), and a work order's labor, parts, and notes (`views_work.py`);
+- contracts and the devices they cover (`views_contracts.py`);
+- the PM schedule, Auto-assign week, PM procedures, a model's procedure, risk score, and AEM cases and decisions (`views_pm.py`);
+- the Overview, the eight reports, custom reports (build and run), and your own report emails (`views_reports.py`);
+- recall alert matches, recall work orders, and Check FDA feed (`views_recalls.py`); Scan (`views_scan.py`);
+- users, roles, technicians, and credentials (`views_users.py`); Settings.
+
+Vendor technicians and clinical requesters reach only their own devices and work orders (and Scan), as on the screens. Nobody gives
+a role more access than their own role has, on the Users tab or the API, and a facility always keeps a director who can sign in.
+Deactivating a user deletes their API tokens.
+
 ## Exports and printing
 Equipment, Work orders, and Contracts download as CSV with the filters on screen (Export), and a contract's covered devices
 from its drawer (Device list); every report downloads as CSV too. The files open cleanly in Excel (UTF-8, ISO dates, plain

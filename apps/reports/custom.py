@@ -638,10 +638,10 @@ def _clean_date(spec: SourceSpec, raw) -> tuple[dict | None, str]:
     period = raw.get("period") or ""
     if not period:
         return None, ""
-    if period not in PERIODS:
+    if not isinstance(period, str) or period not in PERIODS:  # JSON from the API can send any type
         return None, "Choose a period from the list."
     field = raw.get("field") or ""
-    if field not in spec.dates:
+    if not isinstance(field, str) or field not in spec.dates:
         return None, "Choose which date the period applies to."
     out = {"field": field, "period": period}
     if period != CUSTOM_PERIOD:
