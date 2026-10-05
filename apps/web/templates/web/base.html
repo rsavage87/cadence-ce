@@ -1,4 +1,4 @@
-{% load static django_htmx web %}<!doctype html>
+{% load static django_htmx web notification_tags %}<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -24,6 +24,7 @@
         <div class="who">{{ shell.user_name }}</div>
         <div class="role">{{ shell.role }}</div>
         <a href="{% url 'web:password_change' %}">Change password</a>
+        {% if user|chooses_notifications %}<a href="{% url 'web:notifications' %}">Notifications</a>{% endif %}
         {% if user.is_staff %}<a href="{% url 'admin:index' %}">Admin</a>{% endif %}
         <form method="post" action="{% url 'web:logout' %}">{% csrf_token %}<button type="submit">Sign out</button></form>
       </div>
