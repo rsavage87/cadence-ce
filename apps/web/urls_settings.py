@@ -10,4 +10,5 @@ urlpatterns = [
     path("policy/", v.settings_policy, name="settings_policy"),
     path("policy/reset/", v.settings_policy_reset, name="settings_policy_reset"),
     path("targets/", v.settings_targets, name="settings_targets"),
+    path("time-zone/", v.settings_time_zone, name="settings_time_zone"),  # slice 21: the facility's time zone
 ]

@@ -8,8 +8,7 @@ re-rendered and a toast. A rejected policy or targets save keeps what the user t
 rejected portal change shows the saved values again (it saves as the user types, so there is nothing to keep).
 
 Time zone (slice 21, #set-zone): the facility's time zone (fs.set_time_zone), which decides its today, the times shown, and when
-its daily jobs and emails run. Its form posts to the page's own address (settings_page hands a POST to settings_time_zone, which
-needs Settings Edit), so the panel needs no route of its own.
+its daily jobs and emails run. Its form posts to /settings/time-zone/ (settings_time_zone, Settings Edit).
 """
 from django.core.exceptions import ValidationError
 from django.shortcuts import redirect, render
@@ -97,8 +96,6 @@ def _first(errors: dict) -> str:
 
 @web_view(fac_perms.MODULE, fac_perms.VIEW_LEVEL)
 def settings_page(request):
-    if request.method == "POST":  # the Time zone panel saves here (slice 21); settings_time_zone checks Settings Edit itself
-        return settings_time_zone(request)
     s = fs.get_settings()
     user = request.user
     ctx = {"nav_active": "settings", **_integrations(), **_portal_ctx(request, s), **_policy_ctx(request, s), **_targets_ctx(request, s),
@@ -191,8 +188,7 @@ def settings_targets(request):
 @require_POST
 @web_view(fac_perms.MODULE, fac_perms.EDIT_LEVEL)
 def settings_time_zone(request):
-    """Set the facility's time zone (fs.set_time_zone, which refuses anything but a zone this server knows). Reached through
-    settings_page's POST; Settings Edit is checked here, whoever calls it."""
+    """Set the facility's time zone (fs.set_time_zone, which refuses anything but a zone this server knows). Settings Edit."""
     before = request.tenant.timezone
     try:
         fs.set_time_zone(request.tenant, time_zone_field(request.POST), by=request.user)

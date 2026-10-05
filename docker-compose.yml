@@ -26,7 +26,8 @@ services:
       db:
         condition: service_healthy
   scheduler:
-    # Runs the daily jobs (PM work-order generation, then the openFDA recall import) at SCHEDULER_DAILY_AT, local time.
+    # Runs the daily jobs at SCHEDULER_DAILY_AT: each facility's (PM work orders, report emails, staff emails) on its own clock, the
+    # openFDA recall import on the server's (DJANGO_TIME_ZONE).
     # The web service applies migrations; the scheduler starts after it and runs nothing until they are all applied,
     # retrying quietly while the database is not ready. `init: true` passes `docker compose stop` on to the scheduler,
     # which records a job in flight as stopped.

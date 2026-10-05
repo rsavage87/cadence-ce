@@ -23,7 +23,7 @@ from apps.tenants.models import Tenant
 from apps.web import views_settings
 
 NOW = datetime(2026, 10, 5, 8, 30, tzinfo=dt_timezone.utc)
-PAGE, LOG, API, LOG_API = "/settings/", "/users/log/", "/api/v1/settings/", "/api/v1/change-log/"
+PAGE, SAVE, LOG, API, LOG_API = "/settings/", "/settings/time-zone/", "/users/log/", "/api/v1/settings/", "/api/v1/change-log/"
 HX = {"HTTP_HX_REQUEST": "true"}
 US = ["America/New_York", "America/Chicago", "America/Denver", "America/Phoenix", "America/Los_Angeles", "America/Anchorage", "Pacific/Honolulu"]
 REFUSED = "is not a time zone. Choose one from the list, like America/Chicago."
@@ -88,7 +88,7 @@ def test_the_panel_lists_the_us_zones_first_each_with_its_offset_now(client, sig
     assert ("It decides what counts as today (overdue PMs and work orders, due dates, contract days left, report periods), the times "
             "shown on every screen, and when the facility's daily jobs and emails run.") in html
     assert "the daily jobs and emails follow it from the next day." in html
-    assert f'hx-post="{PAGE}" hx-target="#set-zone"' in html and "Save time zone" in html
+    assert f'hx-post="{SAVE}" hx-target="#set-zone"' in html and "Save time zone" in html
 
 
 def test_an_alias_set_through_the_api_shows_as_set(client, signed_in, ctx, tenant):
@@ -102,7 +102,7 @@ def test_an_alias_set_through_the_api_shows_as_set(client, signed_in, ctx, tenan
 
 def test_the_director_sets_the_time_zone_and_the_next_request_works_in_it(client, signed_in, ctx, tenant, monkeypatch):
     signed_in("director")
-    r = client.post(PAGE, {"time_zone": "America/Los_Angeles"}, **HX)
+    r = client.post(SAVE, {"time_zone": "America/Los_Angeles"}, **HX)
     html = r.content.decode()
     assert r.status_code == 200 and _toast(r) == "Time zone set to Pacific (America/Los_Angeles)"
     assert html.count('id="set-zone"') == 1 and "<h1>" not in html  # the panel, swapped in place
@@ -113,15 +113,15 @@ def test_the_director_sets_the_time_zone_and_the_next_request_works_in_it(client
     real = views_settings.fs.risk_summary
     monkeypatch.setattr(views_settings.fs, "risk_summary", lambda: seen.append(timezone.get_current_timezone_name()) or real())
     assert client.get(PAGE).context["zone"] == "America/Los_Angeles" and seen == ["America/Los_Angeles"]
-    again = client.post(PAGE, {"time_zone": "America/Los_Angeles"}, **HX)
+    again = client.post(SAVE, {"time_zone": "America/Los_Angeles"}, **HX)
     assert _toast(again) == "The time zone is already Pacific (America/Los_Angeles)"
     assert Tenant.history.filter(id=tenant.id).count() == 2  # added with the facility, and the one change; the same zone again is none
-    assert client.post(PAGE, {"time_zone": "Pacific/Honolulu"}).status_code == 302  # without htmx, back to the page
+    assert client.post(SAVE, {"time_zone": "Pacific/Honolulu"}).status_code == 302  # without htmx, back to the page
 
 
 def test_any_letter_case_names_the_zone(client, signed_in, ctx, tenant):
     signed_in("director")
-    r = client.post(PAGE, {"time_zone": "  america/chicago "}, **HX)
+    r = client.post(SAVE, {"time_zone": "  america/chicago "}, **HX)
     assert _toast(r) == "Time zone set to Central (America/Chicago)" and _zone(tenant) == "America/Chicago"
 
 
@@ -137,7 +137,7 @@ def test_any_letter_case_names_the_zone(client, signed_in, ctx, tenant):
 ])
 def test_a_name_that_is_not_a_zone_is_refused_in_plain_words(client, signed_in, ctx, tenant, posted, message):
     signed_in("director")
-    r = client.post(PAGE, {} if posted is None else {"time_zone": posted}, **HX)
+    r = client.post(SAVE, {} if posted is None else {"time_zone": posted}, **HX)
     html = r.content.decode()
     assert r.status_code == 200 and _toast(r) == message
     assert escape(message) in html and 'aria-invalid="true"' in html and 'aria-describedby="set-zone-err set-zone-now"' in html
@@ -151,19 +151,19 @@ def test_settings_view_reads_the_panel_and_cannot_change_it(client, signed_in, c
     assert 'name="time_zone" aria-describedby="set-zone-now" disabled>' in html
     assert "Save time zone" not in html and "hx-post" not in html
     assert "It is 4:30 AM on Monday, October 5 there now." in html
-    assert client.post(PAGE, {"time_zone": "America/Chicago"}, **HX).status_code == 403
+    assert client.post(SAVE, {"time_zone": "America/Chicago"}, **HX).status_code == 403
     assert _zone(tenant) == "America/New_York"
 
 
 @pytest.mark.parametrize("role", ["technician", "analyst", "requester", "vendor"])
 def test_roles_without_settings_cannot_change_it(client, signed_in, ctx, tenant, role):
     signed_in(role)
-    assert client.post(PAGE, {"time_zone": "America/Chicago"}, **HX).status_code == 403
+    assert client.post(SAVE, {"time_zone": "America/Chicago"}, **HX).status_code == 403
     assert _zone(tenant) == "America/New_York"
 
 
 def test_signed_out_goes_to_sign_in(client, ctx, tenant):
-    r = client.post(PAGE, {"time_zone": "America/Chicago"})
+    r = client.post(SAVE, {"time_zone": "America/Chicago"})
     assert r.status_code == 302 and "/login/" in r["Location"] and _zone(tenant) == "America/New_York"
 
 
@@ -171,7 +171,7 @@ def test_settings_edit_is_what_it_takes(client, ctx, tenant):
     role = Role.objects.create(name="Facility admin", slug="facility-admin")
     role.set_levels({Module.SETTINGS: Level.EDIT})
     client.force_login(User.objects.create_user(username="fa@riverside.example", password="Test-Pass-2026-x", tenant=tenant, role=role))
-    assert _toast(client.post(PAGE, {"time_zone": "America/Denver"}, **HX)) == "Time zone set to Mountain (America/Denver)"
+    assert _toast(client.post(SAVE, {"time_zone": "America/Denver"}, **HX)) == "Time zone set to Mountain (America/Denver)"
 
 
 def test_the_service_works_only_inside_the_facility_it_changes(tenant, other_tenant):
@@ -186,7 +186,7 @@ def test_the_service_works_only_inside_the_facility_it_changes(tenant, other_ten
 
 def test_the_change_reads_in_the_change_log_with_who_before_and_after(client, signed_in, ctx, tenant, make_user):
     kim = signed_in("director")
-    client.post(PAGE, {"time_zone": "Pacific/Honolulu"}, **HX)
+    client.post(SAVE, {"time_zone": "Pacific/Honolulu"}, **HX)
     row = Tenant.history.filter(id=tenant.id).latest()
     assert (row.history_type, row.timezone, row.history_user_id) == ("~", "Pacific/Honolulu", kim.pk)
     client.force_login(make_user("manager"))  # Settings View and Users View
@@ -286,7 +286,7 @@ def test_changing_the_time_zone_on_the_screen_as_the_runtime_role(client, ctx, t
     kim = make_user("director")
     client.force_login(kim)
     as_app_role()
-    r = client.post(PAGE, {"time_zone": "America/Chicago"}, **HX)
+    r = client.post(SAVE, {"time_zone": "America/Chicago"}, **HX)
     assert r.status_code == 200 and _toast(r) == "Time zone set to Central (America/Chicago)"
     assert _zone(tenant) == "America/Chicago" and Tenant.history.filter(id=tenant.id).latest().history_user_id == kim.pk
     assert [zone for zone, _label, on in _options(client.get(PAGE).content.decode()) if on] == ["America/Chicago"]

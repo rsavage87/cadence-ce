@@ -39,15 +39,23 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
 Four jobs run once a day: `generate_pm` (PM work orders coming due within `PM_LEAD_DAYS`, 21 by default, for every tenant),
 `import_openfda` (the last 30 days of FDA device recalls, matched to every tenant's inventory), `send_report_emails` (scheduled
 reports), and `send_staff_notifications` (the daily digest and contract reminders). `docker compose up` starts a `scheduler` service
-that runs them at `SCHEDULER_DAILY_AT` (default 02:30, local time in `DJANGO_TIME_ZONE`). If it starts after
-that time and today's jobs have not run, it runs them at once.
+that runs them at `SCHEDULER_DAILY_AT` (default 02:30): each facility's PM work orders, report emails, and staff emails at that hour
+on the facility's own clock (its time zone, in Settings), the openFDA import at that hour on the server's (`DJANGO_TIME_ZONE`). If
+it starts after that time and a day's jobs have not run, it runs them at once.
 
-Each job runs at most once per local day, recorded in Admin under Scheduled jobs with what it printed. A second scheduler or a
-restart does not repeat a job, and one job failing does not stop the other. Elsewhere, run one `python manage.py scheduler`
-process, or call `python manage.py run_daily_jobs` from a platform cron or a Kubernetes CronJob; it is safe to call more than
-once a day. `run_daily_jobs --force` runs a finished job again today; it never starts a second copy of a job that is still
+Each job runs at most once per local day (per facility for the facility's jobs), recorded in Admin under Scheduled jobs with what it
+printed. A second scheduler or a restart does not repeat a job, and one job or facility failing does not stop the others. Elsewhere,
+run one `python manage.py scheduler` process, or call `python manage.py run_daily_jobs` from a platform cron or a Kubernetes CronJob
+every 15 minutes (it runs only what is due, so facilities in different time zones each get their jobs at their own hour); it is safe
+to call as often as you like. `--tenant` and `--date` run one facility, or a missed day. `run_daily_jobs --force` runs a finished job again today; it never starts a second copy of a job that is still
 running. A run killed partway (the container stopped, the database dropped) is recorded as stopped, or, if the process died
 outright, taken over by the scheduler six hours after it started.
+
+## Time zones
+Each facility works on its own clock: its time zone (Settings, Time zone; the director by default) decides its today (what is due or
+overdue, report dates, CSV names), the times its screens and prints show, and when its daily jobs and emails run. A change takes
+effect at once for the screens and from the next day for the jobs, and is recorded in the change log. The server's
+`DJANGO_TIME_ZONE` is only the default for a new facility and the clock of the openFDA import.
 
 ## Email and sign-in
 Inviting a user from Users and access emails them a link to set their password (valid for 7 days; Resend invite replaces

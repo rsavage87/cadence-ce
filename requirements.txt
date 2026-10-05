@@ -8,3 +8,4 @@ gunicorn>=22
 whitenoise>=6.7
 requests>=2.32
 segno>=1.6       # QR codes on asset labels (pure Python, SVG out)
+tzdata>=2024.1   # every facility's time zone (zoneinfo), wherever the system has no zone files (slim images)

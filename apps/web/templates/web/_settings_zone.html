@@ -4,7 +4,7 @@
 <div class="panel mt" id="set-zone">
   <div class="panel-h"><h2>Time zone</h2><span class="sub">{{ zone_label }}</span></div>
   <div class="panel-b">
-    <form{% if can_edit %} hx-post="{% url 'web:settings' %}" hx-target="#set-zone" hx-swap="outerHTML"{% endif %} hx-disinherit="hx-swap hx-target">
+    <form{% if can_edit %} hx-post="{% url 'web:settings_time_zone' %}" hx-target="#set-zone" hx-swap="outerHTML"{% endif %} hx-disinherit="hx-swap hx-target">
       <div class="form set-form">
         <label>Facility time zone
           <select id="set-time-zone" name="time_zone" aria-describedby="{% if zone_error %}set-zone-err {% endif %}set-zone-now"{% if zone_error %} aria-invalid="true"{% endif %}{% if not can_edit %} disabled{% endif %}>

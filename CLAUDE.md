@@ -50,7 +50,7 @@ python manage.py generate_pm                                       # PM work-ord
 python manage.py import_assets --tenant riverside inventory.csv --dry-run
 python manage.py import_openfda --days 30                         # FDA recall import; the scheduler runs it daily
 python manage.py send_staff_notifications                          # the daily digest and contract reminders; the scheduler runs it daily
-python manage.py run_daily_jobs                                    # every daily job, each at most once per local day (cron-safe)
+python manage.py run_daily_jobs                                    # whatever is due (each facility's jobs on its clock); cron every 15 min
 python manage.py scheduler                                         # long-running: runs them at SCHEDULER_DAILY_AT (docker-compose `scheduler`)
 python manage.py enable_rls --database=migrate                     # Postgres only, run after migrate
 pytest
@@ -59,6 +59,9 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
 
 ## Conventions
 - Dates for business events are `DateField`s (`opened_on`, `due_on`, `completed_on`); timestamps only for audit.
+- Today is the facility's: `timezone.localdate()` (inside a facility its time zone is active: tenant_context, the middleware, the
+  API), never `date.today()`, `datetime.now()`, or `datetime.today()` (the server's clock; a test fails on them). A function that
+  takes `today` reads the clock once and passes it down.
 - Money is `DecimalField(12, 2)`. KPI math converts to float at the edges, not in models.
 - Choices are `TextChoices` with stable slugs (`in_service`, not "In service"). Display labels can change; slugs cannot.
 - Sequences (`WO-26-0042`, `SR-00017`) come from `apps.core.models.Sequence.next`, never from `max(id)+1`.
@@ -69,7 +72,8 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
 - Ruff (`ruff.toml`: E, F, W, I; line length 160; migrations excluded). CI runs `ruff check .` and `pytest` on every push.
 
 ## Where things are
-- `apps/tenants` tenant model, context var, middleware, `enable_rls`; `tenant_context()` sets both the ORM scope and the Postgres
+- `apps/tenants` tenant model (with its time zone), context var, middleware, `enable_rls`; `tenant_context()` sets the facility's time
+  zone (`zone_of`, `zone_override`), the ORM scope, and the Postgres
   `app.tenant_id` that RLS reads, so the public portal and management commands see the same rows under RLS
 - `apps/core` TenantModel, TenantManager, Sequence, TenantModelAdmin; `history.py` a record's changes in words from django-simple-history
   (`record_history`, `entries_for_rows`) and the facility's change log (`change_log`) across the areas a role can view (`can_read`,
@@ -119,8 +123,9 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   "Open <tag> in Cadence" (the user's role is read only for a member, inside the facility's tenant_context), and nothing else changes
 - `apps/facility` Settings: `FacilitySettings` (one row per tenant: portal callback and hotline, the eight maintenance-policy texts,
   KPI targets and the monthly repair budget); `services.py` reads (`get_settings`, defaults until first saved), `update_settings`,
-  `reset_policy`, `kpi_targets`, `compliance_targets`, `portal_url`, the integration list, risk bands; `permissions.py` (View to see,
-  Edit to change). Named `facility` so it never reads like `django.conf.settings`.
+  `reset_policy`, `kpi_targets`, `compliance_targets`, `portal_url`, the integration list, risk bands, `set_time_zone` (the facility's
+  Tenant.timezone: its today, its clock, its jobs' hour; audited in Tenant history, the change log's "facility" area); `permissions.py`
+  (View to see, Edit to change). Named `facility` so it never reads like `django.conf.settings`.
 - `apps/reports` report emails (`ReportSubscription`, `subscriptions.py`, the daily `send_report_emails`; self-service only), overview KPIs, the Overview bundle (`overview_page`), attention list, nav counts, `cost_of_service`; the eight Reports
   (`REPORTS` catalog and `run_report` in `services.py`; the numbers in `cost.py`, `fleet.py`, `operations.py`, read-only, `today` passed in;
   the API serves only these); custom reports (`CustomReport`, key `custom-<id>`): `custom.py` declares each source's columns and filters
@@ -145,8 +150,10 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   same thing and calls the same service; the API never imports apps.web. `tenancy.py` (`TenantAPIMixin`: the tenant from the session or
   token user, set after authentication and restored once the response is rendered), `authentication.py` (DRF's token check plus the
   deactivated-facility refusal sign-in has)
-- `apps/jobs` the daily jobs (`services.DAILY_JOBS`, `run_daily_jobs`, `is_due`), `JobRun` (a system table, not tenant-scoped: one row per
-  job per local day is the lock against double runs), and the `scheduler` / `run_daily_jobs` commands
+- `apps/jobs` the daily jobs (`services.DAILY_JOBS`, `FACILITY_JOBS`, `run_daily_jobs`, `is_due`): each facility's jobs run at
+  SCHEDULER_DAILY_AT on its own clock, the openFDA import on the server's; `JobRun` (a system table, not tenant-scoped: one row per job
+  and local day, per facility for a facility's job, is the lock against double runs; the column is `facility`, never `tenant_id`), the
+  `scheduler` / `run_daily_jobs` commands, and `cli.py` (the facility jobs' shared `--tenant` / `--date` options)
 - `apps/notifications` emails to staff about their own work: `NotificationPreference` (per user, audited; `services.preferences_for`,
   `wants`, `set_preferences`), `NotificationSent` (each email once: claimed before sending, released if the send failed),
   `assignments.py` (announce a technician's new work order after commit; `batch()` sends each technician one email for a batch,

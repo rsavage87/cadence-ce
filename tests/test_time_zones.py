@@ -80,3 +80,20 @@ def test_a_job_runs_once_per_day_for_everyone_or_once_per_facility_and_day(db, t
     JobRun.objects.create(job="generate_pm", facility=other_tenant, run_on=day)
     with pytest.raises(IntegrityError), transaction.atomic():
         JobRun.objects.create(job="generate_pm", facility=tenant, run_on=day)
+
+
+def test_no_code_reads_the_servers_clock():
+    """Inside a facility today is timezone.localdate() (its zone is active); date.today(), datetime.now(), and datetime.today() are
+    the server's day and clock. Comments and docstrings may name them; code may not."""
+    import ast
+    from pathlib import Path
+
+    offenders = []
+    for path in Path("apps").rglob("*.py"):
+        if "migrations" in path.parts:
+            continue
+        for node in ast.walk(ast.parse(path.read_text(), filename=str(path))):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+                if (node.func.value.id, node.func.attr) in {("date", "today"), ("datetime", "now"), ("datetime", "today")}:
+                    offenders.append(f"{path}:{node.lineno}")
+    assert offenders == []
