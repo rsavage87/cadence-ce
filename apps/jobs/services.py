@@ -27,6 +27,8 @@ DAILY_JOBS = [
     ("import_openfda", "import_openfda", {"days": 30, "limit": 1000}),
     # Slice 13: report emails due today (weekly on Mondays, monthly on the first Monday); each subscription at most once a day.
     ("report_emails", "send_report_emails", {}),
+    # Slice 20: the daily digest and the contract reminders (apps/notifications/daily.py); no email goes twice, so a rerun only retries.
+    ("staff_notifications", "send_staff_notifications", {}),
 ]
 OUTPUT_LIMIT = 20_000
 log = logging.getLogger("cadence.scheduler")

@@ -1,0 +1,15 @@
+{% autoescape off %}Hello {{ name }},
+
+{% if items|length == 1 %}This service contract{% else %}These service contracts{% endif %} at {{ facility }} {% if items|length == 1 %}is{% else %}are{% endif %} ending, or just ended, and still {% if items|length == 1 %}covers{% else %}cover{% endif %} devices in use. Renew or replace {% if items|length == 1 %}it{% else %}them{% endif %}, or plan who services the devices after the end date.
+{% for c in items %}
+{{ c.reference }} · {{ c.vendor }} · {{ c.type }}, {{ c.coverage }}
+{% if c.ended %}Ended{% else %}Ends{% endif %} {{ c.end_on|date:"l, F j, Y" }} ({{ c.when }})
+Devices covered: {{ c.devices }}{% if c.models %} ({% for model, n in c.models %}{{ model }}: {{ n }}{% if not forloop.last %}, {% endif %}{% endfor %}{% if c.more_models %}, and {{ c.more_models }} more model{{ c.more_models|pluralize }}{% endif %}){% endif %}
+{{ c.url }}
+{% endfor %}
+Every contract, on the Contracts screen (you may be asked to sign in):
+{{ contracts_url }}
+
+Cadence CE reminds the people who can edit contracts {% for days in stages %}{% if forloop.last %}and {% endif %}{{ days }}{% if not forloop.last %}, {% endif %}{% endfor %} days before a contract ends, and once after it ends. To stop these reminders, open Notifications:
+{{ preferences_url }}
+{% endautoescape %}

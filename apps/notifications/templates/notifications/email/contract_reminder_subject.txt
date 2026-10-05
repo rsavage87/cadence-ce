@@ -1,0 +1,1 @@
+{% autoescape off %}{% if items|length == 1 %}{% with c=items.0 %}Service contract {{ c.reference }} {% if c.ended %}ended{% else %}ends{% endif %} {{ c.when }}{% endwith %}{% else %}{{ items|length }} service contracts ending or just ended{% endif %} · {{ facility }}{% endautoescape %}
