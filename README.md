@@ -54,8 +54,8 @@ outright, taken over by the scheduler six hours after it started.
 ## Time zones
 Each facility works on its own clock: its time zone (Settings, Time zone; the director by default) decides its today (what is due or
 overdue, report dates, CSV names), the times its screens and prints show, and when its daily jobs and emails run. A change takes
-effect at once for the screens and from the next day for the jobs, and is recorded in the change log. The server's
-`DJANGO_TIME_ZONE` is only the default for a new facility and the clock of the openFDA import.
+effect at once for the screens and from the next day for the jobs, and is recorded in the change log. A facility that has not
+chosen one works in the server's `DJANGO_TIME_ZONE`, which is also the openFDA import's clock.
 
 ## Email and sign-in
 Inviting a user from Users and access emails them a link to set their password (valid for 7 days; Resend invite replaces
