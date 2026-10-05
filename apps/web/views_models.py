@@ -1,6 +1,7 @@
 """
 The device model drawer (slice 14): a model's PM program, opened from the PM library and the device drawer. Three tabs: PM program
-(this module: details, risk score, intervals, devices), Procedure (views_procedures.procedure_tab), and AEM (views_aem.aem_tab).
+(this module: details, risk score, intervals, devices), Procedure (views_procedures.procedure_tab), and AEM (views_aem.aem_tab); and
+History (slice 20, apps.web.history_tabs: the model's changes with its AEM cases') for Equipment View, refused to anyone else.
 Add model and Edit details (Equipment Edit) and the risk score (Equipment Approve) are here too: a model's details and its risk
 are equipment data (apps.equipment.permissions), checked here on every request, GET and POST, behind the PM View the screen needs.
 On both forms, marking a model as equipment CMS keeps on the manufacturer's schedule (imaging, radiologic, medical laser; slice
@@ -16,6 +17,7 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.db.models import F
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, render
+from django.urls import reverse
 from django_htmx.http import retarget, trigger_client_event
 
 from apps.accounts.models import Level, Module
@@ -26,13 +28,14 @@ from apps.facility.services import RISK_BANDS, RISK_RUBRIC
 from apps.pm import aem
 from apps.pm import permissions as pm_perms
 
-from . import views_aem, views_procedures
+from . import history_tabs, views_aem, views_procedures
 from .decorators import web_view
 from .forms_models import RISK_MEANINGS, DeviceModelForm, RiskScoreForm
 from .htmx import is_partial, toast
 
 DRAWER = "web/_model_drawer.html"
 TABS = (("program", "PM program"), ("procedure", "Procedure"), ("aem", "AEM"))
+HISTORY_TAB = ("history", "History")  # slice 20: offered by tabs_for to those who may read it
 DEVICES_SHOWN = 8  # the PM program tab lists this many of the model's active devices, soonest PM first, and counts the rest
 
 
@@ -82,17 +85,26 @@ def program_tab(request, dm, today: date | None = None) -> dict:
     }}
 
 
+def tabs_for(user) -> tuple:
+    """TABS, and History (slice 20: the model's changes with its AEM cases', apps.web.history_tabs) for Equipment View: a model's
+    details are equipment data. Scoped users never open this drawer (the PM screen refuses them)."""
+    return TABS + ((HISTORY_TAB,) if history_tabs.allowed(user, "device_models") else ())
+
+
 def model_drawer_context(request, dm, tab: str | None = None) -> dict:
     """The drawer on `tab` (else ?tab= in the request, else PM program), with that tab's context."""
-    keys = [k for k, _label in TABS]
+    tabs = tabs_for(request.user)
+    keys = [k for k, _label in tabs]
     tab = tab if tab in keys else request.GET.get("tab") if request.GET.get("tab") in keys else "program"
-    ctx = {"dm": dm, "tab": tab, "tabs": TABS, "nav_active": "pm"}
+    ctx = {"dm": dm, "tab": tab, "tabs": tabs, "nav_active": "pm"}
     if tab == "program":
         ctx.update(program_tab(request, dm))
     elif tab == "procedure":
         ctx.update(views_procedures.procedure_tab(request, dm))
-    else:
+    elif tab == "aem":
         ctx.update(views_aem.aem_tab(request, dm))
+    else:
+        ctx.update(history_tabs.context(request, dm, "device_models", reverse("web:pm_model", args=[dm.pk]), tab=True))
     return ctx
 
 
@@ -104,6 +116,10 @@ def render_model_drawer(request, dm, tab: str | None = None, status: int = 200) 
 @web_view(pm_perms.MODULE, pm_perms.VIEW_LEVEL)
 def model_detail(request, pk):
     dm = get_model(pk)
+    if history_tabs.asked(request, tab=True):  # the History tab or its Show older: Equipment View too
+        history_tabs.require(request.user, "device_models")
+        if history_tabs.wants_entries(request):
+            return history_tabs.entries_response(request, dm, "device_models", reverse("web:pm_model", args=[dm.pk]), tab=True)
     if request.htmx:
         return render(request, DRAWER, model_drawer_context(request, dm))
     from .views_pm import pm_page_context

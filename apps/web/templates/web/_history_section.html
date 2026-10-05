@@ -1,0 +1,4 @@
+{# History at the foot of a drawer made of sections (slice 20, part A: the work order and contract drawers). Loads when asked: hist_url is the drawer's URL with ?history=1, whose HTMX answer (aimed at #hist) is the entries; hist is set when the drawer itself was opened that way. #}
+<div class="sec hist-sec"><h3>History <span>every change, newest first</span></h3>
+  <div id="hist">{% if hist %}{% include "web/_history_entries.html" %}{% else %}<button class="btn sm" type="button" hx-get="{{ hist_url }}" hx-target="#hist">Show changes</button>{% endif %}</div>
+</div>

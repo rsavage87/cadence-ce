@@ -512,6 +512,23 @@ button.link{background:none;border:0;padding:0;font:inherit;font-size:12px;font-
 .scan-page{max-width:560px}
 
 /* Slice 20, part A: History tabs (a record's changes in the device, work order, contract, and model drawers) */
+/* A rail like the work order timeline's; each entry's fields in two columns, one on a phone. Show older appends a second list
+   right under the first, so the rail runs on. */
+.hist{list-style:none;margin:0;padding:0;font-size:13px}
+.hist-e{position:relative;padding:0 0 14px 18px;border-left:1.5px solid var(--line);margin-left:5px;min-width:0}
+.hist-e::before{content:"";position:absolute;left:-5px;top:5px;width:8px;height:8px;border-radius:50%;background:var(--line-2)}
+.hist-h{display:flex;flex-wrap:wrap;gap:2px 4px;align-items:baseline}
+.hist-h .t{font-weight:500;color:var(--ink)}
+.hist-h .rs{color:var(--ink-2);overflow-wrap:anywhere}
+.hist-h .rs::before{content:"· ";color:var(--ink-3)}
+.hist-e .w{font-size:12px;color:var(--ink-3)}
+.hist-c{margin:6px 0 0;display:grid;gap:3px;font-size:12.5px}
+.hist-c div{display:grid;grid-template-columns:minmax(110px,36%) 1fr;gap:8px;min-width:0}
+.hist-c dt{color:var(--ink-3)}
+.hist-c dd{margin:0;min-width:0;overflow-wrap:anywhere;color:var(--ink)}
+.hist-c .was,.hist-c .to{color:var(--ink-3)}
+.hist-more{padding:2px 0 0 23px}
+@media (max-width:760px){.hist-c div{grid-template-columns:1fr;gap:0}.hist-c div+div{margin-top:4px}}
 
 /* Slice 13: the Reports panel's Schedule button shows a report is emailed; its modal picks how often */
 .btn.sched-on{border-color:var(--accent-line);background:var(--accent-soft);color:var(--accent)}

@@ -61,6 +61,7 @@
     </form>
     {% endif %}
   </div>
+  {% if can_history %}{% include "web/_history_section.html" %}{% endif %}
 </div>
 <div class="dr-f">
   {% for a in actions %}

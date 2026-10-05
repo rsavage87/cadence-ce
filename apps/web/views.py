@@ -35,7 +35,7 @@ from apps.workorders import scoping
 from apps.workorders import services as wo_services
 from apps.workorders.models import ALLOWED_TRANSITIONS, OPEN_STATUSES, Source, WorkOrder, WoStatus, WoType
 
-from . import asset_tabs
+from . import asset_tabs, history_tabs
 from . import overview as ov
 from .context_processors import nav_entries
 from .decorators import web_view
@@ -138,12 +138,18 @@ def asset_drawer_context(request, asset) -> dict:
     can_view_recalls = user.has_level(Module.RECALLS, Level.VIEW) and not scoped
     # Tabs a role cannot use do not exist for it: PM schedule needs PM View, Costs needs Reports View (service spend, contract
     # share, and replacement outlook are the Reports' figures; a vendor technician or clinical requester has no business with
-    # them), Recalls needs recalls View. The mock's order: Overview, PM schedule, Work orders, Costs, Recalls.
+    # them), Recalls needs recalls View. The mock's order: Overview, PM schedule, Work orders, Costs, Recalls; then History (slice
+    # 20: the device's own changes, for Equipment View and never a scoped user; apps.web.history_tabs).
     tabs = [t for t, ok in (("overview", True), ("pm", user.has_level(Module.PM, Level.VIEW) and not scoped), ("wo", True),
-                            ("costs", user.has_level(Module.REPORTS, Level.VIEW) and not scoped), ("recalls", can_view_recalls)) if ok]
+                            ("costs", user.has_level(Module.REPORTS, Level.VIEW) and not scoped), ("recalls", can_view_recalls),
+                            ("history", history_tabs.allowed(user, "devices"))) if ok]
     tab = request.GET.get("tab") if request.GET.get("tab") in tabs else "overview"
     summary = asset_service_summary(asset, work_orders=scoping.work_orders(user) if scoped else None)
     recalls = _model_recalls(asset.device_model_id) if can_view_recalls else []
+    if tab == "history":
+        extra = history_tabs.context(request, asset, "devices", reverse("web:asset", args=[asset.tag]), tab=True)
+    else:
+        extra = asset_tabs.pm_tab(asset) if tab == "pm" else asset_tabs.costs_tab(asset) if tab == "costs" else {}
     return {"asset": asset, "tab": tab, "summary": summary, "recent": summary["work_orders"][:4],
             # The facility's staff and their credentials (the API closes qualified_technicians to scoped users too): not theirs to read.
             "qualified": [] if scoped else qualified_technicians(asset),
@@ -153,7 +159,7 @@ def asset_drawer_context(request, asset) -> dict:
             "open_recall": any(m.status == AlertMatch.Status.NEEDS_ACTION for m in recalls),
             # slice 12: editing the device and its status buttons; the PM schedule and Costs tabs (apps/web/asset_tabs.py)
             "can_edit_device": eq_perms.can_edit(user) and not scoped, "status_actions": [] if scoped else eq_services.status_actions(asset, user),
-            **(asset_tabs.pm_tab(asset) if tab == "pm" else asset_tabs.costs_tab(asset) if tab == "costs" else {})}
+            **extra}
 
 
 def get_asset(request, tag):
@@ -165,6 +171,10 @@ def get_asset(request, tag):
 @web_view(Module.EQUIPMENT, Level.VIEW, scoped=True)
 def asset_detail(request, tag):
     asset = get_asset(request, tag)
+    if history_tabs.asked(request, tab=True):  # the History tab or its Show older: never a scoped user's (a 403, not another tab)
+        history_tabs.require(request.user, "devices")
+        if history_tabs.wants_entries(request):
+            return history_tabs.entries_response(request, asset, "devices", reverse("web:asset", args=[asset.tag]), tab=True)
     ctx = asset_drawer_context(request, asset)
     # Scan tag pushes this URL; htmx reloads a pushed URL it no longer has in its history cache into <body>, so that gets the page
     if request.htmx and not request.htmx.history_restore_request:
@@ -242,7 +252,13 @@ def _wo_drawer_context(request, wo) -> dict:
     # The Recalls screen is keyed by AlertMatch, so a recall work order links through the match for this alert and the device's model.
     recall_match = (AlertMatch.objects.filter(alert_id=wo.alert_id, device_model_id=wo.asset.device_model_id).first()
                     if wo.alert_id and user.has_level(Module.RECALLS, Level.VIEW) and not scoped else None)
+    # Slice 20: the History section (the work order's changes with its labor and part lines'), never a scoped user's. It loads when
+    # asked; a drawer opened with ?history=1 (wo_detail checked who may) shows it open.
+    can_history = history_tabs.allowed(user, "work_orders")
+    wo_url = reverse("web:wo", args=[wo.number])
+    hist = history_tabs.context(request, wo, "work_orders", wo_url, tab=False) if can_history and request.GET.get("history") else {}
     return {
+        "can_history": can_history, "hist_url": f"{wo_url}?history=1", **hist,
         "wo": wo, "asset": wo.asset, "is_open": is_open, "unassigned": unassigned, "actions": actions,
         "late_days": (today - wo.due_on).days if is_open and wo.due_on < today else 0,
         "open_days": (today - wo.opened_on).days,
@@ -275,6 +291,10 @@ def _render_wo_drawer(request, wo, status=200):
 @web_view(Module.WORKORDERS, Level.VIEW, scoped=True)
 def wo_detail(request, number):
     wo = get_wo(request, number)
+    if history_tabs.asked(request, tab=False):  # the History section or its Show older: never a scoped user's
+        history_tabs.require(request.user, "work_orders")
+        if history_tabs.wants_entries(request):
+            return history_tabs.entries_response(request, wo, "work_orders", reverse("web:wo", args=[wo.number]), tab=False)
     if request.htmx:
         return _render_wo_drawer(request, wo)
     return render(request, "web/workorders.html", {**_workorders_context(request), **_wo_drawer_context(request, wo), "drawer_template": "web/_wo_drawer.html"})

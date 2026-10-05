@@ -18,6 +18,7 @@ from apps.contracts import services as ct
 from apps.contracts.models import Contract, ContractType
 from apps.equipment.models import Asset, AssetStatus, DeviceModel
 
+from . import history_tabs
 from .decorators import web_view
 from .forms import parse_uuid
 from .forms_contracts import STATUS_CHOICES, ContractForm, contract_choices, edit_contract_initial, new_contract_initial, parse_contract_filters
@@ -70,7 +71,12 @@ def _drawer_context(request, contract, edit=False, form=None) -> dict:
     n = lst["total"]
     if edit and form is None:
         form = ContractForm(initial=edit_contract_initial(contract))
+    # Slice 20: the History section, loaded when asked; a drawer opened with ?history=1 (contract_detail checked who may) shows it open
+    can_history = history_tabs.allowed(request.user, "contracts")
+    url = reverse("web:contract", args=[contract.pk])
+    hist = history_tabs.context(request, contract, "contracts", url, tab=False) if can_history and request.GET.get("history") else {}
     return {
+        "can_history": can_history, "hist_url": f"{url}?history=1", **hist,
         "c": contract, "st": ct.contract_status(contract), "models": ct.covered_models(contract), "n": n, "lst": lst,
         "per_device": float(contract.annual_cost) / n if n else None,
         "edit": edit and can_edit, "form": form,
@@ -87,6 +93,10 @@ def _render_drawer(request, contract, **kw):
 @web_view(Module.CONTRACTS, Level.VIEW)
 def contract_detail(request, pk):
     contract = _get_contract(pk)
+    if history_tabs.asked(request, tab=False):  # the History section or its Show older (Contracts View; scoped users never get here)
+        history_tabs.require(request.user, "contracts")
+        if history_tabs.wants_entries(request):
+            return history_tabs.entries_response(request, contract, "contracts", reverse("web:contract", args=[contract.pk]), tab=False)
     if is_partial(request, "ct-list"):
         # The covered-devices filter refreshes only the list.
         return render(request, "web/_contract_list.html", _drawer_context(request, contract))

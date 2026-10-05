@@ -59,6 +59,7 @@
            hx-get="{% url 'web:contract' c.pk %}" hx-trigger="input changed delay:300ms" hx-target="#ct-list" hx-swap="outerHTML" hx-include="this">{% endif %}
     {% include "web/_contract_list.html" %}
   </div>
+  {% if can_history %}{% include "web/_history_section.html" %}{% endif %}
 </div>
 <div class="dr-f">
   {% if can_edit %}<button class="btn primary" type="button" hx-post="{% url 'web:contract_renew' c.pk %}" hx-target="#drawer">Renew 12 months</button>{% endif %}

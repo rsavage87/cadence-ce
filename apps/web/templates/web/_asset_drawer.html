@@ -16,6 +16,7 @@
   <button class="tab{% if tab == 'wo' %} active{% endif %}" role="tab" aria-selected="{% if tab == 'wo' %}true{% else %}false{% endif %}" hx-get="{% url 'web:asset' asset.tag %}?tab=wo" hx-target="#drawer">Work orders ({{ summary.work_orders|length }})</button>
   {% if 'costs' in tabs %}<button class="tab{% if tab == 'costs' %} active{% endif %}" role="tab" aria-selected="{% if tab == 'costs' %}true{% else %}false{% endif %}" hx-get="{% url 'web:asset' asset.tag %}?tab=costs" hx-target="#drawer">Costs</button>{% endif %}
   {% if can_view_recalls %}<button class="tab{% if tab == 'recalls' %} active{% endif %}" role="tab" aria-selected="{% if tab == 'recalls' %}true{% else %}false{% endif %}" hx-get="{% url 'web:asset' asset.tag %}?tab=recalls" hx-target="#drawer">Recalls{% if recalls %} ({{ recalls|length }}){% endif %}</button>{% endif %}
+  {% if 'history' in tabs %}<button class="tab{% if tab == 'history' %} active{% endif %}" role="tab" aria-selected="{% if tab == 'history' %}true{% else %}false{% endif %}" hx-get="{% url 'web:asset' asset.tag %}?tab=history" hx-target="#drawer">History</button>{% endif %}
 </div>
 <div class="dr-b">
 {% if tab == "overview" %}
@@ -65,6 +66,9 @@
     {% for m in recalls %}<a class="li" href="{% url 'web:recalls' %}?match={{ m.id }}"><span class="rail {% if m.alert|is_class_one %}crit{% else %}warn{% endif %}"></span><div class="bd"><div class="t">{{ m.alert|alert_label }}{% if m.alert.classification %} · {{ m.alert.classification }}{% endif %}</div><div class="s">{{ m.alert.title }}</div></div><div class="r">{% alert_status_chip m.status %}</div></a>
     {% empty %}<div class="empty">No alerts on file for this model.</div>{% endfor %}
   </div></div>
+{% elif tab == "history" %}
+  {# Slice 20: the device's own changes (apps.web.history_tabs); its work orders keep theirs in their own drawers. #}
+  <div class="sec hist-sec"><h3>History <span>every change to this device, newest first</span></h3>{% include "web/_history_entries.html" %}</div>
 {% else %}
   <div class="sec">{% if can_view_wo %}<div class="list">
     {% for w in summary.work_orders %}{% include "web/_wo_li.html" %}{% empty %}<div class="empty">No work orders in the last 6 months.</div>{% endfor %}
