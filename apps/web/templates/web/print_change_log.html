@@ -1,0 +1,41 @@
+{% extends "web/print_base.html" %}
+{% comment %}The change log on paper (views_change_log.change_log_print): the filters on screen, newest first, up to `limit` changes.
+   Links stay as plain text: the page has no app shell to open them in.{% endcomment %}
+{% block title %}Change log{% endblock %}
+{% block page_style %}<style>
+@page{size:letter;margin:.5in}
+.clp-head{padding-bottom:8px;margin-bottom:12px;border-bottom:1.5px solid var(--ink)}
+.clp-head h1{margin:0 0 2px}
+.clp-head p{margin:0}
+table.clp td{vertical-align:top;overflow-wrap:anywhere}
+table.clp td.w{width:1.1in}
+table.clp td.who{width:1.2in}
+table.clp td.rec{width:1.6in}
+table.clp td.rec small{display:block;color:var(--muted)}
+table.clp tr{break-inside:avoid}
+table.clp .ln{display:block}
+</style>{% endblock %}
+{% block bar_title %}Change log{% endblock %}
+{% block content %}
+<header class="clp-head">
+  <h1>Change log</h1>
+  <p>{{ request.tenant.name }} · {{ filters }}</p>
+  <p class="muted">Newest first{% if more %}: the latest {{ limit }} changes. Narrow the dates in the app to print older ones{% endif %}. Times are the facility's.</p>
+</header>
+<table class="clp">
+  <thead><tr><th>When</th><th>Who</th><th>Record</th><th>What changed</th><th>Reason</th></tr></thead>
+  <tbody>
+    {% for e, lines in entries %}
+    <tr>
+      <td class="w">{{ e.at|date:"M j, Y g:i A" }}</td>
+      <td class="who">{{ e.who }}</td>
+      <td class="rec">{{ e.record|default:"—" }}<small>{{ e.area_label }} · {{ e.action_label }}</small></td>
+      <td>{% for line in lines %}<span class="ln">{{ line }}</span>{% empty %}{% if e.action == "deleted" %}Removed{% else %}—{% endif %}{% endfor %}</td>
+      <td>{{ e.reason|default:"—" }}</td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="5" class="muted">No changes match these filters.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

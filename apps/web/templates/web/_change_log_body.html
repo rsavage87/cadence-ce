@@ -1,0 +1,14 @@
+{% load web %}
+{# The change log's list (views_change_log): swapped whole by the filters; Show older adds rows under it (_change_log_rows.html). #}
+<div id="log-body">
+  {% if f.page > 1 %}<div class="clog-older">Older changes: page {{ f.page }}, {{ page_size }} to a page. <a class="link" href="{{ list_url }}{% query request.GET page=None %}">Back to the newest</a></div>{% endif %}
+  <div class="tbl-wrap">
+    <table class="clog">
+      <thead><tr><th>When</th><th>Who</th><th>Record</th><th>What changed</th><th>Reason</th></tr></thead>
+      <tbody>
+        {% include "web/_change_log_rows.html" %}
+        {% if not entries %}<tr><td colspan="5"><div class="empty">{% if f.any %}No changes match these filters.{% else %}No changes recorded yet.{% endif %}</div></td></tr>{% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>

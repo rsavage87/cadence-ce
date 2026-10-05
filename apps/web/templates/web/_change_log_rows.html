@@ -1,0 +1,20 @@
+{% load web %}
+{% comment %}One page of the change log's rows (views_change_log), and the Show older row that fetches the next page in its place. A record
+   that opens in a drawer opens over the log; the rest open their own page. Everything shown is escaped as usual.{% endcomment %}
+{% for e in entries %}
+<tr>
+  <td class="two clog-when">{{ e.at|date:"M j, Y" }}<small>{{ e.at|date:"g:i A" }}</small></td>
+  <td class="clog-who">{{ e.who }}</td>
+  <td class="two clog-rec">{% if e.url %}<a class="link" href="{{ e.url }}"{% if e.area in drawer_areas %} hx-get="{{ e.url }}" hx-target="#drawer"{% endif %}>{{ e.record|default:"—" }}</a>{% else %}{{ e.record|default:"—" }}{% endif %}<small>{{ e.area_label }} · {{ e.action_label }}</small></td>
+  <td class="clog-what">{% if e.area == "access" %}{% for c in e.changes %}<div>{{ c.after }}</div>{% endfor %}
+    {% elif e.changes %}<ul class="clog-changes">{% for c in e.changes|slice:":6" %}{% include "web/_change_log_change.html" %}{% endfor %}</ul>
+    {% if e.changes|length > 6 %}<details class="clog-rest"><summary>{{ e.changes|length|add:"-6" }} more</summary><ul class="clog-changes">{% for c in e.changes|slice:"6:" %}{% include "web/_change_log_change.html" %}{% endfor %}</ul></details>{% endif %}
+    {% else %}<span class="muted">{% if e.action == "deleted" %}Removed{% else %}—{% endif %}</span>{% endif %}</td>
+  <td class="clog-why">{{ e.reason|default:"—" }}</td>
+</tr>
+{% endfor %}
+{% if more %}
+<tr id="log-more" class="clog-more"><td colspan="5">{% query request.GET page=next_page as older %}<a class="btn sm" href="{{ list_url }}{{ older }}" hx-get="{{ list_url }}{{ older }}" hx-target="#log-more" hx-swap="outerHTML">Show older</a></td></tr>
+{% elif at_limit %}
+<tr class="clog-more"><td colspan="5"><span class="muted">That is {{ max_entries }} changes back; narrow the dates to see older ones.</span></td></tr>
+{% endif %}

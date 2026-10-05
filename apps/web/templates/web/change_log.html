@@ -1,0 +1,19 @@
+{% extends "web/base.html" %}
+{% load web %}
+{% block title %}Change log{% endblock %}
+{% block content %}
+{% include "web/_users_tabs.html" %}
+{% comment %}Slice 20, part B (views_change_log): the filters swap #log-body and push the address, so Export and Print (in the page head,
+   data-act="with-filters") take the filters on screen.{% endcomment %}
+<form class="toolbar clog-filters" id="log-filters" method="get" action="{{ list_url }}"
+      hx-get="{{ list_url }}" hx-trigger="change, submit" hx-target="#log-body" hx-swap="outerHTML" hx-push-url="true">
+  <label class="field"><span>Area</span><select name="area" aria-label="Area"><option value="">All</option>{% for key, label in areas %}<option value="{{ key }}"{% if f.area == key %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+  <label class="field"><span>From</span><input type="date" name="from" value="{{ f.since|date:'Y-m-d' }}" aria-label="From"></label>
+  <label class="field"><span>To</span><input type="date" name="to" value="{{ f.until|date:'Y-m-d' }}" aria-label="To"></label>
+  <label class="field"><span>Who</span><select name="who" aria-label="Who"><option value="">Anyone</option>{% for pk, name in people %}<option value="{{ pk }}"{% if f.who == pk %} selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
+  <noscript><button class="btn" type="submit">Filter</button></noscript>
+</form>
+{% include "web/_change_log_body.html" %}
+<div class="hint" style="margin-top:8px">Every change in the areas your role can view, newest first, with who made it and why. Access changes (invitations, roles,
+  deactivations, what a role may do) are under Access. Times are the facility's. Export and Print take the filters on screen.</div>
+{% endblock %}

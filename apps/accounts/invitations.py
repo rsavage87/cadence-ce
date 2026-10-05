@@ -8,6 +8,11 @@ link that sets its first password and signs it in. The link is a signed token, n
 
 Views: web.views_invite (accept). Senders: the Users screen (invite, Resend invite), bootstrap_tenant --invite, and the
 password-reset form, which sends a pending account a fresh invitation instead of a reset link.
+
+Access events (slice 20): a send that replaces an earlier invitation's link (Resend invite, the API's resend-invite, or the
+password-reset form for a pending account) writes an "Invitation resent" AccessEvent once the email has gone out. The first send
+writes none: invite_user's "Invited" event is that one, and a first email that failed and is sent later is still the first link.
+A failed send changes nothing, so it writes nothing.
 """
 from django.conf import settings
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
@@ -21,7 +26,8 @@ from django.utils.http import base36_to_int, urlsafe_base64_decode, urlsafe_base
 from apps.tenants.context import tenant_context
 
 from . import emails
-from .models import Role, User
+from .models import AccessEvent, Role, User
+from .services import record_access_event
 
 
 def is_pending(user) -> bool:
@@ -86,6 +92,9 @@ def send_invitation(user, *, by=None) -> bool:
     context = {"user": user, "by": by, "facility": user.tenant.name if user.tenant_id else "Cadence CE", "role": _role_name(user),
                "url": invitation_url(user), "valid_days": settings.INVITATION_VALID_DAYS}
     if emails.send(user.email, "accounts/email/invitation", context):
+        if previous is not None and user.tenant_id:
+            record_access_event(user.tenant, AccessEvent.Action.INVITATION_RESENT, by=by, user=user, role_id=user.role_id,
+                                detail=f"A new link to {user.email} replaces the earlier one")
         return True
     # Nothing went out: put the earlier invitation back, so its link (if one was sent) keeps working.
     user.invited_at = previous

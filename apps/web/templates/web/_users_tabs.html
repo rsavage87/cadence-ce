@@ -1,15 +1,18 @@
 {% load web %}
-{# Page head and tab strip shared by the three Users and access tabs. Context: users_tab (users|roles|credentials), users_summary {active_users, roles, technicians}, can_manage_users, can_manage_credentials. #}
+{# Page head and tab strip shared by the four Users and access tabs. Context: users_tab (users|roles|credentials|log), users_summary {active_users, roles, technicians}, can_manage_users, can_manage_credentials. #}
 <div class="page-head">
   <div><h1>Users and access</h1>{% include "web/_users_summary.html" %}</div>
   <div class="actions">
     {% if users_tab == "users" and can_manage_users %}<button class="btn primary" type="button" hx-get="{% url 'web:user_invite' %}" hx-target="#modal-card">{% icon "plus" %} Invite user</button>
     {% elif users_tab == "roles" and can_manage_users %}<button class="btn primary" type="button" hx-get="{% url 'web:role_new' %}" hx-target="#modal-card">{% icon "plus" %} Add role</button>
-    {% elif users_tab == "credentials" and can_manage_credentials %}<button class="btn primary" type="button" hx-get="{% url 'web:credential_new' %}{% query request.GET %}" hx-target="#modal-card">{% icon "plus" %} Add credential</button>{% endif %}
+    {% elif users_tab == "credentials" and can_manage_credentials %}<button class="btn primary" type="button" hx-get="{% url 'web:credential_new' %}{% query request.GET %}" hx-target="#modal-card">{% icon "plus" %} Add credential</button>
+    {% elif users_tab == "log" %}{% query request.GET page=None as log_q %}<a class="btn" href="{% url 'web:change_log_print' %}{{ log_q }}" data-act="with-filters" data-base="{% url 'web:change_log_print' %}" target="_blank" rel="noopener" title="Print the changes in this list, newest first">{% icon "print" %} Print</a>
+    <a class="btn" href="{% url 'web:change_log_csv' %}{{ log_q }}" data-act="with-filters" data-base="{% url 'web:change_log_csv' %}" download title="Download the changes in this list, newest first, as CSV">{% icon "dl" %} Export</a>{% endif %}
   </div>
 </div>
 <div class="tabs page-tabs" role="tablist">
   <a class="tab{% if users_tab == 'users' %} active{% endif %}" role="tab" href="{% url 'web:users' %}"{% if users_tab == 'users' %} aria-current="page"{% endif %}>Users</a>
   <a class="tab{% if users_tab == 'roles' %} active{% endif %}" role="tab" href="{% url 'web:roles' %}"{% if users_tab == 'roles' %} aria-current="page"{% endif %}>Roles and permissions</a>
   <a class="tab{% if users_tab == 'credentials' %} active{% endif %}" role="tab" href="{% url 'web:credentials' %}"{% if users_tab == 'credentials' %} aria-current="page"{% endif %}>Technician credentials</a>
+  <a class="tab{% if users_tab == 'log' %} active{% endif %}" role="tab" href="{% url 'web:change_log' %}"{% if users_tab == 'log' %} aria-current="page"{% endif %}>Change log</a>
 </div>

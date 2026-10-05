@@ -560,6 +560,26 @@ button.link{background:none;border:0;padding:0;font:inherit;font-size:12px;font-
 }
 
 /* Slice 20, part B: the change log (Users and access) */
+.clog-filters .field input[type="date"]{width:auto}
+.clog td{vertical-align:top}
+.clog td.clog-what,.clog td.clog-why{white-space:normal;min-width:200px}
+.clog td.clog-rec{white-space:normal;min-width:130px;overflow-wrap:anywhere}
+.clog td.clog-why{color:var(--ink-2);max-width:260px}
+.clog-changes{margin:0;padding:0;list-style:none;display:grid;gap:2px}
+.clog-changes li{overflow-wrap:anywhere}
+.clog-f{color:var(--ink-3);margin-right:6px}
+.clog-f:empty{display:none}
+.clog-old{color:var(--ink-3);text-decoration:line-through;text-decoration-color:var(--line-2)}
+.clog-arrow{margin:0 5px;color:var(--ink-3)}
+.clog-rest{margin-top:2px}
+.clog-rest summary{cursor:pointer;color:var(--accent);font-size:12.5px}
+.clog-rest .clog-changes{margin-top:2px}
+.clog-more td{text-align:center;padding:10px 12px}
+.clog-older{margin-bottom:8px;font-size:12.5px;color:var(--ink-3)}
+@media (max-width:760px){
+  .clog-filters .field{flex:1 1 calc(50% - 8px);min-width:0}
+  .clog-filters .field select,.clog-filters .field input{flex:1;min-width:0;width:auto}
+}
 
 /* Slice 15, part A: the work order drawer's labor and part lines (the amount and Remove at the right; notes wrap on a phone) */
 .wo-lines{margin-top:12px}

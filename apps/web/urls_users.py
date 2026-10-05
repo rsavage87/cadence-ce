@@ -1,6 +1,8 @@
-"""Mounted at /users/ inside the `web` namespace. Keep the names `users`, `roles`, `user_invite`, `role_new`; the tabs partial links to them."""
+"""Mounted at /users/ inside the `web` namespace. Keep the names `users`, `roles`, `user_invite`, `role_new`, `change_log`; the tabs partial
+links to them."""
 from django.urls import path
 
+from . import views_change_log as log
 from . import views_users as v
 
 urlpatterns = [
@@ -15,4 +17,8 @@ urlpatterns = [
     path("roles/new/", v.role_new, name="role_new"),
     path("roles/<uuid:pk>/level/", v.role_level, name="role_level"),
     path("roles/<uuid:pk>/scope/", v.role_scope, name="role_scope"),
+    # Slice 20, part B: the Change log tab, its CSV, and its printable page
+    path("log/", log.change_log_view, name="change_log"),
+    path("log/export.csv", log.change_log_csv, name="change_log_csv"),
+    path("log/print/", log.change_log_print, name="change_log_print"),
 ]
