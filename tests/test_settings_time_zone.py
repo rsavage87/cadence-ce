@@ -294,6 +294,6 @@ def test_changing_the_time_zone_on_the_screen_as_the_runtime_role(client, ctx, t
     assert [zone for zone, _label, on in _options(client.get(PAGE).content.decode()) if on] == ["America/Chicago"]
     entries = client.get(LOG + "?area=facility").context["entries"]
     assert {e.record for e in entries} == {"Riverside Regional"}
-    assert [(c.field, c.before, c.after) for c in entries[0].changes] == [("Time zone", "Eastern (America/New_York)", "Central (America/Chicago)")]
+    assert [(c.field, c.before, c.after) for c in entries[0].changes] == [("Time zone", "The server's", "Central (America/Chicago)")]
     api = client.patch(API, {"time_zone": "Pacific/Honolulu"}, content_type="application/json")
     assert api.status_code == 200 and api.json()["time_zone"] == "Pacific/Honolulu" and _zone(tenant) == "Pacific/Honolulu"
