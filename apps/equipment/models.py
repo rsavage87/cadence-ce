@@ -1,7 +1,6 @@
-from datetime import date
-
 from django.core.validators import RegexValidator
 from django.db import models
+from django.utils import timezone
 from simple_history.models import HistoricalRecords
 
 from apps.core.models import TenantModel
@@ -138,9 +137,10 @@ class Asset(TenantModel):
     def is_active(self) -> bool:
         return self.status != AssetStatus.RETIRED
 
+    # Today is the facility's (its time zone is active inside it: a request, tenant_context), unless `as_of` is given.
     @property
     def under_contract(self) -> bool:
-        return bool(self.contract_id and self.contract.end_on >= date.today())
+        return bool(self.contract_id and self.contract.end_on >= timezone.localdate())
 
     @property
     def pm_interval_months(self) -> int:
@@ -149,9 +149,9 @@ class Asset(TenantModel):
     def pm_days_remaining(self, as_of=None) -> int | None:
         if not self.next_pm_on:
             return None
-        return (self.next_pm_on - (as_of or date.today())).days
+        return (self.next_pm_on - (as_of or timezone.localdate())).days
 
     def age_years(self, as_of=None) -> float | None:
         if not self.installed_on:
             return None
-        return ((as_of or date.today()) - self.installed_on).days / 365.25
+        return ((as_of or timezone.localdate()) - self.installed_on).days / 365.25

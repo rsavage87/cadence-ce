@@ -12,12 +12,13 @@ radiologic, medical laser: never on AEM): yes/no, true/false, or 1/0, blank is n
 so on stderr, as a value too long for its column does.
 """
 import csv
-from datetime import date, datetime
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
 from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
+from django.utils import timezone
 
 from apps.equipment.models import TAG_VALIDATOR, Asset, AssetStatus, Department, DeviceModel, RiskClass
 from apps.equipment.services import RESERVED_TAGS, first_pm_due, set_status
@@ -117,6 +118,7 @@ class Command(BaseCommand):
 
         created = updated = skipped = 0
         with tenant_context(tenant), transaction.atomic():
+            today = timezone.localdate()  # the facility's today (tenant_context works in its time zone), one value for the whole file
             for row in rows:
                 tag = get(row, "tag").upper()
                 if not tag:
@@ -177,7 +179,7 @@ class Command(BaseCommand):
                     # coming back from retired puts a PM due today); a file without a status leaves the device's alone.
                     if status and status != asset.status:
                         try:
-                            set_status(asset, status, note="Imported")
+                            set_status(asset, status, note="Imported", today=today)
                         except ValidationError as e:
                             self.stderr.write(f"Kept {asset.tag} {asset.get_status_display().lower()}: {e.messages[0]}")
                     updated += 1
@@ -185,7 +187,7 @@ class Command(BaseCommand):
                     status = status or AssetStatus.IN_SERVICE
                     if fields["next_pm_on"] is None and status != AssetStatus.RETIRED:
                         # As Add device does: one interval after the last PM or install, or today if that has passed
-                        fields["next_pm_on"] = first_pm_due(dm, installed_on=fields["installed_on"], last_pm_on=fields["last_pm_on"], today=date.today())
+                        fields["next_pm_on"] = first_pm_due(dm, installed_on=fields["installed_on"], last_pm_on=fields["last_pm_on"], today=today)
                     Asset.objects.create(tenant=tenant, tag=tag, status=status, **fields)
                     created += 1
             if opts["dry_run"]:

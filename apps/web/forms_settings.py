@@ -87,6 +87,11 @@ def rate_fields(post) -> dict:
     return {field: _number(field, post.get(field, "")) for field in RATE_FIELDS if field in post}
 
 
+def time_zone_field(post) -> str:
+    """The time zone chosen (slice 21), as posted; the service decides whether it is one (blank or unknown is refused there)."""
+    return post.get("time_zone", "")
+
+
 def error_dict(e: ValidationError) -> dict:
     """field -> first message, in the order the service found them (form order). A non-field error keys on "__all__"."""
     if hasattr(e, "error_dict"):

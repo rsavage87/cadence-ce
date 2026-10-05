@@ -9,8 +9,9 @@ openFDA is free and needs no key for light use (https://open.fda.gov/apis/device
 (1,000 requests a day when this was written), and every facility on this server shares the address. So a check fetches at most
 once per CHECK_COOLDOWN, counting the daily import: the feed is the same for every facility, so a fetch by anyone serves everyone.
 The cooldown is kept in the database, in apps.jobs' JobRun table (a system table, like Alert): the check has one row per local
-day whose `started_at` moves to each fetch, taken with a conditional UPDATE, so it holds across worker processes and servers
-(the "limits" cache is per process). The row also records what each check found, next to the daily import's runs.
+day (the server's, whichever facility checks: slice 21) whose `started_at` moves to each fetch, taken with a conditional UPDATE, so
+it holds across worker processes and servers (the "limits" cache is per process). The row also records what each check found, next
+to the daily import's runs.
 
 ECRI alerts need an ECRI membership and API agreement; they would get their own importer.
 """
@@ -74,7 +75,7 @@ def parse_date(s):
 
 
 def search_query(days: int, manufacturer: str | None = None, today: date | None = None) -> str:
-    today = today or date.today()
+    today = today or timezone.localdate()
     # By posting date, not initiation date: FDA posts a recall weeks after the firm starts it, so a window on the start date
     # finds almost nothing recent (1 record against 273 for the same 30 days when this was checked). Spaces, not "+":
     # requests encodes the spaces, and a literal "+" makes openFDA answer 500.
@@ -191,9 +192,15 @@ def last_fetch_failed() -> bool:
     return bool(row) and row["status"] == JobRun.Status.FAILED
 
 
+def _row_day(now: datetime) -> date:
+    """The day a check's row is for: the server's (TIME_ZONE), not the checking facility's. The rows are everyone's (one a day, no
+    facility), and checks from facilities in different time zones at the same moment must land on the same row (slice 21)."""
+    return timezone.localdate(now, timezone=timezone.get_default_timezone())
+
+
 def _succeeded(now: datetime) -> None:
     done = timezone.now()
-    JobRun.objects.update_or_create(job=CHECK_OK_JOB, run_on=timezone.localdate(now),
+    JobRun.objects.update_or_create(job=CHECK_OK_JOB, run_on=_row_day(now),
                                     defaults={"started_at": now, "finished_at": done, "status": JobRun.Status.SUCCEEDED})
 
 
@@ -209,7 +216,7 @@ def _claim(now: datetime) -> _Claim:
     last = last_fetch()
     if last is not None and now - last < CHECK_COOLDOWN:
         return _Claim(None, last)
-    day = timezone.localdate(now)
+    day = _row_day(now)
     row = JobRun.objects.filter(job=CHECK_JOB, run_on=day).first()
     if row is None:
         try:
@@ -235,7 +242,7 @@ def _match_here() -> int:
 
 
 def clock(at: datetime) -> str:
-    """"10:42 AM", local time."""
+    """"10:42 AM", local time (the facility's, inside one)."""
     return dateformat.format(timezone.localtime(at), "g:i A")
 
 

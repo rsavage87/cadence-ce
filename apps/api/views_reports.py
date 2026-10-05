@@ -50,6 +50,7 @@ from datetime import date
 
 from django.db.models.functions import Lower
 from django.http import QueryDict
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, PermissionDenied
@@ -70,8 +71,9 @@ NO_TENANT = "Pick a tenant first (Admin, Tenants)."
 
 
 def _today() -> date:
-    """The reports' clock, in one place so tests can pin it (the screen's is apps.web.views_reports._today)."""
-    return date.today()
+    """The reports' clock, in one place so tests can pin it (the screen's is apps.web.views_reports._today): the facility's today,
+    since the API works in its time zone (apps.api.tenancy)."""
+    return timezone.localdate()
 
 
 def _object(request) -> dict:

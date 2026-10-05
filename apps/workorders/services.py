@@ -12,6 +12,7 @@ from datetime import date, timedelta
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Case, Q, Value, When
+from django.utils import timezone
 
 from apps.equipment.models import AssetStatus
 from apps.notifications import assignments
@@ -41,7 +42,7 @@ URGENCY_TO_PRIORITY = {Urgency.CRITICAL: Priority.CRITICAL, Urgency.HIGH: Priori
 @transaction.atomic
 def create_work_order(*, asset, type, priority, problem, requester="", source=Source.MANUAL, assigned_to=None, vendor_service=False,
                       vendor_name="", opened_on=None, due_on=None, created_by=None, tag_out=False, **extra) -> WorkOrder:
-    opened_on = opened_on or date.today()
+    opened_on = opened_on or timezone.localdate()
     due_on = due_on or opened_on + timedelta(days=DUE_DAYS[priority])
     wo = WorkOrder(asset=asset, type=type, priority=priority, problem=problem, requester=requester, source=source, assigned_to=assigned_to,
                    vendor_service=vendor_service, vendor_name=vendor_name, opened_on=opened_on, due_on=due_on, created_by=created_by,
@@ -58,7 +59,7 @@ def create_work_order(*, asset, type, priority, problem, requester="", source=So
 
 @transaction.atomic
 def change_status(wo: WorkOrder, to_status: str, by=None, note: str = "", as_of=None) -> WorkOrder:
-    as_of = as_of or date.today()
+    as_of = as_of or timezone.localdate()
     if to_status not in ALLOWED_TRANSITIONS[wo.status]:
         raise ValidationError(f"Cannot move {wo.number} from {wo.get_status_display()} to {to_status}.")
     if to_status in (WoStatus.IN_PROGRESS, WoStatus.COMPLETED) and as_of < wo.opened_on:
@@ -209,7 +210,7 @@ def unassigned_portal_requests():
 def board_columns(f: WorkOrderFilters, today: date | None = None, qs=None) -> list[dict]:
     """Kanban columns. Status filters don't apply (the columns are the statuses); done work shows for the last 7 days. Over `qs`
     when given, as filter_work_orders."""
-    today = today or date.today()
+    today = today or timezone.localdate()
     base = filter_work_orders(f, ignore_status=True, qs=qs).order_by(PRIORITY_RANK, "due_on", "number")
     recent = today - timedelta(days=BOARD_RECENT_DAYS)
     columns = [

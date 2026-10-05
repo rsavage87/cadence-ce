@@ -642,6 +642,10 @@ button.link{background:none;border:0;padding:0;font:inherit;font-size:12px;font-
 .form .dm-mark .check-row{color:var(--ink);font-weight:500}
 /* Slice 20, part D: (the daily emails need no screen CSS; keep this marker for any) */
 /* Slice 21, part C: the facility's time zone (Settings) */
+/* The list reads as the panel's other inputs do: dimmed when read-only, marked when refused */
+#set-zone .set-form select:disabled{color:var(--ink-2);background:var(--surface-2)}
+#set-zone .set-form select[aria-invalid="true"]{border-color:var(--crit)}
+#set-zone .zone-what{margin-top:10px}
 
 /* Slice 11: printing app pages */
 /* What the browser prints of an app page (the Overview's Export button calls window.print(); any other screen prints from the

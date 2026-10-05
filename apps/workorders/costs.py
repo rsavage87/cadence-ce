@@ -30,6 +30,7 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Sum
+from django.utils import timezone
 
 from apps.credentials.models import Technician
 from apps.facility.services import RATE_MAX, decimal_places, get_settings
@@ -167,7 +168,7 @@ def _text(value, field: str, errors: dict, *, limit: int, what: str) -> str:
 
 def _date(value, errors: dict) -> date | None:
     if isinstance(value, datetime):
-        value = value.date()
+        value = timezone.localdate(value) if timezone.is_aware(value) else value.date()  # an aware moment: the facility's day
     if isinstance(value, date):
         return value
     if isinstance(value, str) and value.strip():
@@ -235,7 +236,7 @@ def _delete(line, by) -> None:
 def add_labor(wo, *, hours, worked_on, technician=None, rate=None, description="", by, today=None) -> LaborLine:
     """Log time on `wo`. `technician` None means the default (default_technician); `rate` None or blank means Settings'
     (default_rate). Raises ValidationError keyed by these argument names, or a plain one when the work order takes no lines."""
-    today = today or date.today()
+    today = today or timezone.localdate()
     current = _lock_work_order(wo.pk)
     errors: dict = {}
     worked = _date(worked_on, errors)

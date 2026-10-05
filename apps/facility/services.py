@@ -9,10 +9,18 @@ Portal emails (slice 13): with the confirmation set to "On screen and by email",
 of the facility's own work email domains, so the public form can never be used to send mail anywhere else. at_domains() is the
 one check: the portal form refuses another domain, and apps.portal.notifications asks email_allowed() again at sending time,
 because the setting or the domains may have changed since the request came in.
+
+The facility's time zone (slice 21): Tenant.timezone, which every request, job, and command inside the facility works in
+(apps.tenants.context), so it decides the facility's today (what is overdue, due dates, contract days left, report periods), the
+times shown, and when its daily jobs and emails run. set_time_zone() is the one writer: a zone this server knows, or a plain
+refusal; the facility's own history records who changed it (the change log's Facility area, apps.core.history).
 """
 import re
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
+from functools import cache
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo, available_timezones
 
 from django.conf import settings as django_settings
 from django.core.exceptions import ValidationError
@@ -23,6 +31,7 @@ from django.utils import timezone
 
 from apps.equipment.models import Asset, RiskClass
 from apps.tenants.context import get_current_tenant
+from apps.tenants.models import Tenant
 
 from .models import POLICY, POLICY_DEFAULTS, POLICY_MAX_LENGTH, FacilitySettings
 
@@ -390,6 +399,107 @@ def risk_scoring_summary(today=None) -> dict:
     from apps.equipment.models import DeviceModel
     from apps.equipment.services import risk_review_due
 
+    today = today or timezone.localdate()  # the facility's today, read once for every model
     models = list(DeviceModel.objects.only("risk_function", "risk_physical", "risk_maintenance", "risk_incidents", "risk_reviewed_on"))
     scored = [dm for dm in models if dm.risk_score is not None]
     return {"models": len(models), "scored": len(scored), "reviews_due": sum(1 for dm in scored if risk_review_due(dm, today))}
+
+
+# --- the facility's time zone (slice 21) ------------------------------------------------------------------
+
+# The US zones, first in the list and named as people say them; every other zone follows by its IANA name.
+US_ZONES = [("America/New_York", "Eastern"), ("America/Chicago", "Central"), ("America/Denver", "Mountain"), ("America/Phoenix", "Arizona"),
+            ("America/Los_Angeles", "Pacific"), ("America/Anchorage", "Alaska"), ("Pacific/Honolulu", "Hawaii")]
+_US_NAMES = dict(US_ZONES)
+# The list offers the zones named for a place (and UTC). The older aliases this server also knows ("US/Eastern", "EST5EDT", and
+# "Etc/GMT+5", which is five hours behind UTC, not ahead) are left off the list but still accepted, so one set through the API
+# shows as it is.
+_REGIONS = ("Africa/", "America/", "Antarctica/", "Arctic/", "Asia/", "Atlantic/", "Australia/", "Europe/", "Indian/", "Pacific/")
+TIME_ZONE_EXAMPLE = "America/Chicago"
+
+
+@cache
+def zone_names() -> frozenset:
+    """Every IANA zone this server knows (zoneinfo.available_timezones(): a walk of the zone files, so read once)."""
+    return frozenset(available_timezones())
+
+
+@cache
+def _by_lower() -> dict:
+    return {name.lower(): name for name in zone_names()}
+
+
+def offset_text(name: str, at: datetime | None = None) -> str:
+    """The zone's offset from UTC at `at` (now): "UTC-4", "UTC+5:30", "UTC". Daylight saving moves it, so it is worked out each time."""
+    delta = (at or timezone.now()).astimezone(ZoneInfo(name)).utcoffset()
+    minutes = int(delta.total_seconds() // 60)
+    if minutes == 0:
+        return "UTC"
+    hours, rest = divmod(abs(minutes), 60)
+    return f"UTC{'+' if minutes > 0 else '-'}{hours}" + (f":{rest:02d}" if rest else "")
+
+
+def zone_label(name: str) -> str:
+    """A zone in words: "Eastern (America/New_York)" for the US zones, else its name, "Europe/London"."""
+    us = _US_NAMES.get(name)
+    return f"{us} ({name})" if us else name
+
+
+def time_zone_choices(current: str = "", at: datetime | None = None) -> list[tuple[str, list[tuple[str, str]]]]:
+    """The Settings list, as (group, [(zone, label)]): the US zones, then every other zone named for a place, by name, each with
+    its offset now. A current zone the list leaves out (an alias set through the API) heads the second group, so it shows as set."""
+    at = at or timezone.now()
+    us = [(name, f"{label} ({name}) · {offset_text(name, at)}") for name, label in US_ZONES]
+    rest = sorted(name for name in zone_names() if name not in _US_NAMES and (name.startswith(_REGIONS) or name == "UTC"))
+    if current and current in zone_names() and current not in _US_NAMES and current not in rest:
+        rest.insert(0, current)
+    others = [(name, f"{name.replace('_', ' ')} · {offset_text(name, at)}") for name in rest]
+    return [("United States", us), ("Other time zones", others)]
+
+
+def _zone_name(value) -> str:
+    """`value` as the zone it names (in any letter case: "america/chicago" is America/Chicago), or ValidationError in plain words."""
+    text = value.strip() if isinstance(value, str) else ""
+    if not text:
+        raise ValidationError({"time_zone": f"Choose a time zone, like {TIME_ZONE_EXAMPLE}."})
+    name = _by_lower().get(text.lower())
+    if name is None:
+        shown = f"{text} is" if len(text) <= 60 and text.isprintable() else "That is"
+        raise ValidationError({"time_zone": f"{shown} not a time zone. Choose one from the list, like {TIME_ZONE_EXAMPLE}."})
+    return name
+
+
+HISTORY_BASELINE_REASON = "As on record when its changes began to be kept"
+
+
+def _history_baseline(tenant: Tenant) -> None:
+    """A facility added before its changes were kept (Tenant history arrived in slice 21) has no history yet: record it as it
+    stands, dated when it was added, so its first recorded change reads with a before as well as an after."""
+    history = Tenant.history.model
+    if history.objects.filter(id=tenant.pk).exists():
+        return
+    values = {f.attname: getattr(tenant, f.attname) for f in history.tracked_fields}
+    history.objects.create(**values, history_date=tenant.created_at, history_type="+", history_user=None,
+                           history_change_reason=HISTORY_BASELINE_REASON)
+
+
+def set_time_zone(tenant: Tenant, name, by=None) -> Tenant:
+    """Set the facility's time zone (Tenant.timezone). From the next request on it is the facility's today (what is overdue, due
+    dates, contract days left, report periods) and the clock its times are shown in; its daily jobs and emails follow it from its
+    next day. Only a zone this server knows (zone_names(), in any letter case); anything else is refused in plain words, keyed
+    "time_zone". Works only inside the facility it changes. Audited: the facility's history records who (`by`), before and after;
+    setting the zone it already has records nothing. `tenant` is updated in place as well."""
+    current = get_current_tenant()
+    if tenant is None or current is None or current.pk != tenant.pk:
+        raise RuntimeError("set_time_zone() works inside the facility it changes")
+    zone = _zone_name(name)
+    with transaction.atomic():
+        row = Tenant.objects.select_for_update().get(pk=tenant.pk)
+        if row.timezone != zone:
+            _history_baseline(row)
+            row.timezone = zone
+            if by is not None:
+                row._history_user = by
+            row.save(update_fields=["timezone"])
+    tenant.timezone = zone
+    return row

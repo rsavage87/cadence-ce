@@ -1,0 +1,22 @@
+{% comment %}The Settings screen's time zone panel (slice 21): the facility's time zone (Tenant.timezone, apps.facility.services.set_time_zone).
+   It decides the facility's today, the times shown, and when its daily jobs and emails run. Saved with its own button (a change is
+   not one to make by a stray scroll over the list); read-only without Settings Edit. The form posts to the page's own address.{% endcomment %}
+<div class="panel mt" id="set-zone">
+  <div class="panel-h"><h2>Time zone</h2><span class="sub">{{ zone_label }}</span></div>
+  <div class="panel-b">
+    <form{% if can_edit %} hx-post="{% url 'web:settings' %}" hx-target="#set-zone" hx-swap="outerHTML"{% endif %} hx-disinherit="hx-swap hx-target">
+      <div class="form set-form">
+        <label>Facility time zone
+          <select id="set-time-zone" name="time_zone" aria-describedby="{% if zone_error %}set-zone-err {% endif %}set-zone-now"{% if zone_error %} aria-invalid="true"{% endif %}{% if not can_edit %} disabled{% endif %}>
+            {% for group, choices in zone_choices %}<optgroup label="{{ group }}">{% for value, label in choices %}<option value="{{ value }}"{% if value == zone %} selected{% endif %}>{{ label }}</option>{% endfor %}</optgroup>{% endfor %}
+          </select>
+          {% if zone_error %}<span class="hint err" id="set-zone-err">{{ zone_error }}</span>{% endif %}
+          <span class="hint" id="set-zone-now">{% if zone_known %}It is {{ zone_now }} there now.{% else %}{{ zone }} is not a time zone this server knows, so Cadence uses the server's until one is chosen.{% endif %}</span>
+        </label>
+      </div>
+      <div class="hint zone-what">Cadence works in this time zone for {{ request.tenant.name }}. It decides what counts as today (overdue PMs and work orders, due dates, contract days left, report periods), the times shown on every screen, and when the facility's daily jobs and emails run. A change applies to today and the times shown at once; the daily jobs and emails follow it from the next day.</div>
+      {% if can_edit %}<div class="set-actions"><button class="btn sm primary" type="submit">Save time zone</button></div>{% endif %}
+    </form>
+    {% if not can_edit %}<div class="hint" style="margin-top:8px">Changing settings needs Settings Edit access.</div>{% endif %}
+  </div>
+</div>

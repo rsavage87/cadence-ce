@@ -38,6 +38,7 @@ from datetime import date
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.utils import timezone
 
 from apps.credentials.services import qualification
 from apps.equipment.models import AssetStatus, RiskClass
@@ -94,7 +95,7 @@ def checklist_signature(steps) -> str:
 
 def blocker(wo: WorkOrder, today: date | None = None) -> str:
     """Why `wo` cannot be completed now, or "" when it can."""
-    today = today or date.today()
+    today = today or timezone.localdate()
     if WoStatus.COMPLETED not in ALLOWED_TRANSITIONS[wo.status]:
         return {
             WoStatus.OPEN: f"{wo.number} has not been started. Start work on it first.",
@@ -267,7 +268,7 @@ def follow_up_assignee(pm: WorkOrder, asset, today: date | None = None) -> tuple
     repairs on this device (vendor_repairs), so the repair is in their share of the work orders too (apps.workorders.scoping);
     otherwise the PM's technician while active and credentialed; otherwise nobody, for a CE manager to assign. The completion
     and the modal's hint both read this, so the modal never says one thing and the save do another."""
-    today = today or date.today()
+    today = today or timezone.localdate()
     if pm.vendor_service and pm.vendor_name and vendor_repairs(asset, today):
         return pm.vendor_name, None
     return "", follow_up_technician(pm, asset, today)
@@ -277,7 +278,7 @@ def follow_up_technician(pm: WorkOrder, asset, today: date | None = None):
     """The in-house technician a failed PM's repair goes to (follow_up_assignee): the PM's technician while active and credentialed
     for the device, else None."""
     tech = pm.assigned_to if pm.assigned_to_id and not pm.vendor_service else None
-    if tech is None or not tech.is_active or not qualification(tech, asset, today or date.today()).ok:
+    if tech is None or not tech.is_active or not qualification(tech, asset, today or timezone.localdate()).ok:
         return None
     return tech
 
@@ -372,7 +373,7 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
     {"result": "pass" | "fail" | "na", "reading": "..."} per checklist step, in order. Raises ValidationError: a plain message
     when the work order cannot be completed now, else a dict keyed by resolution, pm_result, checklist, step_<n>, reading_<n>,
     and open_repair. `wo` is refreshed from the database afterwards."""
-    today = today or date.today()
+    today = today or timezone.localdate()
     _check_tenant(wo)
     locked = WorkOrder.objects.select_for_update().get(pk=wo.pk)  # two clicks, or two people, complete it once
     reason = blocker(locked, today)
