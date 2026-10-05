@@ -1,0 +1,30 @@
+{% autoescape off %}Hello {{ name }},
+
+Your work at {{ facility }} for {{ today|date:"l, F j, Y" }}.
+{% if due_total %}
+DUE TODAY OR OVERDUE ({{ due_total }})
+{% for wo in due %}
+{{ wo.number }} · {{ wo.type }} · {{ wo.priority }} priority · {{ wo.status }}
+{{ wo.tag }} · {{ wo.device }} · {{ wo.department }}
+{% if wo.late_days %}Overdue {{ wo.late_days }} day{{ wo.late_days|pluralize }}: it was due {{ wo.due_on|date:"M j" }}{% else %}Due today{% endif %}
+{{ wo.url }}
+{% endfor %}{% if due_more %}
+And {{ due_more }} more.
+{% endif %}{% endif %}{% if pms_total %}
+PMS DUE IN THE NEXT {{ pm_days }} DAYS ({{ pms_total }})
+{% for wo in pms %}
+{{ wo.number }} · {{ wo.priority }} priority · {{ wo.status }}
+{{ wo.tag }} · {{ wo.device }} · {{ wo.department }}
+Due {{ wo.due_on|date:"l, M j" }}
+{{ wo.url }}
+{% endfor %}{% if pms_more %}
+And {{ pms_more }} more.
+{% endif %}{% endif %}
+All your open work orders:
+{{ list_url }}
+
+Links ask you to sign in. This email gives only work order numbers and devices; open a work order in Cadence CE to see the problem.
+
+You get this email each morning because you turned on the daily digest. To stop it, open Notifications:
+{{ preferences_url }}
+{% endautoescape %}

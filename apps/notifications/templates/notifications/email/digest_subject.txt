@@ -1,0 +1,1 @@
+{% autoescape off %}Your work for {{ today|date:"D, M j" }}: {% if due_total %}{{ due_total }} due or overdue{% if pms_total %}, {% endif %}{% endif %}{% if pms_total %}{{ pms_total }} PM{{ pms_total|pluralize }} in the next {{ pm_days }} days{% endif %} · {{ facility }}{% endautoescape %}

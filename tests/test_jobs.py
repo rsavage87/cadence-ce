@@ -65,15 +65,15 @@ def fda(monkeypatch):
 @pytest.fixture(autouse=True)
 def two_jobs(monkeypatch):
     """These tests are about the runner (the lock, takeover, failures), written against the first two daily jobs; slice 13's
-    report emails have their own tests (tests/test_report_emails.py)."""
+    report emails and slice 20's staff notifications have their own tests (tests/test_report_emails.py, tests/test_daily_notifications.py)."""
     monkeypatch.setattr(jobs, "DAILY_JOBS", [j for j in jobs.DAILY_JOBS if j[0] in ("generate_pm", "import_openfda")])
 
 
 ALL_JOBS = list(jobs.DAILY_JOBS)  # read when this file is imported, before the fixture above pins the list
 
 
-def test_the_daily_jobs_include_the_report_emails():
-    assert [key for key, _cmd, _opts in ALL_JOBS] == ["generate_pm", "import_openfda", "report_emails"]
+def test_the_daily_jobs_include_the_report_emails_and_the_staff_notifications():
+    assert [key for key, _cmd, _opts in ALL_JOBS] == ["generate_pm", "import_openfda", "report_emails", "staff_notifications"]
 
 
 @pytest.fixture
