@@ -60,7 +60,8 @@ def _options(html: str) -> list[tuple[str, str, bool]]:
 
 
 def _zone(tenant) -> str:
-    return Tenant.objects.get(pk=tenant.pk).timezone
+    """The zone the facility works in: its own, or the server's (America/New_York in tests) while it has chosen none."""
+    return Tenant.objects.get(pk=tenant.pk).zone_name
 
 
 # --- the panel --------------------------------------------------------------------------------------------------------------------
@@ -194,12 +195,13 @@ def test_the_change_reads_in_the_change_log_with_who_before_and_after(client, si
     changed, added = r.context["entries"]
     assert (changed.area, changed.area_label, changed.record, changed.url) == ("facility", "Facility", "Riverside Regional", "/settings/")
     assert (changed.who, changed.who_id, changed.action) == ("Director User", kim.pk, "changed")
-    assert [(c.field, c.before, c.after) for c in changed.changes] == [("Time zone", "Eastern (America/New_York)", "Hawaii (Pacific/Honolulu)")]
-    assert added.action == "added" and ("Time zone", "", "Eastern (America/New_York)") in [(c.field, c.before, c.after) for c in added.changes]
+    # a facility starts with no zone of its own: the server's
+    assert [(c.field, c.before, c.after) for c in changed.changes] == [("Time zone", "The server's", "Hawaii (Pacific/Honolulu)")]
+    assert added.action == "added" and "Time zone" not in [c.field for c in added.changes]
     html = r.content.decode()
-    assert '<span class="clog-old">Eastern (America/New_York)</span>' in html and '<span class="clog-new">Hawaii (Pacific/Honolulu)</span>' in html
+    assert '<span class="clog-old">The server&#x27;s</span>' in html and '<span class="clog-new">Hawaii (Pacific/Honolulu)</span>' in html
     data = client.get(LOG_API + "?area=facility").json()["results"]
-    assert data[0]["area"] == "facility" and data[0]["changes"] == [{"field": "Time zone", "before": "Eastern (America/New_York)",
+    assert data[0]["area"] == "facility" and data[0]["changes"] == [{"field": "Time zone", "before": "The server's",
                                                                      "after": "Hawaii (Pacific/Honolulu)"}]
     assert ("facility", "Facility") in client.get(LOG).context["areas"]
 
@@ -244,10 +246,10 @@ def test_a_facility_with_no_history_yet_gets_its_before(ctx, tenant, make_user):
     kim = make_user("director")
     fs.set_time_zone(tenant, "America/Denver", by=kim)
     rows = list(Tenant.history.filter(id=tenant.id).order_by("history_id"))
-    assert [(r.history_type, r.timezone, r.history_user_id) for r in rows] == [("+", "America/New_York", None), ("~", "America/Denver", kim.pk)]
+    assert [(r.history_type, r.timezone, r.history_user_id) for r in rows] == [("+", "", None), ("~", "America/Denver", kim.pk)]  # none chosen yet
     assert rows[0].history_date == tenant.created_at and rows[0].history_change_reason == fs.HISTORY_BASELINE_REASON
     changed, added = history.change_log(kim, areas=["facility"])[0]
-    assert [(c.field, c.before, c.after) for c in changed.changes] == [("Time zone", "Eastern (America/New_York)", "Mountain (America/Denver)")]
+    assert [(c.field, c.before, c.after) for c in changed.changes] == [("Time zone", "The server's", "Mountain (America/Denver)")]
     assert (added.action, added.who, added.reason) == ("added", "Cadence", fs.HISTORY_BASELINE_REASON)
     fs.set_time_zone(tenant, "America/Chicago", by=kim)
     assert Tenant.history.filter(id=tenant.id, history_type="+").count() == 1  # recorded once

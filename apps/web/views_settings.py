@@ -83,8 +83,9 @@ def _zone_ctx(request, error: str = "") -> dict:
     tenant = request.tenant
     now = timezone.now()
     local = timezone.localtime(now, zone_of(tenant))
-    return {"zone": tenant.timezone, "zone_label": fs.zone_label(tenant.timezone), "zone_choices": fs.time_zone_choices(tenant.timezone, now),
-            "zone_known": tenant.timezone in fs.zone_names(), "zone_now": f"{local:%-I:%M %p} on {local:%A, %B} {local.day}",
+    zone = tenant.zone_name  # its own, or the server's while it has chosen none
+    return {"zone": zone, "zone_label": fs.zone_label(zone), "zone_choices": fs.time_zone_choices(zone, now), "zone_chosen": bool(tenant.timezone),
+            "zone_known": zone in fs.zone_names(), "zone_now": f"{local:%-I:%M %p} on {local:%A, %B} {local.day}",
             "zone_error": error, "can_edit": fac_perms.can_edit(request.user)}
 
 
@@ -189,7 +190,7 @@ def settings_targets(request):
 @web_view(fac_perms.MODULE, fac_perms.EDIT_LEVEL)
 def settings_time_zone(request):
     """Set the facility's time zone (fs.set_time_zone, which refuses anything but a zone this server knows). Settings Edit."""
-    before = request.tenant.timezone
+    before = request.tenant.zone_name
     try:
         fs.set_time_zone(request.tenant, time_zone_field(request.POST), by=request.user)
     except ValidationError as e:
@@ -197,6 +198,6 @@ def settings_time_zone(request):
         return toast(render(request, "web/_settings_zone.html", _zone_ctx(request, error=message)), message)
     if not request.htmx:
         return redirect("web:settings")
-    zone = request.tenant.timezone
+    zone = request.tenant.zone_name
     message = f"Time zone set to {fs.zone_label(zone)}" if zone != before else f"The time zone is already {fs.zone_label(zone)}"
     return toast(render(request, "web/_settings_zone.html", _zone_ctx(request)), message)

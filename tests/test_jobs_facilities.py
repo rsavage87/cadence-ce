@@ -254,6 +254,22 @@ def test_a_facility_run_left_running_is_taken_over_once_stale(places, clock, cal
     assert run.output.startswith("Took over a run that started 2026-10-05 02:30 and never finished.")  # Kona's local time
 
 
+def test_a_dead_run_of_the_previous_day_is_taken_over_after_the_hour_too(places, clock, calls):
+    """Review fix: a catch-up (or late) run killed partway turns stale after the hour; it is still taken over, never left running."""
+    riverside = places["riverside"]
+    _done(OCT4, *places.values())
+    _done(OCT5, places["thames"], places["kona"])
+    dead = JobRun.objects.create(job="generate_pm", facility=riverside, run_on=OCT5, started_at=utc(6, 5))  # 01:00 Oct 6 New York
+    JobRun.objects.bulk_create([JobRun(job=key, facility=riverside, run_on=OCT5, status="succeeded") for key in ("report_emails", "staff_notifications")])
+    _done(OCT6, places["thames"], places["kona"], everyone=True)
+    JobRun.objects.bulk_create([JobRun(job=key, facility=riverside, run_on=OCT6, status="succeeded") for key in sorted(jobs.FACILITY_JOBS)])
+    clock(utc(6, 11, 1))  # 07:01 Oct 6 in New York: past the hour, six hours and a minute after the dead run started
+    assert jobs.is_due() is True
+    runs = jobs.run_daily_jobs()
+    assert [(r.pk, r.status) for r in runs if r.facility_id == riverside.pk] == [(dead.pk, "succeeded")]
+    assert ("generate_pm", "riverside", "2026-10-05") in calls
+
+
 def test_one_facility_failing_does_not_stop_the_others(places, clock, monkeypatch):
     def flaky(command, **kw):
         if (command, kw.get("tenant")) == ("generate_pm", "riverside"):

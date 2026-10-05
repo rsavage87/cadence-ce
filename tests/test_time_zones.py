@@ -97,3 +97,38 @@ def test_no_code_reads_the_servers_clock():
                 if (node.func.value.id, node.func.attr) in {("date", "today"), ("datetime", "now"), ("datetime", "today")}:
                     offenders.append(f"{path}:{node.lineno}")
     assert offenders == []
+
+
+def test_a_facility_that_has_chosen_no_zone_works_in_the_servers(db, settings, monkeypatch, mailoutbox):
+    """Review fix: a facility starts with no zone of its own (blank) and works in the server's (DJANGO_TIME_ZONE), as every facility
+    did before it could choose; a server on the West Coast keeps its facilities on the West Coast."""
+    from io import StringIO
+
+    from django.core.management import call_command
+
+    from apps.tenants.models import Tenant
+
+    settings.TIME_ZONE = "America/Los_Angeles"
+    call_command("bootstrap_tenant", "--name", "West", "--slug", "west", "--admin-email", "dir@west.example", stdout=StringIO())
+    west = Tenant.objects.get(slug="west")
+    assert west.timezone == "" and west.zone_name == "America/Los_Angeles"
+    monkeypatch.setattr(timezone, "now", lambda: datetime(2026, 10, 5, 6, 30, tzinfo=dt_timezone.utc))  # 23:30 Oct 4 in Los Angeles
+    with tenant_context(west):
+        assert timezone.localdate().isoformat() == "2026-10-04"
+
+
+def test_settings_and_the_api_show_the_servers_zone_until_one_is_chosen(client, tenant, make_user):
+    assert tenant.timezone == ""
+    client.force_login(make_user("director"))
+    body = client.get("/settings/").content.decode()
+    assert "the facility has not chosen its own" in body
+    assert client.get("/api/v1/settings/").json()["time_zone"] == "America/New_York"
+    client.post("/settings/time-zone/", {"time_zone": "Pacific/Honolulu"}, HTTP_HX_REQUEST="true")
+    tenant.refresh_from_db()
+    assert tenant.timezone == "Pacific/Honolulu" and "the facility has not chosen its own" not in client.get("/settings/").content.decode()
+    from apps.core import history
+
+    with tenant_context(tenant):
+        [entry] = [e for e in history.change_log(make_user("director", username="kim2@riverside.example"), areas=["facility"])[0]
+                   if e.action == "changed"]
+    assert [(c.field, c.before, c.after) for c in entry.changes][0][:2] == ("Time zone", "The server's")

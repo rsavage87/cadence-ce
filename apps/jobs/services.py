@@ -102,17 +102,20 @@ def _due_days(key: str, facility: Tenant | None, clock: datetime, runs: dict) ->
     come. Before the hour, a facility job's previous local day too when that day never ran although the day before it did: the
     facility's clock jumped over it (its time zone moved east across midnight before the hour, at a late SCHEDULER_DAILY_AT), or
     the scheduler was down for exactly that day. Never further back, and never for a facility with no run before (a new facility,
-    the first deploy): those start with their next day."""
+    the first deploy): those start with their next day. At any hour, the previous day too when its run was left "running" long
+    enough ago to be dead (a catch-up or a late run killed partway), so it is taken over rather than left running for ever."""
     today = clock.date()
-    if clock.time() >= daily_at():
-        return [today]
-    if key not in FACILITY_JOBS:
-        return []
     yesterday, before = today - timedelta(days=1), today - timedelta(days=2)
     fid = _facility_id(facility)
-    if (key, fid, yesterday) not in runs and (key, fid, before) in runs:
+    left = runs.get((key, fid, yesterday))
+    days = [yesterday] if left is not None and _stale(left, clock) else []
+    if clock.time() >= daily_at():
+        return days + [today]
+    if key not in FACILITY_JOBS:
+        return days
+    if left is None and (key, fid, before) in runs:
         return [yesterday]
-    return []
+    return days
 
 
 def _plan(now: datetime, day: date | None = None, force: bool = False, jobs: list[str] | None = None,
@@ -128,9 +131,9 @@ def _plan(now: datetime, day: date | None = None, force: bool = False, jobs: lis
     clocks = {_facility_id(t): local_now(t, now) for t in tenants}
     server = local_now(None, now)
     runs = {}
-    if day is None and not force:  # the catch-up looks back two days on each facility's clock
-        back = {c.date() - timedelta(days=n) for c in clocks.values() for n in (1, 2)}
-        runs = _runs_on(back, {key for key, _c, _o in keys if key in FACILITY_JOBS})
+    if day is None and not force:  # the catch-up looks back two days on each clock, the stale takeover one
+        back = {c.date() - timedelta(days=n) for c in [*clocks.values(), server] for n in (1, 2)}
+        runs = _runs_on(back, {key for key, _c, _o in keys})
 
     def days_for(key, facility, clock):
         if day is not None:

@@ -3,9 +3,10 @@ from django.utils import timezone
 
 
 class JobRun(models.Model):
-    """One run of a scheduled job on one day. Not a TenantModel: each job works through every tenant itself, like the Tenant and
-    Alert tables this is a system table. The unique (job, run_on) row is the lock that stops a second scheduler, or a restart,
-    from running a job twice on the same day."""
+    """One run of a scheduled job on one day. Not a TenantModel: like the Tenant and Alert tables this is a system table, read
+    before any tenant is set. A job for everyone (the openFDA import) has one row per server day: unique (job, run_on) where facility
+    is null. A facility's job (slice 21) has one row per facility and its local day: unique (job, facility, run_on). Those rows are
+    the lock that stops a second scheduler, or a restart, from running a job twice on the same day."""
 
     class Status(models.TextChoices):
         RUNNING = "running", "Running"

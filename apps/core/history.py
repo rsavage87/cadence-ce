@@ -501,6 +501,7 @@ def _plain_text(f, value, names: _Names) -> str:
 # What an empty value means where "—" would say too little.
 EMPTY_WORDS = {
     "accounts.role": {"scope": "The role's default"},
+    "tenants.tenant": {"timezone": "The server's"},  # slice 21: a facility that has chosen none works in the server's zone
     "reports.customreport": {"filters": "None", "group_by": "Not grouped", "sort": "The source's order"},
 }
 

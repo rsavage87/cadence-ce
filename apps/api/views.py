@@ -317,7 +317,7 @@ class FacilitySettingsView(TenantAPIMixin, APIView):
         row = fac_services.get_settings()
         data = {f: getattr(row, f) for f in fac_services.EDITABLE}
         data["updated_at"] = None if row._state.adding else row.updated_at  # unsaved defaults have never been changed
-        data[self.ZONE] = get_current_tenant().timezone  # the facility's own record, which set_time_zone updates in place
+        data[self.ZONE] = get_current_tenant().zone_name  # its own, or the server's while it has chosen none (set_time_zone updates it in place)
         return s.FacilitySettingsSerializer(data).data
 
     def get(self, request):
