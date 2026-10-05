@@ -3,6 +3,7 @@ from datetime import date
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.utils import timezone
 
 from apps.pm.dates import add_months
 
@@ -29,7 +30,7 @@ def _matches(cred: Credential, asset) -> bool:
 
 
 def qualification(technician: Technician, asset, as_of: date | None = None) -> Qualification:
-    as_of = as_of or date.today()
+    as_of = as_of or timezone.localdate()
     creds = [c for c in technician.credentials.all() if c.status == Credential.Status.ACTIVE and _matches(c, asset)]
     active = [c for c in creds if not c.expires_on or c.expires_on >= as_of]
     if not active:
@@ -66,7 +67,7 @@ def coverage_by_category(as_of: date | None = None) -> list[dict]:
     technicians covering only some models or manufacturers in it (`partial`), and whether an active device is on an OEM contract."""
     from apps.equipment.models import Asset, DeviceModel, SupportType
 
-    as_of = as_of or date.today()
+    as_of = as_of or timezone.localdate()
     techs = list(Technician.objects.filter(is_active=True).prefetch_related("credentials"))
     models = list(DeviceModel.objects.values_list("category", "manufacturer", "model"))
     rows = []
@@ -121,7 +122,7 @@ def renew_credential(credential: Credential, months: int = RENEWAL_MONTHS, today
         raise ValidationError("Sign off the credential first; a credential in training cannot be renewed.")
     if not credential.expires_on:
         raise ValidationError("This credential has no expiry, so there is nothing to renew.")
-    credential.expires_on = add_months(today or date.today(), months)
+    credential.expires_on = add_months(today or timezone.localdate(), months)
     credential.save(update_fields=["expires_on", "updated_at"])
     return credential
 
@@ -132,7 +133,7 @@ def sign_off_credential(credential: Credential, today: date | None = None) -> Cr
         raise ValidationError("Only a credential in training can be signed off.")
     credential.status = Credential.Status.ACTIVE
     credential.source = SIGN_OFF_SOURCE
-    credential.issued_on = today or date.today()
+    credential.issued_on = today or timezone.localdate()
     credential.save(update_fields=["status", "source", "issued_on", "updated_at"])
     return credential
 
@@ -143,7 +144,7 @@ def remove_credential(credential: Credential) -> None:
 
 def credential_state(credential: Credential, today: date | None = None) -> dict:
     """Status chip for a credential row: key, label, and chip css, matching the mock's credState."""
-    today = today or date.today()
+    today = today or timezone.localdate()
     if credential.status == Credential.Status.IN_TRAINING:
         return {"key": "in_training", "label": "In training", "css": "info"}
     exp = credential.expires_on

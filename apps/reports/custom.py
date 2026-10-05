@@ -67,6 +67,7 @@ from django.db.models import (
     When,
 )
 from django.db.models.functions import Cast, Coalesce, Lower, NullIf, TruncDate, TruncMonth
+from django.utils import timezone
 from django.utils.text import slugify
 
 from apps.credentials.models import Technician
@@ -298,7 +299,7 @@ def _line_amount(expr):
 
 
 def _recorded(today):
-    return TruncDate("created_at")  # the facility's local day (TIME_ZONE) the part was recorded on
+    return TruncDate("created_at")  # the facility's local day the part was recorded on (TruncDate works in its time zone, active inside it)
 
 
 def _device_columns(prefix: str) -> list:
@@ -810,7 +811,7 @@ def describe(spec: SourceSpec, d: dict, today: date | None = None) -> str:
         if key == "date":
             col = spec.column(values["field"])
             if values["period"] == CUSTOM_PERIOD:
-                start, end = period_range(values, today or date.today())
+                start, end = period_range(values, today or timezone.localdate())
                 when = (f"{day_text(start)} to {day_text(end)}" if start and end else f"on or after {day_text(start)}" if start
                         else f"on or before {day_text(end)}")
             else:

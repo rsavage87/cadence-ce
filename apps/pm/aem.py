@@ -101,7 +101,7 @@ def evidence(dm: DeviceModel, today: date | None = None) -> dict:
     from apps.recalls.services import DONE_STATUSES
     from apps.workorders.models import WorkOrder, WoStatus, WoType
 
-    today = today or date.today()
+    today = today or timezone.localdate()
     since = history_start(today)
     devices = list(Asset.objects.filter(device_model=dm).values("id", "status", "installed_on", "created_at", "updated_at"))
     retired = _retired_on([d["id"] for d in devices if d["status"] == AssetStatus.RETIRED])
@@ -241,7 +241,7 @@ def pull_in_plan(dm: DeviceModel, interval_months: int, today: date | None = Non
     """The devices in use whose next PM is later than one `interval_months` after their last PM (or install date, or today when
     neither is on file), each with the date it moves to: that date, or today when it is already past. A next PM already earlier
     never moves later."""
-    today = today or date.today()
+    today = today or timezone.localdate()
     out = []
     for asset in Asset.objects.filter(device_model=dm, status__in=Asset.ACTIVE_STATUSES, next_pm_on__isnull=False).order_by("tag"):
         due = max(today, add_months(asset.last_pm_on or asset.installed_on or today, interval_months))
@@ -356,7 +356,7 @@ def _check_decision(decision: AemDecision, by, decided_on, today: date) -> date:
 @transaction.atomic
 def propose(dm: DeviceModel, *, interval_months, rationale, by=None, today: date | None = None) -> AemDecision:
     """Open an AEM case for the model: a new interval and the case for it, with the model's failure history as it stands today."""
-    today = today or date.today()
+    today = today or timezone.localdate()
     locked = _lock(dm)
     _check_eligible(locked)
     open_ = open_proposal(locked)
@@ -376,7 +376,7 @@ def approve(decision: AemDecision, *, by, decided_on: date, note: str, today: da
     """The committee approves an open proposal: it goes in force (ending the interval in force before it, if any) and becomes the
     model's PM interval. The exclusions (life support, the CMS mark) and the history are checked again. Returns the decision, with
     `devices_moved`: how many devices' next PM came in because the new interval is shorter than the one before it."""
-    today = today or date.today()
+    today = today or timezone.localdate()
     dm = _lock(decision.device_model)
     current = _locked_decision(decision)
     decided_on = _check_decision(current, by, decided_on, today)
@@ -406,7 +406,7 @@ def approve(decision: AemDecision, *, by, decided_on: date, note: str, today: da
 @transaction.atomic
 def reject(decision: AemDecision, *, by, decided_on: date, note: str, today: date | None = None) -> AemDecision:
     """The committee turns an open proposal down; the model keeps its interval."""
-    today = today or date.today()
+    today = today or timezone.localdate()
     _lock(decision.device_model)
     current = _locked_decision(decision)
     decided_on = _check_decision(current, by, decided_on, today)
@@ -421,7 +421,7 @@ def reject(decision: AemDecision, *, by, decided_on: date, note: str, today: dat
 def withdraw(decision: AemDecision, *, by=None, today: date | None = None, reason: str = "") -> AemDecision:
     """Close an open proposal without a committee decision. Who withdrew it, when, and why are kept in ended_by, ended_on, and
     end_reason (the case closed). The view decides who may: the proposer, or a PM Approve holder."""
-    today = today or date.today()
+    today = today or timezone.localdate()
     _lock(decision.device_model)
     current = _locked_decision(decision)
     if current.status != AemStatus.PROPOSED:
@@ -445,7 +445,7 @@ def end(target: AemDecision | DeviceModel, *, by=None, reason: str, today: date 
     approval). The model goes back to the OEM interval and every device whose next PM is now too far out comes in (`pull_in`;
     by default unless the model is excluded from AEM, whose devices never used the interval). Returns how many devices' next PM
     moved."""
-    today = today or date.today()
+    today = today or timezone.localdate()
     given = target if isinstance(target, AemDecision) else None
     dm = _lock(target.device_model if given else target)
     reason = _text(reason, "reason", REASON_MAX, "Say why the AEM interval ends.")
@@ -492,7 +492,7 @@ def model_changed(device_model, changed: list[str], by=None, previous: dict | No
     effect = {"ended": False, "withdrawn": False, "cleared": False, "moved": 0, "rule": ""}
     if not {"risk_class", "oem_schedule_required"} & set(changed):
         return effect
-    today = date.today()
+    today = timezone.localdate()
     previous = previous or {}
     was_excluded = _was_excluded(device_model, previous)
     if device_model.aem_excluded and not was_excluded:

@@ -11,6 +11,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Count, Exists, OuterRef, Q, Sum
+from django.utils import timezone
 
 from apps.equipment.models import Asset, AssetStatus, DeviceModel
 from apps.pm.dates import add_months
@@ -91,7 +92,7 @@ def update_contract(contract: Contract, by=None, **fields) -> Contract:
 
 def renew_contract(contract: Contract, by=None, today: date | None = None) -> Contract:
     """Twelve more months from the current end, or from today if the contract already lapsed."""
-    today = today or date.today()
+    today = today or timezone.localdate()
     contract.end_on = add_months(max(contract.end_on, today), RENEW_MONTHS)
     if contract.start_on > today:
         contract.start_on = today
@@ -133,7 +134,7 @@ def remove_asset(contract: Contract, asset: Asset):
 
 def contract_status(contract: Contract, today: date | None = None) -> dict:
     """The mock's ctStatus: key drives the filter, label and css the chip."""
-    today = today or date.today()
+    today = today or timezone.localdate()
     days = (contract.end_on - today).days
     if days < 0:
         return {"key": "expired", "label": f"Expired {fmt_short(contract.end_on)}", "css": "crit"}
@@ -190,7 +191,7 @@ def pick_devices(contract: Contract, q: str, limit: int = 6):
 # --- the screen --------------------------------------------------------------------------------------
 
 def contracts_summary(today: date | None = None) -> dict:
-    today = today or date.today()
+    today = today or timezone.localdate()
     fleet = Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES)
     agg = fleet.aggregate(n=Count("id"), value=Sum("acquisition_cost"))
     fleet_n, fleet_value = agg["n"], float(agg["value"] or 0)
@@ -216,7 +217,7 @@ class ContractFilters:
 
 def filter_contracts(f: ContractFilters, today: date | None = None):
     """The Contracts table, annotated with `devices` (covered count). Status is compared in SQL so it matches contract_status."""
-    today = today or date.today()
+    today = today or timezone.localdate()
     qs = Contract.objects.annotate(devices=Count("assets", filter=~Q(assets__status=AssetStatus.RETIRED)))
     if f.type:
         qs = qs.filter(type=f.type)

@@ -297,12 +297,16 @@ class WorkOrderViewSet(TenantViewSet):
 
 class FacilitySettingsView(TenantAPIMixin, APIView):
     """GET the tenant's settings (defaults until first saved); PATCH any of them (Settings Edit). POST .../reset-policy/
-    restores the default policy text. Every change goes through apps.facility.services, which validates and audits it."""
+    restores the default policy text. Every change goes through apps.facility.services, which validates and audits it.
+
+    Slice 21: `time_zone` is the facility's time zone (an IANA name, e.g. "America/Chicago"; Tenant.timezone), set through
+    set_time_zone like the Settings screen's Time zone panel. A PATCH is all or nothing, the time zone with the rest."""
 
     permission_classes = [IsAuthenticated, ModulePermission]
     module = "settings"
     write_level = Level.EDIT
     read_only_fields = {"updated_at"}  # what GET returns but PATCH ignores, so a client can send back what it read
+    ZONE = "time_zone"
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
@@ -313,6 +317,7 @@ class FacilitySettingsView(TenantAPIMixin, APIView):
         row = fac_services.get_settings()
         data = {f: getattr(row, f) for f in fac_services.EDITABLE}
         data["updated_at"] = None if row._state.adding else row.updated_at  # unsaved defaults have never been changed
+        data[self.ZONE] = get_current_tenant().timezone  # the facility's own record, which set_time_zone updates in place
         return s.FacilitySettingsSerializer(data).data
 
     def get(self, request):
@@ -321,12 +326,19 @@ class FacilitySettingsView(TenantAPIMixin, APIView):
     def patch(self, request):
         parsed = s.FacilitySettingsSerializer(data=request.data, partial=True)
         parsed.is_valid(raise_exception=True)
-        unknown = set(request.data) - set(fac_services.EDITABLE) - self.read_only_fields
+        unknown = set(request.data) - set(fac_services.EDITABLE) - self.read_only_fields - {self.ZONE}
         if unknown:
             return Response({"detail": f"Unknown settings: {', '.join(sorted(unknown))}."}, status=status.HTTP_400_BAD_REQUEST)
+        fields = dict(parsed.validated_data)
+        zone = fields.pop(self.ZONE, None)
         try:
-            fac_services.update_settings(by=request.user, **parsed.validated_data)
+            with transaction.atomic():  # all or nothing: a refused setting undoes the time zone, and the other way round
+                if zone is not None:
+                    fac_services.set_time_zone(get_current_tenant(), zone, by=request.user)
+                if fields or zone is None:
+                    fac_services.update_settings(by=request.user, **fields)
         except ValidationError as e:
+            get_current_tenant().refresh_from_db(fields=["timezone"])  # rolled back: what is on record, not the zone refused with it
             return Response(e.message_dict if hasattr(e, "error_dict") else {"detail": e.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
         return Response(self._data())
 

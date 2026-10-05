@@ -23,7 +23,7 @@ from apps.pm.dates import add_months
 from apps.pm.models import PmProcedure
 from apps.recalls.models import Alert, AlertMatch
 from apps.recalls.services import create_recall_work_orders, set_status
-from apps.tenants.context import tenant_context
+from apps.tenants.context import tenant_context, zone_of
 from apps.tenants.models import Tenant
 from apps.workorders.completion import complete_work_order
 from apps.workorders.models import LaborLine, PartLine, PmResult, Priority, Source, WorkOrder, WoType
@@ -132,8 +132,8 @@ class Command(BaseCommand):
     @transaction.atomic
     def _seed(self, *args, **opts):
         rnd = random.Random(20260922)
-        today = date.today()
         tenant, created = Tenant.objects.get_or_create(slug=opts["slug"], defaults={"name": opts["name"]})
+        today = timezone.localdate(timezone=zone_of(tenant))  # the facility's today (its time zone), not the server's
         if not created:
             with tenant_context(tenant):  # inside the tenant: under row-level security the check would otherwise see no devices
                 seeded = Asset.objects.exists()

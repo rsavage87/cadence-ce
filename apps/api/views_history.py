@@ -6,7 +6,8 @@ role may do) under "access".
 GET /api/v1/change-log/   Users View. Read only. Refused (403) to scoped users (apps.workorders.scoping: the log is the whole
                           facility's, so it names no scoped_actions) and to a user with no facility.
     ?area=<key>           One area: devices, device_models, work_orders, labor, parts, contracts, procedures, aem, credentials,
-                          roles, settings, custom_reports, or access, among those the user's role can view (the others are a 400).
+                          roles, settings, facility (the facility's own record: its time zone, its name; Settings View),
+                          custom_reports, or access, among those the user's role can view (the others are a 400).
     ?since=, ?until=      YYYY-MM-DD, the facility's local days, inclusive.
     ?who=<user id>        The changes one person in the facility made.
     ?limit=, ?after=      Newest first, `limit` entries (50 unless given, 1 to 200), after the cursor `after` (none: the newest).

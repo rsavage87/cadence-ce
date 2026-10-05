@@ -28,8 +28,10 @@ since keeps its history there. Pages count saves (`offset`), and a page reads on
 
 Everything here reads inside the request's tenant. The historical tables carry tenant_id, so row-level security applies to them on
 PostgreSQL, but their managers are simple_history's, not the tenant-scoped one: every query here filters on the current tenant itself
-(_rows), and reads nothing when there is none. Callers check who may read what (can_read, readable_areas): scoped users
-(apps.workorders.scoping: a vendor technician, a clinical requester) see no history, and readable_areas gives them no area.
+(_rows), and reads nothing when there is none. The facility's own history (the "facility" area, slice 21: its time zone, its name)
+has no tenant_id column and no policy, so _rows reads it by the current facility's id, never another facility's rows. Callers check
+who may read what (can_read, readable_areas): scoped users (apps.workorders.scoping: a vendor technician, a clinical requester) see
+no history, and readable_areas gives them no area.
 """
 import json
 from dataclasses import dataclass, field
@@ -149,6 +151,8 @@ AREAS = {a.key: a for a in (
     Area("credentials", "Credentials", "credentials.Credential", "users", _safe(lambda r: f"{r.technician} · credential"), select=("technician",)),
     Area("roles", "Roles", "accounts.Role", "users", _safe(lambda r: r.name), _safe(lambda r: reverse("web:roles"))),
     Area("settings", "Settings", "facility.FacilitySettings", "settings", _safe(lambda r: "Settings"), _safe(lambda r: reverse("web:settings"))),
+    # Slice 21: the facility's own record (its time zone, a new name), read as Settings: the time zone is set on that screen.
+    Area("facility", "Facility", "tenants.Tenant", "settings", _safe(lambda r: r.name), _safe(lambda r: reverse("web:settings"))),
     Area("custom_reports", "Custom reports", "reports.CustomReport", "reports", _safe(lambda r: r.name),
          _safe(lambda r: reverse("web:report", args=[f"custom-{r.id}"]))),
 )}
@@ -156,11 +160,20 @@ ACCESS = Area("access", "Access", "accounts.AccessEvent", "users", _safe(lambda 
 ALL_AREAS = {**AREAS, ACCESS.key: ACCESS}
 
 
+FACILITY_HISTORY = "tenants.historicaltenant"
+
+
 def _rows(history_model):
-    """`history_model`'s rows in the current tenant only (none without one): its manager is not the tenant-scoped one."""
+    """`history_model`'s rows in the current tenant only (none without one): its manager is not the tenant-scoped one. The
+    facility's own history (slice 21) has no tenant_id column, and row-level security does not cover it: its rows are the current
+    facility's by id, never another facility's."""
     tenant = get_current_tenant()
     qs = history_model.objects.all()
-    return qs.filter(tenant_id=tenant.id) if tenant is not None else qs.none()
+    if tenant is None:
+        return qs.none()
+    if history_model._meta.label_lower == FACILITY_HISTORY:
+        return qs.filter(id=tenant.id)
+    return qs.filter(tenant_id=tenant.id)
 
 
 def area_of(model) -> Area | None:
@@ -228,6 +241,7 @@ LABELS = {
                                   "target_mttr_days": "Target: mean time to repair", "repair_budget_monthly": "Monthly repair budget",
                                   "labor_rate": "In-house labor rate", "vendor_labor_rate": "Vendor labor rate"},
     "reports.customreport": {"group_by": "Grouped by", "sort": "Sorted by"},
+    "tenants.tenant": {"slug": "Portal link name", "timezone": "Time zone", "is_active": "Can sign in"},
 }
 
 # How a value reads, per model and field (see _kind_text); the rest read by their field's type (_plain_text).
@@ -246,6 +260,7 @@ KINDS = {
     "facility.facilitysettings": {"target_pm_pct": "percent", "target_uptime_pct": "percent", "target_mttr_days": "days",
                                   "repair_budget_monthly": "money", "labor_rate": "rate", "vendor_labor_rate": "rate"},
     "reports.customreport": {"columns": "report_columns", "filters": "report_filters", "group_by": "report_group", "sort": "report_sort"},
+    "tenants.tenant": {"timezone": "zone"},
 }
 
 _CAPITALS = {"pm": "PM", "oem": "OEM", "aem": "AEM", "po": "PO", "cms": "CMS", "mttr": "MTTR"}
@@ -457,6 +472,10 @@ def _kind_text(kind: str, value, rec) -> str:
         return _evidence_text(value)
     if kind.startswith("report_"):
         return _report_text(kind, value, rec)
+    if kind == "zone":
+        from apps.facility.services import zone_label
+
+        return zone_label(value)
     raise ValueError(kind)
 
 

@@ -80,6 +80,7 @@ from datetime import date
 from django.db import transaction
 from django.db.models import Count, IntegerField, OuterRef, Prefetch, Subquery
 from django.db.models.functions import Coalesce
+from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
@@ -117,8 +118,9 @@ WEEK_REFUSAL = "Auto-assign week needs PM Approve and the right to assign work o
 
 
 def _today() -> date:
-    """The clock for the new endpoints, in one place so tests can pin it (the PM screen's is apps.web.views_pm._today)."""
-    return date.today()
+    """The PM endpoints' clock, in one place so tests can pin it (the PM screen's is apps.web.views_pm._today): the facility's
+    today, since the API works in its time zone (apps.api.tenancy)."""
+    return timezone.localdate()
 
 
 def _require(allowed: bool, message: str) -> None:
@@ -207,11 +209,11 @@ class PmViewSet(PmProgramAccess, TenantAPIMixin, viewsets.ViewSet):
 
     @action(detail=False, methods=["post"])
     def generate(self, request):
-        return Response({"created": generate_pm_work_orders()})
+        return Response({"created": generate_pm_work_orders(as_of=_today())})
 
     @action(detail=False, methods=["get"])
     def calendar(self, request):
-        today = date.today()
+        today = _today()
         try:
             year, month = int(request.query_params.get("y", today.year)), int(request.query_params.get("m", today.month))
         except (TypeError, ValueError):
@@ -228,7 +230,7 @@ class PmViewSet(PmProgramAccess, TenantAPIMixin, viewsets.ViewSet):
         day = _parse_day(request.query_params.get("day"))
         if day is None:
             raise DRFValidationError({"day": "Required, as YYYY-MM-DD."})
-        plan = pm_schedule.day_plan(day, date.today())
+        plan = pm_schedule.day_plan(day, _today())
         devices = []
         for r in plan["rows"]:
             a, dm, tech = r["asset"], r["asset"].device_model, r["technician"]
@@ -245,7 +247,7 @@ class PmViewSet(PmProgramAccess, TenantAPIMixin, viewsets.ViewSet):
         if day is None:
             raise DRFValidationError({"day": "Required, as YYYY-MM-DD."})
         # Creating needs PM Approve (write_level); assigning each work order also needs work-order Approve, as on the screen.
-        batch = create_pm_work_orders_for_day(day, by=request.user, assign_to_technicians=wo_perms.can_assign(request.user), today=date.today())
+        batch = create_pm_work_orders_for_day(day, by=request.user, assign_to_technicians=wo_perms.can_assign(request.user), today=_today())
         return Response({"created": batch.created, "assigned": batch.assigned, "skipped": batch.skipped})
 
     @action(detail=False, methods=["get"])

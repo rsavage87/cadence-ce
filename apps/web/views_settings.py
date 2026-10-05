@@ -3,22 +3,38 @@ Settings screen (slice 8): integrations, the service request portal, maintenance
 the labor rates, in the same panel), and risk scoring, from apps.facility.services. Anyone with Settings View sees the page;
 changes need Settings Edit (apps/facility/permissions.py), checked on every POST.
 
-Each editable panel (#set-portal, #set-policy, #set-targets) is its own partial: its POST answers with that panel
+Each editable panel (#set-portal, #set-policy, #set-targets, #set-zone) is its own partial: its POST answers with that panel
 re-rendered and a toast. A rejected policy or targets save keeps what the user typed and marks the bad field; a
 rejected portal change shows the saved values again (it saves as the user types, so there is nothing to keep).
+
+Time zone (slice 21, #set-zone): the facility's time zone (fs.set_time_zone), which decides its today, the times shown, and when
+its daily jobs and emails run. Its form posts to the page's own address (settings_page hands a POST to settings_time_zone, which
+needs Settings Edit), so the panel needs no route of its own.
 """
 from django.core.exceptions import ValidationError
 from django.shortcuts import redirect, render
+from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from apps.accounts.models import Level, Module
 from apps.equipment.models import Department
 from apps.facility import permissions as fac_perms
 from apps.facility import services as fs
+from apps.tenants.context import zone_of
 
 from .decorators import web_view
 from .forms import parse_uuid
-from .forms_settings import RATE_FORM, TARGET_FORM, error_dict, plain_number, policy_fields, portal_fields, rate_fields, target_fields
+from .forms_settings import (
+    RATE_FORM,
+    TARGET_FORM,
+    error_dict,
+    plain_number,
+    policy_fields,
+    portal_fields,
+    rate_fields,
+    target_fields,
+    time_zone_field,
+)
 from .htmx import is_partial, toast
 
 CHIPS = {fs.CONNECTED: ("ok", "Connected"), fs.LICENSE: ("warn", "License needed"), fs.NOT_CONNECTED: ("neutral", "Not connected")}
@@ -61,6 +77,18 @@ def _integrations() -> dict:
     return {"integrations": items, "connected": sum(1 for i in items if i["status"] == fs.CONNECTED)}
 
 
+def _zone_ctx(request, error: str = "") -> dict:
+    """The time zone panel: the facility's zone, the list to choose from (the US zones first, each with its offset now), and its
+    clock now. Read from request.tenant, which set_time_zone updates in place, so a change shows at once (the request itself still
+    runs in the zone it started in). The clock is formatted here: a template would show an aware time in the active zone."""
+    tenant = request.tenant
+    now = timezone.now()
+    local = timezone.localtime(now, zone_of(tenant))
+    return {"zone": tenant.timezone, "zone_label": fs.zone_label(tenant.timezone), "zone_choices": fs.time_zone_choices(tenant.timezone, now),
+            "zone_known": tenant.timezone in fs.zone_names(), "zone_now": f"{local:%-I:%M %p} on {local:%A, %B} {local.day}",
+            "zone_error": error, "can_edit": fac_perms.can_edit(request.user)}
+
+
 def _first(errors: dict) -> str:
     return next(iter(errors.values()))
 
@@ -69,9 +97,12 @@ def _first(errors: dict) -> str:
 
 @web_view(fac_perms.MODULE, fac_perms.VIEW_LEVEL)
 def settings_page(request):
+    if request.method == "POST":  # the Time zone panel saves here (slice 21); settings_time_zone checks Settings Edit itself
+        return settings_time_zone(request)
     s = fs.get_settings()
     user = request.user
     ctx = {"nav_active": "settings", **_integrations(), **_portal_ctx(request, s), **_policy_ctx(request, s), **_targets_ctx(request, s),
+           **_zone_ctx(request),
            "risk_rubric": fs.RISK_RUBRIC, "risk_rows": fs.risk_summary(), "risk_scoring": fs.risk_scoring_summary(),
            "can_view_contracts": user.has_level(Module.CONTRACTS, Level.VIEW), "can_view_users": user.has_level(Module.USERS, Level.VIEW),
            "can_view_recalls": user.has_level(Module.RECALLS, Level.VIEW), "can_view_equipment": user.has_level(Module.EQUIPMENT, Level.VIEW)}
@@ -153,3 +184,23 @@ def settings_targets(request):
                  **{field: request.POST.get(field, plain_number(getattr(s, field))) for field, _label, _help in RATE_FORM}}
         return toast(render(request, "web/_settings_targets.html", _targets_ctx(request, s, typed, errors)), _first(errors))
     return toast(render(request, "web/_settings_targets.html", _targets_ctx(request, s)), "Targets and labor rates saved" if rates else "Targets saved")
+
+
+# --- time zone (slice 21) -------------------------------------------------------------------------------
+
+@require_POST
+@web_view(fac_perms.MODULE, fac_perms.EDIT_LEVEL)
+def settings_time_zone(request):
+    """Set the facility's time zone (fs.set_time_zone, which refuses anything but a zone this server knows). Reached through
+    settings_page's POST; Settings Edit is checked here, whoever calls it."""
+    before = request.tenant.timezone
+    try:
+        fs.set_time_zone(request.tenant, time_zone_field(request.POST), by=request.user)
+    except ValidationError as e:
+        message = _first(error_dict(e))
+        return toast(render(request, "web/_settings_zone.html", _zone_ctx(request, error=message)), message)
+    if not request.htmx:
+        return redirect("web:settings")
+    zone = request.tenant.timezone
+    message = f"Time zone set to {fs.zone_label(zone)}" if zone != before else f"The time zone is already {fs.zone_label(zone)}"
+    return toast(render(request, "web/_settings_zone.html", _zone_ctx(request)), message)

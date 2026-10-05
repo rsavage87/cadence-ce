@@ -12,6 +12,7 @@ from datetime import date, timedelta
 
 from django.db.models import Count, DecimalField, Q, Sum
 from django.db.models.functions import Coalesce, TruncMonth
+from django.utils import timezone
 
 from apps.contracts.models import Contract
 from apps.equipment.models import Asset, AssetStatus, RiskClass
@@ -29,7 +30,7 @@ ANNUALIZE = 365 / TRAILING_DAYS
 
 
 def overview_kpis(year: int, month: int, today: date | None = None) -> dict:
-    today = today or date.today()
+    today = today or timezone.localdate()
     start, end = month_bounds(year, month)
     current = (year, month) == (today.year, today.month)
     as_of = today if current else end
@@ -116,7 +117,7 @@ def _item(rail, title, sub, right, **link):
 
 def attention_items(today: date | None = None) -> list[dict]:
     """The Overview's "Needs attention" list, in the mock's order. Each item carries one link key: asset, wo, contract, or recall."""
-    today = today or date.today()
+    today = today or timezone.localdate()
     items = []
     overdue = overdue_assets(today).order_by("next_pm_on", "tag")
     for a in overdue.filter(device_model__risk_class=RiskClass.LIFE_SUPPORT):
@@ -165,7 +166,7 @@ NAV_CONTRACT_DAYS = 30  # the nav badge counts contracts ending within 30 days, 
 
 
 def contracts_needing_attention(today: date | None = None):
-    today = today or date.today()
+    today = today or timezone.localdate()
     covered = Count("assets", filter=~Q(assets__status=AssetStatus.RETIRED))
     expired = Contract.objects.filter(end_on__lt=today).annotate(devices=covered).filter(devices__gt=0)
     ending = Contract.objects.filter(end_on__gte=today, end_on__lte=today + timedelta(days=NAV_CONTRACT_DAYS))
@@ -234,7 +235,7 @@ def recent_activity(start: date, as_of: date, limit: int = 8):
 def overview_page(year: int, month: int, today: date | None = None) -> dict:
     """Everything the Overview screen shows for one month. Fleet state and attention items are always as of today; the targets are
     the tenant's, from Settings (apps.facility)."""
-    today = today or date.today()
+    today = today or timezone.localdate()
     k = overview_kpis(year, month, today)
     py, pm = _shift_month(year, month, -1)
     # No deltas against a month before the tenant has any history; they would compare against zeros.
@@ -286,7 +287,7 @@ def run_report(key: str, today: date | None = None) -> dict:
     functions = {"cosr": cost.report_cosr, "spend": cost.report_spend, "contract": cost.report_contract,
                  "compliance": fleet.report_compliance, "mtbf": fleet.report_mtbf, "replace": fleet.report_replace,
                  "tech": operations.report_tech, "recall": operations.report_recall}
-    return functions[key](today or date.today())
+    return functions[key](today or timezone.localdate())
 
 
 # --- Any report by key (slice 18): the eight above, or one of the facility's custom reports --------------------------------
@@ -313,7 +314,7 @@ def run_any(key: str, today: date | None = None) -> dict:
         return run_report(key, today)
     from . import custom
 
-    return custom.run_key(key, today or date.today())
+    return custom.run_key(key, today or timezone.localdate())
 
 
 def csv_filename(meta: dict, day: date) -> str:

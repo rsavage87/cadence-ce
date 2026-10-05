@@ -10,6 +10,7 @@ from typing import NamedTuple
 from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.db.models import F, Q
+from django.utils import timezone
 
 from apps.equipment.models import Asset, AssetStatus, RiskClass
 from apps.notifications import assignments
@@ -39,7 +40,7 @@ def generate_pm_work_orders(as_of: date | None = None, lead_days: int | None = N
     generate, a planner clicking Create) would otherwise each find no open PM and each create one.
     """
     lock_planner()
-    as_of = as_of or date.today()
+    as_of = as_of or timezone.localdate()
     lead_days = settings.PM_LEAD_DAYS if lead_days is None else lead_days
     horizon = as_of + timedelta(days=lead_days)
     created = 0
@@ -72,7 +73,7 @@ def create_pm_work_orders_for_day(day: date, by=None, assign_to_technicians: boo
 
     from .schedule import day_devices, suggestions_for_day
 
-    today = today or date.today()
+    today = today or timezone.localdate()
     lock_planner()
     devices = list(day_devices(day))
     needing = [a for a in devices if not a.has_open_pm]
@@ -221,7 +222,7 @@ def _week_steps(today: date) -> tuple[WeekAssignment, list]:
 
 def week_assignment_preview(today: date | None = None) -> WeekAssignment:
     """What Auto-assign week would do now. Changes nothing."""
-    return _week_steps(today or date.today())[0]
+    return _week_steps(today or timezone.localdate())[0]
 
 
 @transaction.atomic
@@ -236,7 +237,7 @@ def assign_week(*, by=None, today: date | None = None) -> WeekAssignment:
     all of it (apps.notifications.assignments.batch). Returns what was done."""
     from apps.workorders.services import assign
 
-    today = today or date.today()
+    today = today or timezone.localdate()
     lock_planner()
     result, steps = _week_steps(today)
     waiting = _first_open_pms([asset.id for asset, w, tech in steps if w is not None and tech is not None])
@@ -270,7 +271,7 @@ def pm_due_queryset(start: date, end: date, as_of: date | None = None, life_supp
     PM work orders that count toward on-time completion for a period:
     due inside [start, end] and, for the current period, already due or already completed.
     """
-    as_of = min(end, as_of or date.today())
+    as_of = min(end, as_of or timezone.localdate())
     qs = (WorkOrder.objects.filter(type=WoType.PM, due_on__gte=start, due_on__lte=as_of).filter(Q(due_on__lt=as_of) | Q(completed_on__isnull=False))
           .exclude(RETIRED_AND_CANCELLED))
     if life_support_only:
@@ -289,7 +290,7 @@ def pm_on_time_series(year: int, month: int, months: int = 12, life_support_only
     """Monthly on-time rates for the `months` months ending at (year, month): one query over the PM work orders due in the
     range, bucketed by month with pm_due_queryset's rule (due inside the month and, for the current month, already due or
     already completed). Months after `today` have no rate."""
-    today = today or date.today()
+    today = today or timezone.localdate()
     points = []
     y, m = year, month
     for _ in range(months):
@@ -319,5 +320,5 @@ def pm_on_time_series(year: int, month: int, months: int = 12, life_support_only
 
 
 def overdue_assets(as_of: date | None = None):
-    as_of = as_of or date.today()
+    as_of = as_of or timezone.localdate()
     return Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES, next_pm_on__lt=as_of).select_related("device_model", "department")

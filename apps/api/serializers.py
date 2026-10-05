@@ -167,4 +167,5 @@ class FacilitySettingsSerializer(serializers.Serializer):
     repair_budget_monthly = serializers.DecimalField(max_digits=14, decimal_places=2, required=False, allow_null=True)
     labor_rate = serializers.DecimalField(max_digits=14, decimal_places=2, required=False)  # slice 15; the service checks the range
     vendor_labor_rate = serializers.DecimalField(max_digits=14, decimal_places=2, required=False)
+    time_zone = serializers.CharField(required=False, allow_blank=True)  # slice 21: the facility's IANA time zone; set_time_zone checks it
     updated_at = serializers.DateTimeField(read_only=True, allow_null=True)

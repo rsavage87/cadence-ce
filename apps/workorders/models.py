@@ -1,4 +1,3 @@
-from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 
 from django.conf import settings
@@ -121,7 +120,7 @@ class WorkOrder(TenantModel):
     def is_late(self) -> bool:
         if self.completed_on:
             return self.completed_on > self.due_on
-        return self.is_open and self.due_on < date.today()
+        return self.is_open and self.due_on < timezone.localdate()  # the facility's today (its time zone is active inside it)
 
     @property
     def turnaround_days(self) -> int | None:

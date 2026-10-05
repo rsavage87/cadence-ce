@@ -12,6 +12,7 @@ from decimal import Decimal, InvalidOperation
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import models, transaction
 from django.db.models import Case, Count, Exists, F, OuterRef, Q, Value, When
+from django.utils import timezone
 
 from apps.recalls.models import AlertMatch
 
@@ -57,7 +58,7 @@ def with_bucket(qs, today: date):
 
 
 def fleet_bucket_counts(today: date | None = None) -> dict[str, int]:
-    today = today or date.today()
+    today = today or timezone.localdate()
     counts = {b: 0 for b in FleetBucket.values}
     for row in with_bucket(Asset.objects.all(), today).order_by().values("bucket").annotate(n=Count("id")):
         counts[row["bucket"]] = row["n"]
@@ -66,7 +67,7 @@ def fleet_bucket_counts(today: date | None = None) -> dict[str, int]:
 
 def fleet_summary(today: date | None = None, qs=None) -> dict:
     """The Equipment page head's counts, over `qs` (default the whole fleet; a scoped user's devices, apps.workorders.scoping)."""
-    today = today or date.today()
+    today = today or timezone.localdate()
     devices = Asset.objects.all() if qs is None else qs
     active = devices.filter(status__in=Asset.ACTIVE_STATUSES)
     return {"total": devices.count(), "active": active.count(), "under_contract": active.filter(contract__end_on__gte=today).count()}
@@ -110,7 +111,7 @@ SORTS = {
 def filter_assets(f: AssetFilters, today: date | None = None, qs=None):
     """The Equipment table: the mock's toolbar filters, annotated with each device's fleet bucket. Over `qs` when given (a scoped
     user's devices, apps.workorders.scoping), else the whole fleet."""
-    today = today or date.today()
+    today = today or timezone.localdate()
     qs = with_bucket((Asset.objects.all() if qs is None else qs).select_related("device_model", "department", "contract"), today)
     if f.q:
         q = f.q.strip()
@@ -155,7 +156,7 @@ def asset_service_summary(asset, today: date | None = None, work_orders=None) ->
     Among `work_orders` when given (a scoped user's, apps.workorders.scoping), so every figure counts only those; else all of them."""
     from apps.workorders.models import WorkOrder, WoType
 
-    today = today or date.today()
+    today = today or timezone.localdate()
     base = WorkOrder.objects.all() if work_orders is None else work_orders
     wos = list(base.filter(asset=asset, opened_on__gte=today - timedelta(days=182)).select_related("assigned_to")
                .prefetch_related("labor_lines", "part_lines").order_by("-opened_on", "-created_at"))
@@ -500,7 +501,7 @@ def risk_review_due_on(device_model: DeviceModel) -> date | None:
 def risk_review_due(device_model: DeviceModel, today: date | None = None) -> bool:
     """Never reviewed, or a year or more since the last review."""
     due = risk_review_due_on(device_model)
-    return due is None or due <= (today or date.today())
+    return due is None or due <= (today or timezone.localdate())
 
 
 @transaction.atomic
@@ -508,7 +509,7 @@ def set_risk_score(device_model: DeviceModel, *, function, physical, maintenance
     """Score a model with the rubric: store the four parts, mark it reviewed today, and set its risk class to the score's band
     (through _save_model, so apps.pm.aem hears of a new class). Saving the same score again is the yearly review: only the date
     changes. Errors are keyed by the keyword names."""
-    today = today or date.today()
+    today = today or timezone.localdate()
     raw = {"function": function, "physical": physical, "maintenance": maintenance, "incidents": incidents}
     values, errors = {}, {}
     for key, field, label, low, high in RISK_PARTS:
@@ -557,7 +558,7 @@ def create_asset(*, tag, device_model, department, serial="", room="", installed
                  last_pm_on=None, next_pm_on=None, notes="", status=AssetStatus.IN_SERVICE, by=None, today: date | None = None) -> Asset:
     """Add a device. Its first PM is `next_pm_on` when given, else first_pm_due(); its acquisition cost defaults to the model's list
     cost. Tags are unique in the facility in any letter case and can never change afterwards (they are on the sticker and in URLs)."""
-    today = today or date.today()
+    today = today or timezone.localdate()
     tag = (tag or "").strip()
     if not tag:
         raise ValidationError({"tag": "Enter the asset tag from the CE sticker."})
@@ -596,7 +597,7 @@ EDITABLE_FIELDS = ("serial", "device_model", "department", "room", "installed_on
 def update_asset(asset: Asset, *, by=None, today: date | None = None, **fields) -> Asset:
     """Change a device's details. Not its tag (on the sticker and in URLs), status (set_status), or contract (the contracts screen).
     A new model does not move the next PM by itself; change next_pm_on alongside it when the interval differs."""
-    today = today or date.today()
+    today = today or timezone.localdate()
     unknown = set(fields) - set(EDITABLE_FIELDS)
     if unknown:
         raise ValidationError(f"These cannot be changed here: {', '.join(sorted(unknown))}.")
@@ -653,7 +654,7 @@ def set_status(asset: Asset, to_status: str, *, by=None, note: str = "", today: 
     from apps.workorders.models import OPEN_STATUSES, WoStatus, WoType
     from apps.workorders.services import change_status
 
-    today = today or date.today()
+    today = today or timezone.localdate()
     if to_status not in AssetStatus.values:
         raise ValidationError("Choose a device status.")
     if to_status not in STATUS_CHANGES.get(asset.status, set()):
@@ -666,7 +667,7 @@ def set_status(asset: Asset, to_status: str, *, by=None, note: str = "", today: 
             raise ValidationError(f"{asset.tag} has open work: {numbers}. Complete it, or cancel it (an in-progress work order goes "
                                   f"back to open first), before retiring the device.")
         for w in open_wos:
-            change_status(w, WoStatus.CANCELLED, by=by, note="Device retired")
+            change_status(w, WoStatus.CANCELLED, by=by, note="Device retired", as_of=today)
         asset.next_pm_on = None
     elif asset.status == AssetStatus.RETIRED:
         asset.next_pm_on = today  # back in use: inspect it before anyone relies on it

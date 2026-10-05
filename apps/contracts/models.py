@@ -1,7 +1,6 @@
-from datetime import date
-
 from django.conf import settings
 from django.db import models, transaction
+from django.utils import timezone
 from simple_history.models import HistoricalRecords
 
 from apps.core.models import TenantModel
@@ -46,19 +45,21 @@ class Contract(TenantModel):
 
         return SupportType.OEM_CONTRACT if self.type == ContractType.OEM else SupportType.THIRD_PARTY
 
+    # The facility's today: inside a facility (a request, tenant_context) its time zone is active, so localdate() is its day.
     @property
     def is_expired(self) -> bool:
-        return self.end_on < date.today()
+        return self.end_on < timezone.localdate()
 
     @property
     def days_to_end(self) -> int:
-        return (self.end_on - date.today()).days
+        return (self.end_on - timezone.localdate()).days
 
     @property
     def status(self) -> str:
-        if self.is_expired:
+        days = self.days_to_end  # one reading of the clock (expired is days < 0), so the answer never straddles midnight
+        if days < 0:
             return "expired"
-        if self.days_to_end <= settings.CONTRACT_EXPIRY_WARNING_DAYS:
+        if days <= settings.CONTRACT_EXPIRY_WARNING_DAYS:
             return "ending"
         return "active"
 

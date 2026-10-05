@@ -13,6 +13,7 @@ from typing import NamedTuple
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Count, F, Max, Q
+from django.utils import timezone
 
 from apps.equipment.models import Asset, DeviceModel
 from apps.notifications import assignments
@@ -79,7 +80,7 @@ def _who(by) -> str:
 
 @transaction.atomic
 def set_status(match: AlertMatch, to_status: str, by=None, note: str = "", today: date | None = None) -> AlertMatch:
-    today = today or date.today()
+    today = today or timezone.localdate()
     if to_status not in ALLOWED_TRANSITIONS[match.status]:
         label = dict(S.choices).get(to_status, to_status)
         raise ValidationError(f"Cannot move {alert_label(match.alert)} from {match.get_status_display().lower()} to {str(label).lower()}.")
@@ -118,7 +119,7 @@ def create_recall_work_orders(match: AlertMatch, by=None, today: date | None = N
     from apps.credentials.services import qualified_technicians
     from apps.workorders.services import assign, create_work_order
 
-    today = today or date.today()
+    today = today or timezone.localdate()
     # The match's row first, locked: two batches at once (two coordinators, the screen and the API, a retry) would otherwise each
     # read no recall work orders yet and each create a full set (PostgreSQL; SQLite runs one writer at a time).
     list(AlertMatch.objects.select_for_update().filter(pk=match.pk).values_list("pk", flat=True))  # the lock; then the copy as it is now

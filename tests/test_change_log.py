@@ -27,6 +27,7 @@ from apps.core import history
 from apps.equipment import services as eq
 from apps.equipment.models import Asset, Department, DeviceModel
 from apps.tenants.context import tenant_context
+from apps.tenants.models import Tenant
 from apps.web import views_change_log
 
 LOG, CSV, PRINT, API = "/users/log/", "/users/log/export.csv", "/users/log/print/", "/api/v1/change-log/"
@@ -242,13 +243,15 @@ def test_a_device_model_links_only_for_a_reader_with_pm_view(client, kim, audito
 
 @pytest.fixture
 def many(ctx, kim):
-    """60 access events in the last hour, "Change 59" the newest; the roles' own history (added with the facility) a day before."""
+    """60 access events in the last hour, "Change 59" the newest; the roles' own history and the facility's (both added with the
+    facility; the facility's is read since slice 21) a day before."""
     for n in range(60):
         AccessEvent.objects.create(action=AccessEvent.Action.ROLE_LEVEL_CHANGED, by=kim, role=role("analyst"), detail=f"Change {n:02d}")
     stamps = timezone.now() - timedelta(hours=1)
     for n, e in enumerate(AccessEvent.objects.filter(detail__startswith="Change").order_by("detail")):
         AccessEvent.objects.filter(pk=e.pk).update(at=stamps + timedelta(seconds=n))
     shift(Role, 1)
+    shift(Tenant, 1, id=ctx.id)
 
 
 def after_of(url: str) -> str:
