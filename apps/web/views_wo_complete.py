@@ -20,10 +20,10 @@ vendor's failed PM on a device whose contract leaves repairs out opens a repair 
 them: not in the drawer's section, the modal's failed-PM options, or the toast; where completion.py wrote its number into the PM's
 resolution and history, the drawer reads "another work order" (templatetags/scoping_tags).
 """
-from datetime import date
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.shortcuts import render
+from django.utils import timezone
 from django_htmx.http import retarget, trigger_client_event
 
 from apps.equipment.models import AssetStatus
@@ -159,7 +159,7 @@ def wo_complete(request, number):
     # In progress is the one status a work order is completed from; whether it is in progress now is the modal's to say.
     _require(wo_perms.can_transition(request.user, WoStatus.IN_PROGRESS, WoStatus.COMPLETED))
     wo = get_wo(request, number)  # another facility's number, or one outside a scoped user's share, is a 404
-    today = date.today()
+    today = timezone.localdate()
     reason = completion.blocker(wo, today)
     if reason:
         return _modal(request, wo, reason=reason)

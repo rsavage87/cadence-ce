@@ -16,6 +16,7 @@ from decimal import Decimal
 
 from django.db.models import DecimalField, Sum
 from django.db.models.functions import Coalesce, ExtractYear
+from django.utils import timezone
 
 from apps.equipment.models import AssetStatus, RiskClass
 from apps.pm.dates import add_months
@@ -152,7 +153,7 @@ def history_rows(history: list[WorkOrder]) -> list[dict]:
 
 
 def pm_tab(asset, today: date | None = None) -> dict:
-    today = today or date.today()
+    today = today or timezone.localdate()
     dm = asset.device_model
     procedure = dm.pm_procedure
     history = pm_history(asset)
@@ -252,7 +253,7 @@ def replacement_outlook(asset, today: date) -> dict:
 
 
 def costs_tab(asset, today: date | None = None) -> dict:
-    today = today or date.today()
+    today = today or timezone.localdate()
     years = cost_years(asset, today)
     by_year = cost_by_year(asset, years)
     total = sum(by_year.values())

@@ -3,9 +3,9 @@ Input parsing for the AEM tab's modals (slice 14): Propose, the committee's deci
 differs from the OEM and the one in force, a rationale, the committee's date and minutes, a reason to end) live in apps.pm.aem;
 these forms only parse what was typed and put the service's errors back on the fields they name.
 """
-from datetime import date
 
 from django import forms
+from django.utils import timezone
 
 from apps.pm import aem
 
@@ -39,7 +39,7 @@ class DecideForm(AemForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["decided_on"].widget.attrs["max"] = date.today().isoformat()  # the service refuses a future date; the picker can say so first
+        self.fields["decided_on"].widget.attrs["max"] = timezone.localdate().isoformat()  # the service refuses a future date; the picker can say so first
 
     @property
     def choice(self) -> str:

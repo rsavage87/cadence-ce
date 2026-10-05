@@ -1,7 +1,7 @@
 """Input parsing for the Technician credentials tab. Technician and "Covers" choices depend on the tenant, so they are built in __init__."""
-from datetime import date
 
 from django import forms
+from django.utils import timezone
 
 from apps.credentials import services
 from apps.credentials.models import Credential, Scope, Technician
@@ -39,7 +39,7 @@ class CredentialForm(forms.Form):
         self.technicians = {str(t.id): t for t in active_technicians()}
         self.fields["technician"].choices = [(pk, t.name) for pk, t in self.technicians.items()]
         self.fields["covers"].choices = credential_options()
-        self.fields["issued_on"].initial = date.today()
+        self.fields["issued_on"].initial = timezone.localdate()
 
     def clean_technician(self):
         return self.technicians[self.cleaned_data["technician"]]

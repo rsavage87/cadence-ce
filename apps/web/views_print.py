@@ -11,11 +11,11 @@ A completed PM prints its result and its checklist as recorded (slice 15), and a
 Slice 16: a scoped user (apps.workorders.scoping) prints labels for their own devices and their own work orders; another tag or
 number is a 404, and a failed PM and its repair name each other only when both are theirs.
 """
-from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 
 from django.db.models import Prefetch
 from django.shortcuts import get_object_or_404, render
+from django.utils import timezone
 
 from apps.accounts.models import Level, Module
 from apps.equipment.models import Asset
@@ -121,7 +121,7 @@ def wo_print(request, number):
     wo = get_object_or_404(scoping.work_orders(user, WorkOrder.objects.select_related(
         "asset", "asset__device_model", "asset__device_model__pm_procedure", "asset__department", "asset__contract", "assigned_to", "alert",
         "follow_up_of").prefetch_related(labor_lines, part_lines)), number=number)
-    today = date.today()
+    today = timezone.localdate()
     is_open = wo.status in OPEN_STATUSES
     is_pm = wo.type == WoType.PM
     procedure = wo.asset.device_model.pm_procedure if is_pm else None

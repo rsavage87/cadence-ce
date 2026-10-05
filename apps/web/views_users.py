@@ -12,13 +12,14 @@ which one a scoped user sees by, or that they see nothing yet. Choosing a compan
 select for someone without what it needs opens Edit with that role chosen, to ask for it. The matrix shows each role's scope
 and changes a custom role's (the Director's and the default vendor and requester roles' are fixed).
 """
-from datetime import date, timedelta
+from datetime import timedelta
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, render
 from django.urls import reverse
+from django.utils import timezone
 from django.views.decorators.http import require_POST
 from django_htmx.http import reswap, retarget, trigger_client_event
 
@@ -56,7 +57,7 @@ def _name(user) -> str:
 
 def _rows(request, users) -> list[dict]:
     """One dict per user with what the row template needs; credential counts come from one query, not one per row."""
-    horizon = date.today() + timedelta(days=settings.CREDENTIAL_EXPIRY_WARNING_DAYS)
+    horizon = timezone.localdate() + timedelta(days=settings.CREDENTIAL_EXPIRY_WARNING_DAYS)
     techs = {t.user_id: t for t in Technician.objects.filter(user__in=[u.pk for u in users]).prefetch_related("credentials")}
     departments = services.department_names(request.tenant)
     rows = []

@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from django import forms
 from django.conf import settings
+from django.utils import timezone
 
 from apps.contracts.models import Contract, ContractType, Coverage
 from apps.contracts.services import STATUS_KEYS, ContractFilters
@@ -43,7 +44,7 @@ class ContractForm(forms.Form):
 
 
 def new_contract_initial(asset=None, today: date | None = None) -> dict:
-    today = today or date.today()
+    today = today or timezone.localdate()
     initial = {"start_on": today, "end_on": add_months(today, 12), "annual_cost": 0}
     if asset is not None:
         initial["vendor"] = asset.device_model.manufacturer
@@ -58,7 +59,7 @@ def edit_contract_initial(contract) -> dict:
 
 def contract_choices(today: date | None = None) -> list[tuple[str, str]]:
     """The support editor's select: in-house first, then every contract by vendor and reference (the mock's supportForm)."""
-    today = today or date.today()
+    today = today or timezone.localdate()
     choices = [("", "In-house, no contract")]
     for c in Contract.objects.order_by("vendor", "reference"):
         choices.append((str(c.id), f"{c.reference} · {c.vendor} · {c.get_coverage_display()}{' (expired)' if c.end_on < today else ''}"))
