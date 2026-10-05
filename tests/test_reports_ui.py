@@ -104,7 +104,7 @@ def test_api_lists_the_catalog_and_serves_one_report(client, signed_in, monkeypa
     signed_in("analyst")
     assert [r["key"] for r in client.get("/api/v1/reports/").json()] == REPORT_KEYS
     monkeypatch.setattr(rs, "run_report", lambda key, today=None: {"columns": ["A"], "rows": [[1, 3.14159, "x"]], "extra": object()})
-    import apps.api.views as api_views
+    import apps.api.views_reports as api_views
 
     monkeypatch.setattr(api_views, "run_report", rs.run_report)
     data = client.get("/api/v1/reports/tech/").json()

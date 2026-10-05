@@ -1,42 +1,34 @@
 """
-REST API. Every view inherits TenantAPIMixin (apps/api/tenancy.py), which sets the tenant once DRF has authenticated the
-session or the token. Every viewset resolves its queryset per request through the tenant-scoped manager;
-never put `queryset = Model.objects.all()` on the class (it would be evaluated at import time
-with no tenant in context and stay empty).
+REST API: devices, device models, departments, work orders, and Settings (slice 19 moved the other areas to their own modules:
+apps/api/base.py lists them). Every view inherits TenantAPIMixin (apps/api/tenancy.py), which sets the tenant once DRF has
+authenticated the session or the token. Every viewset resolves its queryset per request through the tenant-scoped manager;
+never put `queryset = Model.objects.all()` on the class (it would be evaluated at import time with no tenant in context and stay
+empty).
 
 Slice 16: a scoped user (the vendor technician, the clinical requester; apps.workorders.scoping) is refused by every endpoint
 except the actions a view names in `scoped_actions` (ModulePermission). Work orders and devices name theirs and narrow their
 querysets to the user's share, so a row outside it is a 404, as another facility's is, and search and ordering only sort that share.
 """
-import re
-from datetime import date
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import ProtectedError
-from rest_framework import routers, status, viewsets
+from rest_framework import routers, status
 from rest_framework.decorators import action
-from rest_framework.exceptions import MethodNotAllowed, NotFound, PermissionDenied
+from rest_framework.exceptions import MethodNotAllowed, PermissionDenied
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.accounts.models import DataScope, Level
-from apps.contracts.models import Contract
-from apps.credentials.models import Credential, Technician
+from apps.credentials.models import Technician
 from apps.credentials.services import qualified_technicians
 from apps.equipment import permissions as eq_perms
 from apps.equipment import services as eq_services
 from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel
 from apps.facility import services as fac_services
 from apps.pm import permissions as pm_perms
-from apps.pm import schedule as pm_schedule
-from apps.pm.services import create_pm_work_orders_for_day, generate_pm_work_orders
-from apps.recalls import permissions as rc_perms
-from apps.recalls import services as rc_services
-from apps.recalls.models import AlertMatch
-from apps.reports.services import REPORTS, overview_kpis, report_meta, run_report
 from apps.tenants.context import get_current_tenant
 from apps.workorders import permissions as wo_perms
 from apps.workorders import scoping
@@ -44,42 +36,13 @@ from apps.workorders import services as wo_services
 from apps.workorders.models import OPEN_STATUSES, WorkOrder, WoStatus
 
 from . import serializers as s
+from .base import TenantViewSet, _refuse_on_create, _via_service
 from .permissions import ModulePermission
 from .tenancy import TenantAPIMixin
 
 
 class APIRootView(TenantAPIMixin, routers.APIRootView):
     """The /api/v1/ index. It reads no tenant rows, but every API view sets the tenant the same way."""
-
-
-class TenantViewSet(TenantAPIMixin, viewsets.ModelViewSet):
-    model = None
-    module = None
-    permission_classes = [IsAuthenticated, ModulePermission]
-    # Slice 16: the actions that narrow every row they read or write to a scoped user's share. None by default: every other
-    # action refuses a scoped user whatever their levels (ModulePermission), so a viewset opts in, never out.
-    scoped_actions = frozenset()
-
-    def get_queryset(self):
-        return self.model.objects.all()
-
-    def perform_create(self, serializer):
-        serializer.save(tenant=get_current_tenant())
-
-
-def _via_service(fn, *args, **kwargs):
-    """Call a service; its ValidationError becomes a 400, field errors keyed by field (as a form shows them), anything else as detail."""
-    try:
-        return fn(*args, **kwargs)
-    except ValidationError as e:
-        raise DRFValidationError(e.message_dict if hasattr(e, "error_dict") else {"detail": " ".join(e.messages)}) from e
-
-
-def _refuse_on_create(data, fields, what):
-    """Fields the create service does not take: refused when given rather than dropped, so a client never thinks they were saved."""
-    errors = {f: [f"Set this with PATCH once the {what} is added."] for f in fields if data.get(f) not in (None, "")}
-    if errors:
-        raise DRFValidationError(errors)
 
 
 class EquipmentWrites:
@@ -316,203 +279,6 @@ class WorkOrderViewSet(TenantViewSet):
         tech = Technician.objects.filter(pk=request.data.get("technician")).first() if request.data.get("technician") else None
         _via_service(wo_services.assign, wo, technician=tech, vendor_name=request.data.get("vendor_name", ""), by=request.user)  # a refusal is a 400
         return Response(self.get_serializer(wo).data)
-
-
-class ContractViewSet(TenantViewSet):
-    model, module, serializer_class = Contract, "contracts", s.ContractSerializer
-    search_fields = ["reference", "vendor"]
-
-    @action(detail=True, methods=["post"])
-    def add_assets(self, request, pk=None):
-        """Body: {"asset_ids": [...]} or {"device_model": "<id>"} to add every active device of a model."""
-        contract = self.get_object()
-        if request.data.get("device_model"):
-            assets = Asset.objects.filter(device_model_id=request.data["device_model"], status__in=Asset.ACTIVE_STATUSES)
-        else:
-            assets = Asset.objects.filter(id__in=request.data.get("asset_ids", []))
-        n = contract.add_assets(assets)
-        return Response({"added": n, "device_count": contract.covered_assets().count()})
-
-    @action(detail=True, methods=["post"])
-    def remove_asset(self, request, pk=None):
-        contract = self.get_object()
-        asset = Asset.objects.filter(pk=request.data.get("asset_id")).first()
-        if asset is None:
-            return Response({"detail": "asset_id required"}, status=status.HTTP_400_BAD_REQUEST)
-        contract.remove_asset(asset)
-        return Response({"device_count": contract.covered_assets().count()})
-
-
-class TechnicianViewSet(TenantViewSet):
-    model, module, serializer_class = Technician, "users", s.TechnicianSerializer
-
-    def get_queryset(self):
-        return Technician.objects.prefetch_related("credentials")
-
-
-class CredentialViewSet(TenantViewSet):
-    # Removing a credential is part of routine credential upkeep, gated like adding one (the web tab does the same).
-    model, module, serializer_class, delete_level = Credential, "users", s.CredentialSerializer, Level.EDIT
-
-
-class AlertMatchViewSet(TenantViewSet):
-    model, module, serializer_class = AlertMatch, "recalls", s.AlertMatchSerializer
-    http_method_names = ["get", "patch", "post", "head", "options"]  # post only for the actions below; create is refused
-
-    @property
-    def write_level(self):
-        # Same doors as the Recalls screen: the batch and a review move need Edit; editing the note directly stays at Approve.
-        if self.action == "work_orders":
-            return rc_perms.WORK_ORDERS_LEVEL
-        if self.action == "transition":
-            return rc_perms.REVIEW_LEVEL
-        return Level.APPROVE
-
-    def get_queryset(self):
-        return AlertMatch.objects.select_related("alert", "device_model").order_by("-alert__published_on", "alert__external_id")
-
-    def create(self, request, *args, **kwargs):
-        raise MethodNotAllowed("POST", detail="Matches are created by matching alerts to the inventory, not posted.")
-
-    def perform_update(self, serializer):
-        # Status goes through the transition action so it is permission-checked and follows the allowed moves.
-        match, d = serializer.instance, serializer.validated_data
-        if "status" in d and d["status"] != match.status:
-            raise DRFValidationError({"status": "Use POST /api/v1/alert-matches/{id}/transition/ to change the status."})
-        serializer.save()
-
-    @action(detail=True, methods=["post"])
-    def transition(self, request, pk=None):
-        match = self.get_object()
-        to_status = request.data.get("status")
-        if to_status not in AlertMatch.Status.values:
-            raise DRFValidationError({"status": f"Required; one of {', '.join(AlertMatch.Status.values)}."})
-        if not rc_perms.can_transition(request.user, match.status, to_status):
-            raise PermissionDenied("Closing or reopening an alert needs Approve access.")
-        try:
-            rc_services.set_status(match, to_status, by=request.user, note=request.data.get("note", ""))
-        except ValidationError as e:
-            return Response({"detail": e.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(self.get_serializer(match).data)
-
-    @action(detail=True, methods=["post"], url_path="work-orders")
-    def work_orders(self, request, pk=None):
-        match = self.get_object()
-        try:
-            batch = rc_services.create_recall_work_orders(match, by=request.user)
-        except ValidationError as e:
-            return Response({"detail": e.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
-        return Response({"created": batch.created, "unassigned": batch.unassigned, **self.get_serializer(match).data})
-
-
-class OverviewViewSet(TenantAPIMixin, viewsets.ViewSet):
-    permission_classes = [IsAuthenticated, ModulePermission]
-    module = "reports"
-
-    def list(self, request):
-        from datetime import date
-
-        today = date.today()
-        year, month = int(request.query_params.get("y", today.year)), int(request.query_params.get("m", today.month))
-        return Response(overview_kpis(year, month))
-
-
-class ReportViewSet(TenantAPIMixin, viewsets.ViewSet):
-    """The Reports screen's tables as JSON: the list names them, `/<key>/` returns one (columns and rows, as the CSV download)."""
-
-    permission_classes = [IsAuthenticated, ModulePermission]
-    module = "reports"
-
-    def list(self, request):
-        return Response([{"key": r["key"], "title": r["title"], "subtitle": r["subtitle"]} for r in REPORTS])
-
-    def retrieve(self, request, pk=None):
-        from datetime import date
-
-        meta = report_meta(pk)
-        if meta is None:
-            raise NotFound("No such report")
-        today = date.today()
-        data = run_report(pk, today)
-        rows = [[round(v, 2) if isinstance(v, float) else v for v in row] for row in data["rows"]]  # as the CSV: two decimals
-        return Response({"key": pk, "title": meta["title"], "as_of": today, "columns": data["columns"], "rows": rows})
-
-
-ISO_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-
-
-def _parse_day(value):
-    """A strict YYYY-MM-DD date, or None (missing, malformed, or not a real day)."""
-    if not isinstance(value, str) or not ISO_DAY.match(value):
-        return None
-    try:
-        return date.fromisoformat(value)
-    except ValueError:
-        return None
-
-
-def _hours(h) -> str:
-    return f"{h:.2f}"
-
-
-class PmViewSet(TenantAPIMixin, viewsets.ViewSet):
-    """The PM schedule as JSON (slice 9): GET calendar/?y=&m= (the month grid), GET day/?day=YYYY-MM-DD (the day plan with each
-    device's suggested technician), POST create-for-day/ {"day": ...} (one PM work order per device due that day without an open
-    one; PM Approve, like the nightly `generate`). Reads need PM View. The numbers come from apps.pm.schedule and the batch from
-    apps.pm.services, as on the web screen."""
-
-    permission_classes = [IsAuthenticated, ModulePermission]
-    module = "pm"
-    write_level = pm_perms.CREATE_LEVEL
-    MIN_YEAR, MAX_YEAR = 1900, 2200  # the grid runs a few days past the month either side; far-out years are typos, not schedules
-
-    def initial(self, request, *args, **kwargs):
-        super().initial(request, *args, **kwargs)
-        if get_current_tenant() is None:  # a superuser who has not picked a tenant would otherwise read or plan nobody's work
-            raise PermissionDenied("Pick a tenant first (Admin, Tenants).")
-
-    @action(detail=False, methods=["post"])
-    def generate(self, request):
-        return Response({"created": generate_pm_work_orders()})
-
-    @action(detail=False, methods=["get"])
-    def calendar(self, request):
-        today = date.today()
-        try:
-            year, month = int(request.query_params.get("y", today.year)), int(request.query_params.get("m", today.month))
-        except (TypeError, ValueError):
-            return Response({"detail": "y and m must be whole numbers."}, status=status.HTTP_400_BAD_REQUEST)
-        if not (1 <= month <= 12 and self.MIN_YEAR <= year <= self.MAX_YEAR):
-            return Response({"detail": f"m must be 1 to 12 and y {self.MIN_YEAR} to {self.MAX_YEAR}."}, status=status.HTTP_400_BAD_REQUEST)
-        cal = pm_schedule.month_calendar(year, month, today)
-        weeks = [[{"date": c["date"].isoformat(), "in_month": c["in_month"], "is_today": c["is_today"], "past": c["past"], "n": c["n"],
-                   "life_support": c["life_support"], "high": c["high"]} for c in week] for week in cal["weeks"]]
-        return Response({"year": year, "month": month, "due_this_month": cal["due_this_month"], "weeks": weeks})
-
-    @action(detail=False, methods=["get"])
-    def day(self, request):
-        day = _parse_day(request.query_params.get("day"))
-        if day is None:
-            raise DRFValidationError({"day": "Required, as YYYY-MM-DD."})
-        plan = pm_schedule.day_plan(day, date.today())
-        devices = []
-        for r in plan["rows"]:
-            a, dm, tech = r["asset"], r["asset"].device_model, r["technician"]
-            devices.append({"asset_id": str(a.id), "tag": a.tag, "description": dm.description, "manufacturer": dm.manufacturer, "model": dm.model,
-                            "department": a.department.name, "risk_class": dm.risk_class, "hours": _hours(r["hours"]),
-                            "procedure": r["procedure"].code if r["procedure"] else None, "has_open_pm": r["has_open_pm"],
-                            "technician": {"id": str(tech.id), "name": tech.name} if tech else None})
-        return Response({"day": day.isoformat(), "overdue": plan["overdue"], "count": plan["count"], "hours": _hours(plan["hours"]),
-                         "to_create": plan["to_create"], "devices": devices})
-
-    @action(detail=False, methods=["post"], url_path="create-for-day")
-    def create_for_day(self, request):
-        day = _parse_day(request.data.get("day") if hasattr(request.data, "get") else None)  # a JSON list or scalar body has no day
-        if day is None:
-            raise DRFValidationError({"day": "Required, as YYYY-MM-DD."})
-        # Creating needs PM Approve (write_level); assigning each work order also needs work-order Approve, as on the screen.
-        batch = create_pm_work_orders_for_day(day, by=request.user, assign_to_technicians=wo_perms.can_assign(request.user), today=date.today())
-        return Response({"created": batch.created, "assigned": batch.assigned, "skipped": batch.skipped})
 
 
 class FacilitySettingsView(TenantAPIMixin, APIView):
