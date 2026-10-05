@@ -3,9 +3,9 @@ Input parsing for Add device and Edit details (slice 12). Model and department c
 __init__, never at class level. The rules (tags, dates, costs, a new model's fields) live in apps.equipment.services; these forms
 parse what was typed and put the services' errors back on the fields they name.
 """
-from datetime import date
 
 from django import forms
+from django.utils import timezone
 
 from apps.equipment.models import AssetStatus, Department, DeviceModel, RiskClass
 from apps.equipment.services import EDITABLE_FIELDS
@@ -61,7 +61,7 @@ class DeviceForm(forms.Form):
                                                *([(NEW, "Add a new model")] if self.allow_new else [])]
         self.fields["department"].choices = [("", "Choose a department"), *((pk, d.name) for pk, d in self.departments.items()),
                                              *([(NEW, "Add a new department")] if self.allow_new else [])]
-        today = date.today().isoformat()
+        today = timezone.localdate().isoformat()
         for name in ("installed_on", "last_pm_on"):  # the services refuse future dates; the date picker can say so first
             if name in self.fields:
                 self.fields[name].widget.attrs["max"] = today

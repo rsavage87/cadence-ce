@@ -6,6 +6,7 @@ apps.workorders.costs; these forms parse what was typed and put the service's er
 from datetime import date
 
 from django import forms
+from django.utils import timezone
 
 from apps.credentials.models import Technician
 from apps.workorders import costs
@@ -62,7 +63,7 @@ class LaborForm(CostForm):
     def __init__(self, *args, wo, user, default_rate, can_set_rate: bool, today: date | None = None, **kwargs):
         kwargs.setdefault("auto_id", "wl-%s")
         super().__init__(*args, **kwargs)
-        today = today or date.today()
+        today = today or timezone.localdate()
         last = min(today, wo.completed_on or today)
         self.wo, self.default_rate, self.can_set_rate = wo, default_rate, can_set_rate
         self.fields["worked_on"].widget.attrs.update({"min": wo.opened_on.isoformat(), "max": last.isoformat()})

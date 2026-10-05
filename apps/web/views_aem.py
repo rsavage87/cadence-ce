@@ -20,6 +20,7 @@ from datetime import date
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.shortcuts import get_object_or_404, render
+from django.utils import timezone
 from django.views.decorators.http import require_POST
 from django_htmx.http import retarget, trigger_client_event
 
@@ -68,7 +69,7 @@ def evidence_view(ev: dict | None) -> dict | None:
 
 def aem_tab(request, dm) -> dict:
     """The AEM tab's context, under "aem" so nothing collides with the drawer's own keys."""
-    user, today = request.user, date.today()
+    user, today = request.user, timezone.localdate()
     decisions = list(AemDecision.objects.filter(device_model=dm).select_related("proposed_by", "decided_by", "ended_by"))
     approved = next((d for d in decisions if d.status == AemStatus.APPROVED), None)
     proposal = next((d for d in decisions if d.status == AemStatus.PROPOSED), None)
@@ -124,7 +125,7 @@ def _moved_note(moved: int) -> str:
 # --- Propose ---------------------------------------------------------------------------------------------------
 
 def _propose_modal(request, dm, form):
-    today = date.today()
+    today = timezone.localdate()
     ev = aem.evidence(dm, today)
     return render(request, "web/_aem_propose.html", {
         "dm": dm, "form": form, "blocker": aem.propose_blocker(dm, today, ev=ev), "evidence": evidence_view(ev),
@@ -170,7 +171,7 @@ def aem_decide(request, pk):
     dm = decision.device_model
     if request.method != "POST":
         initial = {"decision": request.GET.get("decision") if request.GET.get("decision") in ("approve", "reject") else APPROVE,
-                   "decided_on": date.today()}
+                   "decided_on": timezone.localdate()}
         return _decide_modal(request, decision, DecideForm(initial=initial))
     form = DecideForm(request.POST)
     approved = None

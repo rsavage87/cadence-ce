@@ -17,6 +17,7 @@ from decimal import Decimal
 from django.http import Http404
 from django.shortcuts import render
 from django.urls import reverse
+from django.utils import timezone
 from django.views.decorators.http import require_POST
 from django_htmx.http import trigger_client_event
 
@@ -38,8 +39,9 @@ _INT_RE = re.compile(r"\d{1,4}")
 
 
 def _today() -> date:
-    """The schedule's clock, in one place so tests can pin it."""
-    return date.today()
+    """The schedule's clock, in one place so tests can pin it: the facility's today (its time zone is active in a request), so the
+    calendar's today, the day panel, and what falls overdue turn over at the facility's midnight, not the server's."""
+    return timezone.localdate()
 
 
 def _parse_day(value) -> date | None:

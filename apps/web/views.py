@@ -7,6 +7,10 @@ Drawers (device, work order) and the new work order modal are partials swapped i
 Slice 16: a scoped user (apps.workorders.scoping: a vendor technician's company, a clinical requester's unit) sees only their share
 of the facility. The views here that admit them (web_view's `scoped=True`) narrow every list, count, and search to it, and a device
 or work order outside it is a 404, as another facility's is. The rest refuse them (closed by default).
+
+Slice 21: a page works on the facility's day. The tenant middleware activates the facility's time zone, so timezone.localdate() is
+its today (never date.today(), the server's); a view asks once and passes that day to the services that take one, so one page reads
+one day. Times (the work order timeline, History) are aware and render in the facility's zone.
 """
 from datetime import date, timedelta
 from urllib.parse import urlencode
@@ -17,6 +21,7 @@ from django.db.models import Min
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils import timezone
 from django.views.decorators.http import require_POST
 from django_htmx.http import retarget, trigger_client_event
 
@@ -73,7 +78,7 @@ def overview(request):
             if key != "overview":
                 return redirect(url_name)
         raise PermissionDenied
-    today = date.today()
+    today = timezone.localdate()
     year, month = _parse_month(request.GET, today)
     data = overview_page(year, month, today)
     first = WorkOrder.objects.aggregate(first=Min("opened_on"))["first"] or today
@@ -106,10 +111,11 @@ def _equipment_context(request) -> dict:
     mine = scoped_assets(request.user)  # the list, its filters, and the page head's counts over the user's devices only
     options = asset_filter_options(mine)
     f = parse_asset_filters(request.GET, options)
-    page = Paginator(filter_assets(f, qs=mine), PAGE_SIZE).get_page(request.GET.get("page"))
+    today = timezone.localdate()  # the facility's: a PM falls due, and a contract ends, on its day
+    page = Paginator(filter_assets(f, today, qs=mine), PAGE_SIZE).get_page(request.GET.get("page"))
     bucket_label = FleetBucket(f.bucket).label if f.bucket else ""
     return {"nav_active": "equipment", "list_url": reverse("web:equipment"), "f": f, "options": options, "page": page, "bucket_label": bucket_label,
-            "summary": fleet_summary(qs=mine), "sort_columns": EQUIPMENT_COLUMNS,
+            "summary": fleet_summary(today, qs=mine), "sort_columns": EQUIPMENT_COLUMNS,
             "can_add_device": eq_perms.can_add(request.user) and mine is None}  # asset_new refuses scoped users
 
 
@@ -144,15 +150,16 @@ def asset_drawer_context(request, asset) -> dict:
                             ("costs", user.has_level(Module.REPORTS, Level.VIEW) and not scoped), ("recalls", can_view_recalls),
                             ("history", history_tabs.allowed(user, "devices"))) if ok]
     tab = request.GET.get("tab") if request.GET.get("tab") in tabs else "overview"
-    summary = asset_service_summary(asset, work_orders=scoping.work_orders(user) if scoped else None)
+    today = timezone.localdate()
+    summary = asset_service_summary(asset, today, work_orders=scoping.work_orders(user) if scoped else None)
     recalls = _model_recalls(asset.device_model_id) if can_view_recalls else []
     if tab == "history":
         extra = history_tabs.context(request, asset, "devices", reverse("web:asset", args=[asset.tag]), tab=True)
     else:
-        extra = asset_tabs.pm_tab(asset) if tab == "pm" else asset_tabs.costs_tab(asset) if tab == "costs" else {}
+        extra = asset_tabs.pm_tab(asset, today) if tab == "pm" else asset_tabs.costs_tab(asset, today) if tab == "costs" else {}
     return {"asset": asset, "tab": tab, "summary": summary, "recent": summary["work_orders"][:4],
             # The facility's staff and their credentials (the API closes qualified_technicians to scoped users too): not theirs to read.
-            "qualified": [] if scoped else qualified_technicians(asset),
+            "qualified": [] if scoped else qualified_technicians(asset, today),
             "portal_url": asset_request_url(asset), "can_create_wo": user.has_level(wo_perms.MODULE, wo_perms.CREATE_LEVEL) and not scoped,
             "can_view_wo": user.has_level(Module.WORKORDERS, Level.VIEW), "scoped": scoped,
             "can_view_recalls": can_view_recalls, "recalls": recalls, "tabs": tabs,
@@ -199,7 +206,7 @@ def _workorders_context(request) -> dict:
     techs = [] if scoped else list(Technician.objects.filter(is_active=True))  # the facility's roster is not a scoped user's to read
     f = parse_work_order_filters(request.GET, {str(t.id) for t in techs})
     mode = "board" if request.GET.get("mode") == "board" else "list"
-    today = date.today()
+    today = timezone.localdate()
     open_wos = scoping.work_orders(user, wo_services.open_work_orders())
     # The portal requests waiting are a CE manager's to assign, and a scoped user cannot assign: the note is not for them.
     unassigned_portal = 0 if scoped else wo_services.unassigned_portal_requests().count()
@@ -212,7 +219,7 @@ def _workorders_context(request) -> dict:
            "done_7d": mine.filter(completed_on__gte=today - timedelta(days=wo_services.BOARD_RECENT_DAYS)).count(),
            "can_create": user.has_level(wo_perms.MODULE, wo_perms.CREATE_LEVEL) and not scoped}  # wo_new refuses scoped users
     if mode == "board":
-        ctx["columns"] = wo_services.board_columns(f, qs=mine)
+        ctx["columns"] = wo_services.board_columns(f, today, qs=mine)
     else:
         ctx["page"] = Paginator(wo_services.filter_work_orders(f, qs=mine), PAGE_SIZE).get_page(request.GET.get("page"))
     return ctx
@@ -242,7 +249,7 @@ def _wo_drawer_context(request, wo) -> dict:
 
     user = request.user
     scoped = scoping.is_scoped(user)
-    today = date.today()
+    today = timezone.localdate()
     unassigned = wo.assigned_to_id is None and not wo.vendor_service
     actions = [] if unassigned else [{"to": to, "label": label, "primary": primary} for to, label, primary in WO_ACTIONS.get(wo.status, [])
                                      if to in ALLOWED_TRANSITIONS[wo.status] and wo_perms.can_transition(user, wo.status, to)]
@@ -262,7 +269,7 @@ def _wo_drawer_context(request, wo) -> dict:
         "wo": wo, "asset": wo.asset, "is_open": is_open, "unassigned": unassigned, "actions": actions,
         "late_days": (today - wo.due_on).days if is_open and wo.due_on < today else 0,
         "open_days": (today - wo.opened_on).days,
-        "qual": qualification(wo.assigned_to, wo.asset) if wo.assigned_to_id else None,
+        "qual": qualification(wo.assigned_to, wo.asset, today) if wo.assigned_to_id else None,
         "can_assign": can_assign, "assign_choices": technician_choices(wo.asset) if can_assign else [], "assign_current": current,
         "assignment_policy": get_settings().policy_assignment if can_assign else "",
         "can_note": user.has_level(wo_perms.MODULE, wo_perms.NOTE_LEVEL),

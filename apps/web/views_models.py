@@ -18,6 +18,7 @@ from django.db.models import F
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, render
 from django.urls import reverse
+from django.utils import timezone
 from django_htmx.http import retarget, trigger_client_event
 
 from apps.accounts.models import Level, Module
@@ -59,7 +60,7 @@ def risk_parts(dm) -> list[dict]:
 def program_tab(request, dm, today: date | None = None) -> dict:
     """The PM program tab's context, under one key (`program`): the model's risk, intervals, and devices, and what this user may
     do. One key, because a model drawer opened directly renders over the PM schedule, whose context it would otherwise shadow."""
-    today = today or date.today()
+    today = today or timezone.localdate()
     user = request.user
     active = (Asset.objects.filter(device_model=dm, status__in=Asset.ACTIVE_STATUSES).select_related("department")
               .order_by(F("next_pm_on").asc(nulls_last=True), "tag"))

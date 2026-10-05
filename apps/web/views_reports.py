@@ -20,6 +20,7 @@ from datetime import date
 from django.core.exceptions import ValidationError
 from django.http import Http404, HttpResponseForbidden
 from django.shortcuts import redirect, render
+from django.utils import timezone
 from django_htmx.http import trigger_client_event
 
 from apps.accounts.models import Level, Module
@@ -36,8 +37,9 @@ from .reports_custom import present_custom
 
 
 def _today() -> date:
-    """The reports' clock, in one place so tests can pin it (fixture `freeze_today`)."""
-    return date.today()
+    """The reports' clock, in one place so tests can pin it (fixture `freeze_today`): the facility's today (its time zone is active
+    in a request), so a report, its CSV's name, and its print are as of the facility's day, not the server's."""
+    return timezone.localdate()
 
 
 def _meta(key: str | None) -> dict:

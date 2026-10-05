@@ -20,6 +20,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from django.db.models import Count, DecimalField, F, FilteredRelation, OuterRef, Q, Subquery, Sum
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 
 from apps.accounts.models import Level, Module
 from apps.contracts.models import Contract
@@ -75,7 +76,7 @@ EQUIPMENT_COLUMNS = ["Tag", "Serial", "Manufacturer", "Model", "Description", "C
 
 @web_view(Module.EQUIPMENT, Level.VIEW, scoped=True)
 def equipment_csv(request):
-    today = date.today()
+    today = timezone.localdate()
     mine = scoped_assets(request.user)
     f = parse_asset_filters(request.GET, asset_filter_options(mine))
     # A scoped user's count of open work orders is of their own, as the device drawer counts them.
@@ -115,7 +116,7 @@ def _assigned_to(wo) -> str:
 
 @web_view(Module.WORKORDERS, Level.VIEW, scoped=True)
 def workorders_csv(request):
-    today = date.today()
+    today = timezone.localdate()
     # The same technicians the list's Assigned filter offers (active ones), so an id the list would drop is dropped here too.
     f = parse_work_order_filters(request.GET, {str(pk) for pk in Technician.objects.filter(is_active=True).values_list("pk", flat=True)})
     wos = (filter_work_orders(f, qs=scoping.work_orders(request.user))  # a scoped user's own work orders, as their list shows
@@ -148,7 +149,7 @@ STATUS_LABELS = dict(AssetStatus.choices)  # the device columns are annotations,
 
 @web_view(Module.CONTRACTS, Level.VIEW)
 def contracts_csv(request):
-    today = date.today()
+    today = timezone.localdate()
     listed = filter_contracts(parse_contract_filters(request.GET), today)
     # One row per covered device (a contract without any still gets one row): the listed contracts joined to their covered devices,
     # in the list's order and then the drawer's (model, tag).
@@ -183,7 +184,7 @@ def _file_part(text: str) -> str:
 
 @web_view(Module.CONTRACTS, Level.VIEW)
 def contract_devices_csv(request, pk):
-    today = date.today()
+    today = timezone.localdate()
     contract = get_object_or_404(Contract.objects, pk=pk)
     devices = contract.covered_assets().select_related("device_model", "department").order_by("device_model__model", "tag")
     covered_cost = devices.aggregate(s=Sum("acquisition_cost"))["s"]

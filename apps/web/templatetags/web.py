@@ -1,8 +1,10 @@
-"""Small renderers shared by the web templates: icons, status chips, PM stickers, money, and query strings."""
-from datetime import date
+"""Small renderers shared by the web templates: icons, status chips, PM stickers, money, and query strings.
+
+Days count from the facility's today (timezone.localdate(): the tenant middleware activates its time zone), never the server's."""
 from urllib.parse import urlencode
 
 from django import template
+from django.utils import timezone
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 
@@ -91,7 +93,7 @@ def pm_sticker(asset):
         return format_html('<span class="stk na">{}</span>', "Retired")
     if not asset.next_pm_on:
         return format_html('<span class="stk na">{}</span>', "Not scheduled")
-    d = (asset.next_pm_on - date.today()).days
+    d = (asset.next_pm_on - timezone.localdate()).days
     if d < 0:
         return format_html('<span class="stk over">Overdue {} d</span>', -d)
     if d == 0:
@@ -99,6 +101,13 @@ def pm_sticker(asset):
     if d <= 30:
         return format_html('<span class="stk due">Due in {} d</span>', d)
     return format_html('<span class="stk ok">Due {}</span>', asset.next_pm_on.strftime("%b %Y"))
+
+
+@register.simple_tag
+def local_now():
+    """Now in the time zone at work (the facility's, in a request): `{% local_now as at %}{{ at|date:"g:i A T" }}`. Unlike Django's
+    {% now %}, which reads the system clock itself, this reads django.utils.timezone.now like the rest of the app."""
+    return timezone.localtime()
 
 
 @register.filter
@@ -126,12 +135,12 @@ def short_name(name):
 
 @register.filter
 def days_until(d):
-    return (d - date.today()).days if d else None
+    return (d - timezone.localdate()).days if d else None
 
 
 @register.filter
 def days_since(d):
-    return (date.today() - d).days if d else None
+    return (timezone.localdate() - d).days if d else None
 
 
 @register.simple_tag

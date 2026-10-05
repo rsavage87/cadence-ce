@@ -16,7 +16,7 @@
   <div class="print-bar-a">{% block bar_actions %}{% endblock %}<button class="pbtn primary" type="button" data-print>{% icon "print" %} Print</button></div>
 </div>
 {% block sheets %}<main class="sheet">{% block content %}{% endblock %}</main>{% endblock %}
-<footer class="print-foot">{{ request.tenant.name }} · Cadence CE · printed {% now "M j, Y g:i A" %} by {{ request.user.get_full_name|default:request.user.username }}</footer>
+<footer class="print-foot">{{ request.tenant.name }} · Cadence CE · printed {% local_now as printed_at %}{{ printed_at|date:"M j, Y g:i A T" }} by {{ request.user.get_full_name|default:request.user.username }}</footer>
 <script>document.querySelector("[data-print]").addEventListener("click", function () { window.print(); });</script>
 </body>
 </html>
