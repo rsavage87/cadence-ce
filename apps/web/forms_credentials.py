@@ -3,13 +3,14 @@ from datetime import date
 
 from django import forms
 
+from apps.credentials import services
 from apps.credentials.models import Credential, Scope, Technician
 from apps.credentials.services import credential_options
 
 from .forms import parse_uuid
 
 # Stored as the credential's free-text `source`; the mock offers these four.
-SOURCES = ["OEM training", "In-house sign-off", "Third-party course", "Certification (CBET, CRES, CLES)"]
+SOURCES = services.SOURCES
 
 
 def active_technicians():

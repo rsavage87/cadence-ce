@@ -155,37 +155,13 @@ def recall_match(request):
     return toast(_render_body(request), f"{n} new match{'' if n == 1 else 'es'}" if n else "No new matches")
 
 
-def _plural(n: int, word: str, plural: str = "") -> str:
-    return f"{n} {word if n == 1 else plural or word + 's'}"
-
-
-def _check_message(check: feeds.Check) -> str:
-    """The mock's "Checked ECRI and FDA feeds: no new alerts", for the one feed that is connected."""
-    matches = f"{_plural(check.matches, 'new match', 'new matches')} for your inventory"
-    if check.result is None:
-        tried = (f"The FDA recall feed did not answer at {feeds.clock(check.checked_at)}" if check.last_failed
-                 else f"The FDA recall feed was checked at {feeds.clock(check.checked_at)}")
-        held = f"{tried}; it can be checked again at {feeds.clock(check.again_at)}."
-        return f"{held} {matches[0].upper()}{matches[1:]}." if check.matches else f"{held} No new matches."
-    r = check.result
-    if r.new:
-        message = f"Checked the FDA recall feed: {_plural(r.new, 'new notice')}, " + (matches if check.matches else "none match your inventory")
-    elif check.matches:
-        message = f"Checked the FDA recall feed: no new notices, {matches}"
-    else:
-        message = "Checked the FDA recall feed: no new alerts"
-    if r.truncated:
-        message += f" (openFDA sent {r.returned:,} of {r.total:,} recalls)"
-    return message
-
-
 @require_POST
 @web_view(rc_perms.MODULE, rc_perms.MATCH_LEVEL)
 def recall_check_feed(request):
     """Check FDA feed: fetch the last 30 days from openFDA (at most once per feeds.CHECK_COOLDOWN, whoever asks), store them, and
     match them to this facility. At the level of Match alerts to inventory, which it extends with the fetch."""
     try:
-        message = _check_message(feeds.check_feed())
+        message = feeds.check_message(feeds.check_feed())
     except feeds.FeedError as e:
         message = f"Could not check the FDA recall feed: {e}. Nothing changed; the daily import will try again."
     return toast(render(request, "web/_recalls_check.html", {**_body_context(request), **_feed_context()}), message)

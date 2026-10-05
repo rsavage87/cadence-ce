@@ -470,14 +470,19 @@ def test_api_shows_the_mark_and_only_equipment_approve_changes_it(client, people
     assert AemDecision.objects.get().status == AemStatus.ENDED and Asset.objects.get(tag="CA-1").next_pm_on == TODAY
 
 
-def test_api_refuses_a_new_model_sent_marked(client, people, ctx):
-    client.force_login(people["director"])
+def test_api_adds_a_model_marked_for_equipment_approve_only(client, people, ctx):
+    """Slice 19: the CMS mark can be sent when adding a model, as Add model takes it; create_device_model refuses it (403) from
+    anyone without Equipment Approve, and nothing is added."""
     body = {"manufacturer": "GE HealthCare", "model": "OEC 3D", "description": "Mobile C-arm", "category": "Imaging", "risk_class": "high"}
+    client.force_login(people["tech"])
     r = client.post("/api/v1/device-models/", {**body, "oem_schedule_required": True}, content_type="application/json")
-    assert r.status_code == 400 and "Set this with PATCH once the model is added" in r.json()["oem_schedule_required"][0]
+    assert r.status_code == 403 and r.json() == {"detail": eq.OEM_SCHEDULE_PERMISSION}
     assert not DeviceModel.objects.exists()
-    r = client.post("/api/v1/device-models/", {**body, "oem_schedule_required": False}, content_type="application/json")
+    r = client.post("/api/v1/device-models/", {**body, "model": "OEC Elite", "oem_schedule_required": False}, content_type="application/json")
     assert r.status_code == 201 and r.json()["oem_schedule_required"] is False
+    client.force_login(people["director"])
+    r = client.post("/api/v1/device-models/", {**body, "oem_schedule_required": True}, content_type="application/json")
+    assert r.status_code == 201 and r.json()["oem_schedule_required"] is True and DeviceModel.objects.get(model="OEC 3D").oem_schedule_required
 
 
 # --- the demo seed -------------------------------------------------------------------------------------------------------------

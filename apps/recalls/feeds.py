@@ -258,3 +258,28 @@ def check_feed(now: datetime | None = None) -> Check:
             f"{stamp}: {result.new} new alerts, {result.returned} records returned (openFDA total {result.total}); {matches} new matches")
     _succeeded(now)
     return Check(result, matches, now, None)
+
+
+def _plural(n: int, word: str, plural: str = "") -> str:
+    return f"{n} {word if n == 1 else plural or word + 's'}"
+
+
+def check_message(check: Check) -> str:
+    """What a check found, in the words the Recalls screen's toast and the API's check-feed answer use (the mock's "Checked ECRI and
+    FDA feeds: no new alerts", for the one feed that is connected)."""
+    matches = f"{_plural(check.matches, 'new match', 'new matches')} for your inventory"
+    if check.result is None:
+        tried = (f"The FDA recall feed did not answer at {clock(check.checked_at)}" if check.last_failed
+                 else f"The FDA recall feed was checked at {clock(check.checked_at)}")
+        held = f"{tried}; it can be checked again at {clock(check.again_at)}."
+        return f"{held} {matches[0].upper()}{matches[1:]}." if check.matches else f"{held} No new matches."
+    r = check.result
+    if r.new:
+        message = f"Checked the FDA recall feed: {_plural(r.new, 'new notice')}, " + (matches if check.matches else "none match your inventory")
+    elif check.matches:
+        message = f"Checked the FDA recall feed: no new notices, {matches}"
+    else:
+        message = "Checked the FDA recall feed: no new alerts"
+    if r.truncated:
+        message += f" (openFDA sent {r.returned:,} of {r.total:,} recalls)"
+    return message

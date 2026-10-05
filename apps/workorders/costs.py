@@ -22,6 +22,7 @@ Rules:
 - Another facility's work order, line, or technician is refused. Every add and remove is audited (simple_history: who, and
   "Added" or "Removed"), and the work order's timeline shows both.
 """
+import re
 import unicodedata
 from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
@@ -67,6 +68,17 @@ def plain(value) -> str:
     if d == d.to_integral_value():
         return str(d.to_integral_value())
     return format(d.normalize(), "f")
+
+
+_THOUSANDS = re.compile(r"\d{1,3}(,\d{3})+(\.\d+)?")
+
+
+def read_money(value: str) -> str:
+    """A typed amount as the drawer's and the API's money boxes read it: a pasted "$1,250.00" loses the dollar sign, and a comma
+    goes only as a thousands separator. Anything else ("1,5" meaning 1.5) reaches the service unchanged and is refused there, never
+    read as a number ten times larger."""
+    text = (value or "").strip().removeprefix("$").strip()
+    return text.replace(",", "") if _THOUSANDS.fullmatch(text) else text
 
 
 def money_text(value) -> str:

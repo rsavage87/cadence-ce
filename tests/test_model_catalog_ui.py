@@ -10,6 +10,7 @@ from decimal import Decimal
 import pytest
 
 from apps.accounts.models import Level, Role, User, create_default_roles
+from apps.api.views import DeviceModelViewSet
 from apps.equipment import services as eq
 from apps.equipment.models import Asset, AssetStatus, DeviceModel, RiskClass
 from apps.pm.models import PmProcedure
@@ -465,8 +466,12 @@ def test_api_the_director_changes_an_unscored_class_but_not_against_a_score(clie
 
 
 def test_api_cannot_set_the_score_parts(client, signed_in, pump_model):
+    """The score parts are set at /risk-score/ (slice 19); a model PATCH that sends them is refused, never saved without them."""
     signed_in("director")
-    api_patch(client, pump_model, {"risk_function": 10, "risk_physical": 5, "risk_maintenance": 5, "risk_incidents": 2, "risk_reviewed_on": "2026-01-01"})
+    r = api_patch(client, pump_model, {"risk_function": 10, "risk_physical": 5, "risk_maintenance": 5, "risk_incidents": 2, "risk_reviewed_on": "2026-01-01",
+                                       "description": "Renamed"})
+    assert r.status_code == 400 and "risk-score" in r.json()["risk_function"][0] and set(r.json()) == set(DeviceModelViewSet.SCORE_FIELDS)
     pump_model.refresh_from_db()
+    assert pump_model.description != "Renamed"
     assert pump_model.risk_score is None and pump_model.risk_reviewed_on is None
 

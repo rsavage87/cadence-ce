@@ -3,7 +3,6 @@ Input parsing for Log time and Add part in the work order drawer (slice 15). The
 are built in __init__, never at class level. The rules (hours, dates, rates, quantities, costs, lengths) live in
 apps.workorders.costs; these forms parse what was typed and put the service's errors back on the fields they name.
 """
-import re
 from datetime import date
 
 from django import forms
@@ -22,14 +21,7 @@ def _number(label, placeholder="", **attrs):
                            widget=forms.TextInput(attrs={"inputmode": "decimal", "autocomplete": "off", "placeholder": placeholder, **attrs}))
 
 
-_THOUSANDS = re.compile(r"\d{1,3}(,\d{3})+(\.\d+)?")
-
-
-def money_text(value: str) -> str:
-    """Tolerate a pasted "$1,250.00" in a money box: the dollar sign goes, and a comma only as a thousands separator. Anything
-    else ("1,5" meaning 1.5) reaches the service unchanged and is refused there, never read as a number ten times larger."""
-    text = (value or "").strip().removeprefix("$").strip()
-    return text.replace(",", "") if _THOUSANDS.fullmatch(text) else text
+money_text = costs.read_money  # the reading of a typed amount, shared with the API (apps/api/views_work.py)
 
 
 def _text_input(limit: int, **attrs):

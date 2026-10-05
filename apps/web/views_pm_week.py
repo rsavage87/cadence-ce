@@ -7,8 +7,8 @@ closes the modal after settle. The POST answers the modal, not the body, so noth
 itself and fires no `pm-assigned`.
 
 Both need pm_perms.can_assign_week (PM Approve and the work-order assign level), checked here on every request; the button is hidden
-without it too, but hiding a button is not access control. There is no API endpoint yet; it would be GET (the preview) and POST
-/api/v1/pm/assign-week/ with the same permission, returning the counts below.
+without it too, but hiding a button is not access control. The API's GET /api/v1/pm/week/ (the preview) and POST
+/api/v1/pm/assign-week/ (apps/api/views_pm.py) call the same services with the same permission.
 """
 from django.core.exceptions import PermissionDenied
 from django.http import HttpResponse

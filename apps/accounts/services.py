@@ -21,6 +21,7 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Q
 from django.utils.text import slugify
+from rest_framework.authtoken.models import Token
 
 from apps.contracts.models import Contract
 from apps.credentials.models import Technician
@@ -36,11 +37,27 @@ audit_log = logging.getLogger("cadence.audit")
 # Status is derived, not stored: an invited account that has signed in is simply active.
 USER_STATUSES = [("active", "Active"), ("invited", "Invited"), ("deactivated", "Deactivated")]
 PENDING_INVITE = Q(is_invited=True, last_login__isnull=True)
+EMAIL_MAX = User._meta.get_field("username").max_length  # an invited user's email is their username
 NEW_TECHNICIAN_TITLE = "BMET I"
 COMPANY_MAX_LENGTH = 120  # User.company
 DEPARTMENT_MAX_LENGTH = 80  # User.department
 SCOPE_CHOICE_MESSAGE = "Choose who the role sees: the whole facility, their company's work orders, or their department's."
 
+
+
+# Departments Invite user and Edit suggest besides the tenant's clinical departments (the mock's list); the API takes the same.
+STANDING_DEPARTMENTS = (["Clinical Engineering"], ["Finance", "Quality and Patient Safety", "External vendor"])
+
+
+def facility_departments() -> list[str]:
+    return list(Department.objects.values_list("name", flat=True))
+
+
+def department_options() -> list[str]:
+    """The units a user can be put in: the standing ones and the facility's departments, each once."""
+    before, after = STANDING_DEPARTMENTS
+    names = before + facility_departments() + after
+    return list(dict.fromkeys(names))
 
 def count_active_users(tenant) -> int:
     """Active accounts that have signed in at least once; invited ones are not counted, matching the mock's status chips."""
@@ -95,6 +112,32 @@ def role_user_counts(tenant) -> dict:
 def _check_role(tenant, role):
     if role is None or role.tenant_id != tenant.id:
         raise ValidationError("Choose a role from this facility.")
+
+
+# --- nobody hands out more access than they have, and a facility keeps a director (slice 19) ------------------------------------
+# The Users and Roles tabs and the API (apps/api/views_users.py) share these: a custom role with Users Full can manage accounts,
+# but only up to its own access, so it can never make itself or anyone a director, nor copy or raise a role past its own levels.
+
+def _check_grant(by, role) -> None:
+    """`by` may give `role` (invite, change a user's role, copy it into a new role) only if they have every module's access it has."""
+    if by is None or by.is_superuser:
+        return
+    for module in Module.values:
+        if role.level_for(module) > by.level_for(module):
+            raise ValidationError(f"You can give only a role whose access you have yourself: {role.name} has more "
+                                  f"{Module(module).label} access than your role.")
+
+
+def _active_directors(tenant):
+    """Accounts that hold the Director role (the system role) and can use it: active, and not an invitation still pending."""
+    return User.objects.filter(tenant=tenant, is_active=True, role__is_system=True).exclude(PENDING_INVITE)
+
+
+def _check_keeps_a_director(user) -> None:
+    """A facility always keeps a director who can sign in: refuse to deactivate or move the last one."""
+    if user.role_id and user.role.is_system and user.is_active and not _active_directors(user.tenant).exclude(pk=user.pk).exists():
+        raise ValidationError(f"{user.get_full_name() or user.username} is this facility's only {user.role.name}; give someone else that "
+                              "role first.")
 
 
 # --- data scope: the company or department a scoped role's user needs ----------------------------------------------------------
@@ -202,9 +245,12 @@ def invite_user(tenant, *, email, first_name, last_name, role, department="", co
     first_name, last_name = (first_name or "").strip(), (last_name or "").strip()
     if not email:
         raise ValidationError("A work email is required.")
+    if len(email) > EMAIL_MAX:  # it becomes the username, which holds no more
+        raise ValidationError(f"Keep the email to {EMAIL_MAX} characters.")
     if not first_name or not last_name:
         raise ValidationError("First and last name are required.")
     _check_role(tenant, role)
+    _check_grant(by, role)
     # Only this facility's accounts are named; an address used elsewhere must not be confirmed to another tenant.
     if User.objects.filter(tenant=tenant).filter(Q(username__iexact=email) | Q(email__iexact=email)).exists():
         raise ValidationError(f"{email} is already a member of this facility.")
@@ -237,6 +283,9 @@ def set_user_role(user, role, *, company=None, department=None, by=None) -> User
     _check_role(user.tenant, role)
     if by is not None and by.pk == user.pk:
         raise ValidationError("You cannot change your own role.")
+    _check_grant(by, role)
+    if role.pk != user.role_id:
+        _check_keeps_a_director(user)
     company, department = _scoped_values(user.tenant, role, *_new_values(user, company, department))
     before = {"role": user.role.slug if user.role_id else "", "company": user.company, "department": user.department}
     user.role, user.company, user.department = role, company, department
@@ -273,6 +322,7 @@ def deactivate_user(user, by=None) -> User:
         raise ValidationError("You cannot deactivate your own account.")
     if user.is_superuser:
         raise ValidationError("Superusers are managed in Admin.")
+    _check_keeps_a_director(user)
     user.is_active = False
     fields = ["is_active"]
     if not user.has_usable_password():
@@ -281,6 +331,8 @@ def deactivate_user(user, by=None) -> User:
         user.set_unusable_password()
         fields.append("password")
     user.save(update_fields=fields)
+    # Their API tokens go too: token sign-in refuses an inactive user, but reactivating must not bring an old token back to life.
+    Token.objects.filter(user=user).delete()
     return user
 
 
@@ -303,6 +355,8 @@ def set_role_level(role, module, level, by=None) -> Role:
         raise ValidationError(f"The {role.name} role is fixed and cannot be changed.")
     if by is not None and by.role_id == role.pk:
         raise ValidationError("You cannot change the permissions of your own role.")
+    if by is not None and not by.is_superuser and level > role.level_for(module) and level > by.level_for(module):
+        raise ValidationError(f"You cannot give a role more {Module(module).label} access than your own role has.")
     role.set_levels({module: level})
     return role
 
@@ -352,6 +406,7 @@ def create_role(*, name, description="", copy_from: Role, scope=DataScope.FACILI
         raise ValidationError("Give the role a name.")
     if scope not in DataScope.values:
         raise ValidationError({"scope": SCOPE_CHOICE_MESSAGE})
+    _check_grant(by, copy_from)
     tenant = copy_from.tenant
     description = (description or "").strip() or f"Copied from {copy_from.name}"
     role = Role(tenant=tenant, name=name[:80], slug=_unique_slug(tenant, name), description=description[:300], scope=scope)

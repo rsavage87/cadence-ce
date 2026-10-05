@@ -48,7 +48,6 @@ from rest_framework.response import Response
 
 from apps.credentials.models import Technician
 from apps.tenants.context import get_current_tenant
-from apps.web.forms_wo_costs import money_text  # the drawer's reading of a typed amount ("$1,250.00"), so both doors read it alike
 from apps.workorders import costs, scoping
 from apps.workorders import permissions as wo_perms
 from apps.workorders import services as wo_services
@@ -125,7 +124,7 @@ class WorkOrderLaborViewSet(_WorkOrderPart):
         """The drawer's rule (views_wo_costs._check_rate): a rate other than the Settings one needs work-order Approve (403). Blank,
         or the Settings rate itself, is anyone's, and someone without Approve is charged the Settings rate whatever they sent. A
         pasted "$1,250.00" is read as the drawer reads it (forms_wo_costs.money_text)."""
-        text = money_text(value or "")
+        text = costs.read_money(value or "")
         if wo_perms.can_set_rate(request.user):
             return text or None
         if text:
@@ -175,7 +174,7 @@ class WorkOrderPartViewSet(_WorkOrderPart):
         wo = self.work_order(work_order_pk)
         d = self.body(sw.PartBodySerializer)
         line = _via_service(costs.add_part, wo, by=request.user, description=d.get("description") or "", quantity=d.get("quantity"),
-                            unit_cost=money_text(d.get("unit_cost") or ""), part_number=d.get("part_number") or "",
+                            unit_cost=costs.read_money(d.get("unit_cost") or ""), part_number=d.get("part_number") or "",
                             po_number=d.get("po_number") or "")
         return Response(sw.PartLineSerializer(line, context={"request": request}).data, status=status.HTTP_201_CREATED)
 

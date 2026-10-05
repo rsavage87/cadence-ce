@@ -95,7 +95,6 @@ from apps.accounts.services import USER_STATUSES, UserFilters
 from apps.credentials import services as cred_services
 from apps.credentials.models import Credential, Technician
 from apps.tenants.context import get_current_tenant
-from apps.web.forms_users import department_options
 
 from . import serializers_users as su
 from .base import TenantViewSet, _via_service
@@ -233,7 +232,7 @@ class UserViewSet(UsersModule):
         else:
             department = str(department).strip()
             own = (user.department or "").strip() if user is not None else ""
-            if scope != DataScope.DEPARTMENT and department and department != own and department not in department_options():
+            if scope != DataScope.DEPARTMENT and department and department != own and department not in services.department_options():
                 errors["department"] = ["Choose a department from the list: one of this facility's departments, Clinical Engineering, "
                                         "Finance, Quality and Patient Safety, or External vendor."]
         if errors:

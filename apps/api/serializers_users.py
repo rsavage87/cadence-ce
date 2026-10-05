@@ -12,9 +12,8 @@ from rest_framework import serializers
 from apps.accounts import invitations, services
 from apps.accounts.models import DEFAULT_ROLES, DataScope, Level, Module, Role
 from apps.credentials.models import Credential, Scope, Technician
-from apps.credentials.services import credential_options, credential_state
+from apps.credentials.services import SOURCES, credential_options, credential_state
 from apps.tenants.context import get_current_tenant
-from apps.web.forms_credentials import SOURCES
 from apps.workorders.scoping import scope_of
 
 from . import serializers as s

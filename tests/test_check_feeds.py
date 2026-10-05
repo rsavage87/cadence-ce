@@ -23,7 +23,6 @@ from apps.jobs.models import JobRun
 from apps.recalls import feeds
 from apps.recalls.models import Alert, AlertMatch
 from apps.tenants.context import tenant_context
-from apps.web import views_recalls
 
 HX = {"HTTP_HX_REQUEST": "true"}
 URL = "/recalls/check-feed/"
@@ -428,4 +427,4 @@ AT = timezone.make_aware(datetime(2026, 10, 2, 10, 42))  # local time (TIME_ZONE
      "The FDA recall feed was checked at 10:42 AM; it can be checked again at 10:57 AM. 2 new matches for your inventory."),
 ])
 def test_toast_wording(check, message):
-    assert views_recalls._check_message(check) == message
+    assert feeds.check_message(check) == message

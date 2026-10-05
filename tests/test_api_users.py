@@ -478,7 +478,7 @@ def test_a_users_edit_holder_changes_no_user_or_role(client, ctx, person, member
     assert post(client, cred_url(techs["tom"].credentials.get(), "renew/")).status_code == 200
 
 
-def test_a_users_full_holder_cannot_raise_themself(client, ctx, person, member, role, admin_role):
+def test_a_users_full_holder_cannot_raise_themself(client, ctx, person, member, role, admin_role, custom_role):
     """A custom role with Users Full manages others, never its own access: not the role, its levels, or what it sees."""
     me = person(admin_role)
     r = patch(client, user_url(me), {"role": str(role("director").id)})
@@ -501,9 +501,17 @@ def test_a_users_full_holder_cannot_raise_themself(client, ctx, person, member, 
     r = patch(client, role_url(role("director")), {"scope": "department"})
     assert r.status_code == 400 and r.json() == {"scope": ["The Director role is fixed and cannot be changed."]}
     assert role("director").level_for("users") == Level.FULL
-    # others are theirs to manage, as on the Users tab
+    # others are theirs to manage, but only up to their own access (slice 19: nobody hands out more than they have)
     tom = member("technician")
-    assert patch(client, user_url(tom), {"role": str(role("manager").id)}).json()["role_slug"] == "manager"
+    r = patch(client, user_url(tom), {"role": str(role("manager").id)})
+    assert r.status_code == 400 and r.json() == {"detail": "You can give only a role whose access you have yourself: CE manager has more "
+                                                           "Equipment access than your role."}
+    clerk = custom_role("Contracts clerk", {"contracts": Level.EDIT})
+    assert patch(client, user_url(tom), {"role": str(clerk.id)}).json()["role_name"] == "Contracts clerk"
+    r = post(client, ROLES, {"name": "Copy of Director", "copy_from": str(role("director").id)})
+    assert r.status_code == 400 and "access you have yourself" in str(r.json())
+    r = patch(client, role_url(clerk), {"levels": {"settings": Level.FULL}})
+    assert r.status_code == 400 and r.json() == {"levels": {"settings": ["You cannot give a role more Settings access than your own role has."]}}
 
 
 def test_the_directors_protections(client, ctx, person, member, role, django_user_model):
@@ -557,10 +565,11 @@ def test_a_deactivated_users_token_is_refused(ctx, member, role, token_of):
     boss, mine = token_of(director), token_of(manager)
     assert by_token("get", USERS, None, mine).status_code == 200
     assert by_token("post", user_url(manager, "deactivate/"), None, boss).status_code == 200
-    r = by_token("get", USERS, None, mine)
-    assert r.status_code == 403 and r.json() == {"detail": "User inactive or deleted."}
+    r = by_token("get", USERS, None, mine)  # deactivating deletes their tokens (slice 19)
+    assert r.status_code == 403 and r.json() == {"detail": "Invalid token."} and not Token.objects.filter(user=manager).exists()
     assert by_token("post", user_url(manager, "reactivate/"), None, boss).status_code == 200
-    assert by_token("get", USERS, None, mine).status_code == 200
+    assert by_token("get", USERS, None, mine).status_code == 403  # reactivating never brings the old token back
+    assert by_token("get", USERS, None, token_of(manager)).status_code == 200
     # a deactivated director's token writes nothing either
     User.objects.filter(pk=director.pk).update(is_active=False)
     body = {"email": "x@riverside.example", "first_name": "X", "last_name": "Y", "role": str(role("director").id)}

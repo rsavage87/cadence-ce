@@ -92,11 +92,22 @@ class DeviceModelViewSet(EquipmentWrites, TenantViewSet):
     model, module, serializer_class = DeviceModel, "equipment", s.DeviceModelSerializer
     search_fields = ["manufacturer", "model", "description", "category"]
     in_use = "{} has devices, so it cannot be deleted."
-    CREATE_FIELDS = ("manufacturer", "model", "description", "category", "oem_pm_interval_months", "expected_life_years", "list_cost")
+    CREATE_FIELDS = ("manufacturer", "model", "description", "category", "oem_pm_interval_months", "expected_life_years", "list_cost",
+                     "oem_schedule_required")  # the CMS mark: create_device_model refuses it from anyone without Equipment Approve (a 403)
+    SCORE_FIELDS = ("risk_function", "risk_physical", "risk_maintenance", "risk_incidents", "risk_reviewed_on")
+
+    def _refuse_score(self):
+        """The rubric's parts are set at /risk-score/ (apps/api/views_pm.py: Equipment Approve, the band sets the class), never here;
+        a body that sends them is refused rather than saved without them."""
+        sent = [f for f in self.SCORE_FIELDS if hasattr(self.request.data, "get") and f in self.request.data]
+        if sent:
+            where = "/api/v1/device-models/<id>/risk-score/"
+            raise DRFValidationError({f: [f"A model's risk score is set at {where} (Equipment Approve)."] for f in sent})
 
     def perform_create(self, serializer):
         # Through create_device_model, which needs a risk class and never takes an AEM interval: that is set only by approving an
         # AEM proposal on the model's AEM tab (apps.pm.aem), never through the API.
+        self._refuse_score()
         d = serializer.validated_data
         if d.get("aem_interval_months") not in (None, ""):
             raise DRFValidationError({"aem_interval_months": ["An AEM interval is set by approving an AEM proposal (PM schedule, PM library)."]})
@@ -107,6 +118,7 @@ class DeviceModelViewSet(EquipmentWrites, TenantViewSet):
     def perform_update(self, serializer):
         # Through update_device_model: create's rules (intervals, cost, a name unique in any letter case) hold on every change too.
         # A new risk class needs the risk level (Approve), as on the screen; sending back the current one is fine.
+        self._refuse_score()
         d, dm, user = serializer.validated_data, serializer.instance, self.request.user
         risk = d.get("risk_class")
         if risk is not None and risk != dm.risk_class and not eq_perms.can_set_risk(user):

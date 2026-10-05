@@ -35,7 +35,6 @@ from apps.recalls import permissions as rc_perms
 from apps.recalls import services as rc_services
 from apps.recalls.models import AlertMatch
 from apps.tenants.context import get_current_tenant
-from apps.web.views_recalls import _check_message
 
 from . import serializers as s
 from . import serializers_reports as sr
@@ -102,7 +101,7 @@ class AlertMatchViewSet(TenantViewSet):
         except feeds.FeedError as e:
             detail = f"Could not check the FDA recall feed: {e}. Nothing changed; the daily import will try again."  # the screen's words
             return Response({"detail": detail}, status=status.HTTP_502_BAD_GATEWAY)
-        return Response(sr.feed_check(check, _check_message(check)))
+        return Response(sr.feed_check(check, feeds.check_message(check)))
 
 
 def register(router):

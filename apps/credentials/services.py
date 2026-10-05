@@ -8,6 +8,9 @@ from apps.pm.dates import add_months
 
 from .models import Credential, Scope, Technician
 
+# Where a credential comes from: the Technician credentials tab offers these, and the API takes only these.
+SOURCES = ["OEM training", "In-house sign-off", "Third-party course", "Certification (CBET, CRES, CLES)"]
+
 
 @dataclass
 class Qualification:

@@ -13,14 +13,11 @@ from django.urls import reverse
 from apps.accounts import services
 from apps.accounts.models import DataScope, Role
 from apps.accounts.services import USER_STATUSES, UserFilters
-from apps.equipment.models import Department
 from apps.tenants.context import get_current_tenant
 
 from .forms_models import ServiceErrorsMixin
 
 DEFAULT_ROLE_SLUG = "requester"
-# Departments the invite form suggests besides the tenant's clinical departments (the mock's list).
-STANDING_DEPARTMENTS = (["Clinical Engineering"], ["Finance", "Quality and Patient Safety", "External vendor"])
 VENDOR_DEPARTMENT = "External vendor"  # where a company-scoped user's department starts in Invite user
 CHOOSE_UNIT = "Choose their unit"
 COMPANY_LIST_ID = "user-companies"  # the datalist of suggested companies (one modal is open at a time)
@@ -40,14 +37,8 @@ def parse_user_filters(params, role_slugs: set[str]) -> UserFilters:
                        status=_one_of(params.get("status"), {k for k, _ in USER_STATUSES}))
 
 
-def facility_departments() -> list[str]:
-    return list(Department.objects.values_list("name", flat=True))
-
-
-def department_options() -> list[str]:
-    before, after = STANDING_DEPARTMENTS
-    names = before + facility_departments() + after
-    return list(dict.fromkeys(names))
+# The Invite and Edit forms' department list lives in the service, shared with the API (apps/api/views_users.py).
+department_options, facility_departments, STANDING_DEPARTMENTS = services.department_options, services.facility_departments, services.STANDING_DEPARTMENTS
 
 
 class RoleChoiceMixin:
