@@ -13,8 +13,17 @@ the whole facility, and the default vendor and requester roles keep the narrow v
 
 Audit: a role's scope is in Role.history. User has no history table, so a change to a user's role, company, or department is
 written to the "cadence.audit" log, one line per field.
+
+Access events (slice 20): every change to who may do what writes one AccessEvent in the same transaction as the change (the Users
+and access tab's change log and the API's read them): an invitation (invite_user; a resend in invitations.send_invitation), a user's
+role, company, or department (set_user_role, set_user_scope), deactivating and reactivating an account, adding a role, and a role's
+level for a module or what it sees. `by` is who made the change (None for a command or the seed), `user` the account changed, `role`
+the role involved, and `detail` says what changed in words, with labels rather than slugs ("Technician → CE manager", "Contracts:
+View → Edit"), cut to fit its 300 characters. A refused change raises before anything is written, and a call that changes nothing
+(the role, level, or scope it already has; deactivating an account that already is) writes nothing.
 """
 import logging
+from contextlib import nullcontext
 from dataclasses import dataclass
 
 from django.core.exceptions import ValidationError
@@ -26,11 +35,11 @@ from rest_framework.authtoken.models import Token
 from apps.contracts.models import Contract
 from apps.credentials.models import Technician
 from apps.equipment.models import Department, DeviceModel
-from apps.tenants.context import tenant_context
+from apps.tenants.context import get_current_tenant, tenant_context
 from apps.workorders.models import WorkOrder
 from apps.workorders.scoping import FIELD_SERVICE_SUFFIX, scope_of
 
-from .models import DEFAULT_ROLES, DEFAULT_SCOPES, DataScope, Level, Module, Role, User
+from .models import DEFAULT_ROLES, DEFAULT_SCOPES, AccessEvent, DataScope, Level, Module, Role, User
 
 audit_log = logging.getLogger("cadence.audit")
 
@@ -219,6 +228,66 @@ def _audit(user, by, changes: dict):
                            getattr(by, "pk", None))
 
 
+# --- access events (slice 20) ---------------------------------------------------------------------------------------------------
+
+DETAIL_MAX = AccessEvent._meta.get_field("detail").max_length
+BLANK = "—"  # an empty company or department in an event's words
+
+
+def _inside(tenant):
+    """Work inside `tenant` unless it is the current one already: a command, a test, or the signed-out password-reset form calls with
+    none set, and row-level security accepts a row only while its own tenant is."""
+    current = get_current_tenant()
+    return nullcontext() if current is not None and current.pk == tenant.pk else tenant_context(tenant)
+
+
+def _fit(text: str) -> str:
+    text = " ".join(str(text).split())
+    return text if len(text) <= DETAIL_MAX else text[: DETAIL_MAX - 1] + "…"
+
+
+def record_access_event(tenant, action, *, by=None, user=None, role=None, role_id=None, detail="") -> AccessEvent:
+    """One row in the facility's record of who may do what (AccessEvent), in the caller's transaction. `role`, or its id when only
+    the id is at hand, is the role involved."""
+    with _inside(tenant):
+        event = AccessEvent(tenant=tenant, action=action, by=by, user=user, detail=_fit(detail))
+        event.role_id = role.pk if role is not None else role_id
+        event.save()
+        return event
+
+
+def _role_name(role) -> str:
+    return role.name if role is not None else "No role"
+
+
+def _arrow(before, after) -> str:
+    return f"{before or BLANK} → {after or BLANK}"
+
+
+def _unit_word(role) -> str:
+    """A department-scoped role's users see their own unit; anyone else's department is where they work."""
+    return "unit" if role is not None and role.effective_scope == DataScope.DEPARTMENT else "department"
+
+
+def _scope_words(role, before: tuple[str, str], after: tuple[str, str]) -> list[str]:
+    """"company: A → B" and "department: X → Y" (or "unit: ..."), for whichever of (company, department) changed."""
+    words = []
+    if before[0] != after[0]:
+        words.append(f"company: {_arrow(before[0], after[0])}")
+    if before[1] != after[1]:
+        words.append(f"{_unit_word(role)}: {_arrow(before[1], after[1])}")
+    return words
+
+
+def _sentence(words: list[str]) -> str:
+    text = "; ".join(words)
+    return text[:1].upper() + text[1:]
+
+
+def _is_pending(user) -> bool:
+    return bool(user.is_invited and user.last_login is None)
+
+
 def scope_gap(user, departments: set[str] | None = None) -> str:
     """What keeps a scoped user from seeing anything: "company" or "department" when it is missing (or names none of the facility's
     departments any more), "" when nothing is. `departments` is department_names(), when the caller already has it."""
@@ -288,6 +357,10 @@ def invite_user(tenant, *, email, first_name, last_name, role, department="", co
         raise ValidationError("That address cannot be used for a new account here. Contact support.")
     if create_technician:
         Technician.objects.create(tenant=tenant, user=user, name=f"{first_name} {last_name}"[:120], title=NEW_TECHNICIAN_TITLE)  # its column
+    words = [f"Invited as {role.name}"] + [f"{label}: {value}" for label, value in (("company", company), (_unit_word(role), department)) if value]
+    if create_technician:
+        words.append("technician profile added")
+    record_access_event(tenant, AccessEvent.Action.INVITED, by=by, user=user, role=role, detail="; ".join(words))
     return user
 
 
@@ -310,26 +383,37 @@ def set_user_role(user, role, *, company=None, department=None, by=None) -> User
         _check_outranks(by, user)
         _check_keeps_a_director(user)
     company, department = _scoped_values(user.tenant, role, *_new_values(user, company, department))
-    before = {"role": user.role.slug if user.role_id else "", "company": user.company, "department": user.department}
+    old_role = user.role if user.role_id else None
+    before = {"role": old_role.slug if old_role else "", "company": user.company, "department": user.department}
     user.role, user.company, user.department = role, company, department
     user.save(update_fields=["role", "company", "department"])
     _audit(user, by, {"role": (before["role"], role.slug), "company": (before["company"], company), "department": (before["department"], department)})
+    scope_words = _scope_words(role, (before["company"], before["department"]), (company, department))
+    if old_role is None or old_role.pk != role.pk:
+        record_access_event(user.tenant, AccessEvent.Action.ROLE_CHANGED, by=by, user=user, role=role,
+                            detail="; ".join([_arrow(_role_name(old_role), role.name), *scope_words]))
+    elif scope_words:  # the role it had, with another company or department
+        record_access_event(user.tenant, AccessEvent.Action.SCOPE_CHANGED, by=by, user=user, role=role, detail=_sentence(scope_words))
     return user
 
 
+@transaction.atomic
 def set_user_scope(user, *, company=None, department=None, by=None) -> User:
     """Set or change the company a user works for and the department they belong to (None keeps the account's), checked against
     what their role's scope needs. A scoped user cannot change their own: it decides what they see."""
     company, department = _new_values(user, company, department)
     if by is not None and by.pk == user.pk and scope_of(user) != DataScope.FACILITY and (company, department) != (user.company, user.department):
         raise ValidationError("You cannot change your own company or department: they decide what you see.")
-    company, department = _scoped_values(user.tenant, user.role if user.role_id else None, company, department)
+    role = user.role if user.role_id else None
+    company, department = _scoped_values(user.tenant, role, company, department)
     if (company, department) == (user.company, user.department):
         return user
     before = (user.company, user.department)
     user.company, user.department = company, department
     user.save(update_fields=["company", "department"])
     _audit(user, by, {"company": (before[0], company), "department": (before[1], department)})
+    record_access_event(user.tenant, AccessEvent.Action.SCOPE_CHANGED, by=by, user=user, role=role,
+                        detail=_sentence(_scope_words(role, before, (company, department))))
     return user
 
 
@@ -348,6 +432,7 @@ def deactivate_user(user, by=None) -> User:
         raise ValidationError("Superusers are managed in Admin.")
     _check_outranks(by, user)
     _check_keeps_a_director(user)
+    was_active, pending = user.is_active, _is_pending(user)
     user.is_active = False
     fields = ["is_active"]
     if not user.has_usable_password():
@@ -357,22 +442,36 @@ def deactivate_user(user, by=None) -> User:
         fields.append("password")
     user.save(update_fields=fields)
     # Their API tokens go too: token sign-in refuses an inactive user, but reactivating must not bring an old token back to life.
-    Token.objects.filter(user=user).delete()
+    tokens, _ = Token.objects.filter(user=user).delete()
+    if was_active:
+        role = user.role if user.role_id else None
+        words = [f"Invitation as {_role_name(role)} withdrawn; its link stops working" if pending else f"{_role_name(role)}; can no longer sign in"]
+        if tokens:
+            words.append("API token removed")
+        record_access_event(user.tenant, AccessEvent.Action.DEACTIVATED, by=by, user=user, role=role, detail="; ".join(words))
     return user
 
 
+@transaction.atomic
 def reactivate_user(user, by=None) -> User:
     if user.is_superuser:
         raise ValidationError("Superusers are managed in Admin.")
     if user.role_id:
         _check_grant(by, user.role)  # bringing back an account gives its role again
+    was_active = user.is_active
     user.is_active = True
     user.save(update_fields=["is_active"])
+    if not was_active:
+        role = user.role if user.role_id else None
+        detail = (f"Invitation as {_role_name(role)} open again; Resend invite sends a new link" if _is_pending(user) else
+                  f"{_role_name(role)}; can sign in again")
+        record_access_event(user.tenant, AccessEvent.Action.REACTIVATED, by=by, user=user, role=role, detail=detail)
     return user
 
 
 # --- roles ------------------------------------------------------------------------------------------------------------------
 
+@transaction.atomic
 def set_role_level(role, module, level, by=None) -> Role:
     if module not in Module.values:
         raise ValidationError("Unknown module.")
@@ -382,9 +481,13 @@ def set_role_level(role, module, level, by=None) -> Role:
         raise ValidationError(f"The {role.name} role is fixed and cannot be changed.")
     if by is not None and by.role_id == role.pk:
         raise ValidationError("You cannot change the permissions of your own role.")
-    if by is not None and not by.is_superuser and level > role.level_for(module) and level > by.level_for(module):
+    before = role.level_for(module)
+    if by is not None and not by.is_superuser and level > before and level > by.level_for(module):
         raise ValidationError(f"You cannot give a role more {Module(module).label} access than your own role has.")
     role.set_levels({module: level})
+    if level != before:
+        record_access_event(role.tenant, AccessEvent.Action.ROLE_LEVEL_CHANGED, by=by, role=role,
+                            detail=f"{Module(module).label}: {_arrow(Level(before).label, Level(level).label)}")
     return role
 
 
@@ -398,9 +501,11 @@ def scope_fixed_reason(role) -> str:
     return ""
 
 
+@transaction.atomic
 def set_role_scope(role, scope, by=None) -> Role:
-    """Which devices and work orders a role's users see (audited in Role.history). Narrowing a role whose users have no company or
-    department yet is allowed (closed, never open): they see nothing until one is set, and users_without_scope says who."""
+    """Which devices and work orders a role's users see (audited in Role.history, and an access event when what its users see
+    changes). Narrowing a role whose users have no company or department yet is allowed (closed, never open): they see nothing until
+    one is set, and users_without_scope says who."""
     if scope not in DataScope.values:
         raise ValidationError(SCOPE_CHOICE_MESSAGE)
     reason = scope_fixed_reason(role)
@@ -412,9 +517,13 @@ def set_role_scope(role, scope, by=None) -> Role:
         raise ValidationError("You cannot change what your own role sees.")
     if role.scope != scope:
         _check_grant(by, role)  # what a role sees is part of the access it gives
+        before = role.effective_scope
         role.scope = scope
         role._history_user = by
         role.save(update_fields=["scope", "updated_at"])
+        if role.effective_scope != before:  # a blank scope set to the default it already took changes what nobody sees
+            record_access_event(role.tenant, AccessEvent.Action.ROLE_SCOPE_CHANGED, by=by, role=role,
+                                detail=_arrow(DataScope(before).label, DataScope(role.effective_scope).label))
     return role
 
 
@@ -441,6 +550,9 @@ def create_role(*, name, description="", copy_from: Role, scope=DataScope.FACILI
     role._history_user = by
     role.save()
     role.set_levels({m: copy_from.level_for(m) for m in Module.values})
+    sees = DataScope(scope).label
+    record_access_event(tenant, AccessEvent.Action.ROLE_CREATED, by=by, role=role,
+                        detail=f"Copied from {copy_from.name}; sees {sees[:1].lower()}{sees[1:]}")
     return role
 
 

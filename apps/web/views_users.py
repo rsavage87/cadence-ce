@@ -1,5 +1,6 @@
 """
-Users and access: the Users tab and the Roles and permissions tab (slice 5).
+Users and access: the Users tab and the Roles and permissions tab (slice 5). The Change log tab (slice 20) is
+views_change_log.py, sharing tabs_context.
 
 User is not tenant-scoped, so every lookup here filters on request.tenant; another tenant's user is a 404, never a leak.
 Row actions return the refreshed row and raise 'users-changed' so the list (and its filters) catch up; the matrix is
@@ -36,7 +37,8 @@ from .htmx import is_partial, toast
 SCOPE_SHORT = {DataScope.FACILITY: "Whole facility", DataScope.COMPANY: "Own company", DataScope.DEPARTMENT: "Own department"}
 
 
-def _tabs_context(request, tab: str) -> dict:
+def tabs_context(request, tab: str) -> dict:
+    """What web/_users_tabs.html needs, for each of the Users and access tabs."""
     return {
         "nav_active": "users", "users_tab": tab,
         "users_summary": {"active_users": services.count_active_users(request.tenant), "roles": Role.objects.count(),
@@ -73,7 +75,7 @@ def _rows(request, users) -> list[dict]:
 def _users_context(request) -> dict:
     roles = services.role_order(Role.objects.all())
     f = parse_user_filters(request.GET, {r.slug for r in roles})
-    return {**_tabs_context(request, "users"), "list_url": reverse("web:users"), "f": f, "roles": roles, "statuses": USER_STATUSES,
+    return {**tabs_context(request, "users"),"list_url": reverse("web:users"), "f": f, "roles": roles, "statuses": USER_STATUSES,
             "rows": _rows(request, services.list_users(request.tenant, f))}
 
 
@@ -226,7 +228,7 @@ def _roles_context(request) -> dict:
         levels = {p.module: p.level for p in role.permissions.all()}
         matrix.append({"role": role, "cells": [(m.value, levels.get(m.value, Level.NONE)) for m in ROLE_MATRIX_MODULES], "users": counts.get(role.id, 0),
                        "scope": role.effective_scope, "scope_fixed": services.scope_fixed_reason(role)})
-    return {**_tabs_context(request, "roles"), "matrix": matrix, "modules": [(m.value, m.label) for m in ROLE_MATRIX_MODULES], "levels": Level.choices,
+    return {**tabs_context(request, "roles"),"matrix": matrix, "modules": [(m.value, m.label) for m in ROLE_MATRIX_MODULES], "levels": Level.choices,
             "scopes": [(v, SCOPE_SHORT[v], label) for v, label in DataScope.choices],
             "oob_summary": request.htmx is not None and bool(request.htmx)}
 
