@@ -392,3 +392,29 @@ def test_the_emails_under_row_level_security(staff, techs, wo, fleet, django_cap
     with tenant_context(tenant):
         assert NotificationSent.objects.filter(user=staff["dana"]).count() == 3
     assert User.objects.get(pk=staff["dana"].pk).email == "dana@riverside.example"
+
+
+# --- merge fixes: the recall batch and the demo seed ------------------------------------------------------------------------------
+
+def test_a_recall_batch_sends_its_technician_one_email(staff, techs, pump_recall, pump, dept, pump_model, committed, mailoutbox):
+    """create_recall_work_orders assigns one work order per affected device; the technician hears once, with all of them."""
+    from apps.equipment.models import Asset
+    from apps.recalls.services import create_recall_work_orders
+
+    Asset.objects.create(tag="CE-10003", device_model=pump_model, department=dept)
+    with committed():
+        batch = create_recall_work_orders(pump_recall, by=staff["kim"])
+    assert batch.created == 2
+    sent = [m for m in mailoutbox if m.to in ([staff["dana"].email], [staff["tom"].email])]
+    assert len(sent) == 1 and len(numbers_in(sent[0])) == 2
+    assert_no_free_text(sent[0])
+
+
+def test_the_demo_seed_emails_nobody(db, django_capture_on_commit_callbacks, mailoutbox):
+    from io import StringIO
+
+    from django.core.management import call_command
+
+    with django_capture_on_commit_callbacks(execute=True):
+        call_command("seed_demo", stdout=StringIO())
+    assert mailoutbox == []

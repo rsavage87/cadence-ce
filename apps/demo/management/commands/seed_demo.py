@@ -17,6 +17,7 @@ from apps.credentials.models import Credential, Scope, Technician
 from apps.credentials.services import qualified_technicians
 from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, RiskClass
 from apps.facility.services import labor_rates, update_settings
+from apps.notifications import assignments
 from apps.pm import aem
 from apps.pm.dates import add_months
 from apps.pm.models import PmProcedure
@@ -124,8 +125,12 @@ class Command(BaseCommand):
         parser.add_argument("--slug", default="riverside")
         parser.add_argument("--name", default="Riverside Regional Medical Center")
 
-    @transaction.atomic
     def handle(self, *args, **opts):
+        with assignments.quiet():  # a data load: the demo's work orders are assigned without emailing the demo's technicians
+            self._seed(*args, **opts)
+
+    @transaction.atomic
+    def _seed(self, *args, **opts):
         rnd = random.Random(20260922)
         today = date.today()
         tenant, created = Tenant.objects.get_or_create(slug=opts["slug"], defaults={"name": opts["name"]})

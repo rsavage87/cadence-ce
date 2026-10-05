@@ -15,6 +15,7 @@ from django.db import transaction
 from django.db.models import Count, F, Max, Q
 
 from apps.equipment.models import Asset, DeviceModel
+from apps.notifications import assignments
 from apps.workorders.models import OPEN_STATUSES, Priority, Source, WorkOrder, WoStatus, WoType
 
 from .models import Alert, AlertMatch
@@ -134,15 +135,16 @@ def create_recall_work_orders(match: AlertMatch, by=None, today: date | None = N
     qualified = qualified_technicians(assets[0], today)
     technician = qualified[0][0] if qualified else None
     created = 0
-    for asset in assets:
-        if asset.id in covered:
-            continue
-        wo = create_work_order(asset=asset, type=WoType.RECALL, priority=Priority.HIGH, problem=problem, requester="Recall coordinator",
-                               source=Source.RECALL, opened_on=today, due_on=today + timedelta(days=RECALL_DUE_DAYS), created_by=by,
-                               estimated_hours=RECALL_ESTIMATED_HOURS, alert=alert)
-        if technician is not None:
-            assign(wo, technician=technician, by=by)
-        created += 1
+    with assignments.batch():  # the technician hears once, listing every recall work order, not once per device
+        for asset in assets:
+            if asset.id in covered:
+                continue
+            wo = create_work_order(asset=asset, type=WoType.RECALL, priority=Priority.HIGH, problem=problem, requester="Recall coordinator",
+                                   source=Source.RECALL, opened_on=today, due_on=today + timedelta(days=RECALL_DUE_DAYS), created_by=by,
+                                   estimated_hours=RECALL_ESTIMATED_HOURS, alert=alert)
+            if technician is not None:
+                assign(wo, technician=technician, by=by)
+            created += 1
     if match.status != S.IN_PROGRESS:
         set_status(match, S.IN_PROGRESS, by=by, today=today)
     return RecallBatch(created, 0 if technician is not None else created)

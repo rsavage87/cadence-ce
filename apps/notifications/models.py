@@ -8,6 +8,7 @@ work order's number, device, department, priority, and dates, and a link that as
 """
 from django.conf import settings
 from django.db import models
+from simple_history.models import HistoricalRecords
 
 from apps.core.models import TenantModel
 
@@ -17,6 +18,7 @@ class NotificationPreference(TenantModel):
     assignments = models.BooleanField(default=True, help_text="Email me when a work order is assigned to me")
     daily_digest = models.BooleanField(default=False, help_text="Email me each morning: my work orders due or overdue, and my PMs this week")
     contract_reminders = models.BooleanField(default=True, help_text="Email me when a service contract is about to end (Contracts Edit)")
+    history = HistoricalRecords()  # every choice is audited, as report subscriptions are
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["tenant", "user"], name="uniq_notification_preference_per_user")]

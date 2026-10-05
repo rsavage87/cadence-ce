@@ -89,7 +89,7 @@ def test_the_tab_lists_changes_newest_first_with_who_what_and_why(client, kim, w
     assert 'href="/equipment/CE-10001/" hx-get="/equipment/CE-10001/" hx-target="#drawer"' in html
     renewed = next(e for e in entries if e.area == "contracts" and e.action == "changed")
     assert renewed.who == "Technician User" and renewed.who_id == world["tom"].pk
-    assert {c.field: (c.before, c.after) for c in renewed.changes}["Annual cost"] == ("1200.00", "1500.00")
+    assert {c.field: (c.before, c.after) for c in renewed.changes}["Annual cost"] == ("$1,200", "$1,500")
     assert "Access · Role access changed" in html
     # Export and Print take the filters on screen
     assert f'data-base="{CSV}"' in html and f'data-base="{PRINT}"' in html and 'hx-push-url="true"' in html
