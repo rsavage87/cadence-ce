@@ -174,9 +174,10 @@ def contracts_needing_attention(today: date | None = None):
 
 
 def nav_counts(user=None) -> dict:
-    """The nav's badges. For a scoped user (apps.workorders.scoping: a vendor's company, a requester's unit) only the two screens
-    they may open, counted over their own devices and work orders, and never hot: the portal requests waiting are a CE manager's
-    to assign. Everyone else (and no user) gets the facility's."""
+    """The nav's badges. For a scoped user (apps.workorders.scoping: a vendor's company, a requester's unit) only the screens they may
+    open, counted over their own devices and work orders; Equipment and Work orders never hot (the portal requests waiting are a CE
+    manager's to assign). Everyone else (and no user) gets the facility's. Slice 24: whoever has My work also gets its badge, what is
+    due today or late, hot when something is late (a vendor's company's work included)."""
     mine = _my_work_badge(user)
     if user is not None and scoping.is_scoped(user):
         return {"equipment": scoping.assets(user, Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES)).count(),

@@ -17,6 +17,8 @@ from django.urls import reverse_lazy
 
 from apps.accounts import invitations
 
+from .views_account import default_landing
+
 
 class InviteAcceptView(auth_views.PasswordResetConfirmView):
     token_generator = invitations.invitation_tokens
@@ -28,6 +30,10 @@ class InviteAcceptView(auth_views.PasswordResetConfirmView):
 
     def get_user(self, uidb64):
         return invitations.pending_user_from_uid(uidb64)
+
+    def get_success_url(self):
+        """A technician whose invitation made their profile starts on My work, as signing in does (views_account.default_landing)."""
+        return default_landing(self.request.user) or super().get_success_url()
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)

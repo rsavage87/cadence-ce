@@ -80,7 +80,11 @@ def _saved(request, wo, message: str):
 def _modal(request, template, wo, form, **extra):
     if form is not None and form.is_bound:
         form.focus_first_error()
-    return render(request, template, {"wo": wo, "form": form, "locked": costs.locked_reason(wo), "from_my_work": from_my_work(request), **extra})
+    locked = costs.locked_reason(wo)
+    response = render(request, template, {"wo": wo, "form": form, "locked": locked, "from_my_work": from_my_work(request), **extra})
+    if locked and from_my_work(request):  # review fix: a card offered Log time on work closed meanwhile; the list is behind
+        trigger_client_event(response, "wo-changed", {})
+    return response
 
 
 # --- Log time --------------------------------------------------------------------------------------------------

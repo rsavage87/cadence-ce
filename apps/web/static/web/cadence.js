@@ -114,6 +114,16 @@
       }
     }
   });
+  // Slice 24 review: a My work card's move (Start, Resume, Take) re-fetches the list, which replaces the button that had focus.
+  // Keyboard and screen-reader users go back to that card (or the list's top if it left), not to the top of the page.
+  let mwFocus = null;
+  document.addEventListener("click", (e) => { const b = e.target.closest("[data-mw-card]"); if (b) mwFocus = b.dataset.mwCard; }, true);
+  document.addEventListener("htmx:afterSettle", (e) => {
+    if (!mwFocus || !(e.target.id === "my-work-body")) return;
+    const card = document.getElementById(mwFocus) || e.target.querySelector(".mw-card");
+    mwFocus = null;
+    if (card && (document.activeElement === document.body || !document.activeElement)) card.focus({ preventScroll: true });
+  });
   // Slice 22: the top bar's facility menu. Choosing a facility posts the switch; "All facilities" opens that page in this one.
   document.addEventListener("change", (e) => {
     const sel = e.target.closest('select[data-act="switch-facility"]');

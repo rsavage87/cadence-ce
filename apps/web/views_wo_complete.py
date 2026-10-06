@@ -143,7 +143,7 @@ def _modal(request, wo, form=None, *, steps=(), offers=None, hours=None, reason=
     if form is not None and form.is_bound:
         form.focus_first_error()
     procedure = completion.procedure_for(wo)
-    return render(request, MODAL, {
+    response = render(request, MODAL, {
         "wo": wo, "asset": wo.asset, "dm": wo.asset.device_model, "is_pm": wo.type == WoType.PM, "blocker": reason, "form": form,
         "procedure": procedure, "rows": form.rows() if form is not None else [], "results": form.result_options() if form is not None else [],
         "has_checklist": bool(steps), "step_choices": STEP_CHOICES, "reading_max": completion.READING_MAX, **(offers or {}),
@@ -153,6 +153,9 @@ def _modal(request, wo, form=None, *, steps=(), offers=None, hours=None, reason=
         "starting": not reason and wo.status == WoStatus.OPEN, **(hours or {"offer_hours": False}),
         "from_my_work": from_my_work(request), "from_value": FROM_MY_WORK,
     })
+    if reason and from_my_work(request):  # review fix: a card offered a move the work order no longer allows; the list is behind
+        trigger_client_event(response, "wo-changed", {})
+    return response
 
 
 def _follow_up(wo) -> dict:

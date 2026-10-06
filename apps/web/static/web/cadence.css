@@ -795,6 +795,9 @@ form.facility{margin:0}
   .modal-card:has(input[name="from"][value="my_work"]) :is(#wl-form,#wp-form,#mw-wait-form) .form :is(input:not([type="checkbox"]):not([type="radio"]),select,textarea){font-size:16px;min-height:44px}
 }
 
+/* review fix: a long procedure code wraps inside the card instead of hiding the hours */
+.mw-chips .chip{white-space:normal;overflow-wrap:anywhere;max-width:100%}
+
 /* Slice 24, part B: completing on a phone (the completion modal's checklist and hours) */
 /* Each step's Pass / Fail / N/A is a label covering its cell (a click anywhere in it chooses); its word shows on a phone only */
 .wc-steps td.c .wc-pick{display:flex;align-items:center;justify-content:center;margin:-6px -4px;padding:6px 4px;cursor:pointer}

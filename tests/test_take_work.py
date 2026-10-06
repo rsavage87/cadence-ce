@@ -204,7 +204,7 @@ def test_the_take_button_names_its_own_target_and_swaps_nothing(floor):
     w = wo(floor["pump"])
     html = render_to_string("web/_my_work_take.html", {"wo": w})
     assert f'hx-post="/work-orders/{w.number}/take/"' in html and 'hx-trigger="click consume"' in html
-    assert 'hx-target="this" hx-swap="none"' in html and f'aria-label="Take {w.number}">Take</button>' in html
+    assert 'hx-target="this" hx-swap="none"' in html and f'aria-label="Take {w.number}"' in html and ">Take</button>" in html
     assert render_to_string("web/_my_work_take.html", {}).strip() == ""  # never a broken link without a work order
 
 
@@ -213,11 +213,12 @@ def test_take_answers_with_a_toast_and_wo_changed(client, floor, people):
     client.force_login(people["dana"])
     r = client.post(f"/work-orders/{w.number}/take/", **HX)
     assert r.status_code == 200 and r.content == b""
-    assert triggers(r) == {"toast": {"value": f"{w.number} assigned to you"}, "wo-changed": {}}
+    # on <body> (review fix: the card's button may be gone by the time the answer arrives)
+    assert triggers(r) == {"toast": {"value": f"{w.number} assigned to you", "target": "body"}, "wo-changed": {"target": "body"}}
     w.refresh_from_db()
     assert w.assigned_to == people["dana_tech"]
     again = client.post(f"/work-orders/{w.number}/take/", **HX)
-    assert triggers(again) == {"toast": {"value": f"{w.number} is already yours."}, "wo-changed": {}}  # the list catches up
+    assert triggers(again) == {"toast": {"value": f"{w.number} is already yours.", "target": "body"}, "wo-changed": {"target": "body"}}  # catches up
     defib = wo(floor["defib"])
     r = client.post(f"/work-orders/{defib.number}/take/", **HX)
     assert "not credentialed" in triggers(r)["toast"]["value"] and WorkOrder.objects.get(pk=defib.pk).assigned_to is None

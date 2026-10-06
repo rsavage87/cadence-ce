@@ -170,12 +170,14 @@ def _actions(user, wo) -> list[dict]:
 
 def _waiting(wos, today) -> dict:
     """For work waiting on parts, by work order id: days since it last began waiting (its status history; None if it has no such
-    row, e.g. imported that way), the note it was given then, and its part lines' PO numbers."""
+    row, e.g. imported that way), the note it was given then, and its part lines' PO numbers. Only a move into waiting counts: a
+    reassignment or a due-date move writes a row that stays in the same status, with its own note (review fix)."""
     if not wos:
         return {}
     prefetch_related_objects(wos, "part_lines")
     began = {}
-    for row in WorkOrderStatusHistory.objects.filter(work_order__in=wos, to_status=WoStatus.AWAITING_PARTS).order_by("created_at"):
+    for row in (WorkOrderStatusHistory.objects.filter(work_order__in=wos, to_status=WoStatus.AWAITING_PARTS)
+                .exclude(from_status=WoStatus.AWAITING_PARTS).order_by("created_at")):
         began[row.work_order_id] = row  # the last one wins
     out = {}
     for wo in wos:
@@ -293,8 +295,11 @@ def _waiting_blocker(wo) -> str:
 
 
 def _waiting_modal(request, wo, *, note="", error=""):
-    return render(request, WAITING_MODAL, {"wo": wo, "note": note, "error": error, "blocker": _waiting_blocker(wo),
-                                           "note_max": wo_services.STATUS_NOTE_MAX})
+    blocker = _waiting_blocker(wo)
+    response = render(request, WAITING_MODAL, {"wo": wo, "note": note, "error": error, "blocker": blocker, "note_max": wo_services.STATUS_NOTE_MAX})
+    if blocker:  # review fix: only a card opens this modal; the move it offered is no longer possible, so the list is behind
+        trigger_client_event(response, "wo-changed", {})
+    return response
 
 
 @web_view(wo_perms.MODULE, Level.EDIT, scoped=True)  # a vendor's on their company's work: get_wo narrows to the share, a 404 outside it

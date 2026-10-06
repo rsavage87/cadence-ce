@@ -14,14 +14,14 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
 
-from django.db.models import Sum
+from django.db.models import F, OuterRef, Subquery, Sum
 from django.urls import reverse
 
 from apps.accounts.models import DataScope, Level, Module
 from apps.credentials.services import technician_of
 
 from . import scoping
-from .models import LaborLine, WoStatus, WoType
+from .models import LaborLine, WorkOrderStatusHistory, WoStatus, WoType
 from .services import PRIORITY_RANK, open_work_orders
 
 SOON_DAYS = 7
@@ -107,7 +107,10 @@ def groups(user, today: date) -> Groups:
     result.coming = list(pms.filter(due_on__gt=today, due_on__lte=today + timedelta(days=SOON_DAYS))
                          .order_by("due_on", "asset__department__name", "asset__room", "asset__tag"))
     result.later = pms.filter(due_on__gt=today + timedelta(days=SOON_DAYS)).count()
-    result.waiting = list(qs.filter(status=WoStatus.AWAITING_PARTS).order_by("updated_at"))
+    began = (WorkOrderStatusHistory.objects.filter(work_order=OuterRef("pk"), to_status=WoStatus.AWAITING_PARTS)
+             .exclude(from_status=WoStatus.AWAITING_PARTS).order_by("-created_at").values("created_at")[:1])
+    # longest first, by its last move into waiting (a reassignment touches updated_at, not how long it has waited)
+    result.waiting = list(qs.filter(status=WoStatus.AWAITING_PARTS).annotate(began=Subquery(began)).order_by(F("began").asc(nulls_first=True), "number"))
     result.takeable = takeable(user, today)
     return result
 

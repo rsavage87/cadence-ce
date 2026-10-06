@@ -28,8 +28,10 @@ LAYOUT_TAIL = ("pm_result", "resolution", "open_repair", "hours")
 # What a step records reads as a number when it names a limit or a unit ("leakage µA, limit 100", "Ω", "mmHg"). Anything else
 # ("serial number", or a reading that says nothing of what) keeps the keyboard: the number pad has no letters. So does a reading that
 # may be below zero ("±0.5 °C", "-10 to 10 mV"): a phone's number pad has no minus sign.
-UNITS = frozenset(("µa ua ma amps v mv kv volts ω ohm ohms mω kω % sec secs seconds min mins minutes ms hz bpm psi kpa mmhg cmh2o mbar "
-                   "ml l/min lpm ml/h ml/hr ml/min j joules w watts °c °f db lux kg lb lbs").split())
+# Units a reading never goes below zero in. Not °C, °F, %, mmHg, cmH2O, mV, V, kPa, psi, mbar, or dB: a freezer reads -21 °C, a pump's
+# volume accuracy -3.2 %, a transducer zero -1 mmHg, and the phone's number pad has no minus key (review fix).
+UNITS = frozenset(("µa ua ma amps kv ω ohm ohms mω kω sec secs seconds min mins minutes ms hz bpm "
+                   "ml l/min lpm ml/h ml/hr ml/min j joules w watts lux kg lb lbs").split())
 _WORD = re.compile(r"[^\s,;:()]+")
 _NEGATIVE = re.compile(r"±|(^|[\s(,;:])[-−]\s?\d")
 
@@ -41,7 +43,7 @@ def reads_number(measure) -> bool:
     text = measure.lower()
     if _NEGATIVE.search(text):
         return False
-    return any(c.isdigit() for c in text) or any(word in UNITS for word in _WORD.findall(text))
+    return any(word in UNITS for word in _WORD.findall(text))  # a unit, never digits alone ("software version 2.1.3a" needs letters)
 
 
 class CompleteForm(forms.Form):

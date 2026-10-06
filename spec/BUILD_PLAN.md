@@ -329,4 +329,8 @@ The mock's export and print buttons work since slice 11, Add device since slice 
   (an open PM completes in one step, with its hours), Waiting on parts and Resume. Glove-sized controls (44px). Taking unassigned work
   a technician is credentialed for (a facility setting, on by default; web and API) and assigning oneself on New work order. Scan from
   My work and the label's portal link open the technician's one open work order on the device (my_work.scan_target). The digest's
-  "due" and link are My work's. Deferred: a My work API endpoint, a per-technician route sheet, offline use.
+  "due" and link are My work's. Deferred: a My work API endpoint, a per-technician route sheet, offline use. Rules settled in review:
+  how long work has waited on parts (and its note) is its move into waiting, never a reassignment or a due-date move; signing in from
+  the app's address (/login/?next=/) and accepting an invitation land a technician on My work; the number pad only for readings that
+  never go below zero (not °C, %, mmHg, mV); a refused move from a card re-fetches the list; card moves answer on <body>; cards and
+  their moves are named for screen readers, and focus returns to the card after the list re-fetches.

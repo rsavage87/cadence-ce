@@ -4,4 +4,4 @@
    "click consume" keeps the card, which opens the drawer, from taking the click too; hx-disabled-elt stops a second tap while the
    first is on its way.{% endcomment %}
 {% if wo.number %}<button class="btn primary" type="button" hx-post="{% url 'web:wo_take' wo.number %}" hx-trigger="click consume" hx-target="this" hx-swap="none"
-        hx-disabled-elt="this" aria-label="Take {{ wo.number }}">Take</button>{% endif %}
+        hx-disabled-elt="this" aria-label="Take {{ wo.number }}" data-mw-card="mw-{{ wo.number }}">Take</button>{% endif %}

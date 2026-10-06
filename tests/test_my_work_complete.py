@@ -326,9 +326,12 @@ def test_a_glove_can_choose_each_step(client, signed_in, pm):
 
 
 @pytest.mark.parametrize("measure, number", [
-    ("µA, limit 100", True), ("leakage µA, limit 100", True), ("Ω", True), ("mmHg", True), ("J delivered", True), ("SpO2 %", True),
+    ("µA, limit 100", True), ("leakage µA, limit 100", True), ("Ω", True), ("J delivered", True),
     ("serial number", False), ("firmware version", False), ("a description", False), (True, False), (None, False),
-    ("°C, ±0.5 of the reference", False), ("mV, -10 to 10", False), ("mmHg, 0-300", True),  # below zero needs a minus: the keyboard
+    ("°C, ±0.5 of the reference", False), ("mV, -10 to 10", False),  # below zero needs a minus: the keyboard
+    # review fix: units a reading can go below zero in never bring up the number pad (it has no minus key), nor digits alone
+    ("mmHg", False), ("SpO2 %", False), ("mmHg, 0-300", False), ("freezer temperature, °C", False), ("volume accuracy, %", False),
+    ("software version 2.1.3a", False),
 ])
 def test_which_readings_are_numbers(measure, number):
     assert reads_number(measure) is number

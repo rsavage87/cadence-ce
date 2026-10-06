@@ -54,7 +54,7 @@ from .forms import (
     technician_choices,
     vendor_name_for,
 )
-from .htmx import PAGE_SIZE, is_partial, toast
+from .htmx import PAGE_SIZE, is_partial, on_body, toast
 
 # --- Overview -------------------------------------------------------------------------------------
 
@@ -325,7 +325,7 @@ def wo_status(request, number):
         message = e.messages[0]
     response = _render_wo_drawer(request, wo)
     trigger_client_event(response, "wo-changed", {})
-    return toast(response, message)
+    return on_body(toast(response, message))  # a card's Start or Resume: its button may be gone when the answer comes
 
 
 @require_POST
@@ -360,7 +360,7 @@ def wo_take(request, number):
         message = f"{wo.number} assigned to you"
     except ValidationError as e:
         message = e.messages[0]
-    return trigger_client_event(toast(HttpResponse(""), message), "wo-changed", {})
+    return on_body(trigger_client_event(toast(HttpResponse(""), message), "wo-changed", {}))  # the card may be gone by then
 
 
 @require_POST

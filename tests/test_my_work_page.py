@@ -67,7 +67,7 @@ def page(client, **params) -> str:
 
 def card(body: str, number: str) -> str:
     """The card of work order `number` in a My work body."""
-    m = re.search(r'<article class="mw-card[^"]*" hx-get="/work-orders/%s/".*?</article>' % re.escape(number), body, re.S)
+    m = re.search(r'<article class="mw-card[^"]*"[^>]*hx-get="/work-orders/%s/".*?</article>' % re.escape(number), body, re.S)
     assert m, f"no card for {number}"
     return m.group(0)
 

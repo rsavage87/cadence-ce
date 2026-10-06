@@ -1,4 +1,5 @@
 """Small helpers shared by the web views: partial detection and the toast event."""
+import json
 from urllib.parse import urlsplit
 
 from django.http import HttpResponse
@@ -20,6 +21,18 @@ def is_partial(request, target: str) -> bool:
 def toast(response, message: str):
     """Show `message` in the shell's toast after this response is swapped in."""
     return trigger_client_event(response, "toast", {"value": message})
+
+
+def on_body(response):
+    """Dispatch the response's HX-Trigger events on <body> rather than on the element that asked (slice 24 review). A My work card's
+    move (Start, Resume, Take) swaps nothing, and another move's list re-fetch can replace its button while it waits: htmx would then
+    fire the toast and wo-changed on a detached element, where nothing hears them."""
+    raw = response.headers.get("HX-Trigger")
+    if raw:
+        events = json.loads(raw)
+        response.headers["HX-Trigger"] = json.dumps({name: {**(detail if isinstance(detail, dict) else {"value": detail}), "target": "body"}
+                                                     for name, detail in events.items()})
+    return response
 
 
 class VaryOnHtmxMiddleware:

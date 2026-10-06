@@ -8,10 +8,11 @@ into the session and redirects to a ".../set-password/" URL (Django's PasswordRe
 """
 from urllib.parse import parse_qsl, urlsplit
 
+from django.conf import settings
 from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth import views as auth_views
 from django.contrib.auth.tokens import default_token_generator
-from django.shortcuts import redirect, render
+from django.shortcuts import redirect, render, resolve_url
 from django.urls import Resolver404, resolve, reverse, reverse_lazy
 from django.utils.http import urlsafe_base64_decode
 from django.views.decorators.cache import never_cache
@@ -31,30 +32,36 @@ class SignInView(auth_views.LoginView):
     """Slice 22: a person who works in several facilities signs in to the one they used last (apps.accounts.people.landing_account),
     which need not be the one a link was for, and record numbers repeat across facilities. So for them `next` is followed only when
     it names its facility (`facility=`, as every staff email's link does: apps.web.decorators then offers the switch when it is
-    another one); any other `next` (a bookmark, an email from before links named their facility) lands on the Overview. Someone in
-    one facility follows `next` as before."""
+    another one); any other `next` (a bookmark, an email from before links named their facility) lands where a sign-in with no `next`
+    does (get_default_redirect_url). Someone in one facility follows `next` as before, except the home page's own: slice 24, signing in
+    from the app's address (a home-screen bookmark: /login/?next=/) is a sign-in with no `next`, so a technician lands on My work."""
 
     template_name = "web/login.html"
     redirect_authenticated_user = True
     authentication_form = SignInForm
 
     def get_default_redirect_url(self):
-        """Slice 24: whoever has My work (a technician profile here, or a vendor's company) starts the day there; everyone else on
-        LOGIN_REDIRECT_URL, the Overview. Read inside the account's facility: the role is a tenant-scoped row, and this request began
-        signed out, with no facility set."""
-        user = self.request.user
-        if user.is_authenticated and user.tenant_id:
-            with tenant_context(user.tenant):
-                fresh = User._default_manager.get(pk=user.pk)
-                if fresh.has_level(Module.WORKORDERS, Level.VIEW) and my_work.has_my_work(fresh):
-                    return reverse("web:my_work")
-        return super().get_default_redirect_url()
+        return default_landing(self.request.user) or super().get_default_redirect_url()
 
     def get_redirect_url(self):
         url = super().get_redirect_url()  # "" unless it stays on this site
+        if url and urlsplit(url).path == resolve_url(settings.LOGIN_REDIRECT_URL) and not urlsplit(url).query:
+            return ""  # the home page asked for nothing in particular: the default landing (My work for whoever has it)
         if url and not _names_facility(url) and not _persons_page(url) and _in_several_facilities(self.request.user):
-            return ""  # the default: LOGIN_REDIRECT_URL, the Overview
+            return ""  # the default landing: My work for whoever has it, else the Overview
         return url
+
+
+def default_landing(user) -> str:
+    """Slice 24: where someone who asked for nothing in particular starts after signing in (or accepting an invitation): My work for
+    whoever has it (a technician profile here, or a vendor's company), else "" (LOGIN_REDIRECT_URL, the Overview). Read inside the
+    account's facility: the role is a tenant-scoped row, and these requests began signed out, with no facility set."""
+    if user.is_authenticated and user.tenant_id:
+        with tenant_context(user.tenant):
+            fresh = User._default_manager.get(pk=user.pk)
+            if fresh.has_level(Module.WORKORDERS, Level.VIEW) and my_work.has_my_work(fresh):
+                return reverse("web:my_work")
+    return ""
 
 
 # Pages of the person rather than of one facility: an invitation's join page (which names the account it joins), All facilities,
