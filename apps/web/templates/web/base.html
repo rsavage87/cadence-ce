@@ -7,10 +7,12 @@
 <script>try{var t=localStorage.getItem('cadence-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}</script>
 <link rel="stylesheet" href="{% static 'web/cadence.css' %}">
 {% htmx_script %}
+{# Slice 22 review: a Back or Forward that misses htmx's history cache loads the whole page (it goes through the facility checks), never a bare fragment #}
+<meta name="htmx-config" content='{"refreshOnHistoryMiss": true}'>
 <script src="{% static 'web/cadence.js' %}" defer></script>
 <script src="{% static 'web/scan.js' %}" defer></script>
 </head>
-<body hx-headers='{"X-CSRFToken": "{{ csrf_token }}", "X-Cadence-Facility": "{{ request.tenant.pk|default_if_none:'' }}"}'>
+<body hx-headers='{"X-CSRFToken": "{{ csrf_token }}", "X-Cadence-Facility": "{{ request.tenant.pk|default_if_none:'' }}"}' data-facility="{{ request.tenant.slug|default:'' }}">
 <div class="app">
   <header class="topbar">
     <a class="brand" href="{% url 'web:overview' %}" style="color:inherit;text-decoration:none"><span class="mark">{% icon "brand" %}</span><span>Cadence CE<small>Clinical Engineering</small></span></a>

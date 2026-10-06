@@ -66,7 +66,8 @@ already has an account at another facility on this server adds that facility to 
 join from the link or from the facility menu at the top of any page (on a phone, in the account menu). Nothing tells the inviting
 facility that the address was already in use. `bootstrap_tenant` with a director's existing address does the same.
 - Sign-in opens the facility the person used last. Switching facility signs the browser in to the person's account there (a browser
-  works in one facility at a time: a tab left showing another facility reloads when next used). Being deactivated in one facility
+  works in one facility at a time: a tab left showing another facility goes to the same screen in the new one when next used, never
+  to a record with the same number). Being deactivated in one facility
   leaves the others as they were.
 - The password is the person's: a change or reset applies in every facility, and a reset request sends one link.
 - Staff emails link with the facility's name in the address (`?facility=<slug>`), since record numbers repeat across facilities: a

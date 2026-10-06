@@ -173,7 +173,7 @@ def user_resend_invite(request, pk):
     """A fresh invitation link; the earlier one stops working. Only for accounts still waiting to set their first password."""
     user = _get_user(request, pk)
     try:
-        sent = invitations.send_invitation(user, by=request.user)
+        sent = invitations.send_invitation(user, by=request.user, resend=True)
     except ValidationError as e:
         return _body_response(request, e.messages[0])
     if sent:

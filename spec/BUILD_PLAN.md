@@ -296,4 +296,10 @@ The mock's export and print buttons work since slice 11, Add device since slice 
   same number here; sign-in follows `next` for a person with several facilities only when it names its facility. All facilities
   (`/overview/all/`, `/api/v1/overview/all-facilities/`, session only) shows each joined facility's Overview figures, read inside it
   with the person's account there, with totals from summed parts (a shared recall counted once). The demo seeds Riverside North Campus
-  with Kim linked.
+  with Kim linked. Rules settled in review: "Invitation resent" is written for the staff's Resend invite only, so nothing a signed-out
+  reset request touches changes what the inviting facility's log shows; a page left open from before a switch goes to the same
+  screen's list in the facility the browser is in (by HTMX, or after a form post refused for its old CSRF token: CSRF_FAILURE_VIEW),
+  never a record with the same number; links that open a page or a file (prints, labels, CSVs, PDFs) name their facility like the
+  emails; a Back that misses htmx's history cache loads the whole page; choosing the current facility in the menu is no switch; a
+  reset frees every facility's username from the lockout; a full save never writes `person` (only creation and the linking UPDATE
+  do), so an account loaded before another facility linked it cannot undo the link.

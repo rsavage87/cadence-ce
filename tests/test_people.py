@@ -202,7 +202,7 @@ def test_the_switch_refuses_anything_but_the_persons_own_account(kim, client, ma
     stranger = make_user("director", tenant_=lakeside, username="someone@lakeside.example")
     client.force_login(a)
     assert client.post("/account/facility/", {"account": stranger.pk}).status_code == 404
-    assert client.post("/account/facility/", {"account": a.pk}).status_code == 404
+    assert client.post("/account/facility/", {"account": a.pk})["Location"] == "/"  # review: the current one is no switch, not a 404
     assert client.post("/account/facility/", {"account": "x"}).status_code == 404
     User.objects.filter(pk=b.pk).update(is_active=False)
     assert client.post("/account/facility/", {"account": b.pk}).status_code == 404
@@ -245,10 +245,10 @@ def test_a_tab_left_in_another_facility_reloads(kim, client, tenant):
     here = {"HTTP_HX_REQUEST": "true", "HTTP_X_CADENCE_FACILITY": str(tenant.pk)}
     assert client.get("/work-orders/", **here).status_code == 200
     client.post("/account/facility/", {"account": b.pk})
-    r = client.get("/work-orders/", **here)  # the old tab, now signed in to Lakeside
-    assert r.status_code == 204 and r["HX-Refresh"] == "true"
-    r = client.post("/work-orders/new/", {}, **here)  # its old CSRF token would be refused: a reload instead
-    assert r.status_code == 204 and r["HX-Refresh"] == "true"
+    r = client.get("/work-orders/", **here)  # the old tab, now signed in to Lakeside: its screen there (review: never a record)
+    assert r.status_code == 204 and r["HX-Redirect"] == "/"  # no HX-Current-URL: the Overview
+    r = client.post("/work-orders/new/", {}, HTTP_HX_CURRENT_URL="http://testserver/work-orders/WO-26-0003/", **here)
+    assert r.status_code == 204 and r["HX-Redirect"] == "/work-orders/"
     assert client.get("/work-orders/", HTTP_HX_REQUEST="true", HTTP_X_CADENCE_FACILITY=str(b.tenant_id)).status_code == 200
     assert f'"X-Cadence-Facility": "{b.tenant_id}"' in client.get("/work-orders/").content.decode()
 

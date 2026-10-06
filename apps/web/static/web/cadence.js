@@ -66,8 +66,29 @@
   // Export and print links carry the list's current filters. The filters change through HTMX, which updates the address but
   // not these links, so rewrite them whenever the address changes: then a middle-click, "Open in new tab", or "Save link as"
   // gets the filters on screen too, not only a plain click.
+  // Slice 22: links that open a page or a file of their own (prints, labels, CSVs, report PDFs) name the facility this page shows,
+  // as staff emails do, so one followed from a tab left in another facility offers the switch (apps.web.decorators) instead of
+  // answering with the record that has the same number in the facility the browser is in now.
+  const FACILITY = document.body.dataset.facility || "";
+  function withFacility(href) {
+    if (!FACILITY || !href || !href.startsWith("/") || href.startsWith("//")) return href;
+    const u = new URL(href, window.location.origin);
+    u.searchParams.set("facility", FACILITY);
+    return u.pathname + u.search + u.hash;
+  }
+  function tagLinks(root) {
+    if (!FACILITY || !root.querySelectorAll) return;
+    root.querySelectorAll('a[target="_blank"][href], a[download][href]').forEach((a) => {
+      if (a.dataset.act === "with-filters") return;  // syncFilterLinks owns these
+      const href = a.getAttribute("href"), tagged = withFacility(href);
+      if (tagged !== href) a.setAttribute("href", tagged);
+    });
+  }
+  tagLinks(document);
+  document.addEventListener("htmx:load", (e) => tagLinks(e.target));  // drawers, modals, and lists swapped in later
+
   function syncFilterLinks() {
-    document.querySelectorAll('[data-act="with-filters"]').forEach((a) => a.setAttribute("href", a.dataset.base + window.location.search));
+    document.querySelectorAll('[data-act="with-filters"]').forEach((a) => a.setAttribute("href", withFacility(a.dataset.base + window.location.search)));
   }
   ["htmx:pushedIntoHistory", "htmx:replacedInHistory", "htmx:historyRestore"].forEach((n) => document.addEventListener(n, syncFilterLinks));
   window.addEventListener("popstate", syncFilterLinks);

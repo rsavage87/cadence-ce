@@ -106,11 +106,11 @@ def test_a_resend_writes_an_event_and_the_first_send_and_a_failed_one_do_not(ctx
     ana = services.invite_user(ctx, email="ana@riverside.example", first_name="Ana", last_name="Diaz", role=role("technician"), by=kim)
     assert invitations.send_invitation(ana, by=kim)  # the first email: the Invited event is that one
     assert events(action=Action.INVITATION_RESENT) == []
-    assert invitations.send_invitation(ana, by=kim)
+    assert invitations.send_invitation(ana, by=kim, resend=True)  # Resend invite
     e = only(Action.INVITATION_RESENT)
     assert (e.by, e.user, e.role) == (kim, ana, role("technician")) and e.detail == "A new link to ana@riverside.example replaces the earlier one"
     _broken_mail(monkeypatch)
-    assert invitations.send_invitation(ana, by=kim) is False  # nothing changed, nothing written
+    assert invitations.send_invitation(ana, by=kim, resend=True) is False  # nothing changed, nothing written
     assert len(events(action=Action.INVITATION_RESENT)) == 1
 
 

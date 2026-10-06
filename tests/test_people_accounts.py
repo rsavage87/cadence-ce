@@ -232,7 +232,7 @@ def test_someone_who_signs_in_elsewhere_is_emailed_the_join_page(tenant, kim, la
     assert "as Technician" in mail.body and f"Sign in as usual, with {EMAIL}" in mail.body and "no new password to set" in mail.body
     assert invitations.link_for(b) == invitations.join_url(b) == f"{APP}/account/facility/{b.pk}/join/"
     # a resend: the same event as any invitation's
-    assert invitations.send_invitation(b)
+    assert invitations.send_invitation(b, resend=True)
     e = events(lakeside, action=AccessEvent.Action.INVITATION_RESENT)
     assert len(e) == 1 and e[0].detail == f"A new link to {EMAIL} replaces the earlier one"
 

@@ -130,6 +130,16 @@ class User(AbstractUser):
         # set_password() leaves the raw password in _password until the save; check_password()'s hasher upgrade clears it and
         # saves the password column alone. Either way the column changed.
         password_set = self._password is not None or (update_fields is not None and "password" in update_fields)
+        if update_fields is None and not self._state.adding and not kwargs.get("force_insert") and not args:
+            # Never `person` on a full save of a row that exists: it is set when the row is created and by the linking UPDATE
+            # (services.add_account), and an account loaded before another facility linked it (a Change password or a reset
+            # taking a second to hash) would otherwise write its stale empty value back and orphan the link.
+            deferred = self.get_deferred_fields()
+            kwargs["update_fields"] = [f.name for f in self._meta.concrete_fields
+                                       if not f.primary_key and f.name != "person" and f.attname not in deferred]
+        if password_set and not self.person and not self._state.adding:
+            # the link may have been made since this row was loaded: share with the person it has now
+            self.person = User._default_manager.filter(pk=self.pk).values_list("person", flat=True).first()
         if not (self.person and password_set and self.has_usable_password()):
             return super().save(*args, **kwargs)
         with transaction.atomic():

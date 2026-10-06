@@ -27,6 +27,8 @@ SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-only-insecure-key")
 DEBUG = os.environ.get("DJANGO_DEBUG", "0") == "1"
 ALLOWED_HOSTS = [h for h in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",") if h]
 CSRF_TRUSTED_ORIGINS = [o for o in os.environ.get("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",") if o]
+# Slice 22: a page left open from before a facility switch (which renews the token) goes to its screen instead of a bare 403.
+CSRF_FAILURE_VIEW = "apps.web.htmx.csrf_failure"
 
 INSTALLED_APPS = [
     "django.contrib.admin",

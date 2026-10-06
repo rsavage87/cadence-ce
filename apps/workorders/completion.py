@@ -284,7 +284,7 @@ def follow_up_technician(pm: WorkOrder, asset, today: date | None = None):
 
 
 def _requester(by, pm: WorkOrder) -> str:
-    name = (by.get_full_name() or by.username) if by is not None else ""
+    name = str(by) if by is not None else ""  # the full name, else the email: never a second facility's username (slice 22)
     if not name and pm.assigned_to_id:
         name = pm.assigned_to.name
     return (name or "CE shop")[:120]

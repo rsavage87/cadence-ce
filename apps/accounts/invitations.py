@@ -102,12 +102,16 @@ def _role_name(user) -> str:
         return Role.objects.filter(pk=user.role_id).values_list("name", flat=True).first() or ""
 
 
-def send_invitation(user, *, by=None, record=True) -> bool:
+def send_invitation(user, *, by=None, resend=False) -> bool:
     """Email `user` a fresh link to set their first password; any earlier link stops working. For a person who already signs in
     elsewhere (joins_signed_in) the email says they were added to the facility and links to the join page instead. False if the
     email could not be sent: then nothing changes (an earlier link still works, the account stays Invited, and the Users screen's
-    Resend invite tries again). Raises ValidationError for an account that is not a pending invitation. `record=False` (the
-    signed-out password-reset form) writes no access event."""
+    Resend invite tries again). Raises ValidationError for an account that is not a pending invitation.
+
+    `resend=True` is the staff's Resend invite (the Users screen, the API): once the email has gone out it writes "Invitation
+    resent". Nothing else writes it: not the first send (invite_user's Invited event is that one), and not the signed-out
+    password-reset form (slice 22 review: no staff change, and whether it wrote one must not depend on anything the reset form
+    touched, such as invited_at, or the facility could tell an address used at another facility from a new one)."""
     if not is_pending(user):
         raise ValidationError(f"{user.get_full_name() or user.email} already has a password or is deactivated; there is no invitation to send.")
     if not user.email:
@@ -120,7 +124,7 @@ def send_invitation(user, *, by=None, record=True) -> bool:
                "url": join_url(user) if joins else invitation_url(user), "valid_days": settings.INVITATION_VALID_DAYS}
     if emails.send(user.email, "accounts/email/facility_added" if joins else "accounts/email/invitation", context):
         # The same event whichever email went out: the facility sees an invitation resent, never which kind.
-        if record and previous is not None and user.tenant_id:
+        if resend and user.tenant_id:
             record_access_event(user.tenant, AccessEvent.Action.INVITATION_RESENT, by=by, user=user, role_id=user.role_id,
                                 detail=f"A new link to {user.email} replaces the earlier one")
         return True

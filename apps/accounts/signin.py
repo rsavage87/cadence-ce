@@ -136,7 +136,10 @@ def clear_failures(login, user=None) -> None:
     a shared network does not excuse the failures from it."""
     names = {_norm(login)}
     if user is not None:
-        names |= {_norm(user.username), _norm(user.email)}
+        # Every account of the person (slice 22): a reset sent for the landing account must also free the username of the facility
+        # where Change password counted the failures.
+        for account in people.accounts_of(user):
+            names |= {_norm(account.username), _norm(account.email)}
     keys = [_key("login", n) for n in names if n]
     person = _person_key(user)
     if person:
@@ -210,7 +213,7 @@ def _answer(user) -> None:
     The resend writes no access event: nobody on the staff changed anything, and the facility must not learn of the request."""
     if invitations.is_pending(user):
         try:
-            invitations.send_invitation(user, record=False)
+            invitations.send_invitation(user)  # no access event: see send_invitation
         except ValidationError:  # not pending after all (changed since the check); nothing to send
             pass
     elif user.has_usable_password():

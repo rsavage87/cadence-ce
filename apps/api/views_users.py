@@ -290,7 +290,7 @@ class UserViewSet(UsersModule):
     def resend_invite(self, request, pk=None):
         user = self.get_object()
         _no_body(request)
-        sent = _via_service(invitations.send_invitation, user, by=request.user)
+        sent = _via_service(invitations.send_invitation, user, by=request.user, resend=True)
         message = (f"Invitation resent to {user.email}" if sent else
                    f"The invitation email to {user.email} could not be sent. Try again once email is working.")
         return Response({**self._show([user]), "invitation_sent": sent, "message": message})

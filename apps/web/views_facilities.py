@@ -55,7 +55,14 @@ def _go(request, url: str):
 @require_POST
 @web_view(scoped=True)  # changes nothing of this facility's: a vendor here may be a director there
 def facility_switch(request):
-    target = people.switch_target(request.user, request.POST.get("account"))
+    chosen = request.POST.get("account", "")
+    # The facility menu also offers the one the browser is in (on All facilities, the way back) and, without JavaScript, "All
+    # facilities" itself: neither is a switch.
+    if chosen == "all":
+        return _go(request, reverse("web:all_facilities"))
+    if chosen == str(request.user.pk):
+        return _go(request, landing_url(request.user, request.POST.get("screen", "")))
+    target = people.switch_target(request.user, chosen)
     if target is None:
         raise Http404
     if people.is_pending(target) and not people.join(request.user, target):
