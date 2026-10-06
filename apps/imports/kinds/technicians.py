@@ -3,9 +3,11 @@ Technicians (slice 23): the people work orders and credentials name, current and
 so the work order history imported after this file can name who did the work without offering them for new work.
 
 A row names its technician by name, in any letter case and in either order ("Dana Whitfield" or "Whitfield, Dana", in the file or
-in Cadence): one technician with that name is updated (a blank cell or a column not in the file keeps what Cadence has), two are
-a skip (which one is meant is for the person to say), none is a new technician, written First Last. A technician linked to a user
-account keeps the link: the import never touches it. Through apps.credentials.services (create_technician, update_technician).
+in Cadence; a comma before a suffix or a credential, "John Smith, Jr.", is not Last, First): one technician with that name is
+updated (a blank cell or a column not in the file keeps what Cadence has), two are a skip (which one is meant is for the person to
+say), none is a new technician, written First Last. Names are read and compared by apps.credentials.services' technician_name and
+name_key, as the work order import and Invite user's technician profile compare them. A technician linked to a user account keeps
+the link: the import never touches it. Through apps.credentials.services (create_technician, update_technician).
 """
 from apps.accounts.models import Level, Module
 from apps.credentials import services as credentials
@@ -18,22 +20,6 @@ ACTIVE_WORDS = {**{w: "active" for w in (*parse.YES, "active", "current", "emplo
                 **{w: "inactive" for w in (*parse.NO, "inactive", "former", "terminated", "separated", "left", "retired", "i")}}
 SHOWN = {"active": "Active", "inactive": "Inactive"}
 LABELS = {"title": "Title", "certification": "Certification", "weekly_capacity_hours": "Weekly hours", "is_active": "Active"}
-
-
-def display_name(name: str) -> str:
-    """A name as Cadence writes it: First Last ("Whitfield, Dana" -> "Dana Whitfield"), single spaces. A name with more than one
-    comma is left in its order: which part is the last name is not clear."""
-    name = " ".join((name or "").split())
-    if name.count(",") == 1:
-        last, first = (part.strip() for part in name.split(","))
-        if last and first:
-            return f"{first} {last}"
-    return name
-
-
-def name_key(name: str) -> str:
-    """What two names are compared by: First Last, lowercase."""
-    return display_name(name).lower()
 
 
 class TechniciansImporter(Importer):
@@ -60,7 +46,7 @@ class TechniciansImporter(Importer):
         """A technician named twice, in either order ("Dana Whitfield" and "Whitfield, Dana"), is a problem of the file."""
         firsts, problems = {}, {}
         for i, row in enumerate(rows):
-            key = name_key(row.get("name"))
+            key = credentials.name_key(row.get("name"))
             if not key:
                 continue
             if key in firsts:
@@ -72,13 +58,13 @@ class TechniciansImporter(Importer):
     def load(self, ctx, rows):
         names = ctx.cache.setdefault("names", {})
         for pk, name in Technician.objects.values_list("pk", "name"):
-            names.setdefault(name_key(name), []).append(pk)
+            names.setdefault(credentials.name_key(name), []).append(pk)
 
     def apply(self, ctx, row, result):
-        name = display_name(row["name"])
+        name = credentials.technician_name(row["name"])
         if not name:
             raise RowSkip("Name is blank")
-        matches = ctx.cache["names"].get(name.lower(), [])
+        matches = ctx.cache["names"].get(credentials.name_key(name), [])
         if len(matches) > 1:
             raise RowSkip("Two technicians have this name" if len(matches) == 2 else f"{len(matches)} technicians have this name")
         technician = Technician.objects.filter(pk=matches[0]).first() if matches else None

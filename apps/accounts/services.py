@@ -39,7 +39,7 @@ from django.utils.text import slugify
 from rest_framework.authtoken.models import Token
 
 from apps.contracts.models import Contract
-from apps.credentials.models import Technician
+from apps.credentials import services as credentials
 from apps.equipment.models import Department, DeviceModel
 from apps.tenants.context import get_current_tenant, tenant_context
 from apps.workorders.models import WorkOrder
@@ -428,11 +428,10 @@ def invite_user(tenant, *, email, first_name, last_name, role, department="", co
         raise ValidationError(f"{email} is already a member of this facility.")
     company, department = _scoped_values(tenant, role, _clean_company(company), (department or "").strip())
     user = add_account(tenant, email=email, first_name=first_name, last_name=last_name, role=role, department=department, company=company)
-    if create_technician:
-        Technician.objects.create(tenant=tenant, user=user, name=f"{first_name} {last_name}"[:120], title=NEW_TECHNICIAN_TITLE)  # its column
     words = [f"Invited as {role.name}"] + [f"{label}: {value}" for label, value in (("company", company), (_unit_word(role), department)) if value]
-    if create_technician:
-        words.append("technician profile added")
+    if create_technician:  # the technician the import added with this name, if there is one (credentials.add_account_technician)
+        _, linked = credentials.add_account_technician(user, name=f"{first_name} {last_name}"[:120], title=NEW_TECHNICIAN_TITLE)
+        words.append("technician profile linked" if linked else "technician profile added")
     record_access_event(tenant, AccessEvent.Action.INVITED, by=by, user=user, role=role, detail="; ".join(words))
     return user
 

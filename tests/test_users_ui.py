@@ -6,7 +6,7 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 
 from apps.accounts import services
-from apps.accounts.models import Level, Module, Role, User, create_default_roles
+from apps.accounts.models import AccessEvent, Level, Module, Role, User, create_default_roles
 from apps.accounts.services import UserFilters
 from apps.credentials.models import Credential, Scope, Technician
 
@@ -51,6 +51,34 @@ def test_invite_creates_an_invited_user_and_optional_technician(ctx, role, dept)
     assert u.technician.name == "Maria Santos" and u.technician.title == "BMET I" and u.technician.tenant == ctx
     plain = services.invite_user(ctx, email="d@riverside.example", first_name="Devon", last_name="Park", role=role("requester"), department="ICU")
     assert not Technician.objects.filter(user=plain).exists()
+
+
+def test_invite_links_the_technician_the_import_added_instead_of_a_second_one(ctx, role, dept, client, signed_in):
+    imported = Technician.objects.create(name="Whitfield, Dana", title="Lead BMET", is_active=False)  # no account: the technicians import's
+    taken = Technician.objects.create(name="Tom Okafor", user=services.invite_user(ctx, email="t1@riverside.example", first_name="T",
+                                                                                   last_name="O", role=role("technician"), department="ICU"))
+    dana = services.invite_user(ctx, email="dana@riverside.example", first_name="Dana", last_name="whitfield", role=role("technician"),
+                                department="ICU", create_technician=True)
+    imported.refresh_from_db()
+    assert (imported.user, imported.is_active, imported.title, imported.name) == (dana, True, "Lead BMET", "Whitfield, Dana")  # its own
+    assert Technician.objects.count() == 2
+    assert AccessEvent.objects.filter(user=dana).get().detail == "Invited as Technician; department: ICU; technician profile linked"
+    tom = services.invite_user(ctx, email="tom@riverside.example", first_name="Tom", last_name="Okafor", role=role("technician"),
+                               department="ICU", create_technician=True)  # the Tom Okafor here has an account: another person
+    assert tom.technician != taken and tom.technician.name == "Tom Okafor" and Technician.objects.count() == 3
+    Technician.objects.create(name="Lee Park")
+    Technician.objects.create(name="Park, Lee")
+    with pytest.raises(ValidationError) as e:
+        services.invite_user(ctx, email="lee@riverside.example", first_name="Lee", last_name="Park", role=role("technician"), department="ICU",
+                             create_technician=True)
+    assert e.value.messages == ["Two technicians here without an account are named Lee Park, so which one this person is cannot be told. "
+                                "Invite them without a technician profile."]
+    assert not User.objects.filter(email="lee@riverside.example").exists()  # nothing written
+    assert not Technician.objects.filter(name__in=["Lee Park", "Park, Lee"], user__isnull=False).exists()
+    signed_in("director")
+    r = client.post("/users/invite/", {"first_name": "Lee", "last_name": "Park", "email": "lee@riverside.example", "role": str(role("technician").id),
+                                       "department": "ICU", "create_technician": "on"}, **HX)
+    assert r.status_code == 200 and "Two technicians here without an account are named Lee Park" in r.content.decode() and "HX-Trigger" not in r
 
 
 def test_invite_rejects_duplicate_email_and_missing_fields(ctx, role, make_user):

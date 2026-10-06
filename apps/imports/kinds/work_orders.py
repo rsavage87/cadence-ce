@@ -10,8 +10,9 @@ it refuses, are described there); this module reads the file's values and report
 - Dates in any shape apps.imports.parse reads; a due date may be a month alone (a PM scheduled for March is due on the 31st).
   The opened date, and a done work order's completed date, are needed (a row without one is skipped); a due date is needed on a
   PM (PM on-time is counted by it) and otherwise worked out from the priority, with a note when it could not be read.
-- The technician by name, "First Last" or "Last, First", any letter case, active or not; one not found, or two with the name,
-  leaves the work order without one, with a note. A vendor makes it vendor service.
+- The technician by name, "First Last" or "Last, First", any letter case, active or not, compared as the technicians import
+  compares names (person_key); one not found, or two with the name, leaves the work order without one, with a note (its in-house
+  hours are then an in-house cost line: apps.workorders.legacy). A vendor makes it vendor service.
 - Costs: a value that cannot be read is left out with a note, never read as 0.
 - A re-run: a number already imported on the same device is left as it is ("Already imported", and a note when it is still open
   here and done in the file); on another device it is skipped. A number on more than one row of the file skips every one of them
@@ -27,6 +28,7 @@ from decimal import Decimal
 from django.db.models.functions import Lower
 
 from apps.accounts.models import Level, Module
+from apps.credentials import services as credentials
 from apps.credentials.models import Technician
 from apps.equipment.models import Asset
 from apps.facility.services import get_settings
@@ -86,12 +88,9 @@ COSTS = (("hours", "Labor hours"), ("labor", "Labor cost"), ("parts", "Parts cos
 
 
 def person_key(name: str) -> str:
-    """A name compared with technicians': lowercase, single spaces, "Last, First" read as "First Last"."""
-    text = " ".join((name or "").split()).lower()
-    if "," in text:
-        last, first = text.split(",", 1)
-        text = f"{first} {last}"
-    return " ".join(text.split())
+    """A name compared with technicians': as the technicians import compares them (credentials.name_key: any letter case, "Last,
+    First" read as "First Last", a comma before a suffix or a credential is not)."""
+    return credentials.name_key(name)
 
 
 class WorkOrdersImporter(Importer):

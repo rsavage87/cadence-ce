@@ -22,8 +22,11 @@ What import_work_order records:
 - Its costs (Costs), through apps.workorders.costs' import writer, which stays the only writer of lines: hours with a labor cost
   give the rate (cost over hours to the cent, half up; `drift` is what that rounding moves); hours alone are priced at today's
   Settings rate (a note says so); a labor cost without hours is outside service (a note); parts and outside cost are a part line
-  each; a total alone is one "Imported cost" line; a total that is not what the lines add up to gets a note. The lines are
-  worked on the day it was completed, else opened, and dated between its two status rows.
+  each; a total alone (or beside a breakdown of zeros: exports write 0.00 in the columns they do not use) is one "Imported cost"
+  line; a total that is not what the lines add up to gets a note. Hours are the technician's labor line, or the vendor's on vendor
+  service; in-house hours that name no technician here are an in-house cost line of hours × rate (a note), since a labor line
+  without a technician is vendor time wherever it is read. The lines are worked on the day it was completed, else opened, and
+  dated between its two status rows.
 
 The rows it refuses (ValidationError, in words the import screen shows beside the row): a number already here, a cancelled work
 order (it was never work), an open PM (the planner makes each device's next PM from its next PM date: importing one would make a
@@ -68,6 +71,7 @@ ALREADY = "This number is already on a work order here"
 ESTIMATED = "Labor cost estimated at today's rate"
 NO_HOURS = "Labor cost without hours: imported as outside service"
 TOTAL_DIFFERS = "Total cost is not what the labor, parts, and outside cost add up to: the lines were imported"
+UNNAMED = "In-house hours without a technician here: recorded as an in-house labor cost"
 
 
 @dataclass
@@ -89,11 +93,11 @@ class Imported:
     work_order: WorkOrder
     notes: list[str] = field(default_factory=list)
     hours: Decimal = Decimal(0)
-    labor: Decimal = Decimal(0)  # the labor line's cost (hours × rate, to the cent)
+    labor: Decimal = Decimal(0)  # the hours × rate, to the cent: on the labor line, or the in-house cost line (UNNAMED)
     parts: Decimal = Decimal(0)
     outside: Decimal = Decimal(0)
     total_only: Decimal = Decimal(0)
-    drift: Decimal = Decimal(0)  # the labor line's cost minus the labor cost in the file: what rounding the rate moved
+    drift: Decimal = Decimal(0)  # `labor` minus the labor cost in the file: what rounding the rate moved
 
 
 def problem_text(legacy_number: str) -> str:
@@ -208,7 +212,7 @@ def _plan(c: Costs, rate_today: Decimal) -> _Plan:
         plan.parts.append((PARTS, c.parts))
     if outside:
         plan.parts.append((OUTSIDE, outside))
-    itemized = any(v is not None for v in (c.hours, c.labor, c.parts, c.outside))
+    itemized = any(v for v in (c.hours, c.labor, c.parts, c.outside))  # zeros are no breakdown: the total is then the cost
     if c.total and not itemized:
         plan.parts.append((TOTAL_ONLY, c.total))
     for description, amount in plan.parts:
@@ -263,7 +267,12 @@ def import_work_order(*, asset, legacy_number: str, type: str, status: str, open
 
     result = Imported(work_order=wo, notes=plan.notes, drift=plan.drift)
     at = _moment(wo.completed_on or wo.opened_on, LINES_AT)
-    if plan.labor:
+    if plan.labor and technician is None and not wo.vendor_service:  # in-house time naming nobody here: never vendor time
+        hours, rate = plan.labor
+        line = lines.add_imported_unnamed_labor(wo, hours=hours, rate=rate, at=at, by=by)
+        result.hours, result.labor = line.quantity, lines.part_amount(line)
+        result.notes.append(UNNAMED)
+    elif plan.labor:
         hours, rate = plan.labor
         line = lines.add_imported_labor(wo, hours=hours, rate=rate, technician=technician, at=at, by=by)
         result.hours, result.labor = line.hours, lines.labor_amount(line)
