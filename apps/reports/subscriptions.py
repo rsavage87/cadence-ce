@@ -7,7 +7,9 @@ the facility, the facility is active, and the user can still view Reports; nothi
 off always works.
 
 Each email carries the report's table as an attachment, byte for byte the CSV the screen downloads (apps.web.exports), and a
-link to the printable report, which asks the reader to sign in. Links start with settings.APP_BASE_URL, never a request's Host.
+link to the printable report, which asks the reader to sign in. Links start with settings.APP_BASE_URL, never a request's Host, and
+(slice 22) name their facility (`facility=<slug>`, apps.accounts.people.with_facility), as the subject does: a person may work in
+several facilities, whose reports share their keys, and apps.web.decorators offers the switch when the browser is in another.
 Reports hold device, cost, and staff figures, never the free text a requester typed, so the email cannot repeat patient details.
 
 Slice 18: a facility's custom reports (apps/reports/custom.py) are scheduled and emailed like the eight standard ones: every report
@@ -28,7 +30,7 @@ from django.db.models import Q
 from django.urls import reverse
 from django.utils import timezone
 
-from apps.accounts import emails
+from apps.accounts import emails, people
 from apps.accounts.models import Level, Module
 from apps.jobs.models import JobRun
 from apps.tenants.context import get_current_tenant, tenant_context
@@ -205,8 +207,8 @@ def _send(sub: ReportSubscription, tenant, today: date, data: dict) -> bool:
         "user": sub.user, "facility": tenant.name, "report": meta, "today": today, "rows": len(data["rows"]), "filename": filename,
         "total": data.get("total"), "truncated": bool(data.get("truncated")),  # a custom report lists at most custom.MAX_ROWS
         "frequency": sub.frequency, "next_on": next_due_on(sub.frequency, today + timedelta(days=1)),
-        "print_url": settings.APP_BASE_URL + reverse("web:report_print", args=[sub.report]),
-        "report_url": settings.APP_BASE_URL + reverse("web:report", args=[sub.report]),
+        "print_url": people.with_facility(settings.APP_BASE_URL + reverse("web:report_print", args=[sub.report]), tenant),
+        "report_url": people.with_facility(settings.APP_BASE_URL + reverse("web:report", args=[sub.report]), tenant),
     }
     # Claim it first: two runs at once (the scheduler and an operator) must not both send it. The claim holds only if nothing has
     # been sent for this sending day yet; a failed send gives it back, so the next run tries again.

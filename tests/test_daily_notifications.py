@@ -216,14 +216,15 @@ def test_the_digest_lists_due_or_overdue_work_and_the_weeks_pms(tenant, crew, ma
     body = mail.body
     assert "Your work at Riverside Regional for Monday, October 5, 2026." in body
     assert (f"DUE TODAY OR OVERDUE (2)\n\n{wos['late']} · Corrective repair · High priority · In progress\nCE-10001 · ICU ventilator · ICU\n"
-            f"Overdue 2 days: it was due Oct 3\n{APP}/work-orders/{wos['late']}/\n") in body
+            f"Overdue 2 days: it was due Oct 3\n{APP}/work-orders/{wos['late']}/?facility=riverside\n") in body  # slice 22: links name the facility
     assert f"{wos['today_pm']} · Preventive maintenance · Normal priority · Open\nCE-10002 · Infusion pump · ICU\nDue today\n" in body
     assert "PMS DUE IN THE NEXT 7 DAYS (2)" in body
     assert f"{wos['soon_pm']} · Normal priority · Awaiting parts\nCE-10001 · ICU ventilator · ICU\nDue Thursday, Oct 8\n" in body
     assert f"{wos['week_end_pm']} · Normal priority · Open" in body
     for key in ("far_pm", "soon_repair", "done", "toms"):
         assert wos[key] not in body, key
-    assert f"{APP}/work-orders/?assigned={crew['techs']['dana'].id}" in body and f"{APP}/account/notifications/" in body
+    assert f"{APP}/work-orders/?assigned={crew['techs']['dana'].id}&facility=riverside\n" in body
+    assert f"{APP}/account/notifications/?facility=riverside\n" in body
     assert body.index(wos["late"]) < body.index(wos["today_pm"])  # high priority first
 
 
@@ -298,13 +299,13 @@ def test_reminders_go_to_who_can_edit_contracts_one_email_listing_each_contract(
     body = mail.body
     assert body.index("SC-END ·") < body.index("SC-07 ·") < body.index("SC-30 ·") < body.index("SC-90 ·")  # by end date
     assert ("SC-90 · Philips · OEM, Full service\nEnds Friday, December 4, 2026 (in 60 days)\n"
-            "Devices covered: 3 (Philips IntelliVue MX750: 2, BD Alaris 8015 PCU: 1)\n" f"{APP}/contracts/{c['c90'].id}/\n") in body
+            "Devices covered: 3 (Philips IntelliVue MX750: 2, BD Alaris 8015 PCU: 1)\n" f"{APP}/contracts/{c['c90'].id}/?facility=riverside\n") in body
     assert "SC-07 · Philips · OEM, Full service\nEnds Monday, October 12, 2026 (in 7 days)\nDevices covered: 1" in body  # in repair: in use
     assert "SC-END · Philips · OEM, Full service\nEnded Sunday, October 4, 2026 (yesterday)" in body
     for ref in ("SC-FAR", "SC-OLD", "SC-RET", "SC-NIL"):
         assert ref not in body, ref
     assert "reminds the people who can edit contracts 90, 30, and 7 days before a contract ends" in body
-    assert f"{APP}/contracts/\n" in body and f"{APP}/account/notifications/" in body
+    assert f"{APP}/contracts/?facility=riverside\n" in body and f"{APP}/account/notifications/?facility=riverside\n" in body
 
 
 def test_one_contract_says_so_in_the_subject(tenant, floor, editors, mailoutbox):

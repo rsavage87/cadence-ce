@@ -203,7 +203,8 @@ def test_the_email_says_what_it_is_and_carries_the_screens_csv(client, ctx, tena
     assert body.startswith("Hello Kim,") and "Riverside Regional · as of October 5, 2026" in body
     assert "Devices scoring highest on age, failures, and condition" in body
     assert "attached as cadence-replace-2026-10-05.csv (2 rows)" in body
-    assert f"{APP}/print/reports/replace/" in body and f"{APP}/reports/replace/" in body
+    # slice 22: each link names its facility, as a person may work in several
+    assert f"{APP}/print/reports/replace/?facility=riverside\n" in body and f"{APP}/reports/replace/?facility=riverside\n" in body
     assert all(url.startswith(APP + "/") for url in re.findall(r"https?://\S+", body))
     assert "on the first Monday of each month; the next one is due Monday, November 2" in body and "choose Schedule, then Off" in body
     assert "Jane Roe" not in body  # no free text a person typed

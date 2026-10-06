@@ -6,6 +6,8 @@ a reset request always lands on the same "if an account uses that address" page,
 keyed on the typed login, not on an account. Reset links carry their token only until the first request, which moves it
 into the session and redirects to a ".../set-password/" URL (Django's PasswordResetConfirmView).
 """
+from urllib.parse import parse_qsl, urlsplit
+
 from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth import views as auth_views
 from django.contrib.auth.tokens import default_token_generator
@@ -15,18 +17,43 @@ from django.utils.http import urlsafe_base64_decode
 from django.views.decorators.cache import never_cache
 from django.views.decorators.debug import sensitive_post_parameters
 
-from apps.accounts import signin
+from apps.accounts import people, signin
 from apps.accounts.models import User
 from apps.core.http import client_ip
 
-from .decorators import web_view
+from .decorators import FACILITY, web_view
 from .forms_account import ChangePasswordForm, NewPasswordForm, PasswordResetRequestForm, SignInForm
 
 
 class SignInView(auth_views.LoginView):
+    """Slice 22: a person who works in several facilities signs in to the one they used last (apps.accounts.people.landing_account),
+    which need not be the one a link was for, and record numbers repeat across facilities. So for them `next` is followed only when
+    it names its facility (`facility=`, as every staff email's link does: apps.web.decorators then offers the switch when it is
+    another one); any other `next` (a bookmark, an email from before links named their facility) lands on the Overview. Someone in
+    one facility follows `next` as before."""
+
     template_name = "web/login.html"
     redirect_authenticated_user = True
     authentication_form = SignInForm
+
+    def get_redirect_url(self):
+        url = super().get_redirect_url()  # "" unless it stays on this site
+        if url and not _names_facility(url) and _in_several_facilities(self.request.user):
+            return ""  # the default: LOGIN_REDIRECT_URL, the Overview
+        return url
+
+
+def _names_facility(url: str) -> bool:
+    """Whether `url`'s query names a facility (a `facility` that is not empty, as apps.web.decorators reads it)."""
+    return any(key == FACILITY and value for key, value in parse_qsl(urlsplit(url).query, keep_blank_values=True))
+
+
+def _in_several_facilities(user) -> bool:
+    """Whether the signed-in `user`'s person has two or more facilities they can enter (reads User and Tenant only: this runs as
+    the sign-in completes, and when the sign-in page is opened while signed in). False while signed out (the page's own `next`)."""
+    if not user.is_authenticated or not user.person:
+        return False
+    return sum(1 for a in people.accounts_of(user) if people.can_enter(a)) > 1
 
 
 sign_in = SignInView.as_view()

@@ -22,7 +22,9 @@ is counted as skipped, with the reason (SKIP_REASONS).
 What the emails say: work order numbers, types, priorities, statuses, and due dates, device tags and descriptions, departments;
 contract references, vendors, types, coverage, end dates, and the devices covered; and links that start with settings.APP_BASE_URL
 and ask the reader to sign in. Never a work order's problem, requester, callback, or reported location, nor a contract's notes: the
-templates get plain values built here, never the records (CLAUDE.md, "No PHI").
+templates get plain values built here, never the records (CLAUDE.md, "No PHI"). Slice 22: every link names its facility
+(`facility=<slug>`, apps.accounts.people.with_facility), as every subject does: a person may work in several facilities, where
+record numbers repeat, and apps.web.decorators offers the switch when the browser is in another.
 
 send_due starts with no tenant (the daily job): it reads only the Tenant table (a system table) before it enters each facility's
 tenant_context, which row-level security on PostgreSQL requires. Slice 21: each facility's day is its own (its time zone): the
@@ -39,7 +41,7 @@ from django.db.models import Count, Q
 from django.urls import reverse
 from django.utils import timezone
 
-from apps.accounts import emails
+from apps.accounts import emails, people
 from apps.accounts.models import Level, Module, User
 from apps.contracts.models import Contract
 from apps.credentials.models import Technician
@@ -91,8 +93,9 @@ def local_today() -> date:
     return timezone.localdate()
 
 
-def _url(name: str, *args, query: str = "") -> str:
-    return settings.APP_BASE_URL + reverse(name, args=args) + (f"?{query}" if query else "")
+def _url(tenant, name: str, *args, query: str = "") -> str:
+    """A link to one of `tenant`'s pages: from APP_BASE_URL (never a request's Host), naming the facility (people.with_facility)."""
+    return people.with_facility(settings.APP_BASE_URL + reverse(name, args=args) + (f"?{query}" if query else ""), tenant)
 
 
 def _name(user) -> str:
@@ -131,15 +134,15 @@ def reminder_refusal(user) -> str | None:
 
 # --- what: the digest ------------------------------------------------------------------------------------------------------
 
-def _wo_line(wo, today: date) -> dict:
+def _wo_line(wo, tenant, today: date) -> dict:
     """One work order as the digest shows it. Plain values only: never its problem, requester, callback, or reported location."""
     asset = wo.asset
     return {"number": wo.number, "type": wo.get_type_display(), "priority": wo.get_priority_display(), "status": wo.get_status_display(),
             "due_on": wo.due_on, "late_days": max((today - wo.due_on).days, 0),
-            "tag": asset.tag, "device": asset.device_model.description, "department": asset.department.name, "url": _url("web:wo", wo.number)}
+            "tag": asset.tag, "device": asset.device_model.description, "department": asset.department.name, "url": _url(tenant, "web:wo", wo.number)}
 
 
-def digest_for(user, technician, today: date) -> dict:
+def digest_for(user, technician, tenant, today: date) -> dict:
     """What `user`'s digest for `today` lists: {"due": [...], "due_total", "pms": [...], "pms_total"}, each list at most LIST_CAP
     lines (_wo_line). Due: their open work orders due today or before. PMs: their open PM work orders due in the next PM_DAYS."""
     mine = scoping.work_orders(user, open_work_orders().filter(assigned_to=technician))  # the whole facility: a scoped user is refused
@@ -147,8 +150,8 @@ def digest_for(user, technician, today: date) -> dict:
     due = mine.filter(due_on__lte=today).select_related(*related).order_by(PRIORITY_RANK, "due_on", "number")
     pms = (mine.filter(type=WoType.PM, due_on__gt=today, due_on__lte=today + timedelta(days=PM_DAYS)).select_related(*related)
            .order_by("due_on", "asset__tag"))
-    return {"due": [_wo_line(wo, today) for wo in due[:LIST_CAP]], "due_total": due.count(),
-            "pms": [_wo_line(wo, today) for wo in pms[:LIST_CAP]], "pms_total": pms.count()}
+    return {"due": [_wo_line(wo, tenant, today) for wo in due[:LIST_CAP]], "due_total": due.count(),
+            "pms": [_wo_line(wo, tenant, today) for wo in pms[:LIST_CAP]], "pms_total": pms.count()}
 
 
 # --- what: the contract reminders ------------------------------------------------------------------------------------------
@@ -184,13 +187,13 @@ class Reminder:
     def key(self) -> str:
         return f"{self.contract.id}:{self.contract.end_on.isoformat()}:{self.stage}"
 
-    def line(self, today: date) -> dict:
+    def line(self, tenant, today: date) -> dict:
         c = self.contract
         left = (c.end_on - today).days
         return {"reference": c.reference, "vendor": c.vendor, "type": c.get_type_display(), "coverage": c.get_coverage_display(),
                 "end_on": c.end_on, "ended": left < 0, "when": _when(left), "devices": self.devices,
                 "models": self.models[:MODELS_SHOWN], "more_models": max(len(self.models) - MODELS_SHOWN, 0),
-                "url": _url("web:contract", c.pk)}
+                "url": _url(tenant, "web:contract", c.pk)}
 
 
 def reminders_due(today: date) -> list[Reminder]:
@@ -250,7 +253,7 @@ def send_digest(user, technician, tenant, today: date) -> str:
     reason = digest_refusal(user, technician)
     if reason:
         return reason
-    items = digest_for(user, technician, today)
+    items = digest_for(user, technician, tenant, today)
     if not items["due_total"] and not items["pms_total"]:
         return "quiet"
     claim = _claim(Kind.DIGEST, today.isoformat(), user)
@@ -258,7 +261,7 @@ def send_digest(user, technician, tenant, today: date) -> str:
         raise AlreadySent
     context = {**items, "name": _name(user), "facility": tenant.name, "today": today, "pm_days": PM_DAYS,
                "due_more": items["due_total"] - len(items["due"]), "pms_more": items["pms_total"] - len(items["pms"]),
-               "list_url": _url("web:workorders", query=f"assigned={technician.id}"), "preferences_url": _url("web:notifications")}
+               "list_url": _url(tenant, "web:workorders", query=f"assigned={technician.id}"), "preferences_url": _url(tenant, "web:notifications")}
     return "sent" if _send_claimed(user, DIGEST_TEMPLATE, context, [claim]) else "failed"
 
 
@@ -281,9 +284,9 @@ def send_reminders(user, reminders: list[Reminder], tenant, today: date) -> tupl
         raise
     if not claims:
         raise AlreadySent
-    context = {"name": _name(user), "facility": tenant.name, "today": today, "items": [r.line(today) for r in listed],
-               "stages": [days for days, _stage in reversed(STAGES)], "contracts_url": _url("web:contracts"),
-               "preferences_url": _url("web:notifications")}
+    context = {"name": _name(user), "facility": tenant.name, "today": today, "items": [r.line(tenant, today) for r in listed],
+               "stages": [days for days, _stage in reversed(STAGES)], "contracts_url": _url(tenant, "web:contracts"),
+               "preferences_url": _url(tenant, "web:notifications")}
     sent = _send_claimed(user, CONTRACT_TEMPLATE, context, claims)
     return ("sent" if sent else "failed"), len(listed)
 
