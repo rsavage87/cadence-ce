@@ -662,7 +662,7 @@ form.facility{margin:0}
 .allf .allf-switch{background:none;border:0;padding:0;font:inherit;font-weight:600;color:var(--accent);cursor:pointer;text-align:left;text-decoration:underline;text-underline-offset:2px}
 .allf .chip{margin-left:6px;vertical-align:1px}
 .allf thead th{white-space:normal;vertical-align:bottom}
-.allf td.num{min-width:96px}
+.allf td.num{min-width:80px}
 .allf td .two small{white-space:normal}
 .allf td.allf-none{color:var(--ink-3)}
 .allf tbody tr:last-child th[scope="row"]{border-bottom:0}
