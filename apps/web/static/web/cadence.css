@@ -674,3 +674,8 @@ button.link{background:none;border:0;padding:0;font:inherit;font-size:12px;font-
   .page-head,.panel-h,h1,h2,h3{break-after:avoid}
   .panel,.kpis,.kpi,.stat,.strip,.legend,.chart,.cal,.alert,.kcard,.note,.li,tr{break-inside:avoid}
 }
+
+/* slice 22: the person's facilities, in the account menu (the top bar's facility menu is hidden on phones) */
+.user-menu .menu-facilities{border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin:4px 0 6px;padding:4px 0}
+.user-menu .menu-facilities form{margin:0}
+form.facility{margin:0}

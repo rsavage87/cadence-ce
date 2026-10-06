@@ -36,7 +36,10 @@ PERSONAS = {
 # The views that admit a scoped user (web_view's scoped=True), by URL name. Each narrows what it shows; this test requests them all.
 ADMITS_SCOPED = {"overview", "password_change", "search", "asset_search", "equipment", "asset", "workorders", "wo", "wo_status", "wo_note",
                  "wo_labor_add", "wo_labor_delete", "wo_part_add", "wo_part_delete", "wo_complete", "equipment_csv", "workorders_csv", "labels",
-                 "wo_print", "scan"}
+                 "wo_print", "scan",
+                 # Slice 22: the person's own facilities. Nothing of this facility's; All facilities reads each facility with the person's
+                 # account there (tests/test_all_facilities.py)
+                 "facility_switch", "facility_join", "all_facilities"}
 SIGNED_OUT = {"login", "logout", "password_reset", "password_reset_sent", "password_reset_complete", "password_reset_confirm", "invite_accept"}
 
 

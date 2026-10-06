@@ -71,6 +71,7 @@ MIDDLEWARE = [
     "simple_history.middleware.HistoryRequestMiddleware",
     "django_htmx.middleware.HtmxMiddleware",
     "apps.web.htmx.VaryOnHtmxMiddleware",
+    "apps.web.htmx.FacilityTabMiddleware",  # slice 22: a tab left in another facility reloads instead of reading this one
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]

@@ -93,6 +93,13 @@
       }
     }
   });
+  // Slice 22: the top bar's facility menu. Choosing a facility posts the switch; "All facilities" opens that page in this one.
+  document.addEventListener("change", (e) => {
+    const sel = e.target.closest('select[data-act="switch-facility"]');
+    if (!sel) return;
+    if (sel.value === "all") { window.location.href = sel.dataset.all; return; }
+    sel.form.submit();
+  });
   document.addEventListener("keydown", (e) => {
     const typing = /INPUT|TEXTAREA|SELECT/.test(e.target.tagName);
     if (e.key === "Escape") {

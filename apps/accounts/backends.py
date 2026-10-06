@@ -2,8 +2,12 @@
 Sign-in backend: the username or the email address, in any letter case.
 
 Invited accounts use the lowercased work email as their username, but people type addresses the way they like. A login
-that names more than one account without being an exact username (the same person at two facilities, or two accounts
-differing only in case) signs in to none of them; the exact username still works.
+that names more than one account without being an exact username (two accounts differing only in case) signs in to none of
+them; the exact username still works.
+
+Slice 22: a login that names one person (any of their accounts, or several accounts that all share `person`) signs in to the
+person's landing account (apps.accounts.people.landing_account): their joined account that can sign in and was used last. A
+person deactivated in one facility still signs in to the others.
 
 Every password check runs through here (the sign-in page and Admin's), so this is also where the lockouts of
 apps.accounts.signin are enforced and counted.
@@ -15,22 +19,29 @@ from django.db.models import Q
 
 from apps.core.http import client_ip
 
-from . import signin
+from . import people, signin
 
 User = get_user_model()
 
 
+MATCHES = 50  # more accounts than this under one login is never one person
+
+
 def find_account(login: str):
-    """The one account `login` names: the exact username, else the only account whose username or email matches it in
-    any letter case. Surrounding whitespace is ignored."""
+    """The account a sign-in as `login` opens: the account it names (the exact username, else the only account, or the only
+    person, whose username or email matches it in any letter case), or for a person their landing account. Surrounding
+    whitespace is ignored. None when it names nobody, several people, or a person none of whose accounts can sign in now."""
     login = (login or "").strip()
     if not login:
         return None
-    exact = User.objects.filter(username=login).first()
+    exact = User.objects.select_related("tenant").filter(username=login).first()
     if exact is not None:
-        return exact
-    matches = list(User.objects.filter(Q(username__iexact=login) | Q(email__iexact=login))[:2])
-    return matches[0] if len(matches) == 1 else None
+        return people.landing_account(exact)
+    matches = list(User.objects.select_related("tenant").filter(Q(username__iexact=login) | Q(email__iexact=login))[:MATCHES])
+    persons = {m.person for m in matches}
+    if len(matches) == 1 or (len(persons) == 1 and None not in persons and len(matches) < MATCHES):
+        return people.landing_account(matches[0])
+    return None
 
 
 def facility_is_active(user) -> bool:

@@ -10,11 +10,22 @@
 <script src="{% static 'web/cadence.js' %}" defer></script>
 <script src="{% static 'web/scan.js' %}" defer></script>
 </head>
-<body hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+<body hx-headers='{"X-CSRFToken": "{{ csrf_token }}", "X-Cadence-Facility": "{{ request.tenant.pk|default_if_none:'' }}"}'>
 <div class="app">
   <header class="topbar">
     <a class="brand" href="{% url 'web:overview' %}" style="color:inherit;text-decoration:none"><span class="mark">{% icon "brand" %}</span><span>Cadence CE<small>Clinical Engineering</small></span></a>
+    {% if shell.facilities %}
+    <form class="facility" method="post" action="{% url 'web:facility_switch' %}" title="Facility">{% csrf_token %}{% icon "facility" %}
+      <input type="hidden" name="screen" value="{{ nav_active|default:'' }}">
+      <select name="account" aria-label="Facility" data-act="switch-facility" data-all="{% url 'web:all_facilities' %}">
+        {% for f in shell.facilities %}<option value="{{ f.account }}"{% if f.current and not all_facilities_page %} selected{% endif %}>{{ f.name }}{% if f.invited %} (invited){% endif %}</option>{% endfor %}
+        {% if shell.all_facilities %}<option value="all"{% if all_facilities_page %} selected{% endif %}>All facilities</option>{% endif %}
+      </select>
+      <noscript><button class="btn sm" type="submit">Go</button></noscript>
+    </form>
+    {% else %}
     <div class="facility" title="Facility">{% icon "facility" %}<span>{{ request.tenant.name }}</span></div>
+    {% endif %}
     <form class="gsearch" action="{% url 'web:search' %}" method="get" role="search">{% icon "search" %}<input id="gsearch" name="q" placeholder="Search asset tag, serial, model, or work order" aria-label="Search" autocomplete="off"><kbd>/</kbd></form>
     <div class="spacer"></div>
     <button class="iconbtn" type="button" data-act="theme" title="Toggle light/dark" aria-label="Toggle theme"><span class="if-light">{% icon "moon" %}</span><span class="if-dark">{% icon "sun" %}</span></button>
@@ -22,7 +33,15 @@
       <summary class="avatar" title="{{ shell.user_name }}" aria-label="Account menu">{{ shell.initials }}</summary>
       <div class="menu">
         <div class="who">{{ shell.user_name }}</div>
-        <div class="role">{{ shell.role }}</div>
+        <div class="role">{{ shell.role }}{% if shell.facilities %} · {{ request.tenant.name }}{% endif %}</div>
+        {% if shell.facilities %}
+        <div class="menu-facilities" aria-label="Your facilities">
+          {% for f in shell.facilities %}{% if not f.current %}
+          <form method="post" action="{% url 'web:facility_switch' %}">{% csrf_token %}<input type="hidden" name="account" value="{{ f.account }}"><input type="hidden" name="screen" value="{{ nav_active|default:'' }}"><button type="submit">Switch to {{ f.name }}{% if f.invited %} (invited){% endif %}</button></form>
+          {% endif %}{% endfor %}
+          {% if shell.all_facilities %}<a href="{% url 'web:all_facilities' %}">All facilities</a>{% endif %}
+        </div>
+        {% endif %}
         <a href="{% url 'web:password_change' %}">Change password</a>
         {% if user|chooses_notifications %}<a href="{% url 'web:notifications' %}">Notifications</a>{% endif %}
         {% if user.is_staff %}<a href="{% url 'admin:index' %}">Admin</a>{% endif %}

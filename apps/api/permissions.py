@@ -28,3 +28,20 @@ class ModulePermission(BasePermission):
             self.message = self.SCOPED_REFUSAL  # DRF builds the permission per request, so the message is this request's
             return False
         return True
+
+
+class PersonPermission(ModulePermission):
+    """Slice 22: an endpoint about the signed-in person across their facilities (apps.accounts.people), not this facility's
+    records: any signed-in facility account (a scoped one too: a vendor here may be a director elsewhere; the view lists it in
+    `scoped_actions`), by session only. A token is one account's, issued and revoked in one facility, so it never reads another
+    facility: it is refused here."""
+
+    TOKEN_REFUSAL = "This endpoint reads your other facilities; sign in with a session. A token reads only its own facility."
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        if request.auth is not None:  # a token (session sign-in leaves request.auth None)
+            self.message = self.TOKEN_REFUSAL
+            return False
+        return True

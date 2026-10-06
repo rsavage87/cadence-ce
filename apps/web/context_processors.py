@@ -1,6 +1,7 @@
 from django.urls import reverse
 from django.utils.functional import SimpleLazyObject
 
+from apps.accounts import people
 from apps.accounts.models import Level, Module
 from apps.credentials.models import Technician
 from apps.reports.services import nav_counts
@@ -37,9 +38,11 @@ def _shell(request):
              for key, label, icon, url_name, _module in nav_entries(user)]
     name = user.get_full_name() or user.username
     initials = "".join(p[0] for p in name.split()[:2]).upper() or "?"
+    facilities = people.facility_menu(user)  # slice 22: the person's other facilities (User and Tenant only: never another's role)
     return {"nav": items, "user_name": name, "initials": initials, "role": user.role.name if user.role_id else ("Superuser" if user.is_superuser else ""),
             # the facility's head count, not for a scoped user (a vendor's or a unit's share has no roster in it)
-            "technicians": None if scoping.is_scoped(user) else Technician.objects.filter(is_active=True).count()}
+            "technicians": None if scoping.is_scoped(user) else Technician.objects.filter(is_active=True).count(),
+            "facilities": facilities, "all_facilities": bool(facilities) and people.joined_count(user) > 1}
 
 
 def shell(request):

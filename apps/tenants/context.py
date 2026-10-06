@@ -71,8 +71,10 @@ def tenant_context(tenant):
     token = set_current_tenant(tenant)
     zone = zone_override(tenant)
     zone.__enter__()
-    set_db_tenant(tenant)
     try:
+        # Inside the try (slice 22): a failed set_config (a broken connection) must still restore the contextvar and the zone,
+        # now that one request can enter several facilities in turn (apps.accounts.people, All facilities).
+        set_db_tenant(tenant)
         yield tenant
     finally:
         zone.__exit__(None, None, None)

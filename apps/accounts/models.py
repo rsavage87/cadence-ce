@@ -1,5 +1,6 @@
+from django.contrib.auth.hashers import UNUSABLE_PASSWORD_PREFIX, make_password
 from django.contrib.auth.models import AbstractUser
-from django.db import models
+from django.db import models, transaction
 from simple_history.models import HistoricalRecords
 
 from apps.core.models import TenantModel
@@ -82,9 +83,17 @@ class RolePermission(TenantModel):
 
 
 class User(AbstractUser):
-    """Users belong to exactly one tenant. Superusers may have no tenant and switch in the admin."""
+    """Users belong to exactly one tenant. Superusers may have no tenant and switch in the admin.
+
+    Slice 22, one person in several facilities: a person keeps one account per facility (its role, company, unit, API tokens,
+    preferences, and history stay that facility's), and the accounts that share `person` are the same person (apps.accounts.people).
+    They share one password: a password set on one (the change form, a reset, an invitation, Admin, a hasher upgrade) is written to
+    the person's other accounts that have a usable one, in the same transaction, and an invitation still pending elsewhere gets a
+    fresh unusable password so its emailed link stops working. Only an invitation links accounts, on the exact stored email."""
 
     tenant = models.ForeignKey("tenants.Tenant", on_delete=models.PROTECT, null=True, blank=True, related_name="users")
+    person = models.UUIDField(null=True, blank=True, editable=False,
+                              help_text="Accounts of one person in several facilities share this; empty for an account in one facility.")
     role = models.ForeignKey(Role, on_delete=models.SET_NULL, null=True, blank=True, related_name="users")
     department = models.CharField(max_length=80, blank=True)
     # Slice 16: the vendor a company-scoped user works for, as work orders name it (WorkOrder.vendor_name: a contract's vendor, or
@@ -104,8 +113,40 @@ class User(AbstractUser):
     def has_level(self, module: str, level: int) -> bool:
         return self.level_for(module) >= level
 
+    class Meta(AbstractUser.Meta):
+        constraints = [
+            # One account per person and facility. NULLs are distinct, so every account in one facility passes.
+            models.UniqueConstraint(fields=["person", "tenant"], name="uniq_person_per_facility"),
+            # A person's accounts are facility accounts: never a platform superuser's (no facility).
+            models.CheckConstraint(condition=models.Q(person__isnull=True) | models.Q(tenant__isnull=False), name="person_needs_facility"),
+        ]
+
     def __str__(self):
-        return self.get_full_name() or self.username
+        # The email before the username: a second facility's account has a username of its own ("<email>@<facility slug>").
+        return self.get_full_name() or self.email or self.username
+
+    def save(self, *args, **kwargs):
+        update_fields = kwargs.get("update_fields")
+        # set_password() leaves the raw password in _password until the save; check_password()'s hasher upgrade clears it and
+        # saves the password column alone. Either way the column changed.
+        password_set = self._password is not None or (update_fields is not None and "password" in update_fields)
+        if not (self.person and password_set and self.has_usable_password()):
+            return super().save(*args, **kwargs)
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            share_password(self)
+
+
+def share_password(account) -> None:
+    """Write `account`'s (usable) password to its person's other accounts that have a usable one, and give the person's pending
+    invitations a fresh unusable password, so a set-password link already emailed stops working: the person has a password now
+    and joins those facilities from the facility menu (apps.web.views_facilities). One UPDATE per kind, on the password column
+    only: nothing else a concurrent change wrote (a deactivation, a role) is undone. User has no history table, so this touches
+    no tenant-scoped row and runs on signed-out paths (a reset, an invitation) as well."""
+    others = User._default_manager.filter(person=account.person).exclude(pk=account.pk)
+    others.exclude(password__startswith=UNUSABLE_PASSWORD_PREFIX).update(password=account.password)
+    for pk in others.filter(password__startswith=UNUSABLE_PASSWORD_PREFIX).values_list("pk", flat=True):
+        User._default_manager.filter(pk=pk, password__startswith=UNUSABLE_PASSWORD_PREFIX).update(password=make_password(None))
 
 
 DEFAULT_ROLES = [

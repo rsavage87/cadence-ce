@@ -1,7 +1,18 @@
 from django.contrib.auth import views as auth_views
 from django.urls import include, path
 
-from . import views, views_account, views_equipment, views_invite, views_notifications, views_scan, views_wo_complete, views_wo_costs
+from . import (
+               views,
+               views_account,
+               views_all_facilities,
+               views_equipment,
+               views_facilities,
+               views_invite,
+               views_notifications,
+               views_scan,
+               views_wo_complete,
+               views_wo_costs,
+)
 
 app_name = "web"
 
@@ -16,6 +27,11 @@ urlpatterns = [
     path("password-reset/<uidb64>/<token>/", views_account.password_reset_confirm, name="password_reset_confirm"),
     path("account/password/", views_account.password_change, name="password_change"),
     path("account/notifications/", views_notifications.notifications, name="notifications"),  # slice 20: the emails a user gets
+    # Slice 22: one person, several facilities. The switch (top bar, account menu), the join page an invitation links to, and the
+    # Overview of every facility the person has joined.
+    path("account/facility/", views_facilities.facility_switch, name="facility_switch"),
+    path("account/facility/<int:pk>/join/", views_facilities.facility_join, name="facility_join"),
+    path("overview/all/", views_all_facilities.all_facilities, name="all_facilities"),
     path("invite/<uidb64>/<token>/", views_invite.invite_accept, name="invite_accept"),
     path("search/", views.search, name="search"),
     path("search/assets/", views.asset_search, name="asset_search"),

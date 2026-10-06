@@ -1,0 +1,14 @@
+{% extends "web/base.html" %}
+{% block title %}{% if pending %}Join {{ facility }}{% else %}Switch to {{ facility }}{% endif %}{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>{% if pending %}Join {{ facility }}{% else %}Switch to {{ facility }}{% endif %}</h1>
+  <p class="sub">{% if pending %}{{ facility }} invited you{% if role %} as {{ role }}{% endif %}. You sign in there with the password you use now.{% else %}You already work at {{ facility }}{% if role %} as {{ role }}{% endif %}.{% endif %}</p></div></div>
+<div class="card" style="padding:16px;max-width:560px">
+  <p>Your browser works in one facility at a time: this one's pages in other tabs reload in {{ facility }} when you next use them.</p>
+  <form method="post" action="{% url 'web:facility_switch' %}">{% csrf_token %}
+    <input type="hidden" name="account" value="{{ target.pk }}">
+    <button class="btn primary" type="submit">{% if pending %}Join {{ facility }}{% else %}Switch to {{ facility }}{% endif %}</button>
+    <a class="btn" href="{% url 'web:overview' %}">Not now</a>
+  </form>
+</div>
+{% endblock %}

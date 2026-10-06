@@ -10,8 +10,10 @@ import pytest
 
 from apps.accounts.models import DataScope, Level, Module, Role, User
 from apps.api import urls as api_urls
-from apps.api.permissions import ModulePermission
+from apps.api.permissions import ModulePermission, PersonPermission
 from apps.api.views import AssetViewSet, WorkOrderViewSet
+from apps.api.views_all_facilities import AllFacilitiesViewSet
+from apps.api.views_facilities import FacilityViewSet
 from apps.api.views_scan import ScanViewSet
 from apps.api.views_work import WorkOrderLaborViewSet, WorkOrderNoteViewSet, WorkOrderPartViewSet
 from apps.contracts.models import Contract, ContractType
@@ -416,14 +418,18 @@ def _api_views():
 def test_every_api_endpoint_goes_through_the_module_permission():
     """The scope switch lives in ModulePermission, so every endpoint must check it (a new one without it would be open)."""
     for p, cls in _api_views():
-        assert cls is not None and ModulePermission in cls.permission_classes, p.pattern
+        assert cls is not None and any(issubclass(c, ModulePermission) for c in cls.permission_classes), p.pattern
 
 
 def test_only_work_orders_and_devices_opt_in():
     """A view that names scoped actions must narrow its rows to the share and have a leak test (here, or for slice 19's a work
     order's lines and notes in tests/test_api_work.py, and Scan in tests/test_api_reports.py)."""
     opted = {cls for _p, cls in _api_views() if getattr(cls, "scoped_actions", None)}
-    assert opted == {AssetViewSet, WorkOrderViewSet, WorkOrderLaborViewSet, WorkOrderPartViewSet, WorkOrderNoteViewSet, ScanViewSet}
+    # Slice 22: the person's own facilities, read with the person's account in each (session only, PersonPermission)
+    assert opted == {AssetViewSet, WorkOrderViewSet, WorkOrderLaborViewSet, WorkOrderPartViewSet, WorkOrderNoteViewSet, ScanViewSet,
+                     FacilityViewSet, AllFacilitiesViewSet}
+    assert FacilityViewSet.scoped_actions == AllFacilitiesViewSet.scoped_actions == {"list"}
+    assert FacilityViewSet.permission_classes == AllFacilitiesViewSet.permission_classes == [PersonPermission]
     assert WorkOrderViewSet.scoped_actions == {"list", "retrieve", "transition"}
     assert AssetViewSet.scoped_actions == {"list", "retrieve"}
     assert WorkOrderLaborViewSet.scoped_actions == WorkOrderPartViewSet.scoped_actions == {"list", "create", "destroy"}
