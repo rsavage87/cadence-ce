@@ -2,7 +2,9 @@
 Import data (slice 23, part D): the Settings panel, the page of kinds and runs, a kind's template, an upload and its refusals, the
 column choice with its samples, the check's progress (the bar asking for each chunk until the result), what the check found, the
 import, a stopped import's Continue, discard, the notes CSV, every step refused through the services for a kind the user may not
-import, other facilities' runs, scoped users, the stylesheet's rules, and the whole walk as the runtime role under row-level
+import, other facilities' runs, scoped users, the stylesheet's rules, the review's fixes (whom a pass acts as, said on its page; a
+refused Import's link to the import in the way; an import stopped before its first chunk; samples asked for too late; stale runs
+left out of the Settings panel), and the whole walk as the runtime role under row-level
 security. Fake importers (departments by name; a second kind needing Users Edit) stand in for the real kinds, which parts A to C build.
 """
 import json
@@ -193,8 +195,21 @@ def test_stale_runs_expire_when_the_page_is_read(client, ctx, kim):
     assert "Expired" in client.get(PAGE).content.decode()
     run.refresh_from_db()
     assert run.status == "expired" and run.rows == []
-    body = client.get(f"{PAGE}{run.pk}/").content.decode()
-    assert f"Expired: it was left unfinished for {services.EXPIRE_DAYS} days" in body and "Check the file" not in body
+    body = client.get(f"{PAGE}{run.pk}/").content.decode()  # its columns were never chosen: it expired sooner, and says when
+    assert f"Expired: it was left unfinished for {services.MAPPING_EXPIRE_DAYS} days" in body and "Check the file" not in body
+    done = checked(client)
+    ImportRun.objects.filter(pk=done.pk).update(updated_at=timezone.now() - timedelta(days=services.EXPIRE_DAYS + 1))
+    assert f"Expired: it was left unfinished for {services.EXPIRE_DAYS} days" in client.get(f"{PAGE}{done.pk}/").content.decode()
+
+
+def test_the_settings_panel_counts_no_run_left_too_long(client, ctx, kim):
+    """Review fix: a run abandoned long ago is ended before the panel counts what is not finished, as the Import data page does."""
+    run = uploaded(client)
+    ImportRun.objects.filter(pk=run.pk).update(updated_at=timezone.now() - timedelta(days=services.EXPIRE_DAYS + 5))
+    body = client.get("/settings/").content.decode()
+    assert 'id="set-import"' in body and "not finished" not in body
+    run.refresh_from_db()
+    assert run.status == "expired" and run.rows == []
 
 
 # --- uploading ----------------------------------------------------------------------------------------------------------------
@@ -232,6 +247,15 @@ def test_the_column_choice_shows_the_guess_the_samples_and_what_is_left_out(clie
     assert '<span class="imp-smp-v">x</span> · <span class="imp-smp-v">y</span>' in r.content.decode()
     assert "No values to show" in client.get(f"{PAGE}{run.pk}/samples/?map-code=", **HX).content.decode()
     assert client.get(f"{PAGE}{run.pk}/samples/?map-code=2").status_code == 302  # only ever a fragment
+
+
+def test_a_sample_asked_for_once_the_columns_are_chosen_sends_the_browser_to_the_run(client, ctx, kim):
+    """Review fix: another tab chose the columns (or discarded the run); a select changed here then must not get the whole run
+    page, which a followed redirect would swap into the samples' cell (a second shell, and a second progress bar polling)."""
+    run = uploaded(client)
+    client.post(f"{PAGE}{run.pk}/columns/", {"map-name": "0"})
+    r = client.get(f"{PAGE}{run.pk}/samples/?map-code=1", **HX)
+    assert r.status_code == 200 and r["HX-Redirect"] == f"{PAGE}{run.pk}/" and b"imp-progress" not in r.content
 
 
 def test_a_refused_column_choice_comes_back_as_chosen(client, ctx, kim):
@@ -382,6 +406,88 @@ def test_a_second_import_waits_for_the_first(client, ctx, kim):
     assert r.status_code == 200 and "is running in this facility, or was left part way" in r.content.decode()
     second.refresh_from_db()
     assert second.status == "checked"
+
+
+def test_a_refused_import_names_and_links_the_one_running_for_whoever_may_open_it(client, ctx, make_user, kim):
+    """Review fix: the refusal is shown whole, with a link to the import in the way, who started it, and whether it has stopped
+    (then it never finishes by itself); someone who may not import that kind is told one runs, never which."""
+    first, second = checked(client), checked(client, csv_bytes("Dept,CC,Status", "Lab,,"))
+    client.post(f"{PAGE}{first.pk}/import/")
+    body = client.post(f"{PAGE}{second.pk}/import/").content.decode()
+    assert ('role="alert">Another import (departments, depts.csv) is running in this facility, or was left part way. Let it finish (open it and press '
+            f'Continue if it stopped) or discard it, then import this file. <a class="link" href="{PAGE}{first.pk}/">Open depts.csv</a>, '
+            "started by Director User: 0% done.</div>") in body
+    ImportRun.objects.filter(pk=first.pk).update(updated_at=timezone.now() - timedelta(minutes=5))  # its tab was closed
+    body = client.post(f"{PAGE}{second.pk}/import/").content.decode()
+    assert f'<a class="link" href="{PAGE}{first.pk}/">Open depts.csv</a>, started by Director User: it stopped at 0% and waits for Continue or Stop.' in body
+    client.post(f"{PAGE}{first.pk}/discard/")
+    staff = uploaded(client, kind="staff")
+    client.post(f"{PAGE}{staff.pk}/columns/", {"map-name": "0"})
+    drive(client, staff)
+    client.post(f"{PAGE}{staff.pk}/import/")
+    client.force_login(make_user("manager"))  # may import departments, not staff
+    body = client.post(f"{PAGE}{second.pk}/import/").content.decode()
+    assert 'role="alert">Another import is running in this facility, or was left part way.' in body
+    assert f"{PAGE}{staff.pk}/" not in body and "(staff," not in body and "started by Director User" not in body
+
+
+def test_an_import_stopped_before_its_first_chunk_says_nothing_was_saved(client, ctx, kim):
+    """Review fix: Import was pressed and stopped before any chunk ran: nothing was imported, and the page does not say that rows
+    imported before it stopped stay, nor that no rows were checked."""
+    run = checked(client)
+    client.post(f"{PAGE}{run.pk}/import/")
+    client.post(f"{PAGE}{run.pk}/discard/")  # Stop importing, before the bar asked for a chunk
+    body = client.get(f"{PAGE}{run.pk}/").content.decode()
+    assert "Discarded after Import was pressed, before any row was imported: nothing from this file was saved." in body
+    assert "stay in Cadence" not in body and "No rows were checked." not in body and "No row was imported." in body
+    assert not Department.objects.exists()
+    expired = checked(client)
+    client.post(f"{PAGE}{expired.pk}/import/")
+    ImportRun.objects.filter(pk=expired.pk).update(updated_at=timezone.now() - timedelta(days=services.EXPIRE_DAYS + 1))
+    body = client.get(f"{PAGE}{expired.pk}/").content.decode()
+    assert "so its rows were cleared and nothing from it was saved." in body and "stay in Cadence" not in body
+
+
+# --- who a pass acts as --------------------------------------------------------------------------------------------------------
+
+def test_a_pass_names_whom_its_rows_act_as_whoever_moves_it(client, ctx, make_user, kim, monkeypatch):
+    """Review fix: anyone who may import the kind may open a run under way, and their page moves it on; its rows act as whoever
+    started the pass (ImportRun.pass_by), and the page says so, never implying the viewer's own levels apply."""
+    seen = []
+    real = FakeImporter.apply
+    monkeypatch.setattr(FakeImporter, "apply", lambda self, c, row, result: (seen.append(c.user), real(self, c, row, result))[1])
+    run = uploaded(client)
+    client.post(f"{PAGE}{run.pk}/columns/", {"map-name": "0"})
+    assert "Started by you: each row is checked with your levels." in client.get(f"{PAGE}{run.pk}/").content.decode()
+    manager = make_user("manager")
+    client.force_login(manager)
+    body = client.get(f"{PAGE}{run.pk}/").content.decode()
+    assert "Started by Director User: each row is checked with their levels, not yours, whoever's page moves it on." in body
+    assert 'hx-trigger="load"' in body  # the manager's page moves it on, as the director
+    drive(client, run)
+    assert set(seen) == {kim}
+    body = client.get(f"{PAGE}{run.pk}/").content.decode()
+    assert ("Checked: nothing is saved yet. This is what importing the file will do. The check used Director User's levels; Import uses those "
+            "of whoever presses it, so where yours differ, a row can come out differently.") in body
+    client.post(f"{PAGE}{run.pk}/import/")
+    client.force_login(kim)
+    body = client.get(f"{PAGE}{run.pk}/").content.decode()
+    assert "Started by Manager User: each row is saved with their levels and recorded as their change, not yours" in body
+    seen.clear()
+    drive(client, run)
+    assert set(seen) == {manager}
+
+
+def test_a_pass_from_the_command_line_or_whose_starter_is_gone(client, ctx, kim):
+    run = services.confirm_columns(services.upload(None, "fake", "d.csv", DEPTS), None, {"name": 0})  # manage.py import_data, stopped
+    body = client.get(f"{PAGE}{run.pk}/").content.decode()
+    assert "Started from the command line (manage.py import_data), which may make any change: each row is checked that way, not with your levels" in body
+    gone = uploaded(client)
+    client.post(f"{PAGE}{gone.pk}/columns/", {"map-name": "0"})
+    ImportRun.objects.filter(pk=gone.pk).update(pass_by=None)  # whoever started the check has no account now: the pass is refused
+    body = client.get(f"{PAGE}{gone.pk}/").content.decode()
+    assert "Whoever started this check no longer has an account here, so it cannot go on. Stop it and upload the file again." in body
+    assert 'hx-trigger="load"' not in body and ">Continue<" not in body and "Stop the check" in body
 
 
 # --- who may -------------------------------------------------------------------------------------------------------------------

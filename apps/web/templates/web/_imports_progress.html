@@ -1,16 +1,19 @@
 {% comment %}Slice 23, part D: the check or the import under way. While `poll`, the panel posts to import_next as soon as it is loaded and
    is replaced by the answer: the panel again, one chunk further (after a pause when another request was doing the chunk), until the
    pass is done and the browser loads the run's page. An import nobody is moving waits for Continue. Without JavaScript, Continue
-   does a chunk a click. Stop ends the run (services.discard): an import keeps what it has saved.{% endcomment %}
+   does a chunk a click. Stop ends the run (services.discard): an import keeps what it has saved. Whoever's page moves the pass on,
+   its rows act as the person who started it (views_imports._acting_ctx), whom the panel names; a pass whose starter has no
+   account any more cannot go on, and offers only Stop.{% endcomment %}
 {% url 'web:import_next' run.pk as next_url %}
 <section class="panel imp-progress" id="imp-progress" aria-labelledby="imp-progress-h"{% if poll %} hx-post="{{ next_url }}" hx-trigger="{{ trigger }}" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap hx-target"{% endif %}>
   <div class="panel-h"><h2 id="imp-progress-h">{% if importing %}Importing{% else %}Checking{% endif %}</h2><span class="sub">{{ done_text }} of {{ rows_text }} row{{ run.row_count|pluralize }}</span></div>
   <div class="panel-b">
     <div class="bar imp-bar" role="progressbar" aria-labelledby="imp-progress-h" aria-valuenow="{{ pct }}" aria-valuemin="0" aria-valuemax="100"><i style="width:{{ pct }}%"></i></div>
+    <p class="hint imp-by">{% if by_gone %}Whoever started this {% if importing %}import{% else %}check{% endif %} no longer has an account here, so it cannot go on. Stop it{% if importing %} (the rows saved so far stay){% endif %} and upload the file again.{% elif by_command %}Started from the command line (manage.py import_data), which may make any change: each row is {% if importing %}saved{% else %}checked{% endif %} that way, not with your levels, whoever's page moves it on.{% elif by_you %}Started by you: each row is {% if importing %}saved{% else %}checked{% endif %} with your levels.{% else %}Started by {{ by }}: each row is {% if importing %}saved with their levels and recorded as their change{% else %}checked with their levels{% endif %}, not yours, whoever's page moves it on.{% endif %}</p>
     {% if importing %}
       {% if poll %}
       <p class="hint">Saving the rows, a few hundred at a time. Keep this page open until it finishes; if it stops, open it again and choose Continue: it carries on where it stopped.</p>
-      {% else %}
+      {% elif not by_gone %}
       <p class="hint">This import stopped at {{ pct }}% (the page was closed, or the server restarted). The rows before that are saved. Continue imports the rest; Stop leaves it as it is.</p>
       {% endif %}
     {% else %}
@@ -20,7 +23,7 @@
       <form method="post" action="{% url 'web:import_discard' run.pk %}">{% csrf_token %}<button class="btn" type="submit">{% if importing %}Stop importing{% else %}Stop the check{% endif %}</button></form>
       {% if poll %}
       <noscript><form method="post" action="{{ next_url }}">{% csrf_token %}<button class="btn primary" type="submit">Continue</button></form></noscript>
-      {% else %}
+      {% elif not by_gone %}
       <form method="post" action="{{ next_url }}" hx-post="{{ next_url }}" hx-target="#imp-progress" hx-swap="outerHTML">{% csrf_token %}<button class="btn primary" type="submit">Continue</button></form>
       {% endif %}
     </div>
