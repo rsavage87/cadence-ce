@@ -39,13 +39,20 @@ security tests, `tests/test_postgres_rls.py`).
    run `manage.py enable_rls --database=migrate` in the deploy step (docker-compose already does).
 8. **Tests for every slice:** a tenant-isolation test for each new model, and a service test for each rule.
    `pytest` must be green before a slice is done.
+9. **One account per facility, even for one person** (slice 22). A person in several facilities has an account in each, linked by
+   `User.person` (`apps/accounts/people.py`); nothing ever lets an account read another facility. Code that needs a person's other
+   facility (All facilities, the switch's landing screen, a role name) enters `people.in_facility(account)` and returns plain values;
+   outside it, read only User and Tenant (another facility's Role and rows are hidden under row-level security). Only an invitation links
+   accounts (`services.add_account`, on the exact stored email), and the inviting facility must never be able to tell. Links in staff
+   emails carry `?facility=<slug>` (`people.with_facility`): record numbers repeat across facilities. Person-level API endpoints are
+   session only (`PersonPermission`): a token is one facility's.
 
 ## Commands
 ```
 python manage.py makemigrations && python manage.py migrate        # first run creates all migrations
 python manage.py bootstrap_tenant --name "Riverside" --slug riverside --admin-email you@example.com
 python manage.py bootstrap_tenant --name "Riverside" --slug riverside --admin-email you@example.com --invite   # email the director a set-password link
-python manage.py seed_demo                                         # small fictional dataset, login kim@riverside.example / DemoPass-2026
+python manage.py seed_demo                                         # small fictional dataset, login kim@riverside.example / DemoPass-2026 (two facilities)
 python manage.py generate_pm                                       # PM work-order generation; the scheduler runs it daily
 python manage.py import_assets --tenant riverside inventory.csv --dry-run
 python manage.py import_openfda --days 30                         # FDA recall import; the scheduler runs it daily
@@ -87,7 +94,14 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `invitations.py` (signed set-password links: `send_invitation`, `is_pending`; a resend replaces the link), `signin.py` (sign-in lockouts and
   password-reset requests, never revealing whether an address has an account), `backends.py` (username or email in any case; a deactivated
   facility cannot sign in), `emails.py` (the one place account emails are sent; a failure returns False, never raises). Links in emails start
-  with `APP_BASE_URL`, never the request's Host
+  with `APP_BASE_URL`, never the request's Host. Slice 22, one person in several facilities: `people.py` (which of a person's accounts they
+  may open: `can_enter`, `is_pending`, `is_joined`, `landing_account` (sign-in opens the one used last), `facility_menu`, `switch_target`,
+  `join` (a pending invitation takes the session's password in one conditional UPDATE), `in_facility`, `with_facility`); `User.person` with
+  one account per person and facility; `models.share_password` (a password set on one account is the person's everywhere; their pending
+  invitations' links die); `services.add_account` (invite_user's and bootstrap_tenant's account: an address another facility's account
+  stores exactly joins that person, with the username `<email>@<slug>`); invitations send a person who already signs in the "added to"
+  email with the join page's link; a reset sends a person one link; lockouts also count per person; names show the full name, else the
+  email (`str(user)`), never a username
 - `apps/equipment` Department, DeviceModel, Asset (tags carry no spaces or slashes: they are URL segments, and never change once a device is
   added), CSV importer; `services.py` fleet queries plus adding devices, models, and departments, editing (`update_asset`,
   `update_device_model`, `rename_department`: names unique in any letter case), and status changes
@@ -131,11 +145,15 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   the API serves only these); custom reports (`CustomReport`, key `custom-<id>`): `custom.py` declares each source's columns and filters
   (nothing else can be asked for), checks a definition (`clean_definition`), runs it in the database, and creates, changes, and deletes
   one; `permissions.py` (Reports View runs, Reports Edit builds; a source also needs Work orders or Equipment View). `services.find_report`,
-  `run_any`, and `csv_filename` are the one lookup by key for the screen, CSV, print page, Schedule, and report emails
+  `run_any`, and `csv_filename` are the one lookup by key for the screen, CSV, print page, Schedule, and report emails; `all_facilities.py`
+  All facilities (each joined facility's Overview figures read inside it with the person's account there, totals from summed parts)
 - `apps/web` HTMX UI: one views/urls/forms module per screen (`views.py` Overview, Equipment, Work orders; `views_contracts.py`;
   `views_users.py` Users and Roles tabs; `views_account.py` sign-in, password reset and change; `views_invite.py` accepting an invitation; `views_credentials.py`; `views_recalls.py`; `views_reports.py` with the CSV download and `views_custom_reports.py` the custom report builder (with `reports_custom.py`); `views_settings.py`; `views_pm.py` with `pm_panels.py` for its lower panels; `views_pm_week.py` Auto-assign week; `views_wo_costs.py` and `views_wo_complete.py` the work order drawer's labor and parts and its Mark completed; `views_models.py` the device model drawer (PM program tab, Add model, Edit details, risk score) with `views_procedures.py` and `views_aem.py` for its Procedure and AEM tabs; `views_exports.py` the list CSVs; `views_scan.py` Scan tag (with `static/web/scan.js`, the camera where the browser reads codes); `history_tabs.py` the
   History tab or section of the device, work order, contract, and model drawers; `views_change_log.py` Users and access's Change log
-  (with its CSV and print); `views_notifications.py` the account menu's Notifications page; `views_print.py` asset labels and the
+  (with its CSV and print); `views_notifications.py` the account menu's Notifications page; `views_facilities.py` the facility switch and
+  an invitation's join page, `views_all_facilities.py` All facilities (slice 22; the top bar's facility menu and the account menu's list
+  come from the shell context processor; `htmx.FacilityTabMiddleware` reloads a tab left in another facility; `web_view` answers a link
+  whose `?facility=` names another facility with a page that offers the switch); `views_print.py` asset labels and the
   work-order print, with `qr.py`; `views_print_sheets.py` PM route sheets and report PDFs), templates,
   `charts.py` (SVG geometry: line, stacked bars, hbars with a benchmark marker, donut), `overview.py` and `reports_*.py` (chart geometry
   and display values for the Overview and the Reports; services never import them), `htmx.py` helpers, shell
@@ -146,7 +164,8 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   becomes a 400 keyed by field), `views.py` devices, models, departments, work orders, Settings; `views_work.py` a work order's labor,
   parts, notes; `views_contracts.py`; `views_pm.py` PM schedule, Auto-assign week, procedures, risk score, AEM; `views_reports.py` the
   Overview, reports, custom reports, report emails; `views_recalls.py` with Check FDA feed; `views_scan.py`; `views_users.py` users,
-  roles, technicians, credentials; serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
+  roles, technicians, credentials; `views_facilities.py` and `views_all_facilities.py` the signed-in person's facilities and All
+  facilities (session only: `permissions.PersonPermission`); serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
   same thing and calls the same service; the API never imports apps.web. `tenancy.py` (`TenantAPIMixin`: the tenant from the session or
   token user, set after authentication and restored once the response is rendered), `authentication.py` (DRF's token check plus the
   deactivated-facility refusal sign-in has)
@@ -158,5 +177,5 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `wants`, `set_preferences`), `NotificationSent` (each email once: claimed before sending, released if the send failed),
   `assignments.py` (announce a technician's new work order after commit; `batch()` sends each technician one email for a batch,
   `quiet()` sends none, as the seed does), `daily.py` the digest and contract reminders (`send_staff_notifications`, a daily job). No
-  email carries free text a requester typed
-- `apps/demo` seed data
+  email carries free text a requester typed; every link names its facility (`?facility=`)
+- `apps/demo` seed data (Riverside Regional, and Riverside North Campus with Kim linked: the demo shows the facility menu)

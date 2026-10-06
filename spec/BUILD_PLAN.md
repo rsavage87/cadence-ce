@@ -1,12 +1,12 @@
 # Build plan
 
 The mock (`cadence-ce-cmms-mock.html`) is the spec. Each slice below is shippable on its own and ends with green tests.
-Slices 0 to 21 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
+Slices 0 to 22 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
 export and print, devices are added and changed in the product, reports and request confirmations go out by email, each
 device model's PM program (risk score, procedure, AEM interval) is kept in the product, and the work itself (time, parts,
 what was done, a PM's results) is recorded on the work order; vendors and clinical requesters see only their own share; facilities
 build their own reports, and a label opens its device with Scan tag; the API covers what the screens do, by session or token; every record's changes and every access change can be read back;
-staff get the emails they choose about their own work; and each facility works on its own clock. What each slice deferred is noted in its row and below.
+staff get the emails they choose about their own work; each facility works on its own clock; and one person signs in once to every facility they work at. What each slice deferred is noted in its row and below.
 
 | # | Slice | Mock screen(s) | Code | Status |
 |---|-------|----------------|------|--------|
@@ -32,6 +32,7 @@ staff get the emails they choose about their own work; and each facility works o
 | 19 | The API, complete | (none: `/api/v1/` for every screen's actions) | `api` + `accounts` | done (token sign-in resolves the facility; every API write goes through the services) |
 | 20 | History and notifications | Every drawer (History), Users and access (Change log), the account menu (Notifications) | `core` + `accounts` + `notifications` + `web` + `api` | done (times read in the server's TIME_ZONE; a facility's own time zone is not used yet) |
 | 21 | Facility time zones | Settings (Time zone); every screen's today, times, and prints | `tenants` + `jobs` + every app | done (the server's zone is a new facility's default and the FDA import's clock) |
+| 22 | Several facilities | The top bar's facility menu (each facility, "All facilities"), the account menu, an invitation's join page | `accounts` + `reports` + `notifications` + `web` + `api` | done (one account per facility, linked per person; existing separate accounts are not linked, only invitations link) |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.
@@ -285,3 +286,14 @@ The mock's export and print buttons work since slice 11, Add device since slice 
   zone of its own and works in the server's (DJANGO_TIME_ZONE) until it chooses one, so an upgrade keeps every facility on the clock
   it already used (the column's old, never-read default was dropped); a run of the previous day left running is taken over at any
   hour, not only before the hour.
+- Several facilities (slice 22): the mock's facility menu. A person keeps one account in each facility they work at (its role, unit or
+  company, tokens, preferences, history), linked by `User.person`; they sign in once, with one password (a change or reset applies
+  everywhere), and land in the facility used last. Inviting an address that another facility's account stores exactly adds the
+  facility to that person (`accounts.services.add_account`, which bootstrap_tenant uses too); they join from the email's join page
+  or the facility menu, and nothing tells the inviting facility the address was in use (no username in the API's user rows; names
+  fall back to the email). Switching signs the browser in to the other account (a tab left in the old facility reloads); staff email
+  links name their facility (`?facility=`), and a link for another facility offers the switch instead of opening the record with the
+  same number here; sign-in follows `next` for a person with several facilities only when it names its facility. All facilities
+  (`/overview/all/`, `/api/v1/overview/all-facilities/`, session only) shows each joined facility's Overview figures, read inside it
+  with the person's account there, with totals from summed parts (a shared recall counted once). The demo seeds Riverside North Campus
+  with Kim linked.

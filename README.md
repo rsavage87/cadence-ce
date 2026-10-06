@@ -21,7 +21,8 @@ docker compose exec web python manage.py migrate --database=migrate
 docker compose exec web python manage.py enable_rls --database=migrate
 docker compose exec web python manage.py seed_demo
 ```
-Open http://localhost:8000/ and sign in as `kim@riverside.example` / `DemoPass-2026`.
+Open http://localhost:8000/ and sign in as `kim@riverside.example` / `DemoPass-2026`. Kim directs two demo facilities, Riverside
+Regional and Riverside North Campus: the facility menu at the top switches between them, and "All facilities" puts them side by side.
 Portal: http://localhost:8000/r/riverside/ · API: http://localhost:8000/api/v1/ · Admin: http://localhost:8000/admin/
 
 ## Run locally (no Docker)
@@ -56,6 +57,25 @@ Each facility works on its own clock: its time zone (Settings, Time zone; the di
 overdue, report dates, CSV names), the times its screens and prints show, and when its daily jobs and emails run. A change takes
 effect at once for the screens and from the next day for the jobs, and is recorded in the change log. A facility that has not
 chosen one works in the server's `DJANGO_TIME_ZONE`, which is also the openFDA import's clock.
+
+## Several facilities
+A person who works at several facilities (a health system's hospitals, a CE department covering two campuses) signs in once with
+one email and one password. They keep a separate account in each facility, with that facility's role, unit or company, API tokens,
+notification choices, and history, so each facility manages its own people exactly as before. Inviting someone whose address
+already has an account at another facility on this server adds that facility to their account. They get an email saying so, and
+join from the link or from the facility menu at the top of any page (on a phone, in the account menu). Nothing tells the inviting
+facility that the address was already in use. `bootstrap_tenant` with a director's existing address does the same.
+- Sign-in opens the facility the person used last. Switching facility signs the browser in to the person's account there (a browser
+  works in one facility at a time: a tab left showing another facility reloads when next used). Being deactivated in one facility
+  leaves the others as they were.
+- The password is the person's: a change or reset applies in every facility, and a reset request sends one link.
+- Staff emails link with the facility's name in the address (`?facility=<slug>`), since record numbers repeat across facilities: a
+  link for another facility offers to switch there, never the record with the same number here.
+- All facilities (the facility menu, `/overview/all/`) shows the Overview's figures for each facility the person has joined, each
+  on its own today and month and read with the person's access there, with totals (rates worked out from the summed parts, a
+  recall shared by several facilities counted once).
+- An API token is one account's, so it reads one facility; `/api/v1/facilities/` and `/api/v1/overview/all-facilities/` answer only
+  a signed-in session. `drf_create_token` takes the account's username, which for a second facility's account is `<email>@<slug>`.
 
 ## Email and sign-in
 Inviting a user from Users and access emails them a link to set their password (valid for 7 days; Resend invite replaces
@@ -155,7 +175,8 @@ its module's docstring under `apps/api/`, and the browsable API (open `/api/v1/`
 - the PM schedule, Auto-assign week, PM procedures, a model's procedure, risk score, and AEM cases and decisions (`views_pm.py`);
 - the Overview, the eight reports, custom reports (build and run), and your own report emails (`views_reports.py`);
 - recall alert matches, recall work orders, and Check FDA feed (`views_recalls.py`); Scan (`views_scan.py`);
-- users, roles, technicians, and credentials (`views_users.py`); Settings.
+- users, roles, technicians, and credentials (`views_users.py`); Settings;
+- the signed-in person's facilities and All facilities (`views_facilities.py`, `views_all_facilities.py`; session only).
 
 Vendor technicians and clinical requesters reach only their own devices and work orders (and Scan), as on the screens. Nobody gives
 a role more access than their own role has, on the Users tab or the API, and a facility always keeps a director who can sign in.
@@ -182,6 +203,9 @@ report (PDF), and the recall response log (Recalls). The Overview prints as it i
 - Some roles see only part of a facility: a vendor technician only the work orders assigned to their company (and those devices),
   a clinical requester only their own unit's devices and work orders. Every screen, export, print, and API endpoint refuses them
   unless it narrows what it shows to that share; a custom role can be given either scope on the Roles tab.
+- A person in several facilities has one account in each (`User.person` links them): no account ever reads another facility's
+  rows. Moving between them signs in to the other account; All facilities reads each facility inside it, with that account's
+  access. Only an invitation links accounts, on the exact address another facility's account stores.
 - django-simple-history records every change to assets, work orders, contracts, credentials, and roles.
 - The portal asks for no patient information and is rate-limited per IP.
 - Invitation and password-reset links are signed, single-use, and expire; the reset request never says whether an address has an account.
