@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import date
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -89,6 +90,64 @@ def coverage_by_category(as_of: date | None = None) -> list[dict]:
                      "status": "none" if not full else "single" if len(full) == 1 else "covered"})
     rows.sort(key=lambda r: (len(r["technicians"]), -r["devices"]))
     return rows
+
+
+# --- technicians (slice 23: the technicians import) ------------------------------------------------
+
+TECHNICIAN_FIELDS = ("name", "title", "certification", "weekly_capacity_hours", "is_active")
+DEFAULT_WEEKLY_HOURS = Decimal(Technician._meta.get_field("weekly_capacity_hours").default)
+MAX_WEEKLY_HOURS = Decimal(80)
+
+
+def _clean_technician(technician: Technician) -> None:
+    """Trim the text (a name's inner spaces too: names are matched by their words), check each column's length, and keep the
+    weekly hours to 0 to 80, rounded to the tenth the column holds. Raises ValidationError by field."""
+    technician.name = " ".join((technician.name or "").split())
+    technician.title = (technician.title or "").strip()
+    technician.certification = (technician.certification or "").strip()
+    errors = {}
+    if not technician.name:
+        errors["name"] = "A technician needs a name."
+    for field in ("name", "title", "certification"):
+        limit = Technician._meta.get_field(field).max_length
+        if field not in errors and len(getattr(technician, field)) > limit:
+            errors[field] = f"Keep the {field} to {limit} characters."
+    try:
+        hours = Decimal(str(technician.weekly_capacity_hours))
+    except (InvalidOperation, ValueError):
+        hours = None
+    if hours is None or not hours.is_finite() or not 0 <= hours <= MAX_WEEKLY_HOURS:
+        errors["weekly_capacity_hours"] = f"Weekly hours must be a number from 0 to {MAX_WEEKLY_HOURS}."
+    else:
+        technician.weekly_capacity_hours = hours.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+    if not isinstance(technician.is_active, bool):
+        errors["is_active"] = "Active must be yes or no."
+    if errors:
+        raise ValidationError(errors)
+
+
+def create_technician(*, name: str, title: str = "", certification: str = "", weekly_capacity_hours=None, is_active: bool = True) -> Technician:
+    """A technician with no user account: one the import brings over, current or former (a former one is inactive, so imported
+    work orders can still name who did the work). Invite user's create_technician adds one linked to the new account."""
+    technician = Technician(name=name, title=title, certification=certification, is_active=is_active,
+                            weekly_capacity_hours=DEFAULT_WEEKLY_HOURS if weekly_capacity_hours is None else weekly_capacity_hours)
+    _clean_technician(technician)
+    technician.save()
+    return technician
+
+
+def update_technician(technician: Technician, **fields) -> Technician:
+    """Change any of TECHNICIAN_FIELDS. Only those are written: the user account a technician is linked to stays linked (that link
+    is the account's, made when it was invited)."""
+    unknown = set(fields) - set(TECHNICIAN_FIELDS)
+    if unknown:
+        raise ValidationError({k: "Unknown field." for k in unknown})
+    for k, v in fields.items():
+        setattr(technician, k, v)
+    _clean_technician(technician)
+    if fields:
+        technician.save(update_fields=[*fields, "updated_at"])
+    return technician
 
 
 # --- credential lifecycle (the Users and access tab) ---------------------------------------------
