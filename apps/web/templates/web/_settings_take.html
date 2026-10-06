@@ -1,0 +1,18 @@
+{% comment %}The Settings screen's Taking work panel (slice 24): whether technicians may take open work nobody has, on devices they are
+   credentialed for (FacilitySettings.technicians_take_work; apps.workorders.services.take). The switch saves as it changes, as the
+   portal's do, and the panel swaps itself (#set-take); read-only without Settings Edit.{% endcomment %}
+<div class="panel mt" id="set-take">
+  <div class="panel-h"><h2>Taking work</h2><span class="sub">My work and new work orders</span></div>
+  <div class="panel-b">
+    <div class="set-rows">
+      <div class="set-row last">
+        <span class="lbl">Technicians may take unassigned work they are credentialed for<span class="why" id="set-take-work-help">Open in-house work nobody has, on devices their credentials cover</span></span>
+        <label class="tog">
+          {# hidden 0 first: an unchecked box still posts a value, and QueryDict.get returns the last one #}
+          <input type="hidden" id="set-take-work-off" name="technicians_take_work" value="0"><input type="checkbox" id="set-take-work" name="technicians_take_work" value="1" aria-label="Technicians may take unassigned work they are credentialed for" aria-describedby="set-take-work-help"{% if take_on %} checked{% endif %}{% if can_edit %} hx-post="{% url 'web:settings_take' %}" hx-trigger="change" hx-include="#set-take-work-off" hx-target="#set-take" hx-swap="outerHTML" hx-sync="#set-take:replace"{% else %} disabled{% endif %}><span class="sw"></span>{% if take_on %}On{% else %}Off{% endif %}
+        </label>
+      </div>
+    </div>
+    <div class="hint">{% if take_on %}A technician sees such work on My work and can take it, and can assign a work order they open to themselves. Vendor service, and work they are not credentialed for, stay a CE manager's to assign.{% else %}A CE manager assigns all work.{% endif %}{% if can_edit %} Changes save as you make them.{% else %} Changing settings needs Settings Edit access.{% endif %}</div>
+  </div>
+</div>

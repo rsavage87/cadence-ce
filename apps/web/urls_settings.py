@@ -12,6 +12,7 @@ urlpatterns = [
     path("policy/reset/", v.settings_policy_reset, name="settings_policy_reset"),
     path("targets/", v.settings_targets, name="settings_targets"),
     path("time-zone/", v.settings_time_zone, name="settings_time_zone"),  # slice 21: the facility's time zone
+    path("take-work/", v.settings_take, name="settings_take"),  # slice 24: whether technicians may take unassigned work
     # Slice 23: Import data (views_imports): the kinds and the runs, a kind's template, an upload, and one run's steps
     path("import/", imp.imports, name="imports"),
     path("import/template/<str:kind>.csv", imp.import_template, name="import_template"),

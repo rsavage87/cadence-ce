@@ -349,6 +349,21 @@ def wo_assign(request, number):
 
 
 @require_POST
+@web_view(wo_perms.MODULE, wo_perms.TAKE_LEVEL)  # not for scoped users: taking work is for the facility's own technicians
+def wo_take(request, number):
+    """Slice 24: My work's Take (web/_my_work_take.html). The work order becomes the user's own through wo_services.take, which says
+    in words why not (the facility's setting, no technician profile, not credentialed, someone took it first). Answers with a toast
+    and wo-changed and swaps nothing: My work's list re-fetches itself, after a refusal too (it usually means the list is behind)."""
+    wo = get_wo(request, number)
+    try:
+        wo_services.take(wo, by=request.user)
+        message = f"{wo.number} assigned to you"
+    except ValidationError as e:
+        message = e.messages[0]
+    return trigger_client_event(toast(HttpResponse(""), message), "wo-changed", {})
+
+
+@require_POST
 @web_view(wo_perms.MODULE, wo_perms.NOTE_LEVEL, scoped=True)
 def wo_note(request, number):
     wo = get_wo(request, number)
@@ -362,13 +377,20 @@ def wo_note(request, number):
 
 @web_view(wo_perms.MODULE, wo_perms.CREATE_LEVEL)  # not for scoped users: a vendor did not ask for the work, and a requester uses the portal
 def wo_new(request):
+    """The New work order modal. A manager (Approve) may assign it as it is opened. Slice 24: anyone else who may take work
+    (wo_services.may_take_as: the facility's setting, a technician profile) is offered "Assign it to me", ticked, for a device they
+    are credentialed for; the new work order is then theirs through wo_services.take. Should take refuse, it stays unassigned and
+    the toast says why."""
     can_assign = wo_perms.can_assign(request.user)
+    taker = None if can_assign else wo_services.may_take_as(request.user)
     if request.method != "POST":
         # GET re-renders the form, e.g. after a device is picked; keep what was typed so far.
         initial = {"requester": request.user.get_full_name(), **{k: v for k, v in request.GET.items() if k in NewWorkOrderForm.base_fields}}
-        form = NewWorkOrderForm(initial=initial, can_assign=can_assign)
+        if request.GET.get("take_offered") and "take" not in request.GET:
+            initial["take"] = False  # unticked before another device was picked: it stays unticked
+        form = NewWorkOrderForm(initial=initial, can_assign=can_assign, taker=taker)
         return render(request, "web/_wo_new.html", {"form": form, "asset": form.asset_obj})
-    form = NewWorkOrderForm(request.POST, can_assign=can_assign)
+    form = NewWorkOrderForm(request.POST, can_assign=can_assign, taker=taker)
     if not form.is_valid():
         return render(request, "web/_wo_new.html", {"form": form, "asset": form.asset_obj})
     d = form.cleaned_data
@@ -381,9 +403,16 @@ def wo_new(request):
         tech = Technician.objects.filter(pk=parse_uuid(assignee), is_active=True).first()
         if tech:
             wo_services.assign(wo, technician=tech, by=request.user)
+    message = f"{wo.number} created"
+    if d.get("take"):
+        try:
+            wo_services.take(wo, by=request.user)
+            message = f"{wo.number} created and assigned to you"
+        except ValidationError as e:
+            message = f"{wo.number} created. {e.messages[0]}"
     response = retarget(_render_wo_drawer(request, wo), "#drawer")
     trigger_client_event(response, "wo-changed", {})
-    toast(response, f"{wo.number} created")
+    toast(response, message)
     # After settle: closing the modal detaches the form that sent this request, which would cancel the swap and lose the other events.
     return trigger_client_event(response, "modal-close", {}, after="settle")
 

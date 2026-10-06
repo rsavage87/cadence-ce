@@ -111,9 +111,36 @@ def groups(user, today: date) -> Groups:
     return result
 
 
+TAKE_LIMIT = 10
+
+
 def takeable(user, today: date) -> list:
-    """Unassigned work the user may take (slice 24, part C fills this in). Empty for now."""
-    return []
+    """Open work nobody has that `user` could take (services.take): for a technician whose facility lets technicians take work, up to
+    TAKE_LIMIT open, unassigned, in-house work orders on devices their own profile is credentialed for today, most urgent first
+    (priority, then due date). Empty for a vendor (the facility assigns their company's work), a requester, anyone without a
+    technician profile or Work orders Edit, and while the setting is off (services.may_take_as says who may take any)."""
+    from django.db.models import Q, prefetch_related_objects
+
+    from apps.credentials.models import Credential, Scope
+    from apps.credentials.services import qualification
+
+    from .models import WorkOrder
+    from .services import may_take_as
+
+    technician = may_take_as(user)
+    if technician is None:
+        return []
+    prefetch_related_objects([technician], "credentials")
+    live = [c for c in technician.credentials.all() if c.status == Credential.Status.ACTIVE and (not c.expires_on or c.expires_on >= today)]
+    # Narrows the query to devices a live credential names (what qualification() matches on); qualification() still decides each.
+    named = Q(pk__in=[])
+    for scope, column in ((Scope.MANUFACTURER, "manufacturer"), (Scope.MODEL, "model"), (Scope.CATEGORY, "category")):
+        values = {c.value for c in live if c.scope == scope}
+        if values:
+            named |= Q(**{f"asset__device_model__{column}__in": values})
+    nobodys = WorkOrder.objects.filter(status=WoStatus.OPEN, assigned_to__isnull=True, vendor_service=False)
+    candidates = scoping.work_orders(user, nobodys).filter(named).select_related(*RELATED).order_by(PRIORITY_RANK, "due_on", "number")
+    return [wo for wo in candidates[:TAKE_LIMIT] if qualification(technician, wo.asset, today).ok]
 
 
 def hours(user, today: date) -> dict | None:

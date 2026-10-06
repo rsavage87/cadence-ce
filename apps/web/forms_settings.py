@@ -59,13 +59,18 @@ def _number(field: str, value: str) -> str:
     return text
 
 
+def _toggle(post, field):
+    """An on/off switch as posted: a hidden 0 with the checkbox's 1 when it is ticked, so on means a 1 is among the values, whatever
+    their order, and off is the 0 alone. Anything else (or nothing) goes to the service to reject."""
+    values = post.getlist(field) if hasattr(post, "getlist") else [post[field]] if field in post else []
+    return True if "1" in values else False if values == ["0"] else post.get(field)
+
+
 def portal_fields(post) -> dict:
-    """The portal rows present in the post (each control saves only itself). The toggle posts a hidden 0 with the checkbox's 1
-    when it is ticked, so on means a 1 is among the values, whatever their order. Anything else goes to the service to reject."""
+    """The portal rows present in the post (each control saves only itself); the callback toggle as _toggle reads it."""
     fields = {}
     if "portal_require_callback" in post:
-        values = post.getlist("portal_require_callback") if hasattr(post, "getlist") else [post["portal_require_callback"]]
-        fields["portal_require_callback"] = True if "1" in values else False if values == ["0"] else post.get("portal_require_callback")
+        fields["portal_require_callback"] = _toggle(post, "portal_require_callback")
     for field in ("portal_hotline", "portal_confirmation", "portal_email_domains"):
         if field in post:
             fields[field] = post.get(field, "")
@@ -85,6 +90,12 @@ def rate_fields(post) -> dict:
     """The labor rates present in the post ("$215", "1,250.00" tolerated as for the budget). A rate the post leaves out is left
     as it is; one sent blank goes to the service, which refuses it."""
     return {field: _number(field, post.get(field, "")) for field in RATE_FIELDS if field in post}
+
+
+def take_work_field(post) -> dict:
+    """Slice 24: the Taking work toggle (technicians may take unassigned work they are credentialed for), as _toggle reads it. Always
+    present, so a post without it is refused by the service rather than saving nothing."""
+    return {"technicians_take_work": _toggle(post, "technicians_take_work")}
 
 
 def time_zone_field(post) -> str:
