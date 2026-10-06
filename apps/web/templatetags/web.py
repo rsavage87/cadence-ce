@@ -21,6 +21,7 @@ ICONS = {
     "dash": ("1.7", '<rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="5" rx="1.5"/>'
                     '<rect x="13" y="12" width="8" height="9" rx="1.5"/><rect x="3" y="15" width="8" height="6" rx="1.5"/>'),
     "eq": ("1.7", '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4M6 11h3l1.5-3 2 6 1.5-3h4"/>'),
+    "mine": ("1.7", '<rect x="5" y="4" width="14" height="17" rx="2"/><circle cx="12" cy="10.5" r="2.5"/><path d="M8 18a4 4 0 0 1 8 0"/>'),
     "wo": ("1.7", '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 12l2 2 4-4"/>'),
     "search": ("1.8", '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>'),
     "plus": ("2", '<path d="M12 5v14M5 12h14"/>'),

@@ -51,7 +51,7 @@ def screen_url(url: str, request) -> str:
 
 
 # The screens a stale tab goes back to (apps.web.context_processors.NAV's lists): each one's list, in the facility the browser is in now.
-SCREENS = {"equipment", "workorders", "pm", "contracts", "recalls", "reports", "users", "settings"}
+SCREENS = {"my_work", "equipment", "workorders", "pm", "contracts", "recalls", "reports", "users", "settings"}
 
 
 def _stale(request):

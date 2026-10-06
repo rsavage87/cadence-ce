@@ -1,0 +1,7 @@
+{% extends "web/base.html" %}
+{% block title %}My work{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>My work</h1>
+  <p class="sub">{% if groups.whose.kind == "company" %}Open work for {{ request.user.company }}{% elif groups.whose.kind %}Work assigned to {{ groups.whose.technician.name }}{% else %}The work orders assigned to you{% endif %} · {{ today|date:"D, M j" }}</p></div></div>
+{% include "web/_my_work_body.html" %}
+{% endblock %}

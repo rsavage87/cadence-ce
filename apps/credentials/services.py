@@ -208,6 +208,14 @@ def add_account_technician(user, *, name: str, title: str) -> tuple[Technician, 
 
 # --- credential lifecycle (the Users and access tab) ---------------------------------------------
 
+def technician_of(user) -> Technician | None:
+    """`user`'s own active technician profile in the current facility, or None (slice 24). Through the tenant-scoped manager: never
+    `user.technician`, the reverse one-to-one, which reads around the facility's scope and raises when there is none."""
+    if user is None or not getattr(user, "pk", None):
+        return None
+    return Technician.objects.filter(user_id=user.pk, is_active=True).first()
+
+
 RENEWAL_MONTHS = 24
 SIGN_OFF_SOURCE = "In-house sign-off"
 # Short scope words for the UI and toasts ("category credential for Ventilators added"), as the mock words them.

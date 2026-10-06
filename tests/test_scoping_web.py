@@ -11,6 +11,7 @@ from datetime import date, timedelta
 
 import pytest
 from django.urls import URLPattern, URLResolver, get_resolver, reverse
+from django.utils import timezone
 
 from apps.accounts.models import DataScope, Level, Module, Role, create_default_roles
 from apps.equipment.models import Asset, Department, DeviceModel
@@ -39,7 +40,8 @@ ADMITS_SCOPED = {"overview", "password_change", "search", "asset_search", "equip
                  "wo_print", "scan",
                  # Slice 22: the person's own facilities. Nothing of this facility's; All facilities reads each facility with the person's
                  # account there (tests/test_all_facilities.py)
-                 "facility_switch", "facility_join", "all_facilities"}
+                 "facility_switch", "facility_join", "all_facilities",
+                 "my_work"}  # slice 24: a vendor's own company's work, through apps.workorders.my_work
 SIGNED_OUT = {"login", "logout", "password_reset", "password_reset_sent", "password_reset_complete", "password_reset_confirm", "invite_accept"}
 
 
@@ -288,8 +290,13 @@ def test_full_levels_do_not_widen_a_scoped_role(client, tenant, world, who):
     persona = PERSONAS["vendor" if scope == DataScope.COMPANY else "requester"]
     client.force_login(full_scoped_user(tenant, scope, **persona["fields"]))
     r = get(client, "/")
-    assert r.redirect_chain == [("/equipment/", 302)]
-    assert [i["key"] for i in r.context["shell"]["nav"]] == ["equipment", "workorders"]
+    if scope == DataScope.COMPANY:  # slice 24: a vendor technician starts on My work, their company's open work
+        assert r.redirect_chain == [("/my-work/", 302)]
+        assert [i["key"] for i in r.context["shell"]["nav"]] == ["my_work", "equipment", "workorders"]
+        r = get(client, "/equipment/")
+    else:
+        assert r.redirect_chain == [("/equipment/", 302)]
+        assert [i["key"] for i in r.context["shell"]["nav"]] == ["equipment", "workorders"]
     assert {a.tag for a in r.context["page"]} == persona["tags"] and not r.context["can_add_device"]
     body = body_of(r)
     assert "Add device" not in body and "/pm/" not in body and "/reports/" not in body and "/contracts/" not in body
@@ -321,7 +328,10 @@ def test_counts_and_badges_are_the_users_own(client, make_user, world, who):
     assert r.context["summary"] == {"total": len(persona["tags"]), "active": len(persona["tags"]), "under_contract": 0}
     assert set(r.context["options"]["departments"]) == {Asset.objects.get(tag=t).department.name for t in persona["tags"]}
     nav = {i["key"]: i for i in r.context["shell"]["nav"]}
-    assert list(nav) == ["equipment", "workorders"]
+    assert list(nav) == (["my_work"] if who == "vendor" else []) + ["equipment", "workorders"]  # slice 24: My work for the vendor
+    if who == "vendor":
+        due = [w for w in open_mine if w.status != WoStatus.AWAITING_PARTS and w.due_on <= timezone.localdate()]
+        assert nav["my_work"]["count"] == (len(due) or None)
     assert nav["equipment"]["count"] == len(persona["tags"]) and nav["workorders"]["count"] == len(open_mine)
     assert nav["workorders"]["hot"] is False  # portal requests wait in the facility (one on the requester's own unit): a CE manager's to assign
     r = get(client, "/work-orders/")
@@ -353,7 +363,7 @@ def test_the_equipment_export_counts_only_their_open_work_orders(client, make_us
 def test_the_home_page_sends_a_scoped_user_to_their_equipment(client, make_user, world, who):
     sign_in(client, make_user, PERSONAS[who]["slug"], **PERSONAS[who]["fields"])
     r = client.get("/")
-    assert r.status_code == 302 and r["Location"] == "/equipment/"
+    assert r.status_code == 302 and r["Location"] == ("/my-work/" if who == "vendor" else "/equipment/")  # slice 24: a vendor's My work
 
 
 def test_a_scoped_role_with_only_work_orders_lands_there(client, tenant, world):
@@ -364,8 +374,8 @@ def test_a_scoped_role_with_only_work_orders_lands_there(client, tenant, world):
     client.force_login(User.objects.create_user(username="dispatch@riverside.example", password="Test-Pass-2026-x", tenant=tenant, role=role,
                                                 company="Acme Biomed"))
     r = client.get("/")
-    assert r.status_code == 302 and r["Location"] == "/work-orders/"
-    assert [i["key"] for i in client.get("/work-orders/").context["shell"]["nav"]] == ["workorders"]
+    assert r.status_code == 302 and r["Location"] == "/my-work/"  # slice 24: a company's work orders are its My work
+    assert [i["key"] for i in client.get("/work-orders/").context["shell"]["nav"]] == ["my_work", "workorders"]
     assert client.get("/reports/").status_code == 403 and client.get("/pm/").status_code == 403
 
 
@@ -395,7 +405,8 @@ def test_a_scoped_user_without_a_company_or_unit_sees_nothing(client, make_user,
     r = get(client, "/equipment/")
     assert r.context["page"].paginator.count == 0 and r.context["summary"]["total"] == 0
     assert r.context["options"]["departments"] == [] and r.context["options"]["categories"] == []
-    assert {i["key"]: i["count"] for i in r.context["shell"]["nav"]} == {"equipment": 0, "workorders": 0}
+    assert {i["key"]: i["count"] for i in r.context["shell"]["nav"]} == {**({"my_work": None} if slug == "vendor" else {}), "equipment": 0,
+                                                                         "workorders": 0}
     assert get(client, "/work-orders/?open=0").context["page"].paginator.count == 0
     assert sum(c["count"] for c in get(client, "/work-orders/?mode=board").context["columns"]) == 0
     nobody = {"slug": slug, "tags": set(), "wos": set()}

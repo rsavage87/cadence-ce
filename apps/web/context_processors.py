@@ -5,10 +5,12 @@ from apps.accounts import people
 from apps.accounts.models import Level, Module
 from apps.credentials.models import Technician
 from apps.reports.services import nav_counts
-from apps.workorders import scoping
+from apps.workorders import my_work, scoping
 
 # key, label, icon, url name, module that must be viewable. Order follows the mock's NAV.
 NAV = [
+    # Slice 24: the technician's own work, first; only for whoever has My work (apps.workorders.my_work.has_my_work)
+    ("my_work", "My work", "mine", "web:my_work", Module.WORKORDERS),
     ("overview", "Overview", "dash", "web:overview", Module.REPORTS),
     ("equipment", "Equipment", "eq", "web:equipment", Module.EQUIPMENT),
     ("workorders", "Work orders", "wo", "web:workorders", Module.WORKORDERS),
@@ -22,13 +24,15 @@ NAV = [
 
 # Slice 16: the screens a scoped user (apps.workorders.scoping: a vendor's company, a requester's unit) may open, each narrowed to
 # their share. Every other screen shows the whole facility, so its views refuse them (web_view's `scoped`) and the nav leaves it out.
-SCOPED_SCREENS = {"equipment", "workorders"}
+SCOPED_SCREENS = {"my_work", "equipment", "workorders"}
 
 
 def nav_entries(user) -> list[tuple]:
-    """The NAV rows this user may open: View on the module, and for a scoped user only SCOPED_SCREENS."""
+    """The NAV rows this user may open: View on the module, and for a scoped user only SCOPED_SCREENS; My work only for whoever has
+    it (a technician profile here, or a vendor's company)."""
     scoped = scoping.is_scoped(user)
-    return [row for row in NAV if user.has_level(row[4], Level.VIEW) and (not scoped or row[0] in SCOPED_SCREENS)]
+    return [row for row in NAV if user.has_level(row[4], Level.VIEW) and (not scoped or row[0] in SCOPED_SCREENS)
+            and (row[0] != "my_work" or my_work.has_my_work(user))]
 
 
 def _shell(request):

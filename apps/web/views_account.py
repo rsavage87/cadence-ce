@@ -18,8 +18,10 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.debug import sensitive_post_parameters
 
 from apps.accounts import people, signin
-from apps.accounts.models import User
+from apps.accounts.models import Level, Module, User
 from apps.core.http import client_ip
+from apps.tenants.context import tenant_context
+from apps.workorders import my_work
 
 from .decorators import FACILITY, web_view
 from .forms_account import ChangePasswordForm, NewPasswordForm, PasswordResetRequestForm, SignInForm
@@ -35,6 +37,18 @@ class SignInView(auth_views.LoginView):
     template_name = "web/login.html"
     redirect_authenticated_user = True
     authentication_form = SignInForm
+
+    def get_default_redirect_url(self):
+        """Slice 24: whoever has My work (a technician profile here, or a vendor's company) starts the day there; everyone else on
+        LOGIN_REDIRECT_URL, the Overview. Read inside the account's facility: the role is a tenant-scoped row, and this request began
+        signed out, with no facility set."""
+        user = self.request.user
+        if user.is_authenticated and user.tenant_id:
+            with tenant_context(user.tenant):
+                fresh = User._default_manager.get(pk=user.pk)
+                if fresh.has_level(Module.WORKORDERS, Level.VIEW) and my_work.has_my_work(fresh):
+                    return reverse("web:my_work")
+        return super().get_default_redirect_url()
 
     def get_redirect_url(self):
         url = super().get_redirect_url()  # "" unless it stays on this site

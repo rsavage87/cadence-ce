@@ -8,6 +8,7 @@ from . import (
                views_equipment,
                views_facilities,
                views_invite,
+               views_my_work,
                views_notifications,
                views_scan,
                views_wo_complete,
@@ -32,6 +33,7 @@ urlpatterns = [
     path("account/facility/", views_facilities.facility_switch, name="facility_switch"),
     path("account/facility/<int:pk>/join/", views_facilities.facility_join, name="facility_join"),
     path("overview/all/", views_all_facilities.all_facilities, name="all_facilities"),
+    path("my-work/", views_my_work.my_work_page, name="my_work"),  # slice 24: the technician's own work, phone first
     path("invite/<uidb64>/<token>/", views_invite.invite_accept, name="invite_accept"),
     path("search/", views.search, name="search"),
     path("search/assets/", views.asset_search, name="asset_search"),

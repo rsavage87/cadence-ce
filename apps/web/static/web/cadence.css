@@ -744,6 +744,12 @@ form.facility{margin:0}
   .imp-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 
+/* Slice 24, part A: My work (the page, its cards, and their actions; phone first, 44px targets) */
+
+/* Slice 24, part B: completing on a phone (the completion modal's checklist and hours) */
+
+/* Slice 24, part D: Scan from My work */
+
 /* Slice 11: printing app pages */
 /* What the browser prints of an app page (the Overview's Export button calls window.print(); any other screen prints from the
    browser's menu): the page's content on white, in the light theme whatever the screen shows, with chart and chip colours kept.
