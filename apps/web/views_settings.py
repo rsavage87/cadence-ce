@@ -9,6 +9,9 @@ rejected portal change shows the saved values again (it saves as the user types,
 
 Time zone (slice 21, #set-zone): the facility's time zone (fs.set_time_zone), which decides its today, the times shown, and when
 its daily jobs and emails run. Its form posts to /settings/time-zone/ (settings_time_zone, Settings Edit).
+
+Import data (slice 23, #set-import): a link to /settings/import/ (views_imports) for anyone who may import a kind of file
+(apps.imports.permissions.importable: each kind its own module's level), with the files of those kinds not finished yet.
 """
 from django.core.exceptions import ValidationError
 from django.shortcuts import redirect, render
@@ -19,6 +22,9 @@ from apps.accounts.models import Level, Module
 from apps.equipment.models import Department
 from apps.facility import permissions as fac_perms
 from apps.facility import services as fs
+from apps.imports import permissions as imp_perms
+from apps.imports import services as imp_services
+from apps.imports.models import ImportRun
 from apps.tenants.context import zone_of
 
 from .decorators import web_view
@@ -89,6 +95,17 @@ def _zone_ctx(request, error: str = "") -> dict:
             "zone_error": error, "can_edit": fac_perms.can_edit(request.user)}
 
 
+def _imports_ctx(user) -> dict:
+    """The Import data panel (slice 23): the kinds `user` may import, in words, and their runs not yet finished. Empty (no panel)
+    for someone who may import none."""
+    labels = [imp.label.lower() for imp in imp_perms.importable(user)]
+    if not labels:
+        return {"import_kinds": ""}
+    words = labels[0] if len(labels) == 1 else f"{', '.join(labels[:-1])}{',' if len(labels) > 2 else ''} and {labels[-1]}"
+    unfinished = imp_services.runs_for(user).exclude(status__in=[ImportRun.Status.IMPORTED, ImportRun.Status.DISCARDED, ImportRun.Status.EXPIRED])
+    return {"import_kinds": words, "import_open": unfinished.count()}
+
+
 def _first(errors: dict) -> str:
     return next(iter(errors.values()))
 
@@ -100,7 +117,7 @@ def settings_page(request):
     s = fs.get_settings()
     user = request.user
     ctx = {"nav_active": "settings", **_integrations(), **_portal_ctx(request, s), **_policy_ctx(request, s), **_targets_ctx(request, s),
-           **_zone_ctx(request),
+           **_zone_ctx(request), **_imports_ctx(user),
            "risk_rubric": fs.RISK_RUBRIC, "risk_rows": fs.risk_summary(), "risk_scoring": fs.risk_scoring_summary(),
            "can_view_contracts": user.has_level(Module.CONTRACTS, Level.VIEW), "can_view_users": user.has_level(Module.USERS, Level.VIEW),
            "can_view_recalls": user.has_level(Module.RECALLS, Level.VIEW), "can_view_equipment": user.has_level(Module.EQUIPMENT, Level.VIEW)}

@@ -33,6 +33,16 @@
     </div>
     {% include "web/_settings_portal.html" %}
     {% include "web/_settings_zone.html" %}
+    {# Slice 23: Import data (views_imports), for anyone who may import a kind of file #}
+    {% if import_kinds %}
+    <div class="panel mt" id="set-import">
+      <div class="panel-h"><h2>Import data</h2><span class="sub">From the system you are leaving</span></div>
+      <div class="panel-b">
+        <div class="hint">Bring in {{ import_kinds }} from CSV files. Each file is checked row by row, and nothing is saved until you import it.{% if import_open %} {{ import_open }} file{{ import_open|pluralize }} not finished.{% endif %}</div>
+        <div class="set-actions"><a class="btn sm" href="{% url 'web:imports' %}">Import data</a></div>
+      </div>
+    </div>
+    {% endif %}
   </div>
   <div>
     {% include "web/_settings_policy.html" %}

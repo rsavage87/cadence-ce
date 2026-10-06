@@ -1,0 +1,98 @@
+{% comment %}Slice 23, part D: what the check found (checked: Import and Discard) or what happened (imported, discarded, expired: read
+   only). The counts by outcome, the notes grouped (services.problem_groups: skipped rows first), how choice values were read, the
+   totals to compare with the old system, and the names the import adds; every row with a note as a CSV.{% endcomment %}
+{% if error %}<div class="note warn imp-note" role="alert">{{ error }}</div>{% endif %}
+{% if run.status == "checked" %}
+<div class="note imp-note">Checked: nothing is saved yet. This is what importing the file will do.</div>
+{% elif run.status == "imported" %}
+<div class="note ok imp-note">Imported. The file's rows are no longer kept here: what it added and changed is in Cadence now.</div>
+{% elif run.status == "discarded" %}
+<div class="note imp-note">Discarded{% if started %} while it was importing: the rows imported before it stopped stay in Cadence{% else %}: nothing from this file was saved{% endif %}.</div>
+{% else %}
+<div class="note imp-note">Expired: it was left unfinished for {{ expire_days }} days, so its rows were cleared{% if started %}. The rows imported before it stopped stay in Cadence{% else %} and nothing from it was saved{% endif %}.</div>
+{% endif %}
+
+{% if show_counts %}
+<div class="stats imp-stats" aria-label="{% if started %}What the import did{% else %}What the check found{% endif %}">
+  {% for c in counts %}<div class="stat imp-stat-{{ c.key }}{% if c.key == "skip" and c.n %} imp-stat-hot{% endif %}"><div class="v">{{ c.text }}</div><div class="l">{{ c.label }}</div></div>{% endfor %}
+</div>
+{% endif %}
+
+{% if run.status == "checked" %}
+<div class="panel mt imp-actions" id="imp-actions">
+  <div class="panel-b">
+    {% if to_import %}
+    <p class="imp-lead">Import adds and updates {{ to_import_text }} row{{ to_import|pluralize }}{% if skipped %} and leaves out the {{ skipped_text }} to skip{% endif %}. It runs every row again as it was checked, a few hundred at a time; keep the page open until it finishes.</p>
+    {% else %}
+    <p class="imp-lead">There is nothing to import: every row is already here as the file has it, or is skipped. Fix the file and upload it again, or discard this one.</p>
+    {% endif %}
+    <div class="set-actions">
+      <form method="post" action="{% url 'web:import_discard' run.pk %}">{% csrf_token %}<button class="btn" type="submit">Discard</button></form>
+      {% if to_import %}<form method="post" action="{% url 'web:import_start' run.pk %}">{% csrf_token %}<button class="btn primary" type="submit">Import</button></form>{% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<div class="grid g-32 mt">
+  <div>
+    <div class="panel imp-groups" id="imp-groups">
+      <div class="panel-h"><h2>Rows with a note</h2>{% if run.results %}<a class="btn sm" href="{% url 'web:import_notes' run.pk %}" download>Download (CSV)</a>{% endif %}</div>
+      <div class="panel-b">
+        {% for g in groups %}
+        <div class="imp-group">
+          <div class="imp-group-h"><span class="chip {% if g.skipped %}crit{% else %}warn{% endif %}">{% if g.skipped %}{% if started %}Skipped{% else %}To skip{% endif %}{% elif started %}Imported with a note{% else %}Imports with a note{% endif %}</span> <b>{{ g.count_text }} row{{ g.count|pluralize }}</b></div>
+          <div class="imp-note-text">{{ g.note }}</div>
+          <div class="imp-where">Line{{ g.lines|pluralize }} {{ g.lines|join:", " }}{% if g.more %} and {{ g.more_text }} more{% endif %}{% if g.keys %} · {{ key_label }} {{ g.keys|join:", " }}{% endif %}</div>
+        </div>
+        {% empty %}
+        <div class="empty">{% if run.counts %}No row has a note.{% else %}No rows were checked.{% endif %}</div>
+        {% endfor %}
+        {% if results_capped %}<div class="hint imp-capped">Only the first {{ results_kept }} rows with a note are kept; fix those and check the file again to see the rest.</div>{% endif %}
+      </div>
+    </div>
+  </div>
+  <div>
+    {% if values %}
+    <div class="panel imp-values" id="imp-values">
+      <div class="panel-h"><h2>How values were read</h2></div>
+      <div class="panel-b">
+        {% for v in values %}
+        <h3 class="imp-sub">{{ v.column }}</h3>
+        <table class="mini-tbl imp-tbl">
+          <thead><tr><th scope="col">In the file</th><th scope="col">Read as</th><th scope="col" class="num">Rows</th></tr></thead>
+          <tbody>{% for r in v.rows %}<tr><td>{{ r.value|default:"(blank)" }}</td><td>{{ r.shown }}</td><td class="num">{{ r.count_text }}</td></tr>{% endfor %}</tbody>
+        </table>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+    {% if totals %}
+    <div class="panel{% if values %} mt{% endif %} imp-totals" id="imp-totals">
+      <div class="panel-h"><h2>Totals</h2><span class="sub">To compare with the old system</span></div>
+      <div class="panel-b">
+        {% for t in totals %}
+        <h3 class="imp-sub">{{ t.group }}</h3>
+        <table class="mini-tbl imp-tbl">
+          <tbody>{% for label, amount in t.rows %}<tr><td>{{ label }}</td><td class="num">{{ amount }}</td></tr>{% endfor %}</tbody>
+        </table>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+    {% if created %}
+    <div class="panel{% if values or totals %} mt{% endif %} imp-created" id="imp-created">
+      <div class="panel-h"><h2>{% if started %}What the import added{% else %}What the import adds{% endif %}</h2></div>
+      <div class="panel-b">
+        {% for c in created %}
+        <div class="imp-created-g">
+          <h3 class="imp-sub">{{ c.group }} <span class="muted">({{ c.count }}{% if c.capped %} or more{% endif %})</span></h3>
+          <div class="imp-names">{{ c.first|join:", " }}{% if c.rest %}<details class="imp-more"><summary>and {{ c.rest|length }} more</summary>{{ c.rest|join:", " }}</details>{% endif %}</div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% if run.done %}<p class="hint imp-again"><a class="link" href="{% url 'web:imports' %}">Import another file</a></p>{% endif %}

@@ -1,0 +1,2 @@
+{# Slice 23, part D: a file column's first different values, under its select on the column choice (and import_samples' answer). #}
+{% if samples %}<span class="muted">For example:</span> {% for s in samples %}<span class="imp-smp-v">{{ s }}</span>{% if not forloop.last %} · {% endif %}{% endfor %}{% else %}<span class="muted">No values to show</span>{% endif %}

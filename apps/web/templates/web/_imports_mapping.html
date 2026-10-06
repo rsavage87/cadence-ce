@@ -1,0 +1,34 @@
+{% comment %}Slice 23, part D: choosing the file's columns (services.mapping_view). Each of the importer's columns, its select of the
+   file's columns (the guess by name chosen, "Not in the file" for none), and the chosen column's first values, which the select reads
+   again when it changes (import_samples). "Check the file" posts the choice (import_columns); Discard ends the run.{% endcomment %}
+<form class="panel imp-map-form" method="post" action="{% url 'web:import_columns' run.pk %}">{% csrf_token %}
+  <div class="panel-h"><h2>Choose the file's columns</h2><span class="sub">{{ matched }} of {{ mapping|length }} found by name</span></div>
+  <div class="panel-b">
+    {% if map_error %}<div class="note warn imp-note" role="alert">{{ map_error }}</div>{% endif %}
+    <p class="hint imp-lead">For each value Cadence reads, choose the column of your file that holds it, or "Not in the file". A column left out changes nothing on records already here.</p>
+    {% if duplicates %}<div class="note warn imp-note">The file has more than one column named {{ duplicates|join:", " }}: check that the right one is chosen.</div>{% endif %}
+    <div class="imp-map">
+      {% for row in mapping %}{% with c=row.column %}
+      <div class="imp-map-row">
+        <div class="imp-map-col">
+          <label for="map-{{ c.key }}">{{ c.label }}</label>{% if c.required %} <span class="chip warn">Required</span>{% endif %}
+          {% if c.help %}<div class="hint">{{ c.help }}</div>{% endif %}
+        </div>
+        <div class="imp-map-pick">
+          <select id="map-{{ c.key }}" name="map-{{ c.key }}" aria-describedby="smp-{{ c.key }}" hx-get="{% url 'web:import_samples' run.pk %}" hx-trigger="change" hx-target="#smp-{{ c.key }}" hx-swap="innerHTML">
+            <option value="">Not in the file</option>
+            {% for i, name in header %}<option value="{{ i }}"{% if i == row.index %} selected{% endif %}>{{ name|default:"(a column with no name)" }}</option>{% endfor %}
+          </select>
+          <div class="imp-smp" id="smp-{{ c.key }}" aria-live="polite">{% include "web/_imports_samples.html" with samples=row.samples %}</div>
+        </div>
+      </div>
+      {% endwith %}{% endfor %}
+    </div>
+    {% if unused %}<div class="hint imp-unused">{% if map_typed %}Not chosen{% else %}Not matched by name{% endif %}: {{ unused|join:", " }}. A column of the file is left out of the import unless it is chosen above.</div>{% endif %}
+    <div class="set-actions">
+      <button class="btn" type="submit" formaction="{% url 'web:import_discard' run.pk %}">Discard</button>
+      <button class="btn primary" type="submit">Check the file</button>
+    </div>
+    <div class="hint imp-after">The check runs every row as the import would and saves nothing. You see what it would add, change, and skip, and why, before you import.</div>
+  </div>
+</form>
