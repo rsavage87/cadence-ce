@@ -1,7 +1,10 @@
 {% extends "web/base.html" %}
+{% comment %}My work (slice 24; apps/web/views_my_work.py): the technician's own work, phone first. Scan (part D's web/_my_work_scan.html)
+   sits at the top when that template exists; the list (_my_work_body.html) re-fetches itself when a work order changes.{% endcomment %}
 {% block title %}My work{% endblock %}
 {% block content %}
 <div class="page-head"><div><h1>My work</h1>
   <p class="sub">{% if groups.whose.kind == "company" %}Open work for {{ request.user.company }}{% elif groups.whose.kind %}Work assigned to {{ groups.whose.technician.name }}{% else %}The work orders assigned to you{% endif %} · {{ today|date:"D, M j" }}</p></div></div>
+{% if groups.whose.kind and scan_template %}{% include scan_template %}{% endif %}
 {% include "web/_my_work_body.html" %}
 {% endblock %}

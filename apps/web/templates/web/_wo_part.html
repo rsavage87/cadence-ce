@@ -7,6 +7,7 @@
 <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
 {% else %}
 <form id="wp-form" hx-post="{% url 'web:wo_part_add' wo.number %}" hx-target="#modal-card" hx-sync="this:drop" hx-disabled-elt="find button[type=submit]" novalidate>
+  {% if from_my_work %}<input type="hidden" name="from" value="my_work">{% endif %}{# slice 24: opened from a My work card #}
   <div class="form">
     {% if form.non_field_errors %}<div class="full"><span class="err">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
     {% include "web/_asset_field.html" with field=form.description cls="full" %}

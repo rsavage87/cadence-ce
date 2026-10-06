@@ -9,6 +9,9 @@ scoped user's share (apps.workorders.scoping), is a 404. A closed or cancelled w
 Log time and Add part are modals (#modal-card): a save swaps the work order's drawer into #drawer instead (HX-Retarget), toasts,
 fires `wo-changed` (the lists' cost column re-fetches on it), then closes the modal after settle. A Remove button sits in the
 drawer and answers with the drawer.
+
+Slice 24: opened from a My work card (a hidden from=my_work), a save answers with the toast, wo-changed, and modal-close only
+(views_my_work.saved_from_card): the technician stays on their list, which re-fetches itself, instead of landing in the drawer.
 """
 from decimal import Decimal, InvalidOperation
 
@@ -26,6 +29,7 @@ from .decorators import web_view
 from .forms_wo_costs import LaborForm, PartForm, money_text
 from .htmx import toast
 from .views import _render_wo_drawer, get_wo
+from .views_my_work import from_my_work, saved_from_card
 
 
 def costs_context(request, wo) -> dict:
@@ -65,7 +69,10 @@ def _changed(response, message: str):
 
 def _saved(request, wo, message: str):
     """A modal saved: show the work order's drawer, refresh the lists, toast, then close the modal. After settle: closing it
-    first would detach the form that sent this request, which cancels the swap and loses the other events."""
+    first would detach the form that sent this request, which cancels the swap and loses the other events. From a My work card:
+    no drawer (slice 24)."""
+    if from_my_work(request):
+        return saved_from_card(message)
     response = _changed(retarget(_render_wo_drawer(request, wo), "#drawer"), message)
     return trigger_client_event(response, "modal-close", {}, after="settle")
 
@@ -73,7 +80,7 @@ def _saved(request, wo, message: str):
 def _modal(request, template, wo, form, **extra):
     if form is not None and form.is_bound:
         form.focus_first_error()
-    return render(request, template, {"wo": wo, "form": form, "locked": costs.locked_reason(wo), **extra})
+    return render(request, template, {"wo": wo, "form": form, "locked": costs.locked_reason(wo), "from_my_work": from_my_work(request), **extra})
 
 
 # --- Log time --------------------------------------------------------------------------------------------------

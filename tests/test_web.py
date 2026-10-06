@@ -292,16 +292,34 @@ def test_api_patch_cannot_reassign_around_the_assign_action(client, signed_in, w
 
 def test_self_swapping_wrappers_do_not_leak_outerhtml_to_their_children():
     """A wrapper that replaces itself (hx-swap="outerHTML") must not pass that swap down to rows and buttons that
-    target #drawer or #modal-card; inherited outerHTML would replace the drawer element itself. hx-disinherit stops it."""
+    target #drawer or #modal-card; inherited outerHTML would replace the drawer element itself. hx-disinherit stops it.
+
+    Slice 24: nor its hx-target="this" to a control that names no target of its own: htmx resolves an inherited "this" to the
+    wrapper, so that control's answer would land in the list. The wrapper disinherits hx-target too (My work's does), or every
+    control in it, in its template and the partials it includes, names its own target."""
     import pathlib
     import re
 
-    bad = []
+    root = pathlib.Path("apps/web/templates")
+    control = re.compile(r"<\w+[^>]*\bhx-(?:get|post|put|patch|delete)=[^>]*>")
+
+    def with_includes(name, seen):
+        text = (root / name).read_text()
+        for included in re.findall(r"{%\s*include\s+\"([^\"]+)\"", text):
+            if included not in seen:
+                seen.add(included)
+                text += with_includes(included, seen)
+        return text
+
+    bad, inherits = [], []
     for path in pathlib.Path("apps/web/templates/web").glob("*.html"):
         for m in re.finditer(r"<(\w+)[^>]*hx-target=\"this\"[^>]*hx-swap=\"outerHTML\"[^>]*>", path.read_text()):
             if "hx-disinherit" not in m.group(0) or "hx-swap" not in m.group(0).split("hx-disinherit")[1]:
                 bad.append(f"{path.name}: {m.group(0)[:80]}")
-    assert bad == []
+            if "hx-disinherit" not in m.group(0) or "hx-target" not in m.group(0).split("hx-disinherit")[1]:
+                name = f"web/{path.name}"
+                inherits += [f"{path.name}: {c[:80]}" for c in control.findall(with_includes(name, {name})) if "hx-target=" not in c]
+    assert bad == [] and inherits == []
 
 
 # --- recall integration points (slice 6): device drawer, work order drawer and list, nav ------------

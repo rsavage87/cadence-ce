@@ -1,0 +1,23 @@
+{% load web %}
+{% comment %}Waiting on parts from a My work card (slice 24, part A; views_my_work.wo_waiting): a short note of what the work waits for,
+   kept as the status history's note and shown on the card. A work order that cannot wait now gets the reason instead of the form.
+   The hidden from=my_work marks a modal a card opened (its phone sizes: cadence.css, slice 24 part A).{% endcomment %}
+<div class="modal-h"><h2>Waiting on parts: {{ wo.number }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<input type="hidden" name="from" value="my_work">
+<div class="form"><div class="full note">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="mw-wait-form" hx-post="{% url 'web:wo_waiting' wo.number %}" hx-target="#modal-card" hx-sync="this:drop" hx-disabled-elt="find button[type=submit]" novalidate>
+  <input type="hidden" name="from" value="my_work">
+  <div class="form">
+    <div class="full hint">{{ wo.asset.tag }} · {{ wo.asset.device_model.description }}</div>
+    <label class="full">What it is waiting for: the part, its PO number, when it is expected
+      <input name="note" value="{{ note }}" maxlength="{{ note_max }}" autocomplete="off" placeholder="No patient information"{% if error %} aria-invalid="true" aria-describedby="mw-wait-err"{% endif %} autofocus>
+      {% if error %}<span class="err" id="mw-wait-err">{{ error }}</span>{% endif %}
+    </label>
+    <div class="full hint">The card shows how long it has waited, this note, and the PO numbers on its parts. Resume it when they arrive.</div>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Waiting on parts</button></div>
+</form>
+{% endif %}

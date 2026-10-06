@@ -1,17 +1,54 @@
 {% load web %}
-{# Slice 24 scaffold: part A builds the cards. Re-fetches itself when a work order changes (the drawer and its modals fire wo-changed). #}
-<div id="my-work-body" hx-get="{% url 'web:my_work' %}" hx-trigger="wo-changed from:body" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap hx-target">
+{% comment %}My work's list (slice 24, part A; apps/web/views_my_work.py). Re-fetches itself when a work order changes (the drawer, its
+   modals, and the cards' own moves fire wo-changed), sending the recall batches that are open (their hidden `open` inputs) so they stay
+   open; the response swaps the nav's My work badge out of band (oob_badge, drawn as base.html draws a nav row). Its children name their
+   own targets, so the wrapper passes none of its swap, target, or include down.{% endcomment %}
+<div id="my-work-body" class="mw" hx-get="{% url 'web:my_work' %}" hx-trigger="wo-changed from:body" hx-target="this" hx-swap="outerHTML" hx-include="#my-work-body details[open] input[name=open]" hx-disinherit="hx-swap hx-target hx-include">
 {% if not groups.whose.kind %}
   <div class="note">My work lists the work orders assigned to you. Your account has no technician profile in {{ request.tenant.name }}; the
   <a class="link" href="{% url 'web:workorders' %}">Work orders</a> screen lists the facility's work.</div>
 {% else %}
-  {% if hours %}<p class="sub">Your hours: {{ hours.today }} today, {{ hours.week }} this week</p>{% endif %}
-  {% for label, items in sections %}{% endfor %}
-  <h2>Repairs and requests</h2><ul>{% for wo in groups.repairs %}<li>{{ wo.number }} · {{ wo.asset.tag }}</li>{% empty %}<li class="muted">Nothing open.</li>{% endfor %}</ul>
-  {% for batch in groups.recalls %}<h2>Recall · {{ batch.alert }}</h2><ul>{% for wo in batch.work_orders %}<li>{{ wo.number }} · {{ wo.asset.tag }}</li>{% endfor %}</ul>{% endfor %}
-  <h2>Today's PMs</h2><ul>{% for wo in groups.pms_today %}<li>{{ wo.number }} · {{ wo.asset.tag }}</li>{% empty %}<li class="muted">None due.</li>{% endfor %}</ul>
-  <h2>Waiting on parts</h2><ul>{% for wo in groups.waiting %}<li>{{ wo.number }} · {{ wo.asset.tag }}</li>{% empty %}<li class="muted">Nothing waiting.</li>{% endfor %}</ul>
-  <h2>Coming up</h2><ul>{% for wo in groups.coming %}<li>{{ wo.number }} · {{ wo.asset.tag }} · {{ wo.due_on|date:"M j" }}</li>{% empty %}<li class="muted">No PMs in the next week.</li>{% endfor %}</ul>
-  {% if groups.later %}<p class="sub">{{ groups.later }} more later</p>{% endif %}
+  <p class="mw-sum"><span{% if due.late %} class="down"{% endif %}><b>{{ due.count }}</b> due today or late</span>{% if hours %}<span><b>{{ hours.today }} h</b> logged today</span><span><b>{{ hours.week }} h</b> this week</span>{% endif %}</p>
+  {% if credential_note %}<div class="note warn mw-cred">{{ credential_note.text }}{% if credential_note.url %} <a href="{{ credential_note.url }}">See your credentials</a>{% else %} Ask a CE manager about renewing it.{% endif %}</div>{% endif %}
+
+  <section class="mw-grp" aria-labelledby="mw-h-repairs">
+    <h2 id="mw-h-repairs">Repairs and requests{% if repairs_count %} <span class="n">{{ repairs_count }}</span>{% endif %}</h2>
+    {% if repairs %}<div class="mw-cards">
+      {% for row in repairs %}{% if row.batch %}{% include "web/_my_work_batch.html" with batch=row.batch %}{% else %}{% include "web/_my_work_card.html" with card=row.card %}{% endif %}{% endfor %}
+    </div>{% else %}<p class="mw-none">No repairs or requests open.</p>{% endif %}
+  </section>
+
+  <section class="mw-grp" aria-labelledby="mw-h-pms">
+    <h2 id="mw-h-pms">Today's PMs{% if pms_today %} <span class="n">{{ pms_today|length }}</span>{% endif %}</h2>
+    {% if pms_today %}<div class="mw-cards">{% for card in pms_today %}{% include "web/_my_work_card.html" %}{% endfor %}</div>
+    {% else %}<p class="mw-none">No PMs due today.</p>{% endif %}
+  </section>
+
+  {% if waiting %}
+  <section class="mw-grp" aria-labelledby="mw-h-waiting">
+    <h2 id="mw-h-waiting">Waiting on parts <span class="n">{{ waiting|length }}</span></h2>
+    <div class="mw-cards">{% for card in waiting %}{% include "web/_my_work_card.html" %}{% endfor %}</div>
+  </section>
+  {% endif %}
+
+  {% if coming or groups.later %}
+  <section class="mw-grp" aria-labelledby="mw-h-coming">
+    <h2 id="mw-h-coming">Coming up this week{% if coming %} <span class="n">{{ coming|length }}</span>{% endif %}</h2>
+    {% if coming %}<div class="mw-cards">{% for card in coming %}{% include "web/_my_work_card.html" %}{% endfor %}</div>
+    {% else %}<p class="mw-none">No PMs in the next week.</p>{% endif %}
+    {% if groups.later %}<a class="mw-more" href="{{ later_url }}">{{ groups.later }} more PM{{ groups.later|pluralize }} later</a>{% endif %}
+  </section>
+  {% endif %}
+
+  {% if takeable %}
+  <section class="mw-grp" aria-labelledby="mw-h-take">
+    <h2 id="mw-h-take">You could take <span class="n">{{ takeable|length }}</span></h2>
+    <p class="hint">Open work nobody is assigned to, on devices you are credentialed for.</p>
+    <div class="mw-cards">{% for card in takeable %}{% include "web/_my_work_card.html" %}{% endfor %}</div>
+  </section>
+  {% endif %}
+
+  <p class="mw-links"><a href="{{ done_url }}">Your completed work</a><span class="hint">to add time or parts you forgot</span></p>
 {% endif %}
 </div>
+{% if oob_badge %}<a hx-swap-oob="outerHTML:#nav a[href='{{ oob_badge.url }}']" href="{{ oob_badge.url }}" class="active" aria-current="page">{% icon oob_badge.icon %}<span>{{ oob_badge.label }}</span>{% if oob_badge.count is not None %}<span class="cnt{% if oob_badge.hot %} hot{% endif %}">{{ oob_badge.count }}</span>{% endif %}</a>{% endif %}

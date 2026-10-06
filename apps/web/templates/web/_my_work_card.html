@@ -1,0 +1,19 @@
+{% load web scoping_tags %}
+{% comment %}One work order on My work (slice 24, part A; views_my_work.Card). The card opens the work order's drawer; its number is a link
+   for the keyboard and a new tab. Each move names its own target and consumes its click, so the card does not open too: Start and
+   Resume post the status and swap nothing (the toast and wo-changed do the rest), the others open a modal that carries from=my_work.
+   A card in "You could take" includes part C's Take button (web/_my_work_take.html, with `wo`) when that template exists.{% endcomment %}
+{% with wo=card.wo %}{% with asset=wo.asset %}
+<article class="mw-card {{ card.rail }}" hx-get="{% url 'web:wo' wo.number %}" hx-target="#drawer">
+  <div class="mw-top"><a class="mw-num" href="{% url 'web:wo' wo.number %}">{{ wo.number }}</a><span class="mw-type">{{ wo.type|wo_type_short }}</span><span class="mw-due{% if card.late %} late{% endif %}">{{ card.due }}</span></div>
+  <div class="mw-dev"><span class="tag">{{ asset.tag }}</span> {{ asset.device_model.description }}</div>
+  <div class="mw-where">{{ card.where }}</div>
+  {% if card.problem %}<p class="mw-prob">{% shown_text card.problem %}</p>{% endif %}
+  <div class="mw-chips">{% priority_chip wo.priority %}{% wo_status_chip wo.status %}{% if wo.tagged_out %}<span class="chip crit">Tagged out</span>{% endif %}{% if wo.alert_id %}<span class="chip violet">Recall</span>{% endif %}{% if card.vendor %}<span class="chip violet">Vendor</span>{% endif %}{% if card.qualified is False %}<span class="chip crit">Not credentialed</span>{% endif %}{% if card.pm %}<span class="chip neutral">{{ card.pm }}</span>{% endif %}</div>
+  {% if card.waiting %}<p class="mw-wait"><b>{% if card.waiting.days is None %}Waiting on parts{% elif card.waiting.days == 0 %}Waiting since today{% else %}Waiting {{ card.waiting.days }} d{% endif %}</b>{% if card.waiting.note %} · {% shown_text card.waiting.note %}{% endif %}{% if card.waiting.pos %} · PO {{ card.waiting.pos|join:", " }}{% endif %}</p>{% endif %}
+  {% if card.actions or card.take and take_template %}<div class="mw-acts">
+    {% for a in card.actions %}{% if a.modal %}<button class="btn{% if a.primary %} primary{% endif %}" type="button" hx-get="{{ a.url }}" hx-vals='{"from": "my_work"}' hx-target="#modal-card" hx-trigger="click consume">{{ a.label }}</button>{% else %}<button class="btn{% if a.primary %} primary{% endif %}" type="button" hx-post="{{ a.url }}" hx-vals='{"to": "{{ a.to }}"}' hx-target="this" hx-swap="none" hx-disabled-elt="this" hx-trigger="click consume">{{ a.label }}</button>{% endif %}{% endfor %}
+    {% if card.take and take_template %}{% include take_template %}{% endif %}
+  </div>{% endif %}
+</article>
+{% endwith %}{% endwith %}

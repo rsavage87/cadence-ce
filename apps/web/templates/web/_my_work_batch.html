@@ -1,0 +1,8 @@
+{% load recalls_tags %}
+{% comment %}A recall alert's batch on My work (slice 24, part A): one row, "Recall: <alert> · N devices", that opens to its devices' cards
+   (by location). Its hidden `open` input goes with the list's re-fetch while the batch is open, so it stays open after a move.{% endcomment %}
+<details class="mw-batch"{% if batch.open %} open{% endif %}>
+  <summary><span class="mw-bt">Recall: {{ batch.alert|alert_label }} · {{ batch.cards|length }} device{{ batch.cards|length|pluralize }}</span><span class="mw-due{% if batch.late %} late{% endif %}">{{ batch.due }}</span><span class="mw-bs">{{ batch.alert.title }}</span></summary>
+  <input type="hidden" name="open" value="{{ batch.alert.pk }}">
+  <div class="mw-cards">{% for card in batch.cards %}{% include "web/_my_work_card.html" %}{% endfor %}</div>
+</details>
