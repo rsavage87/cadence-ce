@@ -6,7 +6,7 @@ retired, out of service, in repair, open recall, PM overdue, PM due within 30 da
 The bucket is a SQL annotation so the strip counts and the `?bucket=` filter always agree.
 """
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -233,6 +233,28 @@ def _check_dates(*, installed_on=None, warranty_end=None, last_pm_on=None, today
         errors["last_pm_on"] = "The last PM cannot be before the device was installed."
     if errors:
         raise ValidationError(errors)
+
+
+def _check_last_pm(last_pm_on, *, installed_on, today: date) -> None:
+    """The last PM's own rules (_check_dates's: not in the future, not before the install date), whatever else is wrong with the
+    install date on file."""
+    try:
+        _check_dates(installed_on=installed_on, last_pm_on=last_pm_on, today=today)
+    except ValidationError as e:
+        if "last_pm_on" in e.message_dict:
+            raise ValidationError({"last_pm_on": e.message_dict["last_pm_on"]}) from None
+
+
+def _save_on(obj, day: date | None) -> None:
+    """Save `obj`; with `day`, the history row it writes is dated that day (noon, in the facility's time zone) instead of now: what
+    an import from the previous system says happened on an earlier day. The date goes with this one save (simple_history would
+    reuse it for every later save of the same object)."""
+    if day is not None:
+        obj._history_date = timezone.make_aware(datetime.combine(day, time(12)))
+    try:
+        obj.save()
+    finally:
+        obj.__dict__.pop("_history_date", None)
 
 
 _UNSET = object()
@@ -555,10 +577,16 @@ def rename_department(department: Department, name: str) -> Department:
 
 @transaction.atomic
 def create_asset(*, tag, device_model, department, serial="", room="", installed_on=None, acquisition_cost=None, warranty_end=None, condition=3,
-                 last_pm_on=None, next_pm_on=None, notes="", status=AssetStatus.IN_SERVICE, by=None, today: date | None = None) -> Asset:
+                 last_pm_on=None, next_pm_on=None, notes="", status=AssetStatus.IN_SERVICE, by=None, today: date | None = None,
+                 added_on: date | None = None) -> Asset:
     """Add a device. Its first PM is `next_pm_on` when given, else first_pm_due(); its acquisition cost defaults to the model's list
-    cost. Tags are unique in the facility in any letter case and can never change afterwards (they are on the sticker and in URLs)."""
+    cost. Tags are unique in the facility in any letter case and can never change afterwards (they are on the sticker and in URLs).
+    `added_on` dates the history's "added" row on an earlier day: the importer (apps.imports.kinds.devices) adds a device retired
+    years ago in the previous system with both its rows on the day it was retired (set_status's `changed_on`), so its history reads
+    in order."""
     today = today or timezone.localdate()
+    if added_on is not None and added_on > today:
+        raise ValidationError({"added_on": "A device cannot be added on a day after today."})
     tag = (tag or "").strip()
     if not tag:
         raise ValidationError({"tag": "Enter the asset tag from the CE sticker."})
@@ -586,7 +614,7 @@ def create_asset(*, tag, device_model, department, serial="", room="", installed
                   last_pm_on=last_pm_on, status=status, notes=(notes or "").strip(),
                   next_pm_on=next_pm_on or first_pm_due(device_model, installed_on=installed_on, last_pm_on=last_pm_on, today=today))
     asset._change_reason = "Added"
-    asset.save()
+    _save_on(asset, added_on)
     return asset
 
 
@@ -594,13 +622,18 @@ EDITABLE_FIELDS = ("serial", "device_model", "department", "room", "installed_on
 
 
 @transaction.atomic
-def update_asset(asset: Asset, *, by=None, today: date | None = None, **fields) -> Asset:
+def update_asset(asset: Asset, *, by=None, today: date | None = None, imported_last_pm=_UNSET, **fields) -> Asset:
     """Change a device's details. Not its tag (on the sticker and in URLs), status (set_status), or contract (the contracts screen).
-    A new model does not move the next PM by itself; change next_pm_on alongside it when the interval differs."""
+    A new model does not move the next PM by itself; change next_pm_on alongside it when the interval differs.
+    The last PM is not an editable detail (completed PM work orders set it): `imported_last_pm` is the importer's alone, the last PM
+    the previous system recorded (apps.imports.kinds.devices, on a re-import), with create_asset's rules for it."""
     today = today or timezone.localdate()
     unknown = set(fields) - set(EDITABLE_FIELDS)
     if unknown:
         raise ValidationError(f"These cannot be changed here: {', '.join(sorted(unknown))}.")
+    if imported_last_pm is not _UNSET and imported_last_pm != asset.last_pm_on:
+        _check_last_pm(imported_last_pm, installed_on=fields.get("installed_on", asset.installed_on), today=today)
+        fields["last_pm_on"] = imported_last_pm
     if "device_model" in fields:
         _check_tenant(fields["device_model"], "device_model")
     if "department" in fields:
@@ -614,9 +647,9 @@ def update_asset(asset: Asset, *, by=None, today: date | None = None, **fields) 
         _check_dates(**{f: fields.get(f, getattr(asset, f)) for f in ("installed_on", "warranty_end")}, today=today)
     # The last PM against the install date only when the install date changes, and on the field the form has: a device added
     # before this rule (import, the demo) may have an older PM on record, and must stay editable.
-    new_install = fields.get("installed_on")
-    if new_install and new_install != asset.installed_on and asset.last_pm_on and asset.last_pm_on < new_install:
-        raise ValidationError({"installed_on": f"The install date cannot be after the last PM on record ({asset.last_pm_on:%b %-d, %Y})."})
+    new_install, last_pm = fields.get("installed_on"), fields.get("last_pm_on", asset.last_pm_on)
+    if new_install and new_install != asset.installed_on and last_pm and last_pm < new_install:
+        raise ValidationError({"installed_on": f"The install date cannot be after the last PM on record ({last_pm:%b %-d, %Y})."})
     _check_numbers(**{k: fields[k] for k in ("acquisition_cost", "condition") if k in fields})
     for name in ("serial", "room"):
         if name in fields:
@@ -647,10 +680,11 @@ def _move_open_pm(asset: Asset, by=None) -> None:
 
 
 @transaction.atomic
-def set_status(asset: Asset, to_status: str, *, by=None, note: str = "", today: date | None = None) -> Asset:
+def set_status(asset: Asset, to_status: str, *, by=None, note: str = "", today: date | None = None, changed_on: date | None = None) -> Asset:
     """Move a device along STATUS_CHANGES. Retiring cancels its open PM work orders that can be cancelled and refuses while any
     other work is open (finish or cancel it first); the device leaves the PM schedule. Reinstating puts it back with a PM due today.
-    `note` is kept in the device's history."""
+    `note` is kept in the device's history. `changed_on` dates the history row on an earlier day (not before the install date): the
+    importer's retirement from the previous system, so the AEM evidence (apps.pm.aem) counts the device in use until then."""
     from apps.workorders.models import OPEN_STATUSES, WoStatus, WoType
     from apps.workorders.services import change_status
 
@@ -659,6 +693,10 @@ def set_status(asset: Asset, to_status: str, *, by=None, note: str = "", today: 
         raise ValidationError("Choose a device status.")
     if to_status not in STATUS_CHANGES.get(asset.status, set()):
         raise ValidationError(f"{asset.tag} cannot go from {asset.get_status_display().lower()} to {AssetStatus(to_status).label.lower()}.")
+    if changed_on is not None and changed_on > today:
+        raise ValidationError({"changed_on": "The status cannot change on a day after today."})
+    if changed_on is not None and asset.installed_on and changed_on < asset.installed_on:
+        raise ValidationError({"changed_on": "The status cannot change before the device was installed."})
     if to_status == AssetStatus.RETIRED:
         open_wos = list(asset.work_orders.filter(status__in=OPEN_STATUSES).order_by("number"))
         blocking = [w for w in open_wos if not (w.type == WoType.PM and w.status in (WoStatus.OPEN, WoStatus.AWAITING_PARTS))]
@@ -673,7 +711,7 @@ def set_status(asset: Asset, to_status: str, *, by=None, note: str = "", today: 
         asset.next_pm_on = today  # back in use: inspect it before anyone relies on it
     asset.status = to_status
     asset._change_reason = (note or "").strip()[:100] or f"Status: {AssetStatus(to_status).label}"
-    asset.save()
+    _save_on(asset, changed_on)
     return asset
 
 
