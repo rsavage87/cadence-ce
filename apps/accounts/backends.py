@@ -10,7 +10,8 @@ person's landing account (apps.accounts.people.landing_account): their joined ac
 person deactivated in one facility still signs in to the others.
 
 Every password check runs through here (the sign-in page and Admin's), so this is also where the lockouts of
-apps.accounts.signin are enforced and counted.
+apps.accounts.signin are enforced and counted: the login text and the address before the account is looked up, and once a login
+names a person, the person's own count too (each facility's username is another text for the same password).
 """
 from django.contrib.auth import get_user_model
 from django.contrib.auth.backends import ModelBackend
@@ -63,10 +64,12 @@ class UsernameOrEmailBackend(ModelBackend):
         user = find_account(username)
         if user is None:
             User().set_password(password)  # same hashing cost as a real account, so timing does not say whether it exists
-        elif user.check_password(password) and self.user_can_authenticate(user):
+        # The password is checked even while the person is locked out (slice 22: one count for all their accounts' usernames),
+        # so the time taken does not tell a locked person from a wrong password; either way it is one more failure.
+        elif user.check_password(password) and self.user_can_authenticate(user) and not signin.person_locked(user):
             signin.clear_failures(username, user)
             return user
-        signin.record_failure(username, ip)
+        signin.record_failure(username, ip, user)
         return None
 
     def get_user(self, user_id):

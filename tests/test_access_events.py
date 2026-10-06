@@ -3,7 +3,8 @@ Records of access changes (slice 20, part B; apps.accounts.models.AccessEvent): 
 event in the same transaction as the change (an invitation and a resend, a user's role, company, or unit, deactivating and
 reactivating, adding a role, a role's level and what it sees), with who did it, whose account or which role, and what changed in
 words; a refused change, or one that changes nothing, writes none. The Users and Roles tabs and the API write them through the same
-services. Events stay in their facility, and a command or the signed-out reset form writes them inside the account's facility.
+services. Events stay in their facility, and a command writes them inside the account's facility. The signed-out reset form writes
+none (slice 22): a fresh invitation it sends is not a staff change, and must not tell the facility someone asked.
 """
 import smtplib
 
@@ -113,16 +114,16 @@ def test_a_resend_writes_an_event_and_the_first_send_and_a_failed_one_do_not(ctx
     assert len(events(action=Action.INVITATION_RESENT)) == 1
 
 
-def test_the_reset_form_resending_a_pending_invitation_writes_it_inside_the_facility(client, tenant, role, rls, mailoutbox):  # noqa: F811
-    """Signed out, no tenant set: a pending account asking for a reset gets a fresh invitation, and the event is the facility's."""
+def test_the_reset_form_resending_a_pending_invitation_writes_no_event(client, tenant, role, rls, mailoutbox):  # noqa: F811
+    """Signed out, no tenant set: a pending account asking for a reset gets a fresh invitation, and the facility's log gets nothing
+    (slice 22): nobody on the staff changed anything, and an event would tell the facility that someone asked about the address."""
     ana = services.invite_user(tenant, email="ana@riverside.example", first_name="Ana", last_name="Diaz", role=role("technician"))
     assert invitations.send_invitation(ana)
     with rls:
         assert client.post("/password-reset/", {"email": "ana@riverside.example"}).status_code == 302
     assert rls.violations == [] and len(mailoutbox) == 2
     with tenant_context(tenant):
-        e = only(Action.INVITATION_RESENT)
-    assert e.by is None and e.user == ana
+        assert events(action=Action.INVITATION_RESENT) == [] and len(events()) == 1  # the invitation's own event only
 
 
 def test_a_role_change_writes_before_and_after_in_words(ctx, role, kim, make_user, units):

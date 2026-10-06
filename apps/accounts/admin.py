@@ -28,10 +28,21 @@ class RoleAdmin(TenantModelAdmin):
 
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
+    """Slice 22: `person` (one person's accounts in several facilities, apps.accounts.people) is set only by an invitation's linking
+    (apps.accounts.services.add_account) and shown read-only. A linked account's email and facility are read-only too: the link
+    rests on the exact address, and each facility holds one account of the person (moving one would clash or join the wrong
+    facility). A password set here is the person's in every facility (User.save)."""
+
     list_display = ("username", "email", "first_name", "last_name", "tenant", "role", "is_active", "is_invited")
     list_filter = ("tenant", "role", "is_active", "is_staff")
-    fieldsets = BaseUserAdmin.fieldsets + (("Cadence", {"fields": ("tenant", "role", "department", "company", "phone", "is_invited")}),)
+    fieldsets = BaseUserAdmin.fieldsets + (("Cadence", {"fields": ("tenant", "person", "role", "department", "company", "phone", "is_invited")}),)
     add_fieldsets = BaseUserAdmin.add_fieldsets + (("Cadence", {"fields": ("tenant", "role", "email", "first_name", "last_name")}),)
+
+    def get_readonly_fields(self, request, obj=None):
+        fields = [*super().get_readonly_fields(request, obj), "person"]
+        if obj is not None and obj.person:
+            fields += ["email", "tenant"]
+        return fields
 
     def get_queryset(self, request):
         qs = super().get_queryset(request)

@@ -5,6 +5,10 @@ Django's PasswordResetConfirmView does the work with the invitation's own token 
 into the session and redirects to .../set-password/, so the token never sits in the address bar of the page with the form
 (and the layout sends no Referer). Only a pending invitation of an active facility can be opened; anything else, garbage
 included, renders the "link no longer works" page. Setting the password changes the hashed state, so the link is used up.
+
+Slice 22: the password set here is the person's in every facility they work in (User.save shares it, and voids their other
+facilities' emailed links: they join those from the facility menu). A link for someone who already signs in elsewhere never opens
+(invitations.pending_user_from_uid): the page says to sign in as usual, and the invitation waits in the facility menu.
 """
 from django.conf import settings
 from django.contrib.auth import password_validation

@@ -6,6 +6,7 @@ from django import forms
 from django.contrib.auth.forms import AuthenticationForm, PasswordChangeForm, SetPasswordForm, SetPasswordMixin
 from django.contrib.auth.password_validation import password_validators_help_texts
 from django.core.exceptions import ValidationError
+from django.utils.functional import cached_property
 from django.views.decorators.debug import sensitive_variables
 
 from apps.accounts import signin
@@ -68,8 +69,10 @@ class NewPasswordForm(_NewPassword, SetPasswordForm):
 
 
 class ChangePasswordForm(_NewPassword, PasswordChangeForm):
-    """Django's change form. A wrong current password counts as a failed sign-in for the account, so a borrowed session
-    cannot be used to guess it; while the account is locked the form refuses."""
+    """Django's change form. A wrong current password counts as a failed sign-in for the account, and for its person (slice 22:
+    the same count a sign-in by any of their facilities' usernames adds to), so a borrowed session cannot be used to guess it;
+    while the account or the person is locked the form refuses. The password is the person's: changing it here changes it in
+    every facility they work in (User.save), and the page names them (`facilities`)."""
 
     error_messages = {**PasswordChangeForm.error_messages, "password_mismatch": MISMATCH, "password_incorrect": "That is not your current password."}
 
@@ -78,13 +81,24 @@ class ChangePasswordForm(_NewPassword, PasswordChangeForm):
         super().__init__(user, *args, **kwargs)
         self.fields["old_password"].label = "Current password"
 
+    @cached_property
+    def sign_in(self) -> str:
+        """What the person signs in with: their email (signin.sign_in_name), never a second facility's username."""
+        return signin.sign_in_name(self.user)
+
+    @cached_property
+    def facilities(self) -> str:
+        """The facilities this password opens, in words ("Lakeside Surgery Center and Riverside Regional"), when there are several."""
+        names = signin.facilities_opened(self.user)
+        return signin.in_words(names) if len(names) > 1 else ""
+
     @sensitive_variables("old_password")
     def clean_old_password(self):
-        locked = signin.is_locked(self.user.username, _ip(self.request))
+        locked = signin.is_locked(self.user.username, _ip(self.request)) or signin.person_locked(self.user)
         if locked:
             raise ValidationError(locked, code="locked")
         try:
             return super().clean_old_password()
         except ValidationError:
-            signin.record_failure(self.user.username, _ip(self.request))
+            signin.record_failure(self.user.username, _ip(self.request), self.user)
             raise

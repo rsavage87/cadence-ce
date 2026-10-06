@@ -50,7 +50,7 @@ def tabs_context(request, tab: str) -> dict:
 
 
 def _name(user) -> str:
-    return user.get_full_name() or user.username
+    return services.display_name(user)  # never a second facility's username (slice 22)
 
 
 # --- Users tab ------------------------------------------------------------------------------------

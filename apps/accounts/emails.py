@@ -1,6 +1,7 @@
 """
-Sending the app's emails (invitations, password resets, report emails, portal confirmations). One place decides how a failure is handled: it is logged and
-reported to the caller as False, never raised, so a mail outage cannot undo the account change that asked for the email.
+Sending the app's emails (invitations and "added to a facility" notes, password resets, report emails, portal confirmations).
+One place decides how a failure is handled: it is logged and reported to the caller as False, never raised, so a mail outage
+cannot undo the account change that asked for the email.
 """
 import logging
 

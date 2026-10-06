@@ -27,7 +27,8 @@ USERS, ROLES, TECHS, CREDS = f"{API}users/", f"{API}roles/", f"{API}technicians/
 TODAY = date.today()
 PASSWORD = "Test-Pass-2026-x"
 ALL_FULL = {m: Level.FULL for m in Module.values}
-USER_FIELDS = {"id", "name", "first_name", "last_name", "email", "username", "role", "role_name", "role_slug", "scope", "company", "department",
+# No username (slice 22): a second facility's account has one of its own, which would say the address works elsewhere too.
+USER_FIELDS = {"id", "name", "first_name", "last_name", "email", "role", "role_name", "role_slug", "scope", "company", "department",
                "scope_gap", "status", "invitation_pending", "last_sign_in", "is_superuser", "technician"}
 ROLE_FIELDS = {"id", "name", "slug", "description", "is_system", "standard", "levels", "scope", "scope_fixed", "users", "users_seeing_nothing"}
 CRED_FIELDS = {"id", "technician", "technician_name", "scope", "value", "source", "issued_on", "expires_on", "status", "state"}

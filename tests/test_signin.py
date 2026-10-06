@@ -241,7 +241,9 @@ def test_reset_sends_one_email_whose_link_starts_with_the_app_base_url(client, s
     mail = outbox[0]
     assert mail.to == ["kim@riverside.example"] and mail.subject == "Reset your Cadence CE password"
     assert reset_link(mail).startswith("https://ce.example.org/password-reset/")
-    assert "2 hours" in mail.body and "only once" in mail.body and "ignore" in mail.body and "kim.lee" in mail.body
+    assert "2 hours" in mail.body and "only once" in mail.body and "ignore" in mail.body
+    # what to sign in with: the email, which works (slice 22: never a username, which for a second facility is "<email>@<slug>")
+    assert "Sign in with kim@riverside.example." in mail.body and "kim.lee" not in mail.body
     page = client.get(SENT)
     assert b"If an account uses that address" in page.content and b"2 hours" in page.content and b"spam" in page.content
 
@@ -320,7 +322,8 @@ def test_every_account_using_the_address_gets_its_own_email(client, outbox, tena
     person(other_tenant, "kim.o", "Kim@Shared.example")
     client.post("/password-reset/", {"email": "kim@shared.example"})
     assert sorted(m.to[0] for m in outbox) == ["Kim@shared.example", "kim@shared.example"]  # each to its stored address
-    assert {"kim.r", "kim.o"} == {re.search(r"Your username is (\S+)\.", m.body).group(1) for m in outbox}
+    # the address names two people, so a sign-in by it opens neither: each email names the username that does
+    assert {"kim.r", "kim.o"} == {re.search(r"Sign in with (\S+)\.", m.body).group(1) for m in outbox}
 
 
 def test_per_address_limit_drops_extra_emails_but_answers_the_same(client, settings, outbox, kim):

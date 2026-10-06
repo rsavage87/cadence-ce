@@ -6,7 +6,8 @@ SQLite, where set_db_tenant does nothing, so a query made too early passes here 
 stands in for the policy: it records what set_db_tenant was last told and notes every query that touches a tenant-scoped
 table while no tenant is set. Covered: loading the signed-in user on every request, signing in, the password-reset request,
 accepting an invitation, the public portal (signed out, and opened from a label while signed in), API requests by token, and
-the bootstrap and seed commands.
+the bootstrap and seed commands; and for a person in several facilities (slice 22), accepting a linked invitation, a reset grouped
+by person, and bootstrap_tenant linking an address another facility uses.
 """
 import re
 from io import StringIO
@@ -19,10 +20,11 @@ from django.test.utils import CaptureQueriesContext
 from rest_framework.authtoken.models import Token
 
 from apps.accounts import invitations, services
-from apps.accounts.models import Role, create_default_roles
+from apps.accounts.models import Role, User, create_default_roles
 from apps.equipment.models import Department
 from apps.tenants.context import tenant_context
 from apps.tenants.management.commands.enable_rls import tenant_scoped_tables
+from apps.tenants.models import Tenant
 
 
 class _Rls:
@@ -166,6 +168,37 @@ def test_bootstrap_tenant_with_invite(rls, db, mailoutbox):
                      stdout=StringIO())
     assert rls.violations == []
     assert len(mailoutbox) == 1 and "as Director" in mailoutbox[0].body
+
+
+def _linked_invitations(tenant):
+    """Ana invited to Riverside and to Lakeside before she has a password: one person, two pending invitations (slice 22)."""
+    lakeside = Tenant.objects.create(name="Lakeside Surgery Center", slug="lakeside")
+    create_default_roles(lakeside)
+    a = services.invite_user(tenant, email="ana@health.example", first_name="Ana", last_name="Diaz", role=_role(tenant, "director"))
+    b = services.invite_user(lakeside, email="ana@health.example", first_name="Ana", last_name="Diaz", role=_role(lakeside, "technician"))
+    assert b.person and b.person == User.objects.get(pk=a.pk).person
+    return a, b
+
+
+def test_a_person_s_reset_and_invitation_and_bootstrap_linking(client, rls, tenant, mailoutbox):
+    """Slice 22, signed out or before any tenant: accepting a linked invitation (its person, read across facilities), a reset grouped
+    by person (the landing account and the facilities its password opens), and bootstrap_tenant linking an address another facility
+    uses (the email's role read inside the new facility). User and Tenant only, until a tenant is set."""
+    a, b = _linked_invitations(tenant)
+    assert invitations.send_invitation(b)
+    path = urlsplit(invitations.invitation_url(b)).path
+    with rls:
+        r = client.get(path)
+        done = client.post(r["Location"], {"new_password1": "Kestrel-Harbor-2031", "new_password2": "Kestrel-Harbor-2031"})
+        assert done.status_code == 302 and client.get(done["Location"]).status_code == 200
+        assert client.post("/logout/").status_code == 302
+        User.objects.filter(pk=a.pk).update(password=User.objects.get(pk=b.pk).password, is_invited=False)  # joined Riverside too
+        assert client.post("/password-reset/", {"email": "ana@health.example"}).status_code == 302
+        call_command("bootstrap_tenant", "--name", "Hillside Clinic", "--slug", "hillside", "--admin-email", "ana@health.example", "--invite",
+                     stdout=StringIO())
+    assert rls.violations == []
+    reset, added = mailoutbox[-2:]
+    assert "Lakeside Surgery Center and Riverside Regional" in reset.body and "as Director" in added.body and "/join/" in added.body
 
 
 def test_seed_demo(rls, db):

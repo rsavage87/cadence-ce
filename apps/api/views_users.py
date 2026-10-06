@@ -13,12 +13,14 @@ never dropped; a field a GET shows may be sent back as it reads, and sent change
 Users (User is not tenant-scoped: every lookup here filters on the request's facility)
   GET    /api/v1/users/                     View. ?q= (name, email, department, company), ?role=<role slug>,
                                             ?status=active|invited|deactivated (an unknown role or status is a 400). Each user: id,
-                                            name, first_name, last_name, email, username, role (its id), role_name, role_slug, scope
-                                            (what they see by: facility, company, or department), company (only where the role sees
-                                            by company, else null), department, scope_gap ("company" or "department" while a scoped
-                                            user sees nothing, else null), status (active, invited, deactivated), invitation_pending,
+                                            name, first_name, last_name, email, role (its id), role_name, role_slug, scope (what they
+                                            see by: facility, company, or department), company (only where the role sees by company,
+                                            else null), department, scope_gap ("company" or "department" while a scoped user sees
+                                            nothing, else null), status (active, invited, deactivated), invitation_pending,
                                             last_sign_in, is_superuser, technician (their profile's id, or null). Never a password
-                                            hash, an API token, or an invitation link.
+                                            hash, an API token, or an invitation link, and never the username (slice 22: someone who
+                                            also works at another facility has a username of its own here, which would say so).
+                                            An address another facility uses invites exactly as any other: the same row and status.
   GET    /api/v1/users/{id}/                View.
   POST   /api/v1/users/                     Full. Invite user: {"email", "first_name", "last_name", "role": <role id>, "company",
                                             "department", "create_technician": false}. invite_user, then send_invitation, as the
@@ -169,7 +171,7 @@ class UserViewSet(UsersModule):
     ELSEWHERE = {
         "status": "Use POST /api/v1/users/{id}/deactivate/ or reactivate/ to change the status.",
         "invitation_pending": "Use POST /api/v1/users/{id}/resend-invite/ to send a fresh invitation.",
-        **dict.fromkeys(("name", "first_name", "last_name", "email", "username"), "A user's name and email address are set when they are invited."),
+        **dict.fromkeys(("name", "first_name", "last_name", "email"), "A user's name and email address are set when they are invited."),
         **dict.fromkeys(("role_name", "role_slug"), "Send the role's id as role."),
         "scope": "What a user sees comes from their role: change the role, or the role's scope (PATCH /api/v1/roles/{id}/).",
         "technician": "A technician profile is added with the invitation (create_technician).",

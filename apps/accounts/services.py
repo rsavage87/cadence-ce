@@ -21,8 +21,14 @@ level for a module or what it sees. `by` is who made the change (None for a comm
 the role involved, and `detail` says what changed in words, with labels rather than slugs ("Technician → CE manager", "Contracts:
 View → Edit"), cut to fit its 300 characters. A refused change raises before anything is written, and a call that changes nothing
 (the role, level, or scope it already has; deactivating an account that already is) writes nothing.
+
+One person in several facilities (slice 22, apps.accounts.people): add_account, which invite_user and bootstrap_tenant share, gives
+an address another facility's account uses (exactly as stored) a new account here for that same person, as a pending invitation
+they join while signed in. The inviting facility cannot tell: its response, toast, status, event, change log, Users row, API row,
+and Resend invite are the same as for an address nobody uses, and nothing is written in the other facility but the shared `person`.
 """
 import logging
+import uuid
 from contextlib import nullcontext
 from dataclasses import dataclass
 
@@ -81,6 +87,12 @@ def role_order(roles) -> list:
     return sorted(roles, key=lambda r: (_DEFAULT_ROLE_RANK.get(r.slug, len(_DEFAULT_ROLE_RANK)), r.name))
 
 
+def display_name(user) -> str:
+    """A user's name in messages: the full name, else the email (as User.__str__), never a second facility's username first
+    (slice 22: "<email>@<facility slug>" would say the address has an account elsewhere)."""
+    return user.get_full_name() or user.email or user.username
+
+
 def user_status(user) -> str:
     if not user.is_active:
         return "deactivated"
@@ -97,7 +109,9 @@ class UserFilters:
 
 
 def list_users(tenant, f: UserFilters):
-    qs = User.objects.filter(tenant=tenant).select_related("role").order_by("first_name", "last_name", "username")
+    # By email after the name, never the username: someone who also works at another facility has a username of its own here
+    # (slice 22), and the order must not tell them apart.
+    qs = User.objects.filter(tenant=tenant).select_related("role").order_by("first_name", "last_name", "email", "pk")
     if f.q:
         qs = qs.filter(Q(first_name__icontains=f.q) | Q(last_name__icontains=f.q) | Q(email__icontains=f.q) | Q(department__icontains=f.q)
                        | Q(company__icontains=f.q))
@@ -147,7 +161,7 @@ def _check_outranks(by, user) -> None:
     clerk manages the accounts below them, never a director's."""
     module = _exceeds(by, user.role) if user.role_id else ""
     if module:
-        raise ValidationError(f"You can change only accounts whose access you have yourself: {user.get_full_name() or user.username} "
+        raise ValidationError(f"You can change only accounts whose access you have yourself: {display_name(user)} "
                               f"has more {module} access than your role.")
 
 
@@ -166,7 +180,7 @@ def _check_keeps_a_director(user) -> None:
     list(User.objects.select_for_update(of=("self",)).filter(tenant=user.tenant, is_active=True, role__is_system=True).order_by("pk")
          .values_list("pk", flat=True))
     if not _active_directors(user.tenant).exclude(pk=user.pk).exists():
-        raise ValidationError(f"{user.get_full_name() or user.username} is this facility's only {user.role.name} who can sign in; give "
+        raise ValidationError(f"{display_name(user)} is this facility's only {user.role.name} who can sign in; give "
                               "someone else that role first.")
 
 
@@ -326,12 +340,81 @@ def company_suggestions(tenant) -> list[str]:
 
 # --- users ------------------------------------------------------------------------------------------------------------------
 
+UNUSABLE_ADDRESS = "That address cannot be used for a new account here. Contact support."
+
+
+def normalize_email(email) -> str:
+    """How an invited address is stored: trimmed and lowercased (the username of an account in one facility)."""
+    return (email or "").strip().lower()
+
+
+def is_member(tenant, email) -> bool:
+    """Whether one of `tenant`'s own accounts already uses `email` as its username or address, in any letter case. Only this facility's
+    accounts are read: an address used elsewhere is never confirmed to another facility."""
+    return User.objects.filter(tenant=tenant).filter(Q(username__iexact=email) | Q(email__iexact=email)).exists()
+
+
+def _linked_username(email: str, tenant) -> str:
+    """A second facility's account needs a username of its own (usernames are unique across facilities): "<email>@<facility slug>",
+    which has two @ signs, so it is never a valid address and never anyone's email. Too long for the column, a random one instead.
+    Nobody types it: a sign-in by the email lands on the person's account used last (apps.accounts.backends)."""
+    name = f"{email}@{tenant.slug}"
+    return name if len(name) <= EMAIL_MAX else f"{uuid.uuid4().hex}@{tenant.slug}"
+
+
+def _person_for(tenant, email: str):
+    """The person a new account in `tenant` for `email` joins (slice 22, apps.accounts.people), or None for an account of its own.
+    Other facilities' accounts whose stored email is exactly `email` (never in another letter case, never a username, never a
+    superuser's), locked until the caller's transaction ends, so two facilities inviting the address at once link it once. They are
+    one person when they all share one already, or when there is exactly one of them, unlinked: that account gets a new person,
+    written only if it still has none (a concurrent link wins, and is read back). Several people, or several unlinked accounts
+    under the address, name nobody for sure: None. Nothing else of the other facility's account is read or changed."""
+    matches = list(User.objects.select_for_update().filter(email=email, tenant__isnull=False, is_superuser=False).exclude(tenant=tenant)
+                   .order_by("pk").values_list("pk", "person"))
+    persons = {person for _pk, person in matches}
+    if len(persons) == 1 and None not in persons:
+        return persons.pop()
+    if len(matches) == 1:
+        pk = matches[0][0]
+        User.objects.filter(pk=pk, person__isnull=True).update(person=uuid.uuid4())
+        return User.objects.filter(pk=pk).values_list("person", flat=True).get()
+    return None
+
+
+@transaction.atomic
+def add_account(tenant, *, email, role, first_name="", last_name="", department="", company="", is_staff=False) -> User:
+    """A new pending invitation in `tenant` (no usable password): invite_user's account and bootstrap_tenant's first director. In
+    the caller's transaction when there is one (the other facilities' rows stay locked until it ends); `email` is stored as
+    normalize_email gives it, and the caller has checked is_member.
+
+    Slice 22: when the address is another facility's account's (see _person_for), the new account is that person's account here
+    (their one password, their sign-in), with a username of its own; it never reuses or moves the other facility's account. It
+    looks exactly like any other invitation to this facility: the same status, events, and rows. A clash nobody can resolve here
+    (a username already taken by an account with another address, a person who already has an account here under another
+    address) is today's refusal, which says nothing about why."""
+    email = normalize_email(email)
+    person = _person_for(tenant, email)
+    user = User(username=_linked_username(email, tenant) if person else email, email=email, person=person, first_name=first_name,
+                last_name=last_name, tenant=tenant, role=role, department=department, company=company, is_invited=True, is_active=True,
+                is_staff=is_staff)
+    user.set_unusable_password()
+    try:
+        # savepoint: a concurrent invite for the same email would otherwise poison the outer transaction
+        with transaction.atomic():
+            user.save()
+    except IntegrityError:
+        # username is unique across facilities, and a person has one account per facility; say only that the address cannot be used here
+        raise ValidationError(UNUSABLE_ADDRESS)
+    return user
+
+
 @transaction.atomic
 def invite_user(tenant, *, email, first_name, last_name, role, department="", company="", create_technician=False, by=None) -> User:
-    """Create an Invited account with no usable password. The caller then sends the invitation email
-    (accounts.invitations.send_invitation) outside this transaction, so a mail failure never undoes the account. A company-scoped
-    role's user needs the company they work for, and a department-scoped role's user one of the facility's departments."""
-    email = (email or "").strip().lower()
+    """Create an Invited account with no usable password (add_account: an address another facility's account uses joins that
+    person, and nothing here says so). The caller then sends the invitation email (accounts.invitations.send_invitation) outside
+    this transaction, so a mail failure never undoes the account. A company-scoped role's user needs the company they work for, and
+    a department-scoped role's user one of the facility's departments."""
+    email = normalize_email(email)
     first_name, last_name = (first_name or "").strip(), (last_name or "").strip()
     if not email:
         raise ValidationError("A work email is required.")
@@ -341,20 +424,10 @@ def invite_user(tenant, *, email, first_name, last_name, role, department="", co
         raise ValidationError("First and last name are required.")
     _check_role(tenant, role)
     _check_grant(by, role)
-    # Only this facility's accounts are named; an address used elsewhere must not be confirmed to another tenant.
-    if User.objects.filter(tenant=tenant).filter(Q(username__iexact=email) | Q(email__iexact=email)).exists():
+    if is_member(tenant, email):
         raise ValidationError(f"{email} is already a member of this facility.")
     company, department = _scoped_values(tenant, role, _clean_company(company), (department or "").strip())
-    user = User(username=email, email=email, first_name=first_name, last_name=last_name, tenant=tenant, role=role, department=department,
-                company=company, is_invited=True, is_active=True)
-    user.set_unusable_password()
-    try:
-        # savepoint: a concurrent invite for the same email would otherwise poison the outer transaction
-        with transaction.atomic():
-            user.save()
-    except IntegrityError:
-        # username is unique across tenants; say only that the address cannot be used here
-        raise ValidationError("That address cannot be used for a new account here. Contact support.")
+    user = add_account(tenant, email=email, first_name=first_name, last_name=last_name, role=role, department=department, company=company)
     if create_technician:
         Technician.objects.create(tenant=tenant, user=user, name=f"{first_name} {last_name}"[:120], title=NEW_TECHNICIAN_TITLE)  # its column
     words = [f"Invited as {role.name}"] + [f"{label}: {value}" for label, value in (("company", company), (_unit_word(role), department)) if value]

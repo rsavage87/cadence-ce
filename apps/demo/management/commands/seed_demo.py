@@ -2,6 +2,11 @@
 Seed a small, deterministic demo tenant (same fictional facility as the mock).
 
     python manage.py seed_demo            # creates tenant 'riverside' with director kim@riverside.example / DemoPass-2026
+
+Slice 22: Kim also directs a second, small facility, Riverside North Campus (slug riverside-north: a handful of devices, two
+technicians, and a few work orders), as the same person: her account there is linked to her Riverside account the way an
+invitation links one (apps.accounts.services.add_account) and joined with her password (apps.accounts.people.join), so the demo
+shows the facility menu. A database seeded before slice 22 gets the North Campus on the next run.
 """
 import random
 from datetime import date, timedelta
@@ -11,6 +16,7 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
 
+from apps.accounts import people, services
 from apps.accounts.models import Role, User, create_default_roles
 from apps.contracts.models import Contract, ContractType, Coverage
 from apps.credentials.models import Credential, Scope, Technician
@@ -117,6 +123,25 @@ FAIL_BEFORE_DAYS = 60  # the failed PM is at least this old, so its repair is do
 FAILED_READING = "184 µA"
 FAIL_REPAIR = "Replaced the line cord (open ground conductor). Leakage 38 µA after repair; electrical safety and functional tests passed."
 
+# Slice 22: Kim's second facility. Its slug is the demo's with "-north"; its name the demo's first word's ("Riverside North Campus").
+NORTH_SUFFIX = "-north"
+NORTH_DEPTS = ["ICU", "ED", "Med/Surg 2W", "Outpatient Surgery"]
+NORTH_FLEET = [("Alaris 8015 PCU", 6), ("IntelliVue MX750", 4), ("R Series Plus", 3), ("Connex Spot", 3)]  # models from MODELS, devices
+NORTH_FIRST_TAG = 20100  # its own tag range, so a tag never names a Riverside device too
+NORTH_TECHS = [  # name, title, email local part, credentials
+    ("Avery Chen", "BMET II", "achen", [(Scope.CATEGORY, "Infusion pumps"), (Scope.CATEGORY, "Patient monitoring"), (Scope.CATEGORY, "Defibrillators")]),
+    ("Jamal Brooks", "BMET I", "jbrooks", [(Scope.MODEL, "Connex Spot"), (Scope.CATEGORY, "Infusion pumps")]),
+]
+NORTH_WORK = [  # model, opened days ago, type, where it stands, problem
+    ("Alaris 8015 PCU", 41, WoType.REPAIR, "closed", "Occlusion alarm with no occlusion"),
+    ("Connex Spot", 33, WoType.PM, "closed", "Scheduled preventive maintenance"),
+    ("R Series Plus", 26, WoType.PM, "closed", "Scheduled preventive maintenance"),
+    ("IntelliVue MX750", 12, WoType.REPAIR, "closed", "Screen flickers intermittently"),
+    ("Alaris 8015 PCU", 3, WoType.REPAIR, "in_progress", "Pump door latch loose"),
+    ("IntelliVue MX750", 2, WoType.REPAIR, "open", "No waveform on lead II"),
+    ("R Series Plus", 1, WoType.PM, "open", "Scheduled preventive maintenance"),
+]
+
 
 class Command(BaseCommand):
     help = "Create a small demo tenant with devices, contracts, technicians, credentials, and work orders."
@@ -139,6 +164,7 @@ class Command(BaseCommand):
                 seeded = Asset.objects.exists()
             if seeded:
                 self.stdout.write("Demo tenant already seeded.")
+                self._north_campus(tenant, opts)  # a database seeded before slice 22 has no North Campus yet
                 return
         create_default_roles(tenant)
         with tenant_context(tenant):
@@ -251,6 +277,82 @@ class Command(BaseCommand):
             self._approved_aem(domain, today)
             self._vendor_work(today)
         self.stdout.write(self.style.SUCCESS(f"Seeded {tenant.name}: {len(assets)} devices, {len(techs)} technicians. Sign in as {kim} / DemoPass-2026"))
+        self._north_campus(tenant, opts)
+
+    def _north_campus(self, tenant, opts) -> None:
+        """Kim's second facility (slice 22): a few devices, two technicians, and some work orders, with Kim as its director. Her
+        account there is added as an invitation would add it (services.add_account links it to her Riverside account, which has the
+        address) and joined with her password (people.join, what choosing it in the facility menu does). She has signed in to both,
+        Riverside last, so a sign-in lands there. Nothing happens once the North Campus has devices."""
+        kim = User.objects.filter(tenant=tenant, username=f"kim@{opts['slug']}.example").first()
+        if kim is None:
+            return
+        north, _ = Tenant.objects.get_or_create(slug=f"{opts['slug']}{NORTH_SUFFIX}", defaults={"name": f"{opts['name'].split()[0]} North Campus"})
+        with tenant_context(north):  # inside the facility: under row-level security the check would otherwise see no devices
+            if Asset.objects.exists():
+                return
+        create_default_roles(north)
+        today = timezone.localdate(timezone=zone_of(north))
+        rnd, outcomes = random.Random(20261006), random.Random(20261007)
+        with tenant_context(north):
+            if not services.is_member(north, kim.email):
+                account = services.add_account(north, email=kim.email, role=Role.objects.get(slug="director"), first_name=kim.first_name,
+                                               last_name=kim.last_name, department="Clinical Engineering", is_staff=True)
+                if people.join(User.objects.get(pk=kim.pk), account):  # her password, read fresh: add_account gave her a person
+                    now = timezone.now()
+                    User.objects.filter(pk=account.pk).update(last_login=now - timedelta(days=1))
+                    User.objects.filter(pk=kim.pk).update(last_login=now - timedelta(hours=1))
+            depts = [Department.objects.create(name=d) for d in NORTH_DEPTS]
+            techs = []
+            for name, title, local, creds in NORTH_TECHS:
+                first, last = name.split()
+                email = f"{local}@{north.slug}.example"
+                user = User(username=email, email=email, first_name=first, last_name=last, tenant=north, role=Role.objects.get(slug="technician"),
+                            department="Clinical Engineering", last_login=timezone.now() - timedelta(hours=rnd.randint(2, 30)))
+                user.set_unusable_password()  # as the Riverside staff: an administrator sets a password in Admin
+                user.save()
+                t = Technician.objects.create(name=name, title=title, user=user)
+                for scope, value in creds:
+                    Credential.objects.create(technician=t, scope=scope, value=value, source="In-house sign-off",
+                                              issued_on=today - timedelta(days=rnd.randint(200, 900)))
+                techs.append(t)
+            specs = {spec[1]: spec for spec in MODELS}
+            by_model, tag = {}, NORTH_FIRST_TAG
+            for model, n in NORTH_FLEET:
+                mfr, _model, desc, cat, risk, pm, life, cost, _n, _support = specs[model]
+                proc = PmProcedure.objects.create(code=f"{mfr[:2].upper()}-{model.split()[0][:6].upper()}-PM{pm}", name=f"{desc} {pm}-month PM",
+                                                  estimated_hours=0.75, checklist=CHECKLIST)
+                dm = DeviceModel.objects.create(manufacturer=mfr, model=model, description=desc, category=cat, risk_class=risk, oem_pm_interval_months=pm,
+                                                expected_life_years=life, list_cost=cost, pm_procedure=proc)
+                by_model[model] = []
+                for _ in range(n):
+                    tag += rnd.randint(1, 3)
+                    next_pm = today + timedelta(days=rnd.randint(-10, pm * 30))
+                    by_model[model].append(Asset.objects.create(
+                        tag=f"CE-{tag}", serial=f"{mfr[:2].upper()}{rnd.randint(10000000, 99999999)}", device_model=dm, department=rnd.choice(depts),
+                        room=str(rnd.randint(1, 30)), status=AssetStatus.IN_SERVICE, installed_on=today - timedelta(days=rnd.randint(200, life * 365)),
+                        acquisition_cost=round(cost * rnd.uniform(0.9, 1.1), 2), condition=rnd.randint(3, 5), last_pm_on=add_months(next_pm, -pm),
+                        next_pm_on=next_pm))
+            for model, days_ago, wtype, state, problem in NORTH_WORK:
+                asset = by_model[model].pop(0)  # one work order per device
+                is_pm, opened = wtype == WoType.PM, today - timedelta(days=days_ago)
+                wo = create_work_order(asset=asset, type=wtype, problem=problem, opened_on=opened, assigned_to=techs[1 if model == "Connex Spot" else 0],
+                                       priority=Priority.HIGH if asset.device_model.risk_class == RiskClass.LIFE_SUPPORT else Priority.NORMAL,
+                                       requester="PM planner" if is_pm else "Unit staff", source=Source.PM_PLANNER if is_pm else Source.MANUAL)
+                if state == "open":
+                    continue
+                change_status(wo, "in_progress", as_of=opened)
+                if state == "closed":
+                    done = opened + timedelta(days=2)
+                    LaborLine.objects.create(work_order=wo, technician=wo.assigned_to, worked_on=done, hours=Decimal("0.75" if is_pm else "1.5"), rate=82)
+                    if is_pm:
+                        self._completed_pm(wo, done, outcomes)
+                    else:
+                        complete_work_order(wo, resolution=outcomes.choice(REPAIR_RESOLUTIONS), today=done)
+                    change_status(wo, "closed", as_of=done)
+        devices = sum(n for _model, n in NORTH_FLEET)
+        self.stdout.write(self.style.SUCCESS(f"Seeded {north.name}: {devices} devices, {len(techs)} technicians. {kim.email} directs it too: "
+                                             "the facility menu at the top switches between the two."))
 
     @staticmethod
     def _can_fail(asset) -> bool:

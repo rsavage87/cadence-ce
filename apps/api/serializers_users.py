@@ -67,14 +67,17 @@ class ActiveTechnicianField(_TenantRowField):
 class UserSerializer(serializers.Serializer):
     """A row of the Users tab. `role` is the role's id (what PATCH takes). `scope` is what the user sees by (their role's data
     scope); `company` shows only where the role sees by company (null otherwise), and `scope_gap` says what a scoped user is
-    missing ("company" or "department") while they see nothing. `invitation_pending` is whether Resend invite applies."""
+    missing ("company" or "department") while they see nothing. `invitation_pending` is whether Resend invite applies.
+
+    No username (slice 22): an account of someone who also works at another facility has a username of its own there
+    ("<email>@<facility slug>"), which would tell this facility that the address has an account elsewhere. People sign in with
+    their email, which the row shows."""
 
     id = serializers.IntegerField(read_only=True)
     name = serializers.SerializerMethodField()
     first_name = serializers.CharField(read_only=True)
     last_name = serializers.CharField(read_only=True)
     email = serializers.CharField(read_only=True)
-    username = serializers.CharField(read_only=True)
     role = serializers.SerializerMethodField()
     role_name = serializers.SerializerMethodField()
     role_slug = serializers.SerializerMethodField()
@@ -94,7 +97,7 @@ class UserSerializer(serializers.Serializer):
         return self.context["departments"]
 
     def get_name(self, u):
-        return u.get_full_name() or u.username
+        return services.display_name(u)
 
     def get_role(self, u):
         return str(u.role_id) if u.role_id else None
