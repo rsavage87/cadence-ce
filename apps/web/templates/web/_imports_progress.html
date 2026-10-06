@@ -1,0 +1,28 @@
+{% comment %}Slice 23, part D: the check or the import under way. While `poll`, the panel posts to import_next as soon as it is loaded and
+   is replaced by the answer: the panel again, one chunk further (after a pause when another request was doing the chunk), until the
+   pass is done and the browser loads the run's page. An import nobody is moving waits for Continue. Without JavaScript, Continue
+   does a chunk a click. Stop ends the run (services.discard): an import keeps what it has saved.{% endcomment %}
+{% url 'web:import_next' run.pk as next_url %}
+<section class="panel imp-progress" id="imp-progress" aria-labelledby="imp-progress-h"{% if poll %} hx-post="{{ next_url }}" hx-trigger="{{ trigger }}" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap hx-target"{% endif %}>
+  <div class="panel-h"><h2 id="imp-progress-h">{% if importing %}Importing{% else %}Checking{% endif %}</h2><span class="sub">{{ done_text }} of {{ rows_text }} row{{ run.row_count|pluralize }}</span></div>
+  <div class="panel-b">
+    <div class="bar imp-bar" role="progressbar" aria-labelledby="imp-progress-h" aria-valuenow="{{ pct }}" aria-valuemin="0" aria-valuemax="100"><i style="width:{{ pct }}%"></i></div>
+    {% if importing %}
+      {% if poll %}
+      <p class="hint">Saving the rows, a few hundred at a time. Keep this page open until it finishes; if it stops, open it again and choose Continue: it carries on where it stopped.</p>
+      {% else %}
+      <p class="hint">This import stopped at {{ pct }}% (the page was closed, or the server restarted). The rows before that are saved. Continue imports the rest; Stop leaves it as it is.</p>
+      {% endif %}
+    {% else %}
+      <p class="hint">Running every row as the import would, then putting everything back: nothing is saved yet.</p>
+    {% endif %}
+    <div class="set-actions">
+      <form method="post" action="{% url 'web:import_discard' run.pk %}">{% csrf_token %}<button class="btn" type="submit">{% if importing %}Stop importing{% else %}Stop the check{% endif %}</button></form>
+      {% if poll %}
+      <noscript><form method="post" action="{{ next_url }}">{% csrf_token %}<button class="btn primary" type="submit">Continue</button></form></noscript>
+      {% else %}
+      <form method="post" action="{{ next_url }}" hx-post="{{ next_url }}" hx-target="#imp-progress" hx-swap="outerHTML">{% csrf_token %}<button class="btn primary" type="submit">Continue</button></form>
+      {% endif %}
+    </div>
+  </div>
+</section>

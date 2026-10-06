@@ -685,6 +685,65 @@ form.facility{margin:0}
   .allf tfoot th[scope="row"],.allf tfoot td{border-top:0;background:none}
 }
 
+/* Slice 23, part D: Import data (Settings: web/imports.html, imports_run.html, _imports_*.html). The kinds side by side on a desktop,
+   one under another on a phone; the column choice reads each value's name, then its select and the chosen column's first values,
+   stacked on a phone. File names, values, and notes wrap rather than push the page sideways. Colours are the theme's tokens only. */
+.imp-head h1{overflow-wrap:anywhere}
+.imp-head .sub{overflow-wrap:anywhere}
+.imp-crumbs{font-size:12.5px;color:var(--ink-3);margin-bottom:2px}
+.imp-crumbs a{color:var(--ink-3)}
+.imp-note{margin-bottom:12px;overflow-wrap:anywhere}
+.imp-kinds{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
+.imp-kind .panel-b{display:grid;gap:10px;align-content:start}
+.imp-desc{font-size:13px;color:var(--ink-2)}
+.imp-cols summary,.imp-levels summary,.imp-more summary{cursor:pointer;color:var(--accent);font-size:12.5px}
+.imp-cols ul,.imp-levels ul{margin:6px 0 0;padding-left:18px;font-size:12.5px;color:var(--ink-2)}
+.imp-cols li+li,.imp-levels li+li{margin-top:2px}
+.imp-upload{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.imp-upload input[type="file"]{flex:1 1 180px;min-width:0;max-width:100%;font:inherit;font-size:12.5px;color:var(--ink-2)}
+.imp-upload input[type="file"]::file-selector-button{font:inherit;font-size:12.5px;color:var(--ink);background:var(--surface-2);border:1px solid var(--line-2);border-radius:6px;padding:5px 9px;margin-right:8px;cursor:pointer}
+.imp-upload input[aria-invalid="true"]::file-selector-button{border-color:var(--crit)}
+.imp-err{overflow-wrap:anywhere}
+.imp-limits,.imp-levels{margin-top:10px}
+.imp-runs .li .s{white-space:normal}
+.imp-runs .li .r{display:flex;flex-direction:column;align-items:flex-end;gap:3px}
+.imp-when{font-size:12px}
+.imp-lead{margin:0 0 10px}
+.imp-map-row{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr);gap:6px 16px;padding:10px 0;border-top:1px solid var(--line)}
+.imp-map-row:first-child{border-top:0}
+.imp-map-col label{font-weight:500;color:var(--ink)}
+.imp-map-col .hint{margin-top:2px}
+.imp-map-pick select{width:100%;max-width:100%;font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line-2);border-radius:6px;padding:6px 8px}
+.imp-smp{margin-top:4px;font-size:12px;color:var(--ink-2);overflow-wrap:anywhere}
+.imp-smp-v{color:var(--ink)}
+.imp-unused,.imp-after{margin-top:10px;overflow-wrap:anywhere}
+.imp-bar{height:12px;margin:2px 0 10px}
+.imp-bar i{transition:width .3s ease}
+.imp-progress .set-actions form,.imp-actions .set-actions form{margin:0}
+.imp-stats{grid-template-columns:repeat(4,minmax(0,1fr));margin-top:2px}
+.imp-stats .stat{background:var(--surface)}
+.imp-stat-hot .v{color:var(--crit)}
+.imp-groups a.btn{text-decoration:none}
+.imp-group{padding:10px 0;border-top:1px solid var(--line)}
+.imp-group:first-child{border-top:0;padding-top:2px}
+.imp-group-h{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:3px}
+.imp-note-text{overflow-wrap:anywhere}
+.imp-where{font-size:12px;color:var(--ink-3);overflow-wrap:anywhere;margin-top:2px}
+.imp-capped{margin-top:8px}
+.imp-sub{margin:10px 0 6px;font-size:13px}
+.imp-sub:first-child{margin-top:0}
+.imp-tbl td{white-space:normal;overflow-wrap:anywhere}
+.imp-tbl td.num{white-space:nowrap}
+.imp-names{font-size:13px;overflow-wrap:anywhere}
+.imp-created-g+.imp-created-g{margin-top:10px}
+.imp-more{margin-top:4px}
+.imp-again{margin-top:14px}
+@media (max-width:760px){
+  .imp-kinds{grid-template-columns:minmax(0,1fr)}
+  .imp-map-row{grid-template-columns:minmax(0,1fr)}
+  .imp-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+
 /* Slice 11: printing app pages */
 /* What the browser prints of an app page (the Overview's Export button calls window.print(); any other screen prints from the
    browser's menu): the page's content on white, in the light theme whatever the screen shows, with chart and chip colours kept.

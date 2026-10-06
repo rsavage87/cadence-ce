@@ -1,0 +1,22 @@
+{% extends "web/base.html" %}
+{% block title %}Import {{ run.file_name }}{% endblock %}
+{% block content %}
+{% comment %}Slice 23, part D (views_imports.import_run): one file's run, by its status. Choosing columns (_imports_mapping.html), the
+   check or the import under way (_imports_progress.html, which asks for the next chunk itself), and what the check found or the
+   import did (_imports_summary.html).{% endcomment %}
+<div class="page-head imp-head">
+  <div>
+    <div class="imp-crumbs"><a href="{% url 'web:settings' %}">Settings</a> / <a href="{% url 'web:imports' %}">Import data</a></div>
+    <h1>{{ run.file_name }}</h1>
+    <p class="sub">{{ importer.label }} · {{ run.row_count }} row{{ run.row_count|pluralize }} · uploaded{% if run.uploaded_by %} by {{ run.uploaded_by }}{% endif %} {{ run.created_at|date:"M j, Y g:i A" }}{% if run.imported_at %} · imported{% if run.imported_by %} by {{ run.imported_by }}{% endif %} {{ run.imported_at|date:"M j, Y g:i A" }}{% endif %}</p>
+  </div>
+  <span class="chip {{ css }}">{{ run.get_status_display }}</span>
+</div>
+{% if run.status == "mapping" %}
+  {% include "web/_imports_mapping.html" %}
+{% elif run.status == "checking" or run.status == "importing" %}
+  {% include "web/_imports_progress.html" %}
+{% else %}
+  {% include "web/_imports_summary.html" %}
+{% endif %}
+{% endblock %}

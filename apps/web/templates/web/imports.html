@@ -1,0 +1,68 @@
+{% extends "web/base.html" %}
+{% block title %}Import data{% endblock %}
+{% block content %}
+{% comment %}Slice 23, part D (views_imports): the kinds of file this user may import, each with its template and upload form, and the
+   facility's runs of those kinds below. Plain forms: an upload goes to the run's page, which takes it from there.{% endcomment %}
+<div class="page-head imp-head">
+  <div>
+    <div class="imp-crumbs"><a href="{% url 'web:settings' %}">Settings</a> / Import data</div>
+    <h1>Import data</h1>
+    <p class="sub">Bring {{ request.tenant.name }}'s records over from the system you are leaving, one CSV file at a time. Each file is checked row by row first, and nothing is saved until you import it.</p>
+  </div>
+</div>
+{% if error %}<div class="note warn imp-note" role="alert">{{ error }}</div>{% endif %}
+{% if kinds %}
+<div class="imp-kinds">
+  {% for k in kinds %}{% with imp=k.importer %}
+  <section class="panel imp-kind" id="imp-kind-{{ imp.kind }}" aria-labelledby="imp-kind-{{ imp.kind }}-h">
+    <div class="panel-h"><h2 id="imp-kind-{{ imp.kind }}-h">{{ imp.label }}</h2></div>
+    <div class="panel-b">
+      <p class="imp-desc">{{ imp.description }}</p>
+      <details class="imp-cols">
+        <summary>The columns it reads</summary>
+        <ul>
+          {% for c in imp.columns %}<li><b>{{ c.label }}</b>{% if c.required %} <span class="muted">(required)</span>{% endif %}{% if c.help %}: {{ c.help }}{% endif %}</li>{% endfor %}
+        </ul>
+      </details>
+      <div><a class="link" href="{% url 'web:import_template' imp.kind %}" download>Download the template</a> <span class="hint">(its header and an example row)</span></div>
+      <form class="imp-upload" method="post" action="{% url 'web:imports' %}" enctype="multipart/form-data">{% csrf_token %}
+        <input type="hidden" name="kind" value="{{ imp.kind }}">
+        <input type="file" name="file" aria-label="{{ imp.label }} file"{% if k.error %} aria-invalid="true" aria-describedby="imp-err-{{ imp.kind }}"{% endif %}>
+        <button class="btn primary" type="submit">Upload and check</button>
+      </form>
+      {% if k.error %}<div class="err imp-err" id="imp-err-{{ imp.kind }}" role="alert">{{ k.error }}</div>{% endif %}
+    </div>
+  </section>
+  {% endwith %}{% endfor %}
+</div>
+<div class="hint imp-limits">A CSV file (UTF-8, or what Excel saves as "CSV"), up to {{ max_mb }} MB and {{ max_rows }} rows; split a larger one, by year or by department, and import the parts in turn. Columns are matched by name, and you confirm each before the check. Import devices first: the other files name them by tag.</div>
+{% else %}
+<div class="note imp-note">Your role cannot import any kind of file.</div>
+{% endif %}
+<details class="imp-levels">
+  <summary>Who may import what</summary>
+  <ul>{% for l in levels %}<li>{{ l.label }}: {{ l.module }} {{ l.level }}</li>{% endfor %}</ul>
+</details>
+
+<div class="panel mt imp-runs" id="imp-runs">
+  <div class="panel-h"><h2>Files uploaded here</h2><span class="sub">{% if runs|length == runs_shown %}The latest {{ runs_shown }}{% else %}Newest first{% endif %}</span></div>
+  <div class="panel-b">
+    {% if runs %}
+    <div class="list">
+      {% for r in runs %}
+      <a class="li" href="{% url 'web:import_run' r.run.pk %}">
+        <span class="rail {% if r.css == 'ok' %}ok{% elif r.css == 'info' or r.css == 'acc' %}info{% endif %}"></span>
+        <div class="bd">
+          <div class="t">{{ r.run.file_name }}</div>
+          <div class="s">{{ r.label }} · {{ r.counts }}{% if r.who %} · {{ r.who }}{% endif %}</div>
+        </div>
+        <div class="r"><span class="chip {{ r.css }}">{{ r.run.get_status_display }}</span><div class="imp-when">{{ r.run.created_at|date:"M j, Y g:i A" }}</div></div>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty">No files yet.</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
