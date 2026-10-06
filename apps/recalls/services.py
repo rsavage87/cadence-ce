@@ -75,7 +75,7 @@ def fmt_date(d: date) -> str:
 
 
 def _who(by) -> str:
-    return (by.get_full_name() or by.username) if by else ""
+    return str(by) if by else ""
 
 
 @transaction.atomic

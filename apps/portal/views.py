@@ -64,7 +64,7 @@ def _open_in_cadence(request, tenant, asset) -> dict | None:
         return None
     if not user.has_level(Module.EQUIPMENT, Level.VIEW) or not scoping.can_see_asset(user, asset):
         return None
-    return {"name": user.get_full_name() or user.username, "url": reverse("web:asset", args=[asset.tag])}
+    return {"name": str(user), "url": reverse("web:asset", args=[asset.tag])}
 
 
 @contextmanager

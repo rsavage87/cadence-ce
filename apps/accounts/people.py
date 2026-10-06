@@ -38,8 +38,9 @@ def is_pending(account) -> bool:
 
 
 def is_joined(account) -> bool:
-    """An account its person can open now: it may sign in, has the person's password, and is not a pending invitation."""
-    return can_enter(account) and account.has_usable_password() and not (account.is_invited and account.last_login is None)
+    """An account its person can open now: it may sign in and has the person's password (a pending invitation has none). Never
+    signed in is no matter: an invited account whose password was set in Admin has the person's password all the same."""
+    return can_enter(account) and account.has_usable_password()
 
 
 def accounts_of(account):

@@ -18,7 +18,7 @@
     <form class="facility" method="post" action="{% url 'web:facility_switch' %}" title="Facility">{% csrf_token %}{% icon "facility" %}
       <input type="hidden" name="screen" value="{{ nav_active|default:'' }}">
       <select name="account" aria-label="Facility" data-act="switch-facility" data-all="{% url 'web:all_facilities' %}">
-        {% for f in shell.facilities %}<option value="{{ f.account }}"{% if f.current and not all_facilities_page %} selected{% endif %}>{{ f.name }}{% if f.invited %} (invited){% endif %}</option>{% endfor %}
+        {% for f in shell.facilities %}<option value="{{ f.account }}"{% if f.current %}{% if not all_facilities_page or not shell.all_facilities %} selected{% endif %}{% endif %}>{{ f.name }}{% if f.invited %} (invited){% endif %}</option>{% endfor %}
         {% if shell.all_facilities %}<option value="all"{% if all_facilities_page %} selected{% endif %}>All facilities</option>{% endif %}
       </select>
       <noscript><button class="btn sm" type="submit">Go</button></noscript>

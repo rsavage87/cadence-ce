@@ -278,3 +278,26 @@ def test_the_admin_under_the_policies(client, seeded, django_user_model):
         assert client.get(url).status_code == 200, url
     for url in [f"/admin/accounts/user/{kim.pk}/delete/", f"/admin/recalls/alert/{alert.pk}/delete/", f"/admin/tenants/tenant/{seeded.pk}/delete/"]:
         assert client.get(url).status_code == 403, url
+
+
+def test_a_person_in_two_facilities_under_the_policies(client, tenant, mailoutbox):
+    """Slice 22's signed-out paths and command: bootstrap_tenant for an address another facility's director uses (linking reads and
+    locks User rows only), signing in as the person (the landing account), a reset request (one link for the person), and the
+    switch into the other facility, which joins it."""
+    kim = services.invite_user(tenant, email="kim@health.example", first_name="Kim", last_name="Alvarez",
+                               role=Role.unscoped.get(tenant=tenant, slug="director"))  # unscoped: test setup
+    kim.set_password(PASSWORD)
+    kim.save()
+    as_app_role()
+    call_command("bootstrap_tenant", "--name", "Lakeside General", "--slug", "lakeside", "--admin-email", "kim@health.example", "--invite",
+                 stdout=StringIO())
+    lakeside = User.objects.get(person=User.objects.get(pk=kim.pk).person, tenant__slug="lakeside")
+    r = client.post("/login/", {"username": "KIM@health.example", "password": PASSWORD})
+    assert r.status_code == 302 and int(client.session["_auth_user_id"]) == kim.pk
+    assert "Lakeside General (invited)" in client.get("/").content.decode()
+    r = client.post("/account/facility/", {"account": lakeside.pk})
+    assert r.status_code == 302 and int(client.session["_auth_user_id"]) == lakeside.pk and client.get("/").status_code == 200
+    client.post("/logout/")
+    mailoutbox.clear()
+    assert client.post("/password-reset/", {"email": "kim@health.example"}).status_code == 302
+    assert len(mailoutbox) == 1 and mailoutbox[0].to == ["kim@health.example"]

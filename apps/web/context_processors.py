@@ -36,7 +36,7 @@ def _shell(request):
     counts = nav_counts(user)  # a scoped user's badges count their own devices and work orders
     items = [{"key": key, "label": label, "icon": icon, "url": reverse(url_name), "count": counts.get(key), "hot": counts.get(f"{key}_hot", False)}
              for key, label, icon, url_name, _module in nav_entries(user)]
-    name = user.get_full_name() or user.username
+    name = str(user)  # the full name, else the email: never a second facility's username (slice 22)
     initials = "".join(p[0] for p in name.split()[:2]).upper() or "?"
     facilities = people.facility_menu(user)  # slice 22: the person's other facilities (User and Tenant only: never another's role)
     return {"nav": items, "user_name": name, "initials": initials, "role": user.role.name if user.role_id else ("Superuser" if user.is_superuser else ""),

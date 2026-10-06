@@ -82,8 +82,9 @@ def parse_log_filters(params, area_keys: set[str], people: set[int]) -> LogFilte
 
 def _people(request) -> list[tuple[int, str]]:
     """Everyone with an account in the facility, deactivated ones too (their changes stay in the log). User is not tenant-scoped."""
-    users = User.objects.filter(tenant=request.tenant).order_by("first_name", "last_name", "username").only("pk", "first_name", "last_name", "username")
-    return [(u.pk, u.get_full_name() or u.username) for u in users]
+    users = (User.objects.filter(tenant=request.tenant).order_by("first_name", "last_name", "email", "pk")
+             .only("pk", "first_name", "last_name", "email", "username"))
+    return [(u.pk, str(u)) for u in users]
 
 
 def _filters(request):

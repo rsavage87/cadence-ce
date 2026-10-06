@@ -12,7 +12,7 @@ from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth import views as auth_views
 from django.contrib.auth.tokens import default_token_generator
 from django.shortcuts import redirect, render
-from django.urls import reverse, reverse_lazy
+from django.urls import Resolver404, resolve, reverse, reverse_lazy
 from django.utils.http import urlsafe_base64_decode
 from django.views.decorators.cache import never_cache
 from django.views.decorators.debug import sensitive_post_parameters
@@ -38,9 +38,21 @@ class SignInView(auth_views.LoginView):
 
     def get_redirect_url(self):
         url = super().get_redirect_url()  # "" unless it stays on this site
-        if url and not _names_facility(url) and _in_several_facilities(self.request.user):
+        if url and not _names_facility(url) and not _persons_page(url) and _in_several_facilities(self.request.user):
             return ""  # the default: LOGIN_REDIRECT_URL, the Overview
         return url
+
+
+# Pages of the person rather than of one facility: an invitation's join page (which names the account it joins), All facilities,
+# and the password every facility of theirs shares. Followed whichever facility the sign-in lands on.
+PERSONS_PAGES = {"web:facility_join", "web:all_facilities", "web:password_change"}
+
+
+def _persons_page(url: str) -> bool:
+    try:
+        return resolve(urlsplit(url).path).view_name in PERSONS_PAGES
+    except Resolver404:
+        return False
 
 
 def _names_facility(url: str) -> bool:

@@ -151,7 +151,7 @@ def test_a_change_by_someone_of_another_facility_never_names_them(device, other_
     root = User.objects.create_superuser(username="root", password="Test-Pass-2026-x", email="root@example.com")
     Asset.history.filter(id=asset.pk, room="30").update(history_user=root)
     latest = history.entries_for(Asset.objects.get(pk=asset.pk))[0]
-    assert (latest.who, latest.who_id) == ("root", root.pk)
+    assert (latest.who, latest.who_id) == ("root@example.com", root.pk)  # by email when there is no name (slice 22: never a username)
     Asset.history.filter(id=asset.pk, room="30").update(history_user=kim)
     latest = history.entries_for(Asset.objects.get(pk=asset.pk))[0]
     assert (latest.who, latest.who_id) == ("Director User", kim.pk)

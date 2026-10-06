@@ -159,7 +159,7 @@ def add_note(wo: WorkOrder, text: str, by=None) -> WorkOrderNote:
         raise ValidationError("A note needs some text.")
     if len(text) > NOTE_MAX_LENGTH:
         raise ValidationError(f"Notes are limited to {NOTE_MAX_LENGTH} characters.")
-    name = ((by.get_full_name() or by.username) if by else "")[:NAME_MAX]  # a full name may be longer than the column
+    name = (str(by) if by else "")[:NAME_MAX]  # a full name may be longer than the column
     return WorkOrderNote.objects.create(tenant=wo.tenant, work_order=wo, author=by, author_name=name, text=text)
 
 

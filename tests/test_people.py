@@ -289,3 +289,44 @@ def test_the_menu_switch_and_join_under_the_policies(invited, client):
     r = client.post("/account/facility/", {"account": ib.pk, "screen": "workorders"})
     assert r.status_code == 302 and r["Location"] == "/work-orders/"
     assert client.get("/work-orders/").status_code == 200
+
+
+# --- merge fixes ------------------------------------------------------------------------------------------------------------------
+
+def test_an_invitations_join_link_survives_signing_in(invited, client):
+    """The join page belongs to the person, not one facility: after signing in (landing on Riverside) the link still opens."""
+    _a, b = invited
+    r = client.get(f"/account/facility/{b.pk}/join/")
+    r = client.post(r["Location"], {"username": "ines@health.example", "password": PASSWORD})
+    assert r.status_code == 302 and r["Location"] == f"/account/facility/{b.pk}/join/"
+    assert "Join Lakeside Surgery Center" in client.get(r["Location"]).content.decode()
+
+
+def test_a_nameless_linked_account_is_shown_by_its_email(tenant, lakeside, client, make_user):
+    """bootstrap_tenant's director has no name; a second facility's username ("<email>@<slug>") would say the person works
+    elsewhere, so names fall back to the email."""
+    a = account(tenant, "director", username=EMAIL, person=uuid.uuid4())
+    b = account(lakeside, "technician", username=f"{EMAIL}@lakeside", person=a.person)
+    User.objects.filter(pk=b.pk).update(first_name="", last_name="")
+    b.refresh_from_db()
+    assert str(b) == EMAIL
+    client.force_login(make_user("director", tenant_=lakeside, username="dir@lakeside.example"))
+    body = client.get("/users/").content.decode()
+    assert EMAIL in body and f"{EMAIL}@lakeside" not in body
+
+
+def test_all_facilities_with_nowhere_else_joined_keeps_this_facility_selected(invited, client):
+    a, _b = invited
+    client.force_login(a)
+    body = client.get("/overview/all/").content.decode()
+    assert f'<option value="{a.pk}" selected>' in body and ">All facilities</option>" not in body
+
+
+def test_an_invited_account_given_a_password_in_admin_still_signs_in_once_linked(tenant, lakeside):
+    """Merge fix: an invitation never accepted whose password an administrator set has the person's password; linking it must not
+    leave the person with nowhere to land."""
+    person = uuid.uuid4()
+    a = account(tenant, "director", username=EMAIL, person=person, signed_in=False)
+    User.objects.filter(pk=a.pk).update(is_invited=True)
+    account(lakeside, "technician", username=f"{EMAIL}@lakeside", person=person, pending=True)
+    assert find_account(EMAIL) == a

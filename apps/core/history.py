@@ -156,7 +156,7 @@ AREAS = {a.key: a for a in (
     Area("custom_reports", "Custom reports", "reports.CustomReport", "reports", _safe(lambda r: r.name),
          _safe(lambda r: reverse("web:report", args=[f"custom-{r.id}"]))),
 )}
-ACCESS = Area("access", "Access", "accounts.AccessEvent", "users", _safe(lambda e: e.user.get_full_name() or e.user.username if e.user_id else ""))
+ACCESS = Area("access", "Access", "accounts.AccessEvent", "users", _safe(lambda e: str(e.user) if e.user_id else ""))
 ALL_AREAS = {**AREAS, ACCESS.key: ACCESS}
 
 
@@ -304,7 +304,7 @@ def _person(user) -> tuple[str, int | None]:
     tenant = get_current_tenant()
     if user.tenant_id is not None and (tenant is None or user.tenant_id != tenant.id):
         return OUTSIDE, None
-    return (user.get_full_name() or user.username), user.pk
+    return str(user), user.pk
 
 
 def _who(rec) -> tuple[str, int | None]:
@@ -320,7 +320,7 @@ _NAMERS = {
     "contracts.contract": lambda o: f"{o.reference} · {o.vendor}",
     "pm.pmprocedure": lambda o: o.code,
     "credentials.technician": lambda o: o.name,
-    "accounts.user": lambda o: o.get_full_name() or o.username,
+    "accounts.user": str,
     "accounts.role": lambda o: o.name,
     "recalls.alert": lambda o: f"{o.get_source_display()} {o.external_id}",
 }

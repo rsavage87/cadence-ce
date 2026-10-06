@@ -1,10 +1,10 @@
 {% load web users_tags %}
 {% with u=row.u %}
 <tr id="user-{{ u.pk }}">
-  <td class="two">{{ u.get_full_name|default:u.username }}<small>{{ u.email }}</small></td>
+  <td class="two">{{ u }}<small>{{ u.email }}</small></td>
   <td>
     {% if can_manage_users %}
-    <select class="perm" name="role" aria-label="Role for {{ u.get_full_name|default:u.username }}"{% if row.status == "deactivated" %} disabled{% elif row.is_self %} disabled title="You cannot change your own role"{% else %}
+    <select class="perm" name="role" aria-label="Role for {{ u }}"{% if row.status == "deactivated" %} disabled{% elif row.is_self %} disabled title="You cannot change your own role"{% else %}
             hx-post="{% url 'web:user_role' u.pk %}{% query request.GET %}" hx-trigger="change" hx-target="#users-body" hx-swap="outerHTML"{% endif %}>
       {% if not u.role_id %}<option value="" selected>No role</option>{% endif %}
       {% for r in roles %}<option value="{{ r.id }}"{% if u.role_id == r.id %} selected{% endif %}>{{ r.name }}</option>{% endfor %}
@@ -21,10 +21,10 @@
   <td class="num" style="white-space:nowrap">
     {% if can_manage_users %}
       {% if row.status == "deactivated" %}<button class="btn sm" type="button" hx-post="{% url 'web:user_reactivate' u.pk %}{% query request.GET %}" hx-target="#users-body" hx-swap="outerHTML">Reactivate</button>
-      {% else %}<button class="btn sm ghost" type="button" hx-get="{% url 'web:user_edit' u.pk %}" hx-target="#modal-card" aria-label="Edit {{ u.get_full_name|default:u.username }}">Edit</button>
+      {% else %}<button class="btn sm ghost" type="button" hx-get="{% url 'web:user_edit' u.pk %}" hx-target="#modal-card" aria-label="Edit {{ u }}">Edit</button>
       {% if row.pending %}<button class="btn sm ghost" type="button" hx-post="{% url 'web:user_resend_invite' u.pk %}{% query request.GET %}" hx-target="#users-body" hx-swap="outerHTML">Resend invite</button>{% endif %}
       {% if not row.is_self and not u.is_superuser %}<button class="btn sm ghost" type="button" hx-post="{% url 'web:user_deactivate' u.pk %}{% query request.GET %}" hx-target="#users-body" hx-swap="outerHTML"
-              hx-confirm="Deactivate {{ u.get_full_name|default:u.username }}? {% if row.pending %}Their invitation link stops working.{% else %}They keep their history but cannot sign in.{% endif %}">Deactivate</button>{% endif %}{% endif %}
+              hx-confirm="Deactivate {{ u }}? {% if row.pending %}Their invitation link stops working.{% else %}They keep their history but cannot sign in.{% endif %}">Deactivate</button>{% endif %}{% endif %}
     {% endif %}
   </td>
 </tr>
