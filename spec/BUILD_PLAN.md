@@ -312,4 +312,11 @@ The mock's export and print buttons work since slice 11, Add device since slice 
   skipped with their reason; re-runs never double records (tag, reference, name, previous number). Work order history keeps its
   previous number (`WorkOrder.legacy_number`, `Source.IMPORTED`), its business dates, and its costs, but no free text (the problem
   reads "Imported from the previous system"); cancelled work and open PMs are not imported. Deferred: credentials, the imports API,
-  updating work orders already imported, and spreadsheets (.xlsx is refused with words).
+  updating work orders already imported, and spreadsheets (.xlsx is refused with words). Rules settled in review: a header wider than
+  300 columns is refused and a row with more values than its header is skipped (never shifted); notes name the file's own lines; a
+  decimal comma is refused rather than misread, and "12.0" months is 12; every skipped row stays listed; a pass acts as whoever started
+  it, whoever's page moves it on; a row's plain save the database refuses skips only that row; the check reads a later chunk as the
+  import will (models, departments, and contracts an earlier row adds; a device under two contracts); in-house hours that name no
+  technician here stay in-house spend; a total beside a breakdown of zeros is the cost; imported labor never fills a technician's
+  live day; Invite user links the imported technician of that name; "First Last, Jr." keeps its order; a daily job (expire_imports)
+  ends unfinished runs, a file whose columns were never chosen after two days.

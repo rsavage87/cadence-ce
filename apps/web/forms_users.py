@@ -133,7 +133,8 @@ class InviteUserForm(ScopeFieldsMixin, forms.Form):
     role = forms.ChoiceField(label="Role")
     company = _company_field()
     department = _department_field()
-    create_technician = forms.BooleanField(required=False, label="Also create a technician profile so credentials and work can be assigned")
+    create_technician = forms.BooleanField(required=False, label=("Also make them a technician (a profile of that name already imported is linked) "
+                                                                  "so credentials and work can be assigned"))
 
     def __init__(self, *args, focus: str | None = None, **kwargs):
         super().__init__(*args, **kwargs)

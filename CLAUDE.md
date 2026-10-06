@@ -122,7 +122,8 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   quantity × unit cost to the cent, half up (`LABOR_AMOUNT`, `PART_AMOUNT`, `line_cents` in `models.py`), wherever lines are added up;
   `permissions.py` (Edit to record labor, parts, and completion; Approve to assign, close, or charge a different rate); `legacy.py` work
   orders imported from another system (slice 23: `legacy_number`, the previous number, unique per facility; `Source.IMPORTED`; created in
-  their final state with backdated status rows, never emailing or changing the device; their lines through costs.py's import-only writers)
+  their final state with backdated status rows, never emailing or changing the device; their lines through costs.py's import-only writers,
+  in-house hours that name no technician here as an in-house cost line, never vendor time; imported labor never fills a technician's live day)
 - `apps/pm` PmProcedure, PM generation, on-time math, month helpers; `schedule.py` the PM schedule's read models (month calendar,
   a day's devices, suggested technicians, `planned_technicians` (who does each device due on a day: the day panel, route sheets, and
   the device drawer's PM tab share it), 30-day outlook, 7-day workload, PM library); `services.create_pm_work_orders_for_day` and
@@ -136,7 +137,9 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   screen's Check FDA feed (one fetch per 15 minutes for everyone, kept in apps.jobs' `JobRun`; a check matches only its own facility).
   ECRI import is deferred (license).
 - `apps/credentials` Technician, Credential, qualification and coverage services, credential add/renew/sign-off/remove,
-  `create_technician` / `update_technician` (the technicians import's)
+  `create_technician` / `update_technician` (the technicians import's), `technician_name` / `name_key` (one rule for matching a name
+  written "Last, First" or with a suffix or credential), `add_account_technician` (Invite user's profile: links the imported technician of
+  that name rather than adding a second)
 - `apps/portal` public request form (`/r/<tenant-slug>/`); `notifications.py` the requester's confirmation and done emails (only at the
   facility's work email domains, never the problem text); a label's link opened by a signed-in member who can see that device shows
   "Open <tag> in Cadence" (the user's role is read only for a member, inside the facility's tenant_context), and nothing else changes
@@ -189,5 +192,7 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   fills in: its columns with their model lengths, a natural key, `apply` one row through the services), `parse.py` (dates, money,
   intervals, choices: an unreadable value raises, never defaults), `services.py` (upload, confirm_columns, process: a chunk at a time,
   the check rolling each back and the import committing each; start_import, discard, expire_stale), `permissions.py` (each kind at its
-  screen's level), `kinds/` (devices, contracts, technicians, work_orders). No free text comes over from another system
+  screen's level), `kinds/` (devices, contracts, technicians, work_orders). No free text comes over from another system. A pass acts as
+  whoever started it (`ImportRun.pass_by`), whoever's browser moves it on; the check rolls each chunk back, so an importer whose rows depend
+  on earlier rows reads them (`ctx.rows`) to check a later chunk as the import will; the daily job `expire_imports` ends unfinished runs
 - `apps/demo` seed data (Riverside Regional, and Riverside North Campus with Kim linked: the demo shows the facility menu)

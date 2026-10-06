@@ -61,7 +61,7 @@ Roles
                                             back as a GET returned it is fine, the Director's and your own role's included). PUT and
                                             DELETE are not offered.
 
-Technicians (read only here: Invite user's create_technician adds one with the account, and the technicians import adds and edits them)
+Technicians (read only here: Invite user's create_technician adds one with the account, or links the one of that name the import added)
   GET    /api/v1/technicians/               View. Each with their credentials.
   GET    /api/v1/technicians/{id}/          View.
 
@@ -174,7 +174,7 @@ class UserViewSet(UsersModule):
         **dict.fromkeys(("name", "first_name", "last_name", "email"), "A user's name and email address are set when they are invited."),
         **dict.fromkeys(("role_name", "role_slug"), "Send the role's id as role."),
         "scope": "What a user sees comes from their role: change the role, or the role's scope (PATCH /api/v1/roles/{id}/).",
-        "technician": "A technician profile is added with the invitation (create_technician).",
+        "technician": "A technician profile is added with the invitation, or the imported one of that name linked (create_technician).",
         "is_superuser": "Superusers are managed in Admin.",
     }
 
@@ -370,7 +370,8 @@ class RoleViewSet(UsersModule):
 # --- technicians and credentials -------------------------------------------------------------------------------------------------
 
 class TechnicianViewSet(FacilityRequired, TenantViewSet):
-    """Read only here: Invite user's create_technician adds one with the account; the technicians import (slice 23) adds and edits them."""
+    """Read only here: Invite user's create_technician adds one with the account (or links the imported one of that name); the technicians
+    import (slice 23) adds and edits them."""
 
     model, module, serializer_class = Technician, Module.USERS, su.TechnicianSerializer
     http_method_names = ["get", "head", "options"]
