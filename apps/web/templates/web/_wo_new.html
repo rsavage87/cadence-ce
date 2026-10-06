@@ -21,7 +21,10 @@
     {% if form.assignee %}<label>Assign to{{ form.assignee }}</label>{% endif %}
     <label class="full">Problem description{{ form.problem }}{% if form.problem.errors %}<span class="err">{{ form.problem.errors|striptags }}</span>{% endif %}</label>
     <label class="full check-row">{{ form.tag_out }} Tag the device out of service</label>
+    {# Slice 24: a technician credentialed for the device takes it as it is opened; take_offered keeps an untick when another device is picked #}
+    {% if form.take %}<label class="full check-row">{{ form.take }} Assign it to me<input type="hidden" name="take_offered" value="1"></label>{% endif %}
   </div>
   {% if form.assignee %}<div class="hint" style="padding:0 16px 12px">Technicians credentialed for the selected device are listed first with a check mark.</div>{% endif %}
+  {% if form.take %}<div class="hint" style="padding:0 16px 12px">You are credentialed for this device. Untick to leave it for a CE manager to assign.</div>{% endif %}
   <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Create work order</button></div>
 </form>

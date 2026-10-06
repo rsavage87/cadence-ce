@@ -7,7 +7,7 @@ import uuid
 
 from django import forms
 
-from apps.credentials.services import ranked_technicians
+from apps.credentials.services import qualification, ranked_technicians
 from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, RiskClass
 from apps.equipment.services import ACTIVE_STATUS_FILTER, SORTS, AssetFilters, FleetBucket, SupportFilter
 from apps.workorders.models import Priority, WoStatus, WoType
@@ -98,8 +98,12 @@ class NewWorkOrderForm(forms.Form):
     problem = forms.CharField(widget=forms.Textarea(attrs={"placeholder": "What was observed? Is the device still usable? No patient information."}),
                               label="Problem description", max_length=2000)
     tag_out = forms.BooleanField(required=False, label="Tag the device out of service")
+    # Slice 24: a technician who may take work (apps.workorders.services.may_take_as) and is credentialed for the device is offered
+    # this instead of Assign to, ticked; the view takes the new work order for them (services.take). Never with Assign to.
+    take = forms.BooleanField(required=False, initial=True, label="Assign it to me")
 
-    def __init__(self, *args, can_assign: bool, **kwargs):
+    def __init__(self, *args, can_assign: bool, taker=None, **kwargs):
+        """`taker`: the technician the user takes work as, or None (a manager, who assigns, or someone who takes none)."""
         super().__init__(*args, **kwargs)
         self.asset_obj = self._lookup_asset(self.data.get("asset") if self.is_bound else self.initial.get("asset"))
         if self.asset_obj is not None:
@@ -108,6 +112,8 @@ class NewWorkOrderForm(forms.Form):
             self.fields["assignee"].choices = [("", "Leave unassigned")] + technician_choices(self.asset_obj)
         else:
             del self.fields["assignee"]
+        if can_assign or taker is None or self.asset_obj is None or not qualification(taker, self.asset_obj).ok:
+            del self.fields["take"]
 
     @staticmethod
     def _lookup_asset(tag):

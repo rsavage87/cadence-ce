@@ -52,6 +52,10 @@ class FacilitySettings(TenantModel):
     # Labor rates (slice 15): what a labor line on a work order is charged at unless the line says otherwise (the mock's $82 and $215).
     labor_rate = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal("82.00"), help_text="In-house labor, per hour")
     vendor_labor_rate = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal("215.00"), help_text="Vendor service labor, per hour")
+    # Taking work (slice 24): a technician may take open work nobody has, on a device they are credentialed for (My work's "You could
+    # take", the new work order form's "Assign it to me"; apps.workorders.services.take). On by default; the rest a CE manager assigns.
+    technicians_take_work = models.BooleanField(default=True, verbose_name="technicians may take unassigned work",
+                                                help_text="Technicians may take unassigned work they are credentialed for")
     history = HistoricalRecords()
 
     class Meta:

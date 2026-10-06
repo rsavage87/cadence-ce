@@ -49,6 +49,7 @@ urlpatterns = [
     path("work-orders/<str:number>/status/", views.wo_status, name="wo_status"),
     path("work-orders/<str:number>/assign/", views.wo_assign, name="wo_assign"),
     path("work-orders/<str:number>/notes/", views.wo_note, name="wo_note"),
+    path("work-orders/<str:number>/take/", views.wo_take, name="wo_take"),  # slice 24: a technician takes unassigned work (My work)
     # Slice 15: recording the work. Labor and parts (views_wo_costs), completing with the resolution and a PM's results (views_wo_complete).
     path("work-orders/<str:number>/labor/", views_wo_costs.labor_add, name="wo_labor_add"),
     path("work-orders/<str:number>/labor/<uuid:pk>/delete/", views_wo_costs.labor_delete, name="wo_labor_delete"),

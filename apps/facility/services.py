@@ -14,6 +14,9 @@ The facility's time zone (slice 21): Tenant.timezone, which every request, job, 
 (apps.tenants.context), so it decides the facility's today (what is overdue, due dates, contract days left, report periods), the
 times shown, and when its daily jobs and emails run. set_time_zone() is the one writer: a zone this server knows, or a plain
 refusal; the facility's own history records who changed it (the change log's Facility area, apps.core.history).
+
+Taking work (slice 24): whether technicians may take open work nobody has, on devices they are credentialed for
+(technicians_may_take; apps.workorders.services.take is the one place it happens). On until the facility turns it off.
 """
 import re
 from datetime import datetime
@@ -41,7 +44,10 @@ TARGET_FIELDS = ("target_pm_pct", "target_uptime_pct", "target_mttr_days", "repa
 # Labor rates (slice 15): what a labor line logged on a work order is charged at unless the line says otherwise. Lines keep the
 # rate they were logged at, so a change here prices new lines only (apps.workorders.costs).
 RATE_FIELDS = ("labor_rate", "vendor_labor_rate")
-EDITABLE = PORTAL_FIELDS + POLICY_FIELDS + TARGET_FIELDS + RATE_FIELDS
+# Taking work (slice 24): whether technicians may take unassigned work they are credentialed for (apps.workorders.services.take).
+TAKE_FIELDS = ("technicians_take_work",)
+EDITABLE = PORTAL_FIELDS + POLICY_FIELDS + TARGET_FIELDS + RATE_FIELDS + TAKE_FIELDS
+TOGGLES = ("portal_require_callback", "technicians_take_work")  # on or off, and nothing else
 
 # (field, label, low, high): the ranges a target may take. Life support and high risk PM stay at 100% (survey rule).
 TARGET_RANGES = [("target_pm_pct", "PM completion target", Decimal("50"), Decimal("100")),
@@ -159,7 +165,7 @@ def _clean(fields: dict) -> dict:
     if unknown:
         raise ValidationError(f"Unknown settings: {', '.join(sorted(unknown))}.")
     for field, value in fields.items():
-        if field == "portal_require_callback":
+        if field in TOGGLES:
             if not isinstance(value, bool):
                 errors[field] = "Choose on or off."
             cleaned[field] = value
@@ -281,6 +287,11 @@ def labor_rates(s: FacilitySettings | None = None) -> dict:
     """The hourly rates new labor lines are charged at: in-house and vendor service, as Decimals."""
     s = s or get_settings()
     return {"in_house": s.labor_rate, "vendor": s.vendor_labor_rate}
+
+
+def technicians_may_take(s: FacilitySettings | None = None) -> bool:
+    """Whether technicians may take unassigned work they are credentialed for (slice 24; apps.workorders.services.take)."""
+    return (s or get_settings()).technicians_take_work
 
 
 def compliance_targets(s: FacilitySettings | None = None) -> dict:

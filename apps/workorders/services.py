@@ -5,6 +5,9 @@ Slice 20: assigning work to a technician (assign, or create_work_order with assi
 apps.notifications.assignments, which emails the technician's account once the transaction commits (their choice, at most once per
 work order, never the problem text). Callers that assign many at once wrap the loop in assignments.batch(), so each technician gets one
 email listing them all.
+
+Slice 24: a technician may take open, unassigned, in-house work on a device they are credentialed for (take), while the facility's
+setting lets them; it is an assignment like any other (assign), made by the technician for themselves.
 """
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -124,6 +127,69 @@ def assign(wo: WorkOrder, technician=None, vendor_name: str = "", by=None) -> Wo
     if technician is not None and not vendor_name:
         assignments.announce(wo, technician, by=by)  # slice 20: emailed once this commits, at most once per work order and person
     return wo
+
+
+# --- taking work (slice 24) -------------------------------------------------------------------------
+
+def taking_technician(by):
+    """The technician profile `by` takes work as, or a ValidationError saying why they take none: the facility lets technicians take
+    work (Settings), `by` has Work orders Edit and sees the whole facility (a vendor's work is the facility's to assign), and has an
+    active technician profile here (credentials.services.technician_of)."""
+    from apps.credentials.services import technician_of
+    from apps.facility.services import technicians_may_take
+
+    from . import permissions, scoping
+
+    if not technicians_may_take():
+        raise ValidationError("Technicians do not take unassigned work in this facility; a CE manager assigns it.")
+    if by is None or not permissions.can_take(by):
+        raise ValidationError("Taking work needs Work orders Edit.")
+    if scoping.is_scoped(by):
+        raise ValidationError("Taking work is for the facility's own technicians; the facility assigns work to vendor service.")
+    technician = technician_of(by)
+    if technician is None:
+        raise ValidationError("Your account has no technician profile here, so there is nobody to assign the work to.")
+    return technician
+
+
+def may_take_as(by):
+    """The technician `by` may take work as, or None: what My work's "You could take" and the new work order form ask before they
+    offer it (taking_technician without the reason)."""
+    try:
+        return taking_technician(by)
+    except ValidationError:
+        return None
+
+
+@transaction.atomic
+def take(wo: WorkOrder, by) -> WorkOrder:
+    """`by` takes `wo` for themselves (slice 24: My work's Take, the new work order form's "Assign it to me", the API's take): an open
+    work order nobody has started, unassigned and in-house (not vendor service), on a device `by`'s own technician profile is
+    credentialed for today (credentials.services.qualification), while the facility lets technicians take work and `by` may
+    (taking_technician). It is assigned through assign(), so the status history records it and nobody is emailed about their own
+    choice. Anything else is a ValidationError in words. The row is locked first, so two technicians taking it at once cannot both
+    have it: the second is told who did. `wo` is read again and updated in place."""
+    from apps.credentials.services import qualification
+
+    technician = taking_technician(by)
+    if not WorkOrder.objects.select_for_update().filter(pk=wo.pk).exists():
+        raise ValidationError(f"{wo.number} is no longer on file.")
+    wo.refresh_from_db()
+    if wo.vendor_service:
+        raise ValidationError(f"{wo.number} is assigned to vendor service ({wo.vendor_name}).")
+    if wo.assigned_to_id == technician.pk:
+        raise ValidationError(f"{wo.number} is already yours.")
+    if wo.assigned_to_id is not None:
+        raise ValidationError(f"{wo.number} is already assigned to {wo.assigned_to.name}.")
+    if wo.status != WoStatus.OPEN:
+        raise ValidationError(f"{wo.number} is {wo.get_status_display().lower()}; only open work nobody has started can be taken.")
+    q = qualification(technician, wo.asset)
+    if not q.ok:
+        what = f"the {wo.asset.device_model} ({wo.asset.tag})"
+        if q.expired_only:
+            raise ValidationError(f"Your credentials for {what} have expired, so a CE manager assigns {wo.number}.")
+        raise ValidationError(f"You are not credentialed for {what}, so a CE manager assigns {wo.number}.")
+    return assign(wo, technician=technician, by=by)
 
 
 @transaction.atomic

@@ -294,6 +294,16 @@ class WorkOrderViewSet(TenantViewSet):
         _via_service(wo_services.assign, wo, technician=tech, vendor_name=request.data.get("vendor_name", ""), by=request.user)  # a refusal is a 400
         return Response(self.get_serializer(wo).data)
 
+    @action(detail=True, methods=["post"])
+    def take(self, request, pk=None):
+        """Slice 24, My work's Take: the caller takes this work order for their own technician profile (wo_services.take). Work orders
+        Edit (ModulePermission's write level, as on the screen), and never a scoped user (not in scoped_actions). The rest is the
+        service's: the facility's setting on, an open, unassigned, in-house work order on a device the caller is credentialed for;
+        anything else is a 400 in words. No body."""
+        wo = self.get_object()
+        _via_service(wo_services.take, wo, by=request.user)
+        return Response(self.get_serializer(wo).data)
+
 
 class FacilitySettingsView(TenantAPIMixin, APIView):
     """GET the tenant's settings (defaults until first saved); PATCH any of them (Settings Edit). POST .../reset-policy/

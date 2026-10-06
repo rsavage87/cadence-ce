@@ -10,6 +10,10 @@ rejected portal change shows the saved values again (it saves as the user types,
 Time zone (slice 21, #set-zone): the facility's time zone (fs.set_time_zone), which decides its today, the times shown, and when
 its daily jobs and emails run. Its form posts to /settings/time-zone/ (settings_time_zone, Settings Edit).
 
+Taking work (slice 24, #set-take): whether technicians may take unassigned work they are credentialed for (My work's "You could
+take", the new work order form's "Assign it to me"; apps.workorders.services.take). One switch that saves as it changes, posted to
+/settings/take-work/ (settings_take, Settings Edit).
+
 Import data (slice 23, #set-import): a link to /settings/import/ (views_imports) for anyone who may import a kind of file
 (apps.imports.permissions.importable: each kind its own module's level), with the files of those kinds not finished yet (those
 left for too long are ended first: apps.imports.services.expire_stale).
@@ -38,6 +42,7 @@ from .forms_settings import (
     policy_fields,
     portal_fields,
     rate_fields,
+    take_work_field,
     target_fields,
     time_zone_field,
 )
@@ -74,6 +79,11 @@ def _targets_ctx(request, s, typed: dict | None = None, errors: dict | None = No
                 for field, label, help_text in form]
 
     return {"targets": rows(TARGET_FORM), "rates": rows(RATE_FORM), "can_edit": fac_perms.can_edit(request.user)}
+
+
+def _take_ctx(request, s) -> dict:
+    """The Taking work panel (slice 24): the switch, on or off as saved."""
+    return {"take_on": s.technicians_take_work, "can_edit": fac_perms.can_edit(request.user)}
 
 
 def _integrations() -> dict:
@@ -120,7 +130,7 @@ def settings_page(request):
     s = fs.get_settings()
     user = request.user
     ctx = {"nav_active": "settings", **_integrations(), **_portal_ctx(request, s), **_policy_ctx(request, s), **_targets_ctx(request, s),
-           **_zone_ctx(request), **_imports_ctx(user),
+           **_zone_ctx(request), **_imports_ctx(user), **_take_ctx(request, s),
            "risk_rubric": fs.RISK_RUBRIC, "risk_rows": fs.risk_summary(), "risk_scoring": fs.risk_scoring_summary(),
            "can_view_contracts": user.has_level(Module.CONTRACTS, Level.VIEW), "can_view_users": user.has_level(Module.USERS, Level.VIEW),
            "can_view_recalls": user.has_level(Module.RECALLS, Level.VIEW), "can_view_equipment": user.has_level(Module.EQUIPMENT, Level.VIEW)}
@@ -202,6 +212,22 @@ def settings_targets(request):
                  **{field: request.POST.get(field, plain_number(getattr(s, field))) for field, _label, _help in RATE_FORM}}
         return toast(render(request, "web/_settings_targets.html", _targets_ctx(request, s, typed, errors)), _first(errors))
     return toast(render(request, "web/_settings_targets.html", _targets_ctx(request, s)), "Targets and labor rates saved" if rates else "Targets saved")
+
+
+# --- taking work (slice 24) -----------------------------------------------------------------------------
+
+@require_POST
+@web_view(fac_perms.MODULE, fac_perms.EDIT_LEVEL)
+def settings_take(request):
+    """Turn taking work on or off (FacilitySettings.technicians_take_work, through update_settings, which records who). Answers with
+    the panel as saved: a refused post (neither on nor off) changes nothing."""
+    try:
+        s = fs.update_settings(by=request.user, **take_work_field(request.POST))
+    except ValidationError as e:
+        return toast(render(request, "web/_settings_take.html", _take_ctx(request, fs.get_settings())), _first(error_dict(e)))
+    message = ("Technicians may take unassigned work they are credentialed for" if s.technicians_take_work
+               else "Technicians no longer take unassigned work; a CE manager assigns it")
+    return toast(render(request, "web/_settings_take.html", _take_ctx(request, s)), message)
 
 
 # --- time zone (slice 21) -------------------------------------------------------------------------------

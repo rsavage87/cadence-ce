@@ -17,6 +17,9 @@ ASSIGN_LEVEL = Level.APPROVE
 RECORD_LEVEL = Level.EDIT
 # A labor line charged at a rate other than Settings' (in-house or vendor) needs Approve: the Reports' spend is built on the rate.
 RATE_LEVEL = Level.APPROVE
+# Slice 24: a technician taking open work nobody has, on a device they are credentialed for, needs Edit (the level they work it at);
+# assigning anyone else stays Approve. apps.workorders.services.take has the rest of the rule (the facility's setting among it).
+TAKE_LEVEL = Level.EDIT
 
 
 def transition_level(from_status: str, to_status: str) -> int:
@@ -31,6 +34,11 @@ def can_transition(user, from_status: str, to_status: str) -> bool:
 
 def can_assign(user) -> bool:
     return user.has_level(MODULE, ASSIGN_LEVEL)
+
+
+def can_take(user) -> bool:
+    """Take an unassigned work order for oneself (apps.workorders.services.take, which checks the rest)."""
+    return user.has_level(MODULE, TAKE_LEVEL)
 
 
 def can_record_work(user) -> bool:
