@@ -1,0 +1,17 @@
+{% extends "web/base.html" %}
+{% comment %}Slice 22: a link (a staff email's) for another of the person's facilities. Nothing of this facility's: the link's record
+number may name another record here (apps.web.decorators.facility_elsewhere).{% endcomment %}
+{% block title %}This link is for {{ facility }}{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>This link is for {{ facility }}</h1>
+  <p class="sub">{% if pending %}Join {{ facility }} to open it.{% else %}Switch to {{ facility }} to open it.{% endif %} You are working in {{ request.tenant.name }}.</p></div></div>
+<div class="card" style="padding:16px;max-width:560px">
+  <p>{% if pending %}{{ facility }} invited you: you sign in there with the password you use now. {% endif %}Your browser works in one facility at a time: this one's pages in other tabs reload in {{ facility }} when you next use them.</p>
+  <form method="post" action="{% url 'web:facility_switch' %}">{% csrf_token %}
+    <input type="hidden" name="account" value="{{ target.pk }}">
+    <input type="hidden" name="next" value="{{ next }}">
+    <button class="btn primary" type="submit">{% if pending %}Join {{ facility }}{% else %}Switch to {{ facility }}{% endif %}</button>
+    <a class="btn" href="{% url 'web:overview' %}">Stay in {{ request.tenant.name }}</a>
+  </form>
+</div>
+{% endblock %}

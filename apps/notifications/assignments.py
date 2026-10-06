@@ -21,6 +21,9 @@ gets an email saying so, once the change is committed.
   (settings.APP_BASE_URL + the work order's page, which asks the reader to sign in). Never the problem, the requester, the callback,
   or the location: free text someone typed, which can name a patient (CLAUDE.md, "No PHI"). The template gets only those values,
   never the work order itself, so it cannot show more by accident.
+- Which facility (slice 22): a person may work in several, and work order numbers repeat across them, so every link names its
+  facility (`?facility=<slug>`, apps.accounts.people.with_facility; apps.web.decorators offers the switch when the browser is in
+  another) and so does every subject.
 - Never raises: a failed send is logged (apps.accounts.emails) and its claims released, so a later assignment of the same work order
   can try again; the assignment itself stands.
 
@@ -36,7 +39,7 @@ from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.urls import reverse
 
-from apps.accounts import emails
+from apps.accounts import emails, people
 from apps.accounts.models import Level, Module
 from apps.tenants.context import tenant_context
 from apps.tenants.models import Tenant
@@ -203,12 +206,18 @@ def _send_to(tenant, user, wos: list) -> int:
 
 
 def context(tenant, user, wos: list) -> dict:
-    """Everything the email shows, and nothing else: no problem, requester, callback, or location; links only from APP_BASE_URL."""
+    """Everything the email shows, and nothing else: no problem, requester, callback, or location; links only from APP_BASE_URL, each
+    naming the facility (people.with_facility)."""
     rows = []
     for wo in wos:
         asset, model = wo.asset, wo.asset.device_model
         rows.append({"number": wo.number, "type": wo.get_type_display(), "priority": wo.get_priority_display(), "due_on": wo.due_on,
                      "tag": asset.tag, "description": model.description or str(model), "department": asset.department.name,
-                     "url": f"{settings.APP_BASE_URL}{reverse('web:wo', args=[wo.number])}"})
+                     "url": _link(tenant, "web:wo", wo.number)})
     return {"facility": tenant.name, "name": user.first_name, "email": user.email, "work_orders": rows, "count": len(rows),
-            "preferences_url": f"{settings.APP_BASE_URL}{reverse('web:notifications')}"}
+            "preferences_url": _link(tenant, "web:notifications")}
+
+
+def _link(tenant, name: str, *args) -> str:
+    """A link to one of `tenant`'s pages for an email: from APP_BASE_URL (never a request's Host), naming the facility."""
+    return people.with_facility(settings.APP_BASE_URL + reverse(name, args=args), tenant)

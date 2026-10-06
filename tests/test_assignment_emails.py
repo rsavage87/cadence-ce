@@ -83,11 +83,12 @@ def test_assigning_emails_the_technician_once_the_change_commits(staff, techs, w
         assert mailoutbox == []  # nothing before the commit
     assert len(mailoutbox) == 1
     m = mailoutbox[0]
-    assert m.to == ["dana@riverside.example"] and m.subject == f"Assigned to you: {wo.number} · CE-10001, ICU ventilator · due {wo.due_on:%b} {wo.due_on.day}"
-    link = f"{settings.APP_BASE_URL}/work-orders/{wo.number}/"
+    assert m.to == ["dana@riverside.example"] and m.subject == \
+        f"Assigned to you: {wo.number} · CE-10001, ICU ventilator · due {wo.due_on:%b} {wo.due_on.day} · Riverside Regional"
+    link = f"{settings.APP_BASE_URL}/work-orders/{wo.number}/?facility=riverside"  # slice 22: every link names its facility
     for text in ("Hello Dana,", "A work order at Riverside Regional is assigned to you", f"{wo.number} · Corrective repair · High priority",
                  "Device: CE-10001 · ICU ventilator", "Department: ICU", f"Due: {wo.due_on:%A}, {wo.due_on:%b} {wo.due_on.day}, {wo.due_on.year}",
-                 f"Open it: {link}", f"{settings.APP_BASE_URL}{reverse('web:notifications')}", "emailed to dana@riverside.example"):
+                 f"Open it: {link}\n", f"{settings.APP_BASE_URL}{reverse('web:notifications')}?facility=riverside\n", "emailed to dana@riverside.example"):
         assert text in m.body, text
     assert_no_free_text(m)
     sent = NotificationSent.objects.get()
