@@ -74,9 +74,11 @@ class WorkOrderSerializer(serializers.ModelSerializer):
         fields = ["id", "number", "asset", "asset_tag", "type", "priority", "status", "source", "requester", "callback", "reported_location",
                   "assigned_to", "assigned_to_name", "vendor_service", "vendor_name", "opened_on", "due_on", "started_on", "completed_on",
                   "problem", "resolution", "estimated_hours", "tagged_out", "is_late", "total_cost", "labor_lines", "part_lines", "updated_at",
-                  "pm_result", "checklist_results", "follow_up_of"]
+                  "pm_result", "checklist_results", "follow_up_of", "legacy_number"]
         # Slice 15: what a completion recorded (transition to completed, apps.workorders.completion) is read here, never written.
-        read_only_fields = ["number", "status", "started_on", "completed_on", "resolution", "pm_result", "checklist_results", "follow_up_of"]
+        # Slice 23: so is an imported work order's number in the previous system (apps.workorders.legacy sets it, once).
+        read_only_fields = ["number", "status", "started_on", "completed_on", "resolution", "pm_result", "checklist_results", "follow_up_of",
+                            "legacy_number"]
 
     def to_representation(self, instance):
         """As a scoped user (apps.workorders.scoping) may read it, the same as the web's drawer: the number of a work order outside

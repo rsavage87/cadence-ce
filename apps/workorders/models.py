@@ -49,6 +49,7 @@ class Source(models.TextChoices):
     PORTAL = "portal", "Service request portal"
     PM_PLANNER = "pm_planner", "PM planner"
     RECALL = "recall", "Recall match"
+    IMPORTED = "imported", "Imported"  # slice 23: history and open work from the previous system (apps.workorders.legacy)
 
 
 OPEN_STATUSES = (WoStatus.OPEN, WoStatus.IN_PROGRESS, WoStatus.AWAITING_PARTS)
@@ -94,11 +95,17 @@ class WorkOrder(TenantModel):
     checklist_results = models.JSONField(default=list, blank=True)
     follow_up_of = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True, related_name="follow_ups",
                                      help_text="The work order (a failed PM) this repair was opened from")
+    # Slice 23: the number an imported work order had in the previous system (apps.workorders.legacy). Shown beside Cadence's own and
+    # searchable, so a technician holding old paperwork finds it; it is what makes a re-run of the import find, not double, the row.
+    legacy_number = models.CharField("previous number", max_length=40, blank=True, editable=False,
+                                     help_text="The work order's number in the previous system, when it was imported")
     history = HistoricalRecords()
 
     class Meta:
         ordering = ["-opened_on", "-created_at"]
-        constraints = [models.UniqueConstraint(fields=["tenant", "number"], name="uniq_wo_number_per_tenant")]
+        constraints = [models.UniqueConstraint(fields=["tenant", "number"], name="uniq_wo_number_per_tenant"),
+                       models.UniqueConstraint(fields=["tenant", "legacy_number"], condition=~models.Q(legacy_number=""),
+                                               name="uniq_wo_legacy_number_per_tenant")]
         indexes = [models.Index(fields=["tenant", "status"]), models.Index(fields=["tenant", "due_on"]),
                    models.Index(fields=["tenant", "type", "completed_on"])]
 

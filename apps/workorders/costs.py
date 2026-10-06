@@ -21,6 +21,9 @@ Rules:
 - Free text is one short line (no patient information: the screens say so).
 - Another facility's work order, line, or technician is refused. Every add and remove is audited (simple_history: who, and
   "Added" or "Removed"), and the work order's timeline shows both.
+
+Slice 23: the lines of work order history imported from the previous system are written here too, by history's rules
+(add_imported_labor, add_imported_part, only on an imported work order; see "importing" below).
 """
 import re
 import unicodedata
@@ -35,7 +38,7 @@ from django.utils import timezone
 from apps.credentials.models import Technician
 from apps.facility.services import RATE_MAX, decimal_places, get_settings
 
-from .models import LaborLine, PartLine, WorkOrder, WoStatus
+from .models import LaborLine, PartLine, Source, WorkOrder, WoStatus
 
 HOURS_MAX = Decimal("24")  # one line
 DAY_HOURS_MAX = Decimal("24")  # one technician, one day, every work order
@@ -214,15 +217,20 @@ def _technician(wo: WorkOrder, technician, by, errors: dict) -> Technician | Non
     return tech
 
 
-def _save(line, by, reason: str) -> None:
+def _save(line, by, reason: str, at=None) -> None:
+    """Save `line` with its audit record: who (`by`), why (`reason`), and when (`at`, only for an imported line: the day the work
+    was done; otherwise now)."""
     line._change_reason = reason
     if by is not None:
         line._history_user = by
+    if at is not None:
+        line._history_date = at
     try:
         line.save()
     finally:  # simple_history reads these on every save; never let them reach a later, unrelated one
         line.__dict__.pop("_change_reason", None)
         line.__dict__.pop("_history_user", None)
+        line.__dict__.pop("_history_date", None)
 
 
 def _delete(line, by) -> None:
@@ -309,3 +317,83 @@ def remove_labor(line, *, by) -> None:
 @transaction.atomic
 def remove_part(line, *, by) -> None:
     _remove(PartLine, line, by, "That part line is not on file here. It may have been removed already.")
+
+
+# --- importing (slice 23) ------------------------------------------------------------------------------------------------------
+#
+# Work order history from the previous system (apps.workorders.legacy) arrives done: its lines are recorded by history's rules, not
+# today's. Only on a work order that was imported (Source.IMPORTED), whatever its status (it is created closed, and its lines come
+# with it). No daily or per-line 24-hour cap (an old system's line may be a whole job's time), no active-technician rule (former
+# staff did the work), no default technician (never the person importing), and the worked day is the work order's own: completed,
+# else opened. The limits are the columns' (numeric sizes), so PostgreSQL never refuses a line. Each line's record and its audit
+# record carry `at`, a moment on that day, so the timeline and the History section read in business order.
+
+def _column_max(model, name: str) -> Decimal:
+    """The largest value a numeric column holds: 9999.99 for numeric(6, 2)."""
+    f = model._meta.get_field(name)
+    return Decimal(10) ** (f.max_digits - f.decimal_places) - Decimal(1).scaleb(-f.decimal_places)
+
+
+IMPORT_HOURS_MAX = _column_max(LaborLine, "hours")
+IMPORT_RATE_MAX = _column_max(LaborLine, "rate")
+IMPORT_AMOUNT_MAX = _column_max(PartLine, "unit_cost")  # a cost is one part line, quantity 1
+IMPORTED_LABOR = "Labor (imported)"
+
+
+def _imported(wo) -> WorkOrder:
+    current = WorkOrder.objects.select_for_update().filter(pk=wo.pk).first()
+    if current is None:
+        raise ValidationError("That work order is not in this facility.")
+    if current.source != Source.IMPORTED:
+        raise ValidationError(f"{current.number} was not imported: its labor and parts are logged as the work is done.")
+    return current
+
+
+def _imported_amount(value, *, what: str, low: Decimal, high: Decimal, low_inclusive: bool) -> Decimal:
+    errors: dict = {}
+    d = _decimal(value, "value", errors, required=f"Enter the {what}.", low=low, high=high, low_inclusive=low_inclusive,
+                 range_message=f"The {what} must be {'0 or more' if low_inclusive else 'above 0'} and at most {high:,}.")
+    if errors:
+        raise ValidationError(errors["value"])
+    return d
+
+
+def _backdate(model, line, at) -> None:
+    model.objects.filter(pk=line.pk).update(created_at=at)  # the row's own timestamp (auto_now_add) follows its audit record
+    line.created_at = at
+
+
+@transaction.atomic
+def add_imported_labor(wo, *, hours, rate, technician=None, at, by=None) -> LaborLine:
+    """Time from the previous system on an imported work order: `hours` (above 0, at most IMPORT_HOURS_MAX) at `rate` (0 to
+    IMPORT_RATE_MAX) for `technician` (this facility's, active or not) or none (unknown, or vendor service, which takes none).
+    Raises ValidationError in words."""
+    current = _imported(wo)
+    h = _imported_amount(hours, what="labor hours", low=Decimal(0), high=IMPORT_HOURS_MAX, low_inclusive=False)
+    r = _imported_amount(rate, what="labor rate", low=Decimal(0), high=IMPORT_RATE_MAX, low_inclusive=True)
+    if technician is not None:
+        if current.vendor_service:
+            raise ValidationError("Vendor service time is recorded without a technician.")
+        if not Technician.objects.filter(pk=technician.pk).exists():  # the scoped manager: another facility's is not found
+            raise ValidationError("Choose a technician from this facility.")
+    line = LaborLine(tenant_id=current.tenant_id, work_order=current, technician=technician, worked_on=current.completed_on or current.opened_on,
+                     hours=h, rate=r, description=IMPORTED_LABOR)
+    _save(line, by, CHANGE_ADDED, at=at)
+    _backdate(LaborLine, line, at)
+    return line
+
+
+@transaction.atomic
+def add_imported_part(wo, *, description, amount, at, by=None) -> PartLine:
+    """A cost from the previous system on an imported work order, as one part line (quantity 1 at `amount`, above 0 and at most
+    IMPORT_AMOUNT_MAX): its parts, its outside service, or a total the old system kept alone. Raises ValidationError in words."""
+    current = _imported(wo)
+    c = _imported_amount(amount, what="amount", low=Decimal(0), high=IMPORT_AMOUNT_MAX, low_inclusive=False)
+    errors: dict = {}
+    text = _text(description, "description", errors, limit=DESCRIPTION_MAX, what="description")
+    if errors or not text:
+        raise ValidationError(errors.get("description", "Describe the cost."))
+    line = PartLine(tenant_id=current.tenant_id, work_order=current, description=text, quantity=Decimal(1), unit_cost=c)
+    _save(line, by, CHANGE_ADDED, at=at)
+    _backdate(PartLine, line, at)
+    return line

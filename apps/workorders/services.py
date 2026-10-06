@@ -188,7 +188,7 @@ def filter_work_orders(f: WorkOrderFilters, ignore_status: bool = False, qs=None
         q = f.q.strip()
         qs = qs.filter(Q(number__icontains=q) | Q(asset__tag__icontains=q) | Q(asset__device_model__description__icontains=q)
                        | Q(asset__device_model__model__icontains=q) | Q(problem__icontains=q) | Q(asset__department__name__icontains=q)
-                       | Q(requester__icontains=q))
+                       | Q(requester__icontains=q) | Q(legacy_number__icontains=q))  # slice 23: an imported one's number in the previous system
     if f.type:
         qs = qs.filter(type=f.type)
     if f.assigned == UNASSIGNED:

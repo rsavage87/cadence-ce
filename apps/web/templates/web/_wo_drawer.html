@@ -19,6 +19,7 @@
         {% else %}<span class="chip crit">Not credentialed for this device</span>{% endif %}
       {% else %}<span class="chip warn">Unassigned</span>{% endif %}
     </dd></div>
+    {% if wo.legacy_number %}<div><dt>Previous number</dt><dd>{{ wo.legacy_number }} <span class="chip neutral">Imported</span></dd></div>{% endif %}
     <div><dt>Opened</dt><dd>{{ wo.opened_on|date:"M j, Y" }}</dd></div>
     <div><dt>Due</dt><dd class="{% if late_days %}down{% endif %}">{{ wo.due_on|date:"M j, Y" }}</dd></div>
     <div><dt>Completed</dt><dd>{{ wo.completed_on|date:"M j, Y"|default:"—" }}</dd></div>
