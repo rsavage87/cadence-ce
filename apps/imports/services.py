@@ -37,8 +37,9 @@ logger = logging.getLogger(__name__)
 CHUNK = 200
 KEEP_TOGETHER_MAX = 2_000  # rows of one key kept in one chunk (a contract covering that many devices)
 EXPIRE_DAYS = 14
+MAPPING_EXPIRE_DAYS = 2  # a file whose columns were never chosen still holds every column of the old system's export
 CREATED_SHOWN = 500  # names kept per group of "what the import adds"
-RESULTS_KEPT = 5_000  # rows with notes kept on a run (a file whose every row has a note says the same thing many times over)
+NOTES_KEPT = 5_000  # rows imported with a note kept on a run (skipped rows are all kept: each must be findable)
 Status = ImportRun.Status
 
 
@@ -73,10 +74,11 @@ def upload(user, kind: str, file_name: str, data: bytes, *, max_rows: int | None
     _check(user, kind)
     if max_bytes is not None and len(data) > max_bytes:
         raise ValidationError(f"The file is larger than {max_bytes // (1024 * 1024)} MB. Split it (by year, or by department) and import the parts in turn.")
-    header, rows = base.read_table(base.decode(data), max_rows=max_rows)
+    table = base.read_file(base.decode(data), max_rows=max_rows)
     expire_stale()
-    return ImportRun.objects.create(kind=kind, file_name=(file_name or "upload.csv")[:200], uploaded_by=user, header=header, rows=rows,
-                                    row_count=len(rows))
+    return ImportRun.objects.create(kind=kind, file_name=(file_name or "upload.csv")[:200], uploaded_by=user, header=table.header,
+                                    rows=table.rows, lines=table.lines, row_count=len(table.rows),
+                                    file_problems={str(i): base.WIDE_ROW for i in table.wide})
 
 
 # --- 2. columns -----------------------------------------------------------------------------------------------------------------
@@ -135,8 +137,8 @@ def confirm_columns(run, user, mapping: dict[str, int | None]) -> ImportRun:
     run.header = [run.header[chosen[k]] for k in keys]
     run.rows = [[row[chosen[k]] for k in keys] for row in run.rows]
     dicts = [dict(zip(keys, (base.clean(c) for c in cells))) for cells in run.rows]
-    run.file_problems = {str(i): reason for i, reason in importer.prepare(dicts).items()}
-    run.status = Status.CHECKING
+    run.file_problems = {**{str(i): reason for i, reason in importer.prepare(dicts).items()}, **run.file_problems}  # wide rows stay
+    run.status, run.pass_by = Status.CHECKING, user
     _restart_pass(run)
     run.save()
     return run
@@ -161,29 +163,46 @@ def process(run, user) -> ImportRun:
         start = run.offset
         end = _chunk_end(run, importer, start)
         rows = [dict(zip(run.columns, (base.clean(c) for c in cells))) for cells in run.rows[start:end]]
-        ctx = base.Context(user=user, today=timezone.localdate(), check=not importing)
+        ctx = base.Context(user=_acting(run), today=timezone.localdate(), check=not importing, file=(run.columns, run.rows))
         results = []
-        chunk = transaction.savepoint()
-        with assignments.quiet():
-            importer.load(ctx, rows)
-            for i, row in enumerate(rows):
-                result = base.RowResult(line=start + i + 2, key=(row.get(importer.key) or "")[:80])
-                problem = run.file_problems.get(str(start + i))
-                if problem:
-                    result.outcome, result.notes = result.SKIP, [problem]
-                else:
-                    _apply(importer, ctx, row, result)
-                results.append(result)
-        if importing:
-            transaction.savepoint_commit(chunk)
-        else:
-            transaction.savepoint_rollback(chunk)  # the check changes nothing
+        try:
+            with transaction.atomic(), assignments.quiet():  # the chunk: committed by the import, rolled back by the check
+                importer.load(ctx, rows)
+                for i, row in enumerate(rows):
+                    index = start + i
+                    ctx.index = index
+                    result = base.RowResult(line=run.lines[index] if index < len(run.lines) else index + 2, key=(row.get(importer.key) or "")[:80])
+                    problem = run.file_problems.get(str(index))
+                    if problem:
+                        result.outcome, result.notes = result.SKIP, [problem]
+                    else:
+                        _apply(importer, ctx, row, result)
+                    results.append(result)
+                if not importing:
+                    raise _CheckDone  # the check changes nothing
+        except _CheckDone:
+            pass
         _record(run, results, ctx)
         run.offset = end
         if end >= run.row_count:
             _finish(run, user, importing)
         run.save()
     return run
+
+
+class _CheckDone(Exception):
+    """Raised at the end of a check's chunk to roll it back."""
+
+
+def _acting(run):
+    """Who the current pass acts as: whoever started it (pass_by), whoever's browser asks for the next chunk, so a row's per-row
+    levels are that person's from the first chunk to the last. A run of the command line (uploaded by nobody) acts as nobody, which
+    may do anything; a web run whose starter is gone is refused."""
+    if run.pass_by_id:
+        return run.pass_by
+    if run.uploaded_by_id is None:
+        return None
+    raise PermissionDenied
 
 
 def _chunk_end(run, importer, start: int) -> int:
@@ -204,33 +223,36 @@ def _apply(importer, ctx, row: dict, result) -> None:
     if long:
         result.outcome, result.notes = result.SKIP, [f"{long.label} is longer than {long.max_length} characters"]
         return
-    point = transaction.savepoint()
     try:
-        importer.apply(ctx, row, result)
+        with transaction.atomic():  # the row's savepoint: rolled back on any refusal, and the transaction stays usable (a plain
+            importer.apply(ctx, row, result)  # save that failed marks it for rollback; leaving this block clears that)
     except base.RowSkip as e:
-        _skipped(point, result, str(e))
+        _skipped(result, str(e))
     except ValidationError as e:
-        _skipped(point, result, "; ".join(e.messages))
+        _skipped(result, "; ".join(e.messages))
     except PermissionDenied as e:
-        _skipped(point, result, str(e) or "You may not make this change")
+        _skipped(result, str(e) or "You may not make this change")
     except DatabaseError:
         logger.warning("import %s line %s: the database refused the row", importer.kind, result.line, exc_info=True)  # never the values
-        _skipped(point, result, "It could not be saved (a value the database refuses)")
-    else:
-        transaction.savepoint_commit(point)
+        _skipped(result, "It could not be saved (a value the database refuses)")
 
 
-def _skipped(point, result, reason: str) -> None:
-    transaction.savepoint_rollback(point)
+def _skipped(result, reason: str) -> None:
     result.outcome, result.notes = result.SKIP, [reason]
 
 
 def _record(run, results, ctx) -> None:
+    summary = run.summary
     for r in results:
         run.counts[r.outcome] = run.counts.get(r.outcome, 0) + 1
-        if r.notes and len(run.results) < RESULTS_KEPT:
+        if not r.notes:
+            continue
+        if r.outcome == r.SKIP or summary.get("notes_kept", 0) < NOTES_KEPT:  # every skipped row stays findable
             run.results.append(r.as_list())
-    summary = run.summary
+            if r.outcome != r.SKIP:
+                summary["notes_kept"] = summary.get("notes_kept", 0) + 1
+        else:
+            summary["notes_not_kept"] = summary.get("notes_not_kept", 0) + 1
     for group, labels in ctx.totals.items():
         bucket = summary.setdefault("totals", {}).setdefault(group, {})
         for label, amount in labels.items():
@@ -250,7 +272,7 @@ def _record(run, results, ctx) -> None:
 def _finish(run, user, importing: bool) -> None:
     now = timezone.now()
     if importing:
-        run.status, run.imported_at, run.rows = Status.IMPORTED, now, []  # the facility's data now lives in its records
+        run.status, run.imported_at, run.rows, run.lines = Status.IMPORTED, now, [], []  # the facility's data now lives in its records
     else:
         run.status, run.checked_at = Status.CHECKED, now
 
@@ -263,13 +285,16 @@ def start_import(run, user) -> ImportRun:
     _check(user, run)
     if run.status != Status.CHECKED:
         raise ValidationError("Only a checked file can be imported." if run.status != Status.IMPORTING else "This file is already importing.")
-    run.status, run.imported_by = Status.IMPORTING, user
+    run.status, run.imported_by, run.pass_by = Status.IMPORTING, user, user
     _restart_pass(run)
     try:
         with transaction.atomic():
             run.save()
     except IntegrityError:
-        raise ValidationError("Another import is running in this facility. Wait for it to finish, then import this file.") from None
+        other = ImportRun.objects.filter(status=Status.IMPORTING).exclude(pk=run.pk).first()
+        named = f" ({_importer(other).label.lower()}, {other.file_name})" if other is not None and can_import(user, other.kind) else ""
+        raise ValidationError(f"Another import{named} is running in this facility, or was left part way. Let it finish (open it and "
+                              "press Continue if it stopped) or discard it, then import this file.") from None
     return run
 
 
@@ -280,16 +305,20 @@ def discard(run, user) -> ImportRun:
     _check(user, run)
     if run.done:
         raise ValidationError("This run has already ended.")
-    run.status, run.rows = Status.DISCARDED, []
+    run.status, run.rows, run.lines = Status.DISCARDED, [], []
     run.save()
     return run
 
 
 def expire_stale(now=None) -> int:
-    """End the facility's runs left unfinished for EXPIRE_DAYS (their rows are the facility's data, kept no longer than needed)."""
-    cutoff = (now or timezone.now()) - timedelta(days=EXPIRE_DAYS)
-    stale = ImportRun.objects.exclude(status__in=[Status.IMPORTED, Status.DISCARDED, Status.EXPIRED]).filter(updated_at__lt=cutoff)
-    return stale.update(status=Status.EXPIRED, rows=[], updated_at=timezone.now())
+    """End the facility's runs left unfinished for EXPIRE_DAYS, or MAPPING_EXPIRE_DAYS for a file whose columns were never chosen (it
+    still holds every column of the export): their rows are the facility's data, kept no longer than needed. The daily job
+    expire_imports runs it in every facility; the Import data screen and every upload run it too."""
+    now = now or timezone.now()
+    unfinished = ImportRun.objects.exclude(status__in=[Status.IMPORTED, Status.DISCARDED, Status.EXPIRED])
+    stale = unfinished.filter(updated_at__lt=now - timedelta(days=EXPIRE_DAYS)) | unfinished.filter(
+        status=Status.MAPPING, updated_at__lt=now - timedelta(days=MAPPING_EXPIRE_DAYS))
+    return stale.update(status=Status.EXPIRED, rows=[], lines=[], updated_at=timezone.now())
 
 
 # --- reading a run ------------------------------------------------------------------------------------------------------------------

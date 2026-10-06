@@ -163,7 +163,7 @@ def test_one_import_at_a_time_per_facility(ctx, fake, make_user):
     first, second = (services.confirm_columns(services.upload(kim, "fake", "d.csv", csv_bytes("Dept", name)), kim, {"name": 0}) for name in "AB")
     first, second = run_through(first, kim), run_through(second, kim)
     services.start_import(first, kim)
-    with pytest.raises(ValidationError, match="Another import is running"):
+    with pytest.raises(ValidationError, match=r"Another import \(departments, d.csv\) is running"):
         services.start_import(second, kim)
     with pytest.raises(ValidationError, match="already importing"):
         services.start_import(first, kim)

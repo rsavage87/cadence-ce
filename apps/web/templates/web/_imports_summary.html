@@ -48,7 +48,7 @@
         {% empty %}
         <div class="empty">{% if run.counts %}No row has a note.{% else %}No rows were checked.{% endif %}</div>
         {% endfor %}
-        {% if results_capped %}<div class="hint imp-capped">Only the first {{ results_kept }} rows with a note are kept; fix those and check the file again to see the rest.</div>{% endif %}
+        {% if results_capped %}<div class="hint imp-capped">Every skipped row is listed; of the rows imported with a note, the first {{ results_kept }} are, and {{ results_capped }} more are not.</div>{% endif %}
       </div>
     </div>
   </div>

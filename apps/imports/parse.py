@@ -71,7 +71,11 @@ def parse_decimal(value: str, *, places: int = 2, low: Decimal | None = None, hi
     if not s:
         return None
     negative = s.startswith("(") and s.endswith(")")
-    s = s.strip("()").replace(",", "").replace("$", "").replace("USD", "").replace("US$", "").strip()
+    s = s.strip("()").replace("$", "").replace("USD", "").replace("US$", "").strip()
+    if "," in s:  # only as a thousands separator: "3200,50" (a decimal comma) is not read as 320,050
+        if not _THOUSANDS.match(s):
+            raise Unreadable(f"{value.strip()!r} is not a {what} (write it with a point for decimals: 3200.50)")
+        s = s.replace(",", "")
     try:
         number = Decimal(s)
     except InvalidOperation:
@@ -88,6 +92,8 @@ def parse_money(value: str, *, high: Decimal = Decimal("9999999999.99")) -> Deci
     """An amount of money: 0 or more, to the cent (numeric(12, 2) holds less than ten billion)."""
     return parse_decimal(value, low=Decimal(0), high=high, what="money amount")
 
+
+_THOUSANDS = re.compile(r"^[+-]?\d{1,3}(,\d{3})+(\.\d+)?$")
 
 YES = {"yes", "y", "true", "t", "1", "x"}
 NO = {"no", "n", "false", "f", "0"}
@@ -107,19 +113,20 @@ def parse_yes_no(value: str) -> bool | None:
 INTERVAL_WORDS = {"annual": 12, "annually": 12, "yearly": 12, "semi-annual": 6, "semiannual": 6, "semi annual": 6, "semi-annually": 6,
                   "biannual": 6, "quarterly": 3, "monthly": 1, "bimonthly": 2, "bi-monthly": 2, "biennial": 24, "biennially": 24,
                   "every 2 years": 24, "triennial": 36}
-_INTERVAL = re.compile(r"^(\d{1,3})\s*(m|mo|mos|mon|month|months|y|yr|yrs|year|years)?$")
+_INTERVAL = re.compile(r"^(\d{1,3}(?:\.\d+)?)\s*(m|mo|mos|mon|month|months|y|yr|yrs|year|years)?$")
 
 
 def parse_interval_months(value: str) -> int | None:
     """A PM interval in months, 1 to 120: "12", "6 mo", "2 yr", "Semi-annual", "Quarterly"."""
-    s = text(value).lower().replace(".", "")
+    s = text(value).lower().rstrip(".")  # "6 mo." -- but never a decimal point: "12.0" is 12, not 120
     if not s:
         return None
     months = INTERVAL_WORDS.get(s)
     if months is None:
         m = _INTERVAL.match(s)
         if m:
-            months = int(m.group(1)) * (12 if (m.group(2) or "m").startswith("y") else 1)
+            amount = Decimal(m.group(1)) * (12 if (m.group(2) or "m").startswith("y") else 1)  # "1.5 yr" is 18 months
+            months = int(amount) if amount == amount.to_integral_value() else None
     if months is None or not 1 <= months <= 120:
         raise Unreadable(f"{value.strip()!r} is not a PM interval (1 to 120 months, or a word such as annual or quarterly)")
     return months

@@ -379,7 +379,7 @@ def test_a_second_import_waits_for_the_first(client, ctx, kim):
     first, second = checked(client), checked(client, csv_bytes("Dept,CC,Status", "Lab,,"))
     client.post(f"{PAGE}{first.pk}/import/")
     r = client.post(f"{PAGE}{second.pk}/import/")
-    assert r.status_code == 200 and "Another import is running in this facility." in r.content.decode()
+    assert r.status_code == 200 and "is running in this facility, or was left part way" in r.content.decode()
     second.refresh_from_db()
     assert second.status == "checked"
 

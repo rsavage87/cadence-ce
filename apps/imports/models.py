@@ -25,11 +25,15 @@ class ImportRun(TenantModel):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.MAPPING)
     uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     imported_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    # Review fix: who the current pass acts as (who started the check, or the import), whoever's browser asks for its next chunk, so
+    # a row's per-row levels (retiring a device, the CMS mark) are always that person's. None only for a run of the command line.
+    pass_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     checked_at = models.DateTimeField(null=True, blank=True)
     imported_at = models.DateTimeField(null=True, blank=True)
     header = models.JSONField(default=list, blank=True, help_text="The file's column names, as written")
     columns = models.JSONField(default=list, blank=True, help_text="Once confirmed: the importer's column keys, in the order rows hold them")
     rows = models.JSONField(default=list, blank=True, help_text="The file's rows (lists of cells); cleared when the run ends")
+    lines = models.JSONField(default=list, blank=True, help_text="The line of the file each row starts on (blank lines are left out)")
     row_count = models.PositiveIntegerField(default=0)
     offset = models.PositiveIntegerField(default=0, help_text="Rows done by the current pass (the check, or the import)")
     file_problems = models.JSONField(default=dict, blank=True, help_text="Row index -> why the whole row is refused (a repeat in the file)")

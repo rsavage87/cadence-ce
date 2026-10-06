@@ -128,8 +128,8 @@ class Command(BaseCommand):
             keys = f" ({', '.join(g['keys'])})" if g["keys"] else ""
             self.stdout.write(f"  {'Skipped' if g['skipped'] else 'Note'}, {g['count']:,} row{'s' if g['count'] != 1 else ''}: {g['note']}")
             self.stdout.write(f"    line{'s' if len(g['lines']) != 1 else ''} {where}{keys}")
-        if len(run.results) >= services.RESULTS_KEPT:
-            self.stdout.write(f"  (only the first {services.RESULTS_KEPT:,} rows with a note are kept)")
+        if (run.summary or {}).get("notes_not_kept"):  # every skipped row is kept; notes on imported rows beyond NOTES_KEPT are counted
+            self.stdout.write(f"  ({run.summary['notes_not_kept']:,} more rows imported with a note are not listed)")
         summary = run.summary or {}
         for column, found in summary.get("values", {}).items():
             read = sorted(found.items(), key=lambda item: (-item[1][1], item[0]))

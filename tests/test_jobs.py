@@ -82,7 +82,7 @@ def _due_all_day(settings):
 
 
 def test_the_daily_jobs_include_the_report_emails_and_the_staff_notifications():
-    assert [key for key, _cmd, _opts in ALL_JOBS] == ["generate_pm", "import_openfda", "report_emails", "staff_notifications"]
+    assert [key for key, _cmd, _opts in ALL_JOBS] == ["generate_pm", "import_openfda", "expire_imports", "report_emails", "staff_notifications"]
     assert jobs.FACILITY_JOBS == {"generate_pm", "report_emails", "staff_notifications"}  # the openFDA import is everyone's
 
 

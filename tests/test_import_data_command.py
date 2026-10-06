@@ -145,7 +145,7 @@ def test_a_running_import_stops_it_and_its_check_is_discarded(tenant, make_user,
         while running.status == "checking":
             running = services.process(running, kim)
         services.start_import(running, kim)
-    with pytest.raises(CommandError, match="Another import is running in this facility"):
+    with pytest.raises(CommandError, match=r"Another import \(.*\) is running in this facility"):
         run_command("--tenant", "riverside", "--kind", "fake", str(depts))
     with tenant_context(tenant):
         mine = ImportRun.objects.get(file_name="depts.csv")

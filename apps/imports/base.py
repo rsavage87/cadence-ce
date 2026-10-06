@@ -21,6 +21,7 @@ from apps.core.csvtext import unguard
 MAX_BYTES = 5 * 1024 * 1024        # a file on the screen
 MAX_ROWS = 20_000                  # rows in one run on the screen; import_data has no limit
 MAX_CELL = 4_000                   # characters in one cell: longer than any column, so never a real value
+MAX_COLUMNS = 300                  # columns in the header: wider is no export of records (and rows are held at the header's width)
 SAMPLES = 3                        # sample values shown per column on the mapping step
 
 _BOMS = ((b"\xff\xfe\x00\x00", "utf-32"), (b"\x00\x00\xfe\xff", "utf-32"), (b"\xef\xbb\xbf", "utf-8-sig"), (b"\xff\xfe", "utf-16"),
@@ -53,9 +54,27 @@ def decode(data: bytes) -> str:
     return result
 
 
+@dataclass
+class Table:
+    """A file as read: its header, its rows (each padded or cut to the header's width), the line each row starts on (blank lines
+    are left out, so a row's index is not its line), and the rows that had more values than the header has columns."""
+
+    header: list[str]
+    rows: list[list[str]]
+    lines: list[int]
+    wide: list[int]
+
+
 def read_table(text: str, *, max_rows: int | None = MAX_ROWS) -> tuple[list[str], list[list[str]]]:
-    """The header and the rows (each padded or cut to the header's width; blank rows left out), streamed so a file of blank lines
-    never builds a huge list. Raises ValidationError for an unreadable file, a cell over MAX_CELL, or more than `max_rows` rows."""
+    """The header and the rows of read_file."""
+    table = read_file(text, max_rows=max_rows)
+    return table.header, table.rows
+
+
+def read_file(text: str, *, max_rows: int | None = MAX_ROWS) -> Table:
+    """The file as a Table, streamed so a file of blank lines never builds a huge list. Raises ValidationError for an unreadable
+    file, a header wider than MAX_COLUMNS (the rows are held at its width: a short file with a wide header would otherwise fill the
+    memory), a cell over MAX_CELL, or more than `max_rows` rows."""
     first_line = text.split("\n", 1)[0]
     delimiter = max(",;\t|", key=first_line.count) if any(d in first_line for d in ",;\t|") else ","  # the header's separator
     reader = csv.reader(io.StringIO(text, newline=""), delimiter=delimiter)
@@ -63,22 +82,33 @@ def read_table(text: str, *, max_rows: int | None = MAX_ROWS) -> tuple[list[str]
         header = next(reader, None)
         if not header or not any(h.strip() for h in header):
             raise ValidationError("The file has no header row: the first line must name the columns.")
+        if len(header) > MAX_COLUMNS:
+            raise ValidationError(f"The first line has {len(header):,} columns; an export of records has far fewer (at most {MAX_COLUMNS}). "
+                                  "Check that the first line names the columns.")
         header = [h.strip() for h in header]
         width = len(header)
-        rows = []
+        rows, lines, wide = [], [], []
+        line = reader.line_num
         for cells in reader:
+            start, line = line + 1, reader.line_num  # a quoted cell may span lines: the row starts after the previous one ended
             if not any(c.strip() for c in cells):
                 continue
             if any(len(c) > MAX_CELL for c in cells):
-                raise ValidationError(f"Line {reader.line_num} has a cell longer than {MAX_CELL:,} characters; no column holds that much.")
+                raise ValidationError(f"Line {start} has a cell longer than {MAX_CELL:,} characters; no column holds that much.")
             if max_rows is not None and len(rows) >= max_rows:
                 raise ValidationError(f"The file has more than {max_rows:,} rows. Split it (by year, or by department) and import the parts in turn.")
-            rows.append([c for c in (cells + [""] * width)[:width]])
+            if any(c.strip() for c in cells[width:]):
+                wide.append(len(rows))
+            rows.append((cells + [""] * width)[:width])
+            lines.append(start)
     except csv.Error as e:
         raise ValidationError(f"Line {reader.line_num} could not be read as CSV ({e}).") from None
     if not rows:
         raise ValidationError("The file has a header but no rows.")
-    return header, rows
+    return Table(header, rows, lines, wide)
+
+
+WIDE_ROW = "This line has more values than the file has columns (a comma inside a value without quotes?): its values would land in the wrong columns"
 
 
 def clean(cell: str) -> str:
@@ -170,9 +200,21 @@ class Context:
     today: object
     check: bool
     cache: dict = field(default_factory=dict)
+    index: int = 0               # the row being applied, in the file (its place in `rows`)
+    file: object = None          # the run's rows: see `rows`
     totals: dict = field(default_factory=dict)
     created: dict = field(default_factory=dict)
     values: dict = field(default_factory=dict)
+
+    @property
+    def rows(self) -> list[dict]:
+        """Every row of the file, as apply() gets them, read once per chunk. The check rolls each chunk back, so a record an earlier
+        chunk's row adds is not there for a later chunk's: an importer whose rows depend on earlier ones (a device model the first
+        row naming it adds; a contract its first line adds) looks here to treat them as the import will."""
+        if "_rows" not in self.cache:
+            columns, raw = self.file if self.file is not None else ([], [])
+            self.cache["_rows"] = [dict(zip(columns, (clean(c) for c in cells))) for cells in raw]
+        return self.cache["_rows"]
 
     def total(self, group: str, label: str, amount=1) -> None:
         bucket = self.totals.setdefault(group, {})

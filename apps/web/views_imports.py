@@ -226,7 +226,7 @@ def _summary_ctx(run) -> dict:
             # a check stopped part way counted only the rows it reached: no counts, which would read as the file's
             "show_counts": bool(run.counts) and (started or run.checked_at is not None),
             "to_import": to_import, "to_import_text": f"{to_import:,}", "skipped": skipped, "skipped_text": f"{skipped:,}",
-            "results_capped": len(run.results) >= services.RESULTS_KEPT, "results_kept": f"{services.RESULTS_KEPT:,}"}
+            "results_capped": (run.summary or {}).get("notes_not_kept", 0), "results_kept": f"{services.NOTES_KEPT:,}"}
 
 
 def _run_page(request, run, *, error: str = "", typed: dict | None = None):

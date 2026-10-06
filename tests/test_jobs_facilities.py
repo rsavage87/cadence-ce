@@ -98,10 +98,10 @@ def calls(monkeypatch):
 
 
 def _done(day, *facilities, everyone=True):
-    """Each facility's jobs, and (with `everyone`) the openFDA import, ran on `day` (a steady state to start from)."""
+    """Each facility's jobs, and (with `everyone`) the jobs for everyone (the openFDA import, expiring imports), ran on `day`."""
     rows = [JobRun(job=key, facility=f, run_on=day, status="succeeded") for f in facilities for key in sorted(jobs.FACILITY_JOBS)]
     if everyone:
-        rows.append(JobRun(job="import_openfda", run_on=day, status="succeeded"))
+        rows += [JobRun(job=key, run_on=day, status="succeeded") for key, _c, _o in jobs.DAILY_JOBS if key not in jobs.FACILITY_JOBS]
     JobRun.objects.bulk_create(rows)
 
 
@@ -135,7 +135,8 @@ def test_each_facility_runs_its_jobs_once_on_its_own_day_at_its_own_time(places,
     assert jobs.is_due() is False
     clock(utc(5, 6, 30))  # Riverside 02:30, and the server's: the import for everyone
     assert _ran(jobs.run_daily_jobs()) == [("generate_pm", "riverside", "2026-10-05"), ("import_openfda", None, "2026-10-05"),
-                                           ("report_emails", "riverside", "2026-10-05"), ("staff_notifications", "riverside", "2026-10-05")]
+                                           ("expire_imports", None, "2026-10-05"), ("report_emails", "riverside", "2026-10-05"),
+                                           ("staff_notifications", "riverside", "2026-10-05")]
     assert ("import_openfda", None, None) in calls  # the import is not given a facility or a day
 
     clock(utc(5, 12, 29))
@@ -146,7 +147,7 @@ def test_each_facility_runs_its_jobs_once_on_its_own_day_at_its_own_time(places,
     for moment in (utc(5, 18), utc(5, 23, 59), utc(6, 1, 29)):  # nothing more until Thames reaches 02:30 on Oct 6
         clock(moment)
         assert jobs.is_due() is False and jobs.run_daily_jobs() == []
-    assert JobRun.objects.filter(run_on=OCT5).count() == 3 * 3 + 1
+    assert JobRun.objects.filter(run_on=OCT5).count() == 3 * 3 + 2
     clock(utc(6, 1, 30))
     assert _ran(jobs.run_daily_jobs())[0] == ("generate_pm", "thames", "2026-10-06")
 
@@ -158,7 +159,7 @@ def test_the_scheduler_and_the_command_run_what_is_due(places, clock, calls):
     call_command("scheduler", "--once", stdout=out)
     assert out.getvalue().splitlines() == [  # each job for every facility (by slug) before the next job; Kona is still on a day that ran
         "generate_pm (riverside, 2026-10-05): succeeded", "generate_pm (thames, 2026-10-05): succeeded", "import_openfda (2026-10-05): succeeded",
-        "report_emails (riverside, 2026-10-05): succeeded", "report_emails (thames, 2026-10-05): succeeded",
+        "expire_imports (2026-10-05): succeeded", "report_emails (riverside, 2026-10-05): succeeded", "report_emails (thames, 2026-10-05): succeeded",
         "staff_notifications (riverside, 2026-10-05): succeeded", "staff_notifications (thames, 2026-10-05): succeeded"]
     call_command("run_daily_jobs", stdout=(again := StringIO()))
     assert again.getvalue().startswith("Nothing to run")
@@ -431,7 +432,7 @@ def test_the_due_check_and_the_runs_touch_no_facility_table_before_entering_it(r
         runs = jobs.run_daily_jobs()
         call_command("scheduler", "--once", stdout=StringIO())  # nothing left to run, but it checks every facility
     assert rls.violations == []
-    assert {r.status for r in runs} == {"succeeded"} and len(runs) == 3 * 3 + 1
+    assert {r.status for r in runs} == {"succeeded"} and len(runs) == 3 * 3 + 2
 
 
 @needs_postgres
@@ -448,6 +449,6 @@ def test_the_scheduler_runs_each_facility_under_the_policies_from_no_tenant(plac
         assert {r.status for r in runs} == {"succeeded"}, [r.output for r in runs if r.status != "succeeded"]
         assert jobs.is_due() is False
         call_command("scheduler", "--once", stdout=StringIO())
-        assert len(runs) == 3 * 3 + 1 and JobRun.objects.count() == 3 * 3 + 1
+        assert len(runs) == 3 * 3 + 2 and JobRun.objects.count() == 3 * 3 + 2
     for t in (places["riverside"], places["kona"]):
         assert set(_pm_opened(t)) == {"D-1"}
