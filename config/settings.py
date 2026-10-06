@@ -27,6 +27,9 @@ SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-only-insecure-key")
 DEBUG = os.environ.get("DJANGO_DEBUG", "0") == "1"
 ALLOWED_HOSTS = [h for h in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",") if h]
 CSRF_TRUSTED_ORIGINS = [o for o in os.environ.get("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",") if o]
+# Slice 23: the largest multipart body accepted (apps.core.http.RejectNulMiddleware): an import file of 5 MB (apps.imports.base.MAX_BYTES)
+# and its form. A proxy in front must allow at least this much (nginx: client_max_body_size 6m).
+UPLOAD_MAX_BYTES = 6 * 1024 * 1024
 # Slice 22: a page left open from before a facility switch (which renews the token) goes to its screen instead of a bare 403.
 CSRF_FAILURE_VIEW = "apps.web.htmx.csrf_failure"
 
@@ -56,6 +59,7 @@ INSTALLED_APPS = [
     "apps.jobs",
     "apps.reports",
     "apps.notifications",
+    "apps.imports",
     "apps.api",
     "apps.demo",
     "apps.web",

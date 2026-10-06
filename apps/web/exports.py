@@ -15,7 +15,6 @@ inside the tenant that was current when the response was made, for as long as it
 the facility's time zone (slice 21), which the middleware's has left by then too.
 """
 import csv
-import re
 from contextlib import nullcontext
 from datetime import date, datetime
 from decimal import Decimal
@@ -23,10 +22,8 @@ from decimal import Decimal
 from django.http import StreamingHttpResponse
 from django.utils import timezone
 
+from apps.core.csvtext import FORMULA_START, guard  # noqa: F401  (FORMULA_START: the tests read it here)
 from apps.tenants.context import get_current_tenant, tenant_context
-
-FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
-_EMBEDDED_FORMULA = re.compile(r"([;\t\r\n])(?=[=+\-@])")
 
 
 def cell(value):
@@ -47,8 +44,7 @@ def cell(value):
     # Inside the text too: Excel in many regions splits a double-clicked CSV on ";" (whatever the quoting, since this file is
     # comma-separated), so "Pump alarm;=WEBSERVICE(...)" would give a cell starting with "=" that Excel runs. An apostrophe
     # after a separator or line break keeps that piece text as well.
-    text = _EMBEDDED_FORMULA.sub(r"\1'", str(value))
-    return "'" + text if text.startswith(FORMULA_START) else text
+    return guard(str(value))
 
 
 class _Echo:
