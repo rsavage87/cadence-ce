@@ -42,6 +42,7 @@ tfoot td{font-weight:700;border-top:1px solid var(--ink);border-bottom:0}
 </div>
 <dl class="kv">
   <div><dt>Number</dt><dd class="mono">{{ wo.number }}</dd></div>
+  {% if wo.legacy_number %}<div><dt>Previous number</dt><dd class="mono">{{ wo.legacy_number }}</dd></div>{% endif %}
   <div><dt>Type</dt><dd>{{ wo.get_type_display }}</dd></div>
   <div><dt>Priority</dt><dd>{{ wo.get_priority_display }}</dd></div>
   <div><dt>Status</dt><dd>{{ wo.get_status_display }}</dd></div>

@@ -391,7 +391,8 @@ def wo_new(request):
 
 @web_view(scoped=True)
 def search(request):
-    """Topbar search: an exact work order number or asset tag opens it; anything else searches equipment. A scoped user's search
+    """Topbar search: an exact work order number or asset tag opens it, and so does an imported work order's number in the previous
+    system (slice 23; a tag that reads the same wins, as before imports); anything else searches equipment. A scoped user's search
     finds only their share: another number or tag is searched as text in their Equipment list, where it matches nothing of theirs."""
     q = request.GET.get("q", "").strip()
     if q:
@@ -401,4 +402,7 @@ def search(request):
         asset = scoping.assets(request.user).filter(tag__iexact=q).first()
         if asset:
             return redirect("web:asset", tag=asset.tag)
+        wo = scoping.work_orders(request.user).filter(legacy_number__iexact=q).first()
+        if wo:
+            return redirect("web:wo", number=wo.number)
     return redirect(f"{reverse('web:equipment')}?{urlencode({'q': q})}" if q else reverse("web:equipment"))
