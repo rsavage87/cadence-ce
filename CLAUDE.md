@@ -30,7 +30,8 @@ security tests, `tests/test_postgres_rls.py`).
    (`web_view(..., scoped=True)`, a viewset's `scoped_actions`) and narrows what it shows through `scoping.work_orders` / `assets`.
 5. **State changes go through services** (`apps/workorders/services.py`, `apps/pm/services.py`, `apps/contracts/services.py`,
    `apps/accounts/services.py`, `apps/credentials/services.py`, `apps/recalls/services.py`, `apps/facility/services.py`, `apps/equipment/services.py`,
-   `apps/pm/aem.py`, `apps/pm/procedures.py`, `apps/workorders/costs.py`, `apps/workorders/completion.py`, `apps/reports/custom.py`), never by setting fields in a
+   `apps/pm/aem.py`, `apps/pm/procedures.py`, `apps/workorders/costs.py`, `apps/workorders/completion.py`, `apps/workorders/legacy.py`, `apps/reports/custom.py`,
+   `apps/imports/services.py`), never by setting fields in a
    view or calling model helpers like
    `Contract.add_assets` directly. Services validate, write status history, and keep the asset in sync.
 6. **No PHI by design.** The portal never asks for patient identifiers. Don't add free-text fields that invite them, and never offer
@@ -55,6 +56,7 @@ python manage.py bootstrap_tenant --name "Riverside" --slug riverside --admin-em
 python manage.py seed_demo                                         # small fictional dataset, login kim@riverside.example / DemoPass-2026 (two facilities)
 python manage.py generate_pm                                       # PM work-order generation; the scheduler runs it daily
 python manage.py import_assets --tenant riverside inventory.csv --dry-run
+python manage.py import_data --tenant riverside --kind work_orders history.csv --dry-run   # any kind; the screen is Settings, Import data
 python manage.py import_openfda --days 30                         # FDA recall import; the scheduler runs it daily
 python manage.py send_staff_notifications                          # the daily digest and contract reminders; the scheduler runs it daily
 python manage.py run_daily_jobs                                    # whatever is due (each facility's jobs on its clock); cron every 15 min
@@ -118,7 +120,9 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   and a PM's step results (`complete_work_order`: the screen's Mark completed and the API's transition to completed both use it; a
   failed PM opens or names its repair and holds the device out until that repair is done); a line's cost is hours × rate or
   quantity × unit cost to the cent, half up (`LABOR_AMOUNT`, `PART_AMOUNT`, `line_cents` in `models.py`), wherever lines are added up;
-  `permissions.py` (Edit to record labor, parts, and completion; Approve to assign, close, or charge a different rate)
+  `permissions.py` (Edit to record labor, parts, and completion; Approve to assign, close, or charge a different rate); `legacy.py` work
+  orders imported from another system (slice 23: `legacy_number`, the previous number, unique per facility; `Source.IMPORTED`; created in
+  their final state with backdated status rows, never emailing or changing the device; their lines through costs.py's import-only writers)
 - `apps/pm` PmProcedure, PM generation, on-time math, month helpers; `schedule.py` the PM schedule's read models (month calendar,
   a day's devices, suggested technicians, `planned_technicians` (who does each device due on a day: the day panel, route sheets, and
   the device drawer's PM tab share it), 30-day outlook, 7-day workload, PM library); `services.create_pm_work_orders_for_day` and
@@ -131,7 +135,8 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `permissions.py` (review at Edit, close/reopen at Approve); `feeds.py` the openFDA fetch shared by `import_openfda` and the Recalls
   screen's Check FDA feed (one fetch per 15 minutes for everyone, kept in apps.jobs' `JobRun`; a check matches only its own facility).
   ECRI import is deferred (license).
-- `apps/credentials` Technician, Credential, qualification and coverage services, credential add/renew/sign-off/remove
+- `apps/credentials` Technician, Credential, qualification and coverage services, credential add/renew/sign-off/remove,
+  `create_technician` / `update_technician` (the technicians import's)
 - `apps/portal` public request form (`/r/<tenant-slug>/`); `notifications.py` the requester's confirmation and done emails (only at the
   facility's work email domains, never the problem text); a label's link opened by a signed-in member who can see that device shows
   "Open <tag> in Cadence" (the user's role is read only for a member, inside the facility's tenant_context), and nothing else changes
@@ -151,7 +156,8 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `views_users.py` Users and Roles tabs; `views_account.py` sign-in, password reset and change; `views_invite.py` accepting an invitation; `views_credentials.py`; `views_recalls.py`; `views_reports.py` with the CSV download and `views_custom_reports.py` the custom report builder (with `reports_custom.py`); `views_settings.py`; `views_pm.py` with `pm_panels.py` for its lower panels; `views_pm_week.py` Auto-assign week; `views_wo_costs.py` and `views_wo_complete.py` the work order drawer's labor and parts and its Mark completed; `views_models.py` the device model drawer (PM program tab, Add model, Edit details, risk score) with `views_procedures.py` and `views_aem.py` for its Procedure and AEM tabs; `views_exports.py` the list CSVs; `views_scan.py` Scan tag (with `static/web/scan.js`, the camera where the browser reads codes); `history_tabs.py` the
   History tab or section of the device, work order, contract, and model drawers; `views_change_log.py` Users and access's Change log
   (with its CSV and print); `views_notifications.py` the account menu's Notifications page; `views_facilities.py` the facility switch and
-  an invitation's join page, `views_all_facilities.py` All facilities (slice 22; the top bar's facility menu and the account menu's list
+  an invitation's join page, `views_imports.py` Settings' Import data (slice 23: upload, columns, the check and the import a chunk at a
+  time by HTMX, the problems CSV), `views_all_facilities.py` All facilities (slice 22; the top bar's facility menu and the account menu's list
   come from the shell context processor; `htmx.FacilityTabMiddleware` reloads a tab left in another facility; `web_view` answers a link
   whose `?facility=` names another facility with a page that offers the switch); `views_print.py` asset labels and the
   work-order print, with `qr.py`; `views_print_sheets.py` PM route sheets and report PDFs), templates,
@@ -178,4 +184,10 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `assignments.py` (announce a technician's new work order after commit; `batch()` sends each technician one email for a batch,
   `quiet()` sends none, as the seed does), `daily.py` the digest and contract reminders (`send_staff_notifications`, a daily job). No
   email carries free text a requester typed; every link names its facility (`?facility=`)
+- `apps/imports` onboarding imports (slice 23): `ImportRun` (one file's run; its rows kept only until it ends; one import at a time per
+  facility), `base.py` (reading a file: encodings, separators, workbooks and NUL refused; columns matched by alias; the `Importer` a kind
+  fills in: its columns with their model lengths, a natural key, `apply` one row through the services), `parse.py` (dates, money,
+  intervals, choices: an unreadable value raises, never defaults), `services.py` (upload, confirm_columns, process: a chunk at a time,
+  the check rolling each back and the import committing each; start_import, discard, expire_stale), `permissions.py` (each kind at its
+  screen's level), `kinds/` (devices, contracts, technicians, work_orders). No free text comes over from another system
 - `apps/demo` seed data (Riverside Regional, and Riverside North Campus with Kim linked: the demo shows the facility menu)

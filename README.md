@@ -113,6 +113,25 @@ while repair or recall work is open; it needs Equipment Approve (the director by
 to service only when that repair tagged it out. The drawer's PM schedule tab shows
 the device's maintenance strategy, procedure, next PMs, and PM history, and its Costs tab the service cost by year.
 
+## Onboarding imports
+A facility moving off another CMMS brings its records over from Settings, Import data (`/settings/import/`), one CSV file at a
+time, in this order: devices, service contracts (one row per contract, or one per covered device with the contract repeated),
+technicians (current and former), then work order history and open work (one row per work order, with its hours and costs). Each
+kind needs the level of the screen that does the same thing: Equipment Edit, Contracts Edit, Users Edit, Work orders Approve.
+- Upload the file (a template for each kind is on the page), confirm which of its columns feeds each value (Cadence guesses by
+  name and shows sample values), and read the check: what the import will add, update, leave alone, and skip, why, and totals to
+  compare with the old system. Nothing is saved until you press Import.
+- A value it cannot read is reported, never quietly defaulted (an unreadable date stays blank with a note); a row it cannot take is
+  skipped with its reason; records already here are found by their key (tag, contract reference, name, previous work order number),
+  so a corrected file can be imported again without doubling anything.
+- Files of up to 5 MB and 20,000 rows run a few hundred rows at a time; an import that stops (a closed tab) continues where it was.
+  A file's rows are kept only until it is imported or discarded (or 14 days). For larger loads, `python manage.py import_data
+  --tenant <slug> --kind <devices|contracts|technicians|work_orders> file.csv [--dry-run]` runs the same check and import with no limit.
+- No free text comes over: imported work orders read "Imported from the previous system (work order <number>)", keep their old
+  number (searchable, shown in the drawer), and count in the reports by their own dates and costs. Cancelled work and open PMs are
+  not imported (each device's next PM date schedules its PMs).
+- A proxy in front of the app must accept request bodies of 6 MB (nginx: `client_max_body_size 6m`); larger uploads are refused.
+
 ## The PM program
 Each row of the PM library (PM schedule) opens that device model's PM program; so does a device's model name in its drawer. It
 shows the model's details, its risk score, the interval it is maintained on, its PM procedure, and its devices. Add model and

@@ -1,12 +1,12 @@
 # Build plan
 
 The mock (`cadence-ce-cmms-mock.html`) is the spec. Each slice below is shippable on its own and ends with green tests.
-Slices 0 to 22 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
+Slices 0 to 23 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
 export and print, devices are added and changed in the product, reports and request confirmations go out by email, each
 device model's PM program (risk score, procedure, AEM interval) is kept in the product, and the work itself (time, parts,
 what was done, a PM's results) is recorded on the work order; vendors and clinical requesters see only their own share; facilities
 build their own reports, and a label opens its device with Scan tag; the API covers what the screens do, by session or token; every record's changes and every access change can be read back;
-staff get the emails they choose about their own work; each facility works on its own clock; and one person signs in once to every facility they work at. What each slice deferred is noted in its row and below.
+staff get the emails they choose about their own work; each facility works on its own clock; one person signs in once to every facility they work at; and a facility brings its records over from the CMMS it is leaving. What each slice deferred is noted in its row and below.
 
 | # | Slice | Mock screen(s) | Code | Status |
 |---|-------|----------------|------|--------|
@@ -33,6 +33,7 @@ staff get the emails they choose about their own work; each facility works on it
 | 20 | History and notifications | Every drawer (History), Users and access (Change log), the account menu (Notifications) | `core` + `accounts` + `notifications` + `web` + `api` | done (times read in the server's TIME_ZONE; a facility's own time zone is not used yet) |
 | 21 | Facility time zones | Settings (Time zone); every screen's today, times, and prints | `tenants` + `jobs` + every app | done (the server's zone is a new facility's default and the FDA import's clock) |
 | 22 | Several facilities | The top bar's facility menu (each facility, "All facilities"), the account menu, an invitation's join page | `accounts` + `reports` + `notifications` + `web` + `api` | done (one account per facility, linked per person; existing separate accounts are not linked, only invitations link) |
+| 23 | Onboarding imports | (none: Settings, Import data) | `imports` + `equipment` + `workorders` + `contracts` + `credentials` + `web` | done (credentials and the imports API deferred; no free text imported) |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.
@@ -303,3 +304,12 @@ The mock's export and print buttons work since slice 11, Add device since slice 
   emails; a Back that misses htmx's history cache loads the whole page; choosing the current facility in the menu is no switch; a
   reset frees every facility's username from the lockout; a full save never writes `person` (only creation and the linking UPDATE
   do), so an account loaded before another facility linked it cannot undo the link.
+- Onboarding imports (slice 23, beyond the mock): Settings, Import data takes CSV files of devices, service contracts (with their
+  covered devices), technicians, and work order history and open work, each at its screen's level; `import_data` (and
+  `import_assets`, now over the same services) does the same from the command line. A run reads the file (encodings, separators,
+  workbooks and NUL refused), lets the person confirm the columns, checks every row through the real services and rolls back, then
+  imports chunk by chunk (resumable; one import at a time per facility). Unreadable values are noted, never defaulted; rows are
+  skipped with their reason; re-runs never double records (tag, reference, name, previous number). Work order history keeps its
+  previous number (`WorkOrder.legacy_number`, `Source.IMPORTED`), its business dates, and its costs, but no free text (the problem
+  reads "Imported from the previous system"); cancelled work and open PMs are not imported. Deferred: credentials, the imports API,
+  updating work orders already imported, and spreadsheets (.xlsx is refused with words).
