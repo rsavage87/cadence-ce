@@ -1,12 +1,12 @@
 # Build plan
 
 The mock (`cadence-ce-cmms-mock.html`) is the spec. Each slice below is shippable on its own and ends with green tests.
-Slices 0 to 23 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
+Slices 0 to 24 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
 export and print, devices are added and changed in the product, reports and request confirmations go out by email, each
 device model's PM program (risk score, procedure, AEM interval) is kept in the product, and the work itself (time, parts,
 what was done, a PM's results) is recorded on the work order; vendors and clinical requesters see only their own share; facilities
 build their own reports, and a label opens its device with Scan tag; the API covers what the screens do, by session or token; every record's changes and every access change can be read back;
-staff get the emails they choose about their own work; each facility works on its own clock; one person signs in once to every facility they work at; and a facility brings its records over from the CMMS it is leaving. What each slice deferred is noted in its row and below.
+staff get the emails they choose about their own work; each facility works on its own clock; one person signs in once to every facility they work at; a facility brings its records over from the CMMS it is leaving; and technicians work from their phones on My work. What each slice deferred is noted in its row and below.
 
 | # | Slice | Mock screen(s) | Code | Status |
 |---|-------|----------------|------|--------|
@@ -34,6 +34,7 @@ staff get the emails they choose about their own work; each facility works on it
 | 21 | Facility time zones | Settings (Time zone); every screen's today, times, and prints | `tenants` + `jobs` + every app | done (the server's zone is a new facility's default and the FDA import's clock) |
 | 22 | Several facilities | The top bar's facility menu (each facility, "All facilities"), the account menu, an invitation's join page | `accounts` + `reports` + `notifications` + `web` + `api` | done (one account per facility, linked per person; existing separate accounts are not linked, only invitations link) |
 | 23 | Onboarding imports | (none: Settings, Import data) | `imports` + `equipment` + `workorders` + `contracts` + `credentials` + `web` | done (credentials and the imports API deferred; no free text imported) |
+| 24 | My work | (none: the technician's phone page) | `workorders` + `facility` + `portal` + `notifications` + `web` + `api` | done (its own API endpoint and a route sheet per technician deferred) |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.
@@ -320,3 +321,12 @@ The mock's export and print buttons work since slice 11, Add device since slice 
   technician here stay in-house spend; a total beside a breakdown of zeros is the cost; imported labor never fills a technician's
   live day; Invite user links the imported technician of that name; "First Last, Jr." keeps its order; a daily job (expire_imports)
   ends unfinished runs, a file whose columns were never chosen after two days.
+- My work (slice 24, beyond the mock): the technician's own work on a phone-first page, first in the nav and where technicians and
+  vendor technicians land after signing in. Whose work, scope first (a vendor's company even when the account carries a technician
+  profile; a requester has none; else the user's own active technician profile), grouped as a technician works: repairs by priority (a
+  recall alert's devices one row), today's PMs by location, waiting on parts (with a note: part, PO, expected date), this week's PMs,
+  hours logged. Cards act through the work order's own endpoints, answering without the full-screen drawer: Start, Log time, Complete
+  (an open PM completes in one step, with its hours), Waiting on parts and Resume. Glove-sized controls (44px). Taking unassigned work
+  a technician is credentialed for (a facility setting, on by default; web and API) and assigning oneself on New work order. Scan from
+  My work and the label's portal link open the technician's one open work order on the device (my_work.scan_target). The digest's
+  "due" and link are My work's. Deferred: a My work API endpoint, a per-technician route sheet, offline use.

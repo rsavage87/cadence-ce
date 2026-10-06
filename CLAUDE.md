@@ -118,9 +118,15 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   facility (scope_of, work_orders, assets, can_see_*, and shown_text, which masks other work orders' numbers); `costs.py` the only writer of labor and part lines (rates from
   Settings, a different rate at Approve, nothing on a closed or cancelled work order); `completion.py` completing with the resolution
   and a PM's step results (`complete_work_order`: the screen's Mark completed and the API's transition to completed both use it; a
-  failed PM opens or names its repair and holds the device out until that repair is done); a line's cost is hours × rate or
+  failed PM opens or names its repair and holds the device out until that repair is done; slice 24: an open PM is started as it is
+  completed, both moves in its history (`starts_on_completion`; a repair still needs Start), and optional hours are logged for the
+  default technician in the same transaction); a line's cost is hours × rate or
   quantity × unit cost to the cent, half up (`LABOR_AMOUNT`, `PART_AMOUNT`, `line_cents` in `models.py`), wherever lines are added up;
-  `permissions.py` (Edit to record labor, parts, and completion; Approve to assign, close, or charge a different rate); `legacy.py` work
+  `permissions.py` (Edit to record labor, parts, and completion; Approve to assign, close, or charge a different rate; Edit to take
+  unassigned work, `can_take`); `my_work.py` the technician's own work (slice 24: whose work, scope first, a vendor's company, never a
+  requester's, else the user's active technician profile, `credentials.services.technician_of`; the groups; `due`, the one "due" of the
+  page, the nav badge, and the digest; `takeable`; `scan_target`, what a scanned label opens); `services.take` (a technician assigns
+  themselves unassigned in-house work they are credentialed for, while the facility allows it); `legacy.py` work
   orders imported from another system (slice 23: `legacy_number`, the previous number, unique per facility; `Source.IMPORTED`; created in
   their final state with backdated status rows, never emailing or changing the device; their lines through costs.py's import-only writers,
   in-house hours that name no technician here as an in-house cost line, never vendor time; imported labor never fills a technician's live day)
@@ -142,9 +148,10 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   that name rather than adding a second)
 - `apps/portal` public request form (`/r/<tenant-slug>/`); `notifications.py` the requester's confirmation and done emails (only at the
   facility's work email domains, never the problem text); a label's link opened by a signed-in member who can see that device shows
-  "Open <tag> in Cadence" (the user's role is read only for a member, inside the facility's tenant_context), and nothing else changes
+  "Open <tag> in Cadence" (the user's role is read only for a member, inside the facility's tenant_context), which follows
+  `my_work.scan_target` (their one open work order on it, or the device: the iPhone Camera app's way into My work), and nothing else changes
 - `apps/facility` Settings: `FacilitySettings` (one row per tenant: portal callback and hotline, the eight maintenance-policy texts,
-  KPI targets and the monthly repair budget); `services.py` reads (`get_settings`, defaults until first saved), `update_settings`,
+  KPI targets and the monthly repair budget, whether technicians may take unassigned work); `services.py` reads (`get_settings`, defaults until first saved), `update_settings`,
   `reset_policy`, `kpi_targets`, `compliance_targets`, `portal_url`, the integration list, risk bands, `set_time_zone` (the facility's
   Tenant.timezone: its today, its clock, its jobs' hour; audited in Tenant history, the change log's "facility" area); `permissions.py`
   (View to see, Edit to change). Named `facility` so it never reads like `django.conf.settings`.
@@ -159,7 +166,7 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `views_users.py` Users and Roles tabs; `views_account.py` sign-in, password reset and change; `views_invite.py` accepting an invitation; `views_credentials.py`; `views_recalls.py`; `views_reports.py` with the CSV download and `views_custom_reports.py` the custom report builder (with `reports_custom.py`); `views_settings.py`; `views_pm.py` with `pm_panels.py` for its lower panels; `views_pm_week.py` Auto-assign week; `views_wo_costs.py` and `views_wo_complete.py` the work order drawer's labor and parts and its Mark completed; `views_models.py` the device model drawer (PM program tab, Add model, Edit details, risk score) with `views_procedures.py` and `views_aem.py` for its Procedure and AEM tabs; `views_exports.py` the list CSVs; `views_scan.py` Scan tag (with `static/web/scan.js`, the camera where the browser reads codes); `history_tabs.py` the
   History tab or section of the device, work order, contract, and model drawers; `views_change_log.py` Users and access's Change log
   (with its CSV and print); `views_notifications.py` the account menu's Notifications page; `views_facilities.py` the facility switch and
-  an invitation's join page, `views_imports.py` Settings' Import data (slice 23: upload, columns, the check and the import a chunk at a
+  an invitation's join page, `views_my_work.py` My work (slice 24: the cards, `wo_waiting`, `from=my_work` answers without the drawer), `views_imports.py` Settings' Import data (slice 23: upload, columns, the check and the import a chunk at a
   time by HTMX, the problems CSV), `views_all_facilities.py` All facilities (slice 22; the top bar's facility menu and the account menu's list
   come from the shell context processor; `htmx.FacilityTabMiddleware` reloads a tab left in another facility; `web_view` answers a link
   whose `?facility=` names another facility with a page that offers the switch); `views_print.py` asset labels and the

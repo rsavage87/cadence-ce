@@ -156,6 +156,17 @@ A failed PM opens a repair work order and keeps the device out of service until 
 device's PM history show the recorded results. Recalls' Check FDA feed fetches new FDA recall notices on demand (at most every 15
 minutes) and matches them to your inventory.
 
+## My work
+Technicians start the day on My work (`/my-work/`, first in the nav, and where they land after signing in): their own work orders on
+a phone-first page. Repairs and requests come by priority (a recall alert's devices as one row), today's PMs by location, then work
+waiting on parts (with its note and how long it has waited), this week's PMs, and the hours they logged today and this week. From a
+card they start a repair, log time, complete a PM in one step (the checklist, the result, and their hours in one form; no Start
+needed), mark work waiting on parts or resume it, and open the full work order. Scan a label opens the work order of theirs on that
+device, or the device; on an iPhone the Camera app pointed at the label's QR code does the same through its request link. Unassigned
+work they are credentialed for is offered under "You could take" (Take it), and a work order a technician creates can be assigned to
+themselves; a facility can turn taking work off in Settings. Vendor technicians see their company's open work there. The daily
+digest links to My work.
+
 ## Custom reports
 Reports' "+ Custom report" (Reports Edit: the director and Finance and quality by default) builds a report from work orders, devices,
 labor, or parts: pick the columns, filter by type, status, department, category, technician, or a date range (a rolling period such
