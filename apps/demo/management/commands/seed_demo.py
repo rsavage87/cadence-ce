@@ -27,6 +27,7 @@ from apps.notifications import assignments
 from apps.pm import aem
 from apps.pm.dates import add_months
 from apps.pm.models import PmProcedure
+from apps.pm.services import assign_week
 from apps.recalls.models import Alert, AlertMatch
 from apps.recalls.services import create_recall_work_orders, set_status
 from apps.tenants.context import tenant_context, zone_of
@@ -276,6 +277,9 @@ class Command(BaseCommand):
                     set_status(match, AlertMatch.Status.CLOSED, note=note, today=today - timedelta(days=closed_days_ago))
             self._approved_aem(domain, today)
             self._vendor_work(today)
+            # Slice 24: this week's PMs on the technicians' plates, as a CE manager's Auto-assign week puts them, so a technician signing
+            # in (dwhitfield@... and the others, once they have a password) finds their own work on My work
+            assign_week(today=today)
         self.stdout.write(self.style.SUCCESS(f"Seeded {tenant.name}: {len(assets)} devices, {len(techs)} technicians. Sign in as {kim} / DemoPass-2026"))
         self._north_campus(tenant, opts)
 
