@@ -749,6 +749,18 @@ form.facility{margin:0}
 /* Slice 24, part B: completing on a phone (the completion modal's checklist and hours) */
 
 /* Slice 24, part D: Scan from My work */
+/* My work's Scan button (web/_my_work_scan.html): 48px tall, the width of a phone's screen. The scan form opened from it
+   (from-my-work): the field, Open, the camera's buttons, and the modal's close button are 44px, for a thumb or a glove. */
+.mw-scan{margin:0 0 14px}
+.mw-scan-btn{min-height:48px;padding:10px 20px;font-size:15px;justify-content:center;text-decoration:none}
+.mw-scan-btn svg{width:20px;height:20px}
+.scan-form.from-my-work .scan-row input{min-height:44px}
+.scan-form.from-my-work .btn{min-height:44px;padding:10px 16px;font-size:14px;justify-content:center}
+.modal-h .scan-close{width:44px;height:44px}
+@media (max-width:760px){
+  .mw-scan-btn{display:flex;width:100%}
+  .scan-form.from-my-work .scan-cam-actions .btn{flex:1}
+}
 
 /* Slice 11: printing app pages */
 /* What the browser prints of an app page (the Overview's Export button calls window.print(); any other screen prints from the

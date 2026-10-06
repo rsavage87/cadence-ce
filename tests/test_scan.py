@@ -21,6 +21,7 @@ from apps.equipment.models import Asset, Department, DeviceModel
 from apps.facility.services import asset_request_url
 from apps.tenants.context import tenant_context
 from apps.web.templatetags.web import ICONS
+from apps.workorders.models import WorkOrder
 from apps.workorders.services import create_work_order
 
 HX = {"HTTP_HX_REQUEST": "true", "HTTP_HX_TARGET": "modal-card"}
@@ -339,8 +340,14 @@ def test_the_note_for_someone_who_could_open_the_device(client, make_user, world
     user = sign_in(client, make_user, slug, **fields)
     body = portal(client, f"?asset={tag.lower()}")
     note = re.search(r'<div class="note in-cadence"[^>]*>.*?</div>\n', body).group(0)
-    assert strip_tags(note).strip() == f"Signed in to Cadence as {user.get_full_name()}. Open {tag} in Cadence"
-    assert re.search(rf'<a href="/equipment/{tag}/"[^>]*>Open {tag} in Cadence</a>', note)
+    # Slice 24: the link opens what Scan from My work would (apps.workorders.my_work.scan_target). The vendor has My work (their
+    # company's), and Hamilton's one open work order on MED-3 is it; the rest have no My work here (no technician profile): the device.
+    link, href = f"Open {tag} in Cadence", f"/equipment/{tag}/"
+    if slug == "vendor":
+        number = WorkOrder.objects.get(asset=world["med_vent"]).number
+        link, href = f"Open {number} on {tag} in Cadence", f"/work-orders/{number}/"
+    assert strip_tags(note).strip() == f"Signed in to Cadence as {user.get_full_name()}. {link}"
+    assert re.search(rf'<a href="{href}"[^>]*>{link}</a>', note)
     assert body.index("in-cadence") < body.index("<form")  # at the top of the page
     # the rest of the page is the one everyone gets
     assert body.replace(note, "") == signed_out(client, f"?asset={tag.lower()}")
@@ -405,7 +412,8 @@ def test_scan_and_the_portal_note_under_the_policies(client, make_user, tenant, 
     client.force_login(vendor)
     assert scan_get(client, "MED-3", **HX)["HX-Retarget"] == "#drawer"
     assert error_of(scan_get(client, "CE-10002", **HX)) == no_device("CE-10002")
-    assert "Open MED-3 in Cadence" in portal(client, "?asset=MED-3") and "in Cadence" not in portal(client, "?asset=CE-10002")
+    # slice 24: the vendor's My work has Hamilton's one open work order on MED-3, which the link opens and names
+    assert " on MED-3 in Cadence" in portal(client, "?asset=MED-3") and "in Cadence" not in portal(client, "?asset=CE-10002")
     for code in ("/equipment/A%00B/", "https://h.example/r/riverside/?asset=A%00B"):  # decoded once more here: a NUL never reaches the query
         assert error_of(scan_get(client, code, **HX)) == "That code is not an asset tag or a Cadence label."
     client.force_login(theirs_user)  # their role is hidden here: the note must not try to read it

@@ -125,7 +125,7 @@ def test_every_link_in_a_staff_email_names_its_facility(kim, numbers, lakeside, 
     assert assigned.subject == f"Assigned to you: {wo.number} · {THEIRS}, Surgical camera · due Oct 5 · Lakeside Surgery Center"
     assert f"Open it: {APP}/work-orders/{wo.number}/?facility=lakeside\n" in assigned.body
     [digest] = [m for m in mailoutbox if m.subject.startswith("Your work")]
-    assert f"{APP}/work-orders/?assigned={tech.id}&facility=lakeside\n" in digest.body
+    assert f"{APP}/my-work/?facility=lakeside\n" in digest.body  # slice 24: the digest's "all your open work" is My work
 
 
 def test_an_emailed_link_for_the_other_facility_offers_the_switch_and_opens_its_own_record(kim, numbers, lakeside, client,
@@ -150,7 +150,8 @@ def test_an_emailed_link_for_the_other_facility_offers_the_switch_and_opens_its_
     assert r.status_code == 302 and r["Location"] == path and int(client.session["_auth_user_id"]) == b.pk
     body = client.get(path).content.decode()
     assert THEIRS in body and OURS not in body  # Lakeside's own WO-26-0001
-    assert client.get(f"/work-orders/?assigned={tech.id}&facility=lakeside").status_code == 200  # the digest's list link, now here
+    my_work = client.get("/my-work/?facility=lakeside")  # the digest's My work link (slice 24), now here
+    assert my_work.status_code == 200 and numbers["lakeside"].number in my_work.content.decode()
 
 
 def test_a_link_for_this_facility_or_none_changes_nothing(kim, numbers, client):
