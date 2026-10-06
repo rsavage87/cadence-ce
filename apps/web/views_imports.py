@@ -12,15 +12,18 @@ ends the runs left unfinished for services.EXPIRE_DAYS first (services.expire_st
 
 /settings/import/<id>/ (import_run), by the run's status:
 - mapping: each of the importer's columns with a select of the file's columns (services.mapping_view: the guess chosen, the required
-  ones marked) and the chosen column's sample values, which import_samples reads again when the choice changes; the file's columns
-  nothing reads and the names it repeats. "Check the file" posts the choice (import_columns: services.confirm_columns).
+  ones marked) and the chosen column's sample values, which import_samples reads again when the choice changes (once the columns
+  are chosen, in another tab, the browser goes to the run's page instead); the file's columns nothing reads and the names it
+  repeats. "Check the file" posts the choice (import_columns: services.confirm_columns).
 - checking, importing: a progress bar that asks for the next chunk itself (web/_imports_progress.html posts to import_next on load;
   each answer is the bar again until the pass is done, then the browser loads the run's page). An import nobody has moved for
-  STALLED (a closed tab, a restart) waits for Continue instead, and either pass can be stopped (services.discard).
+  STALLED (a closed tab, a restart) waits for Continue instead, and either pass can be stopped (services.discard). Whoever's
+  browser moves a pass on, its rows act as the person who started it (ImportRun.pass_by), whom the panel names (_acting_ctx).
 - checked: what the import will do (the counts, the notes grouped with skipped rows first, how choice values were read, the totals,
-  and what it adds), Import (import_start: services.start_import, then the progress) and Discard (import_discard), and every row
+  and what it adds), whose levels the check used, Import (import_start: services.start_import, then the progress; refused while
+  another import runs, with a link to that one for someone who may open it: _blocking) and Discard (import_discard), and every row
   with a note as a CSV (import_notes).
-- imported, discarded, expired: what happened, read only.
+- imported, discarded, expired: what happened, read only (an import stopped before its first chunk saved nothing, and says so).
 
 Settings View opens the screen (scoped users never: web_view). A run is shown only to someone who may import its kind (runs_for: a
 404 otherwise, another facility's too); the steps look the run up in the facility and leave the refusal to the service. The run's
@@ -64,7 +67,7 @@ STATUS_CSS = {Status.MAPPING: "neutral", Status.CHECKING: "info", Status.CHECKED
 
 def _run(request, pk) -> ImportRun:
     """A run of a kind the user may import (another kind's, or another facility's, is a 404), without its rows until they are read."""
-    return get_object_or_404(services.runs_for(request.user).defer("rows").select_related("uploaded_by", "imported_by"), pk=pk)
+    return get_object_or_404(services.runs_for(request.user).defer("rows").select_related("uploaded_by", "imported_by", "pass_by"), pk=pk)
 
 
 def _step_run(pk) -> ImportRun:
@@ -85,6 +88,12 @@ def _go(request, url):
 def _import_started(run) -> bool:
     """Whether the run's counts are an import's (rows saved) rather than a check's (what an import would do)."""
     return run.status in (Status.IMPORTING, Status.IMPORTED) or run.imported_at is not None or run.imported_by_id is not None
+
+
+def _imported_some(run) -> bool:
+    """Whether an import saved any chunk (its offset is the import's: start_import starts the pass again at 0). An import stopped
+    before its first chunk saved nothing, though it was started."""
+    return _import_started(run) and run.offset > 0
 
 
 def _counts(run) -> list[dict]:
@@ -200,12 +209,31 @@ def _mapping_ctx(run, typed: dict | None = None, error: str = "") -> dict:
             "map_typed": typed is not None, "matched": sum(1 for r in rows if r["index"] is not None)}
 
 
-def _progress_ctx(run, *, poll: bool, wait: bool = False) -> dict:
-    return {"run": run, "pct": services.progress(run), "importing": run.status == Status.IMPORTING, "poll": poll, "trigger": WAIT if wait else "load",
-            "done_text": f"{run.offset:,}", "rows_text": f"{run.row_count:,}"}
+def _acting_ctx(run, viewer) -> dict:
+    """Who the run's current pass acts as (services._acting: pass_by, whoever's browser asks for the next chunk), for the page to
+    say so: a person (perhaps the viewer), the command line (a run uploaded by nobody, which may make any change), or nobody any
+    more (whoever started it has no account now: the pass is refused, so the page neither polls nor offers Continue)."""
+    return {"by": run.pass_by, "by_you": run.pass_by_id is not None and run.pass_by_id == viewer.pk,
+            "by_command": run.pass_by_id is None and run.uploaded_by_id is None, "by_gone": run.pass_by_id is None and run.uploaded_by_id is not None}
 
 
-def _summary_ctx(run) -> dict:
+def _progress_ctx(run, viewer, *, poll: bool, wait: bool = False) -> dict:
+    acting = _acting_ctx(run, viewer)
+    return {"run": run, "pct": services.progress(run), "importing": run.status == Status.IMPORTING, "poll": poll and not acting["by_gone"],
+            "trigger": WAIT if wait else "load", "done_text": f"{run.offset:,}", "rows_text": f"{run.row_count:,}", **acting}
+
+
+def _blocking(user, run) -> dict | None:
+    """The import that keeps `run` from starting (one at a time per facility), when `user` may open it (runs_for: the service's
+    refusal names it only then too): its page, who started it, and how far it is, or that it has stopped (nobody has moved it for
+    STALLED: it never finishes by itself, and waits for Continue or Stop)."""
+    other = services.runs_for(user).defer(*HEAVY).select_related("imported_by").filter(status=Status.IMPORTING).exclude(pk=run.pk).first()
+    if other is None:
+        return None
+    return {"run": other, "pct": services.progress(other), "stalled": timezone.now() - other.updated_at >= STALLED}
+
+
+def _summary_ctx(run, viewer) -> dict:
     """What the check found, or what the import did: the counts, the notes grouped, and the importer's summary (each value read
     once with its rows, the totals, and the names it adds: services.CREATED_SHOWN of a group at most, which `capped` says)."""
     summary = run.summary or {}
@@ -223,23 +251,26 @@ def _summary_ctx(run) -> dict:
     to_import, skipped = sum(c["n"] for c in counts if c["key"] in ("create", "update")), run.counts.get("skip", 0)
     started = _import_started(run)
     return {"counts": counts, "groups": groups, "values": values, "totals": totals, "created": created, "started": started,
+            "imported_some": _imported_some(run), **_acting_ctx(run, viewer),
             # a check stopped part way counted only the rows it reached: no counts, which would read as the file's
             "show_counts": bool(run.counts) and (started or run.checked_at is not None),
             "to_import": to_import, "to_import_text": f"{to_import:,}", "skipped": skipped, "skipped_text": f"{skipped:,}",
             "results_capped": (run.summary or {}).get("notes_not_kept", 0), "results_kept": f"{services.NOTES_KEPT:,}"}
 
 
-def _run_page(request, run, *, error: str = "", typed: dict | None = None):
+def _run_page(request, run, *, error: str = "", typed: dict | None = None, blocking: dict | None = None):
     importer = kinds.get(run.kind)
     ctx = {"nav_active": "settings", "run": run, "importer": importer, "css": STATUS_CSS.get(run.status, "neutral"), "error": error,
-           "key_label": importer.column(importer.key).label, "expire_days": services.EXPIRE_DAYS}
+           "key_label": importer.column(importer.key).label, "blocking": blocking,
+           # a file whose columns were never chosen (none kept) expires sooner: it still held every column of the export
+           "expire_days": services.EXPIRE_DAYS if run.columns else services.MAPPING_EXPIRE_DAYS}
     if run.status == Status.MAPPING:
         ctx.update(_mapping_ctx(run, typed, error))
     elif run.status in (Status.CHECKING, Status.IMPORTING):
         # The check carries on by itself; an import does only while someone is moving it (another tab, or this one a moment ago).
-        ctx.update(_progress_ctx(run, poll=run.status == Status.CHECKING or timezone.now() - run.updated_at < STALLED))
+        ctx.update(_progress_ctx(run, request.user, poll=run.status == Status.CHECKING or timezone.now() - run.updated_at < STALLED))
     else:
-        ctx.update(_summary_ctx(run))
+        ctx.update(_summary_ctx(run, request.user))
     return render(request, "web/imports_run.html", ctx)
 
 
@@ -251,10 +282,12 @@ def import_run(request, pk):
 
 @web_view(*PAGE)
 def import_samples(request, pk):
-    """The sample values of the file column a select now names (the column choice asks when it changes)."""
+    """The sample values of the file column a select now names (the column choice asks when it changes). Once the columns are
+    chosen (or the run ended, in another tab) the browser goes to the run's page: a redirect the request followed would put the
+    whole page in the samples' cell."""
     run = _run(request, pk)
     if not request.htmx or run.status != Status.MAPPING:
-        return redirect(_run_url(run))
+        return _go(request, _run_url(run))
     chosen = next((value for name, value in request.GET.items() if name.startswith("map-")), "")
     index = _index(chosen, len(run.header))
     return render(request, "web/_imports_samples.html", {"samples": base.samples(run.rows, index) if index is not None else []})
@@ -290,7 +323,7 @@ def import_next(request, pk):
     if run.status not in (Status.CHECKING, Status.IMPORTING):
         return HttpResponseClientRedirect(_run_url(run))
     waited = (run.status, run.offset) == before  # another request holds the run and is doing this chunk: ask again in a moment
-    return render(request, "web/_imports_progress.html", _progress_ctx(run, poll=True, wait=waited))
+    return render(request, "web/_imports_progress.html", _progress_ctx(run, request.user, poll=True, wait=waited))
 
 
 @require_POST
@@ -304,7 +337,7 @@ def import_start(request, pk):
         run = _run(request, pk)
         if run.status != Status.CHECKED:  # importing already (another tab), or ended: the page says where the run is
             return _go(request, _run_url(run))
-        return _run_page(request, run, error=" ".join(e.messages))  # another import is running in the facility
+        return _run_page(request, run, error=" ".join(e.messages), blocking=_blocking(request.user, run))  # another import is running
     return _go(request, _run_url(run))
 
 

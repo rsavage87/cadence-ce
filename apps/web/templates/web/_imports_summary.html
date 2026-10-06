@@ -1,15 +1,17 @@
 {% comment %}Slice 23, part D: what the check found (checked: Import and Discard) or what happened (imported, discarded, expired: read
    only). The counts by outcome, the notes grouped (services.problem_groups: skipped rows first), how choice values were read, the
-   totals to compare with the old system, and the names the import adds; every row with a note as a CSV.{% endcomment %}
-{% if error %}<div class="note warn imp-note" role="alert">{{ error }}</div>{% endif %}
+   totals to compare with the old system, and the names the import adds; every row with a note as a CSV. A refused Import names the
+   import that is running when the user may open it (`blocking`), with a link to it. A check run with someone else's levels says so:
+   Import uses the levels of whoever presses it. An import stopped before its first chunk saved nothing (`imported_some`).{% endcomment %}
+{% if error %}<div class="note warn imp-note" role="alert">{{ error }}{% if blocking %} <a class="link" href="{% url 'web:import_run' blocking.run.pk %}">Open {{ blocking.run.file_name }}</a>{% if blocking.run.imported_by %}, started by {{ blocking.run.imported_by }}{% endif %}: {% if blocking.stalled %}it stopped at {{ blocking.pct }}% and waits for Continue or Stop{% else %}{{ blocking.pct }}% done{% endif %}.{% endif %}</div>{% endif %}
 {% if run.status == "checked" %}
-<div class="note imp-note">Checked: nothing is saved yet. This is what importing the file will do.</div>
+<div class="note imp-note">Checked: nothing is saved yet. This is what importing the file will do.{% if by and not by_you %} The check used {{ by }}'s levels; Import uses those of whoever presses it, so where yours differ, a row can come out differently.{% elif by_command %} The check ran from the command line, which may make any change; Import uses the levels of whoever presses it, so a row can come out differently.{% endif %}</div>
 {% elif run.status == "imported" %}
 <div class="note ok imp-note">Imported. The file's rows are no longer kept here: what it added and changed is in Cadence now.</div>
 {% elif run.status == "discarded" %}
-<div class="note imp-note">Discarded{% if started %} while it was importing: the rows imported before it stopped stay in Cadence{% else %}: nothing from this file was saved{% endif %}.</div>
+<div class="note imp-note">Discarded{% if imported_some %} while it was importing: the rows imported before it stopped stay in Cadence{% elif started %} after Import was pressed, before any row was imported: nothing from this file was saved{% else %}: nothing from this file was saved{% endif %}.</div>
 {% else %}
-<div class="note imp-note">Expired: it was left unfinished for {{ expire_days }} days, so its rows were cleared{% if started %}. The rows imported before it stopped stay in Cadence{% else %} and nothing from it was saved{% endif %}.</div>
+<div class="note imp-note">Expired: it was left unfinished for {{ expire_days }} days, so its rows were cleared{% if imported_some %}. The rows imported before it stopped stay in Cadence{% else %} and nothing from it was saved{% endif %}.</div>
 {% endif %}
 
 {% if show_counts %}
@@ -46,7 +48,7 @@
           <div class="imp-where">Line{{ g.lines|pluralize }} {{ g.lines|join:", " }}{% if g.more %} and {{ g.more_text }} more{% endif %}{% if g.keys %} · {{ key_label }} {{ g.keys|join:", " }}{% endif %}</div>
         </div>
         {% empty %}
-        <div class="empty">{% if run.counts %}No row has a note.{% else %}No rows were checked.{% endif %}</div>
+        <div class="empty">{% if run.counts %}No row has a note.{% elif started %}No row was imported.{% else %}No rows were checked.{% endif %}</div>
         {% endfor %}
         {% if results_capped %}<div class="hint imp-capped">Every skipped row is listed; of the rows imported with a note, the first {{ results_kept }} are, and {{ results_capped }} more are not.</div>{% endif %}
       </div>

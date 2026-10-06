@@ -11,7 +11,8 @@ Time zone (slice 21, #set-zone): the facility's time zone (fs.set_time_zone), wh
 its daily jobs and emails run. Its form posts to /settings/time-zone/ (settings_time_zone, Settings Edit).
 
 Import data (slice 23, #set-import): a link to /settings/import/ (views_imports) for anyone who may import a kind of file
-(apps.imports.permissions.importable: each kind its own module's level), with the files of those kinds not finished yet.
+(apps.imports.permissions.importable: each kind its own module's level), with the files of those kinds not finished yet (those
+left for too long are ended first: apps.imports.services.expire_stale).
 """
 from django.core.exceptions import ValidationError
 from django.shortcuts import redirect, render
@@ -97,11 +98,13 @@ def _zone_ctx(request, error: str = "") -> dict:
 
 def _imports_ctx(user) -> dict:
     """The Import data panel (slice 23): the kinds `user` may import, in words, and their runs not yet finished. Empty (no panel)
-    for someone who may import none."""
+    for someone who may import none. Runs left unfinished too long are ended first (services.expire_stale, as the Import data page
+    does), so one abandoned long ago never reads as waiting."""
     labels = [imp.label.lower() for imp in imp_perms.importable(user)]
     if not labels:
         return {"import_kinds": ""}
     words = labels[0] if len(labels) == 1 else f"{', '.join(labels[:-1])}{',' if len(labels) > 2 else ''} and {labels[-1]}"
+    imp_services.expire_stale()
     unfinished = imp_services.runs_for(user).exclude(status__in=[ImportRun.Status.IMPORTED, ImportRun.Status.DISCARDED, ImportRun.Status.EXPIRED])
     return {"import_kinds": words, "import_open": unfinished.count()}
 
