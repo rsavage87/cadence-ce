@@ -1,6 +1,51 @@
 {% extends "web/base.html" %}
 {% block title %}All facilities{% endblock %}
 {% block content %}
-<div class="page-head"><div><h1>All facilities</h1><p class="sub">Every facility you have joined, side by side.</p></div></div>
-<div class="note">Coming in this slice.</div>
+<div class="page-head">
+  <div>
+    <h1>All facilities</h1>
+    <p class="sub">The Overview's figures for every facility you have joined, {% if month %}{{ month|date:"F Y" }} to date{% else %}each in its own current month to date{% endif %}. Each facility counts on its own clock; devices and open work orders are as of its today.</p>
+  </div>
+</div>
+
+<div class="tbl-wrap allf">
+  <table>
+    <thead><tr><th scope="col">Facility</th>{% for c in columns %}<th scope="col" class="num">{{ c }}</th>{% endfor %}</tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr{% if r.current %} class="cur"{% endif %}>
+        <th scope="row" class="allf-fac">
+          {% if r.current %}
+            {% if r.cells %}<a class="allf-name" href="{% url 'web:overview' %}">{{ r.name }}</a>{% else %}<span class="allf-name">{{ r.name }}</span>{% endif %}
+            <span class="chip acc">Current</span>
+          {% else %}
+            <form method="post" action="{% url 'web:facility_switch' %}">{% csrf_token %}
+              <input type="hidden" name="account" value="{{ r.account }}"><input type="hidden" name="screen" value="overview">
+              <button class="allf-name allf-switch" type="submit" aria-label="Switch to {{ r.name }}" title="Switch to {{ r.name }} and open its Overview">{{ r.name }}</button>
+            </form>
+          {% endif %}
+          {% if months_differ and r.month %}<small>{{ r.month|date:"F Y" }} to date</small>{% endif %}
+        </th>
+        {% if r.cells %}
+          {% for c in r.cells %}<td class="num" data-label="{{ c.label }}"><span class="two">{{ c.value }}{% if c.sub %}<small>{{ c.sub }}</small>{% endif %}</span></td>{% endfor %}
+        {% else %}
+          <td class="allf-none" colspan="{{ columns|length }}">No access to its Overview</td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+    {% if totals %}
+    <tfoot>
+      <tr class="allf-total">
+        <th scope="row" class="allf-fac"><span class="allf-name">All facilities</span><small>{{ totals.facilities }} facilities added up</small></th>
+        {% for c in totals.cells %}<td class="num" data-label="{{ c.label }}"><span class="two">{{ c.value }}{% if c.sub %}<small>{{ c.sub }}</small>{% endif %}</span></td>{% endfor %}
+      </tr>
+    </tfoot>
+    {% endif %}
+  </table>
+</div>
+<p class="hint allf-foot">
+  {% if totals %}The totals add each figure up and work every rate out again from the sums: PM on time over all PMs due, repair time weighted by repairs closed, uptime over all device-days, and service cost over all acquisition value. A recall alert that needs action in several facilities counts once.{% elif rows|length == 1 %}Each facility you join appears here beside this one.{% endif %}
+  {% if switchable %}Select a facility's name to switch to it and open its Overview.{% endif %}
+</p>
 {% endblock %}

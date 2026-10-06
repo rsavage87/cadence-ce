@@ -679,3 +679,36 @@ button.link{background:none;border:0;padding:0;font:inherit;font-size:12px;font-
 .user-menu .menu-facilities{border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin:4px 0 6px;padding:4px 0}
 .user-menu .menu-facilities form{margin:0}
 form.facility{margin:0}
+
+/* Slice 22, part B: All facilities (web/all_facilities.html). A table with a totals row on a desktop; on a phone each facility is a
+   card of label and value lines (the cell's data-label), so nothing scrolls sideways */
+.allf th[scope="row"]{background:none;color:var(--ink);font-size:13px;font-weight:400;white-space:normal;min-width:180px;padding:8px 12px;border-bottom:1px solid var(--line)}
+.allf th[scope="row"] small{display:block;color:var(--ink-3);font-size:12px;margin-top:2px}
+.allf .allf-name{font-weight:600;color:var(--ink);text-decoration:none}
+.allf a.allf-name:hover{color:var(--accent)}
+.allf form{margin:0;display:inline}
+.allf .allf-switch{background:none;border:0;padding:0;font:inherit;font-weight:600;color:var(--accent);cursor:pointer;text-align:left;text-decoration:underline;text-underline-offset:2px}
+.allf .chip{margin-left:6px;vertical-align:1px}
+.allf thead th{white-space:normal;vertical-align:bottom}
+.allf td.num{min-width:96px}
+.allf td .two small{white-space:normal}
+.allf td.allf-none{color:var(--ink-3)}
+.allf tbody tr:last-child th[scope="row"]{border-bottom:0}
+.allf tfoot th[scope="row"],.allf tfoot td{border-top:2px solid var(--line-2);border-bottom:0;background:var(--surface-2)}
+.allf tfoot td{font-weight:600}
+.allf tfoot td small{font-weight:400}
+.allf-foot{margin-top:10px;max-width:880px}
+@media (max-width:760px){
+  .allf table,.allf tbody,.allf tfoot,.allf tr,.allf th[scope="row"],.allf td{display:block}
+  .allf thead{display:none}
+  .allf tr{padding:10px 12px;border-bottom:1px solid var(--line)}
+  .allf tbody tr:last-child{border-bottom:0}
+  .allf th[scope="row"]{padding:0 0 6px;border:0;min-width:0}
+  .allf td,.allf td.num{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:4px 0;border:0;white-space:normal;min-width:0}
+  .allf td::before{content:attr(data-label);color:var(--ink-3);font-size:12.5px;font-weight:400;text-align:left}
+  .allf td.allf-none{display:block;padding:0}
+  .allf td.allf-none::before{content:none}
+  .allf td .two{text-align:right;min-width:0;overflow-wrap:anywhere}
+  .allf tfoot tr{border-top:2px solid var(--line-2);background:var(--surface-2)}
+  .allf tfoot th[scope="row"],.allf tfoot td{border-top:0;background:none}
+}

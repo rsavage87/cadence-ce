@@ -321,3 +321,12 @@ def csv_filename(meta: dict, day: date) -> str:
     """The CSV's name, the same for the screen's download and the email's attachment: cadence-cosr-2026-10-05.csv, or a custom
     report's from its name (cadence-pump-repairs-2026-10-05.csv)."""
     return f"cadence-{meta['file_stem']}-{day:%Y-%m-%d}.csv"
+
+
+# --- All facilities (slice 22) ---------------------------------------------------------------------------------------------------
+
+def alerts_needing_action_ids() -> set:
+    """The recall alerts (apps.recalls Alert ids) the current facility still has to act on: the ones the Overview's alerts tile counts
+    as needing action. An alert is shared by every facility it matches, so All facilities (apps.reports.all_facilities) unites these
+    sets to count each alert once."""
+    return set(AlertMatch.objects.filter(status=AlertMatch.Status.NEEDS_ACTION).order_by().values_list("alert_id", flat=True).distinct())
