@@ -9,7 +9,8 @@ Rules:
   progress, awaiting parts, and completed work orders take lines (a completed one is waiting for review, and its paperwork may
   lag the work).
 - Hours: a number above 0 and at most 24 on one line, at most 2 decimal places (more is refused, not rounded, as Settings does),
-  and at most 24 for one technician on one day across all work orders.
+  and at most 24 for one technician on one day across all work orders (the time imported from the previous system aside: a line of
+  it is a whole job's time on the day it was completed, never one day's work).
 - The date worked is never in the future, never before the work order was opened, and never after it was completed.
 - In-house work orders take an active technician of this facility: by default the one assigned, else the signed-in user's own
   technician record. Vendor service work orders take none (the vendor's time is the vendor's).
@@ -265,7 +266,8 @@ def add_labor(wo, *, hours, worked_on, technician=None, rate=None, description="
                      range_message=f"The rate is between $0 and {money_text(RATE_MAX)} an hour.")
     text = _text(description, "description", errors, limit=DESCRIPTION_MAX, what="description")
     if tech is not None and worked is not None and h is not None and not errors:
-        logged = LaborLine.objects.filter(technician=tech, worked_on=worked).aggregate(h=Sum("hours"))["h"] or Decimal(0)
+        day = LaborLine.objects.filter(technician=tech, worked_on=worked).exclude(work_order__source=Source.IMPORTED, description=IMPORTED_LABOR)
+        logged = day.aggregate(h=Sum("hours"))["h"] or Decimal(0)
         if logged + h > DAY_HOURS_MAX:
             errors["hours"] = (f"{tech.name} already has {plain(logged)} h logged on {worked:%b %-d, %Y}; "
                                f"one day holds at most {plain(DAY_HOURS_MAX)} h.")
@@ -323,10 +325,13 @@ def remove_part(line, *, by) -> None:
 #
 # Work order history from the previous system (apps.workorders.legacy) arrives done: its lines are recorded by history's rules, not
 # today's. Only on a work order that was imported (Source.IMPORTED), whatever its status (it is created closed, and its lines come
-# with it). No daily or per-line 24-hour cap (an old system's line may be a whole job's time), no active-technician rule (former
-# staff did the work), no default technician (never the person importing), and the worked day is the work order's own: completed,
-# else opened. The limits are the columns' (numeric sizes), so PostgreSQL never refuses a line. Each line's record and its audit
-# record carry `at`, a moment on that day, so the timeline and the History section read in business order.
+# with it). No daily or per-line 24-hour cap (an old system's line may be a whole job's time, so add_labor's day total leaves these
+# lines out), no active-technician rule (former staff did the work), no default technician (never the person importing), and the
+# worked day is the work order's own: completed, else opened. In-house time still names its technician: a labor line without one is
+# vendor time wherever it is read (cost of service, the drawer, the timeline, the custom labor report), so in-house hours that name
+# nobody here are an in-house cost line instead (add_imported_unnamed_labor). The limits are the columns' (numeric sizes), so
+# PostgreSQL never refuses a line. Each line's record and its audit record carry `at`, a moment on that day, so the timeline and the
+# History section read in business order.
 
 def _column_max(model, name: str) -> Decimal:
     """The largest value a numeric column holds: 9999.99 for numeric(6, 2)."""
@@ -338,6 +343,7 @@ IMPORT_HOURS_MAX = _column_max(LaborLine, "hours")
 IMPORT_RATE_MAX = _column_max(LaborLine, "rate")
 IMPORT_AMOUNT_MAX = _column_max(PartLine, "unit_cost")  # a cost is one part line, quantity 1
 IMPORTED_LABOR = "Labor (imported)"
+UNNAMED_LABOR = "In-house labor (imported)"  # in-house hours with no technician here: a part line of hours × rate
 
 
 def _imported(wo) -> WorkOrder:
@@ -366,11 +372,13 @@ def _backdate(model, line, at) -> None:
 @transaction.atomic
 def add_imported_labor(wo, *, hours, rate, technician=None, at, by=None) -> LaborLine:
     """Time from the previous system on an imported work order: `hours` (above 0, at most IMPORT_HOURS_MAX) at `rate` (0 to
-    IMPORT_RATE_MAX) for `technician` (this facility's, active or not) or none (unknown, or vendor service, which takes none).
-    Raises ValidationError in words."""
+    IMPORT_RATE_MAX) for `technician` (this facility's, active or not), or none on vendor service (the vendor's time). In-house
+    time that names nobody here is add_imported_unnamed_labor's. Raises ValidationError in words."""
     current = _imported(wo)
     h = _imported_amount(hours, what="labor hours", low=Decimal(0), high=IMPORT_HOURS_MAX, low_inclusive=False)
     r = _imported_amount(rate, what="labor rate", low=Decimal(0), high=IMPORT_RATE_MAX, low_inclusive=True)
+    if technician is None and not current.vendor_service:
+        raise ValidationError("In-house time is recorded with its technician: a line without one is vendor time.")
     if technician is not None:
         if current.vendor_service:
             raise ValidationError("Vendor service time is recorded without a technician.")
@@ -380,6 +388,23 @@ def add_imported_labor(wo, *, hours, rate, technician=None, at, by=None) -> Labo
                      hours=h, rate=r, description=IMPORTED_LABOR)
     _save(line, by, CHANGE_ADDED, at=at)
     _backdate(LaborLine, line, at)
+    return line
+
+
+@transaction.atomic
+def add_imported_unnamed_labor(wo, *, hours, rate, at, by=None) -> PartLine:
+    """In-house time from the previous system that names no technician here (the cell was blank, or names nobody or two people) on
+    an imported in-house work order: one part line, UNNAMED_LABOR, `hours` (above 0, at most IMPORT_HOURS_MAX) as its quantity at
+    `rate` (0 to IMPORT_RATE_MAX), so it costs what a labor line would and stays in-house spend (cost of service counts a part line
+    by its work order) instead of reading as vendor time. Raises ValidationError in words."""
+    current = _imported(wo)
+    h = _imported_amount(hours, what="labor hours", low=Decimal(0), high=IMPORT_HOURS_MAX, low_inclusive=False)
+    r = _imported_amount(rate, what="labor rate", low=Decimal(0), high=IMPORT_RATE_MAX, low_inclusive=True)
+    if current.vendor_service:
+        raise ValidationError("Vendor service time is recorded as a labor line without a technician.")
+    line = PartLine(tenant_id=current.tenant_id, work_order=current, description=UNNAMED_LABOR, quantity=h, unit_cost=r)
+    _save(line, by, CHANGE_ADDED, at=at)
+    _backdate(PartLine, line, at)
     return line
 
 

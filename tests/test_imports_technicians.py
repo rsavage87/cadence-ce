@@ -13,7 +13,6 @@ from pg_helpers import as_app_role, needs_postgres
 from apps.credentials import services as credentials
 from apps.credentials.models import Technician
 from apps.imports import services
-from apps.imports.kinds.technicians import display_name
 from apps.imports.models import ImportRun
 from apps.tenants.context import tenant_context
 
@@ -135,8 +134,28 @@ def test_a_value_too_long_for_its_column_skips_the_row(ctx, make_user):
 
 
 def test_names_are_written_first_last():
-    assert [display_name(n) for n in ("Whitfield, Dana", "  Dana   Whitfield ", "Whitfield,Dana M.", "Smith, John, Jr.", "Cher", ",Cher")] == [
-        "Dana Whitfield", "Dana Whitfield", "Dana M. Whitfield", "Smith, John, Jr.", "Cher", ",Cher"]
+    assert [credentials.technician_name(n) for n in ("Whitfield, Dana", "  Dana   Whitfield ", "Whitfield,Dana M.", "Smith, John, Jr.", "Cher",
+                                                     ",Cher")] == ["Dana Whitfield", "Dana Whitfield", "Dana M. Whitfield", "Smith, John, Jr.", "Cher", ",Cher"]
+
+
+def test_a_suffix_or_a_credential_after_a_comma_is_not_a_first_name():
+    names = ("John Smith, Jr.", "Dana Whitfield, CBET", "Ana Reyes, III", "Smith Jr., John", "Lee, Pat")
+    assert [credentials.technician_name(n) for n in names] == ["John Smith, Jr.", "Dana Whitfield, CBET", "Ana Reyes, III", "John Smith Jr.", "Pat Lee"]
+    assert [credentials.name_key(n) for n in names] == ["john smith jr", "dana whitfield", "ana reyes iii", "john smith jr", "pat lee"]
+    assert credentials.name_key("JOHN SMITH JR") == credentials.name_key("John Smith Jr.") == "john smith jr"
+    assert credentials.name_key("Lin Rn") == "lin rn"  # a first and a last name are never cut to one
+
+
+def test_a_name_with_a_suffix_or_a_credential_is_never_turned_around(ctx, make_user):
+    kim = make_user("director")
+    smith = Technician.objects.create(name="John Smith Jr.")  # as Invite user writes one, from first and last name
+    run = imported(kim, "Name,Title", '"John Smith, Jr.",BMET II', '"Dana Whitfield, CBET",BMET', '"Whitfield, Dana",Lead BMET')
+    assert notes(run)[4] == ("skip", ["Name Whitfield, Dana is also on line 3: one row per technician"])  # one person, written two ways
+    smith.refresh_from_db()
+    assert run.counts == {"update": 1, "create": 1, "skip": 1} and (smith.name, smith.title) == ("John Smith Jr.", "BMET II")
+    assert sorted(Technician.objects.values_list("name", flat=True)) == ["Dana Whitfield, CBET", "John Smith Jr."]
+    again = imported(kim, "Name,Title", "Dana Whitfield,BMET")  # the credential is not part of the name
+    assert again.counts == {"unchanged": 1} and Technician.objects.count() == 2
 
 
 # --- the services ------------------------------------------------------------------------------------------------------------------

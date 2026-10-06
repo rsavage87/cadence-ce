@@ -102,7 +102,8 @@ def test_the_columns_map_by_alias_and_read_no_free_text():
     assert [c.key for c in importer.required()] == ["legacy_number", "tag", "type", "status", "opened"]
     assert TYPE_WORDS["corrective"] == WoType.REPAIR and TYPE_WORDS["install"] == WoType.INSPECTION and TYPE_WORDS["ppm"] == WoType.PM
     assert STATUS_WORDS["void"] == WoStatus.CANCELLED and STATUS_WORDS["waiting on parts"] == WoStatus.AWAITING_PARTS
-    assert person_key("Whitfield,  Dana") == person_key("dana WHITFIELD") == "dana whitfield"
+    assert person_key("Whitfield,  Dana") == person_key("dana WHITFIELD") == person_key("Dana Whitfield, CBET") == "dana whitfield"
+    assert person_key("John Smith, Jr.") == person_key("Smith Jr., John") == "john smith jr"  # as the technicians import reads them
     assert costs.IMPORT_HOURS_MAX == Decimal("9999.99") and costs.IMPORT_RATE_MAX == Decimal("999999.99")
     assert costs.IMPORT_AMOUNT_MAX == Decimal("99999999.99")
 
@@ -173,7 +174,7 @@ def test_costs_become_lines_by_historys_rules(ctx, kim, pump, techs, former):
         line(number="3", hours="2", vendor="BD field service"),  # vendor service: the vendor rate, no technician
         line(number="4", labor="250", outside="100"),  # a labor cost without hours is outside service
         line(number="5", total="$1,200.00"),  # only a total
-        line(number="6", hours="1", labor="80", parts="20", total="150"),  # a total that is not the sum
+        line(number="6", technician="Dana Whitfield", hours="1", labor="80", parts="20", total="150"),  # a total that is not the sum
         line(number="7", hours="two", parts="N/A"),  # unreadable values are left out, never read as 0
     )
     assert run.counts == {"create": 7}
@@ -203,6 +204,58 @@ def test_costs_become_lines_by_historys_rules(ctx, kim, pump, techs, former):
     assert Decimal(totals["Labor $"]) == Decimal("99.99") + 30 * Decimal("82") + 2 * Decimal("215") + 80
     assert Decimal(totals["Parts $"]) == Decimal("104.50") and Decimal(totals["Outside service $"]) == Decimal("350.00")
     assert Decimal(totals["Total only $"]) == Decimal("1200.00") and Decimal(totals["Labor rate rounding (cents)"]) == -1
+
+
+def test_a_total_beside_a_breakdown_of_zeros_is_the_cost(ctx, kim, pump):
+    """Exports write 0.00 in the cost columns they do not use: the total is then the work order's cost, never dropped."""
+    run = run_file(kim, line(number="z1", hours="0", labor="0", parts="0", outside="0", total="450"), line(number="z2", hours="0", total="450"),
+                   line(number="z3", hours="0.00", labor="0.00", parts="0.00", outside="0.00", total="$450.00"),
+                   line(number="z4", hours="0", labor="0", total="0"))
+    for number in ("z1", "z2", "z3"):
+        wo = by_legacy(number)
+        assert [(p.description, p.unit_cost) for p in wo.part_lines.all()] == [("Imported cost", Decimal("450.00"))] and not wo.labor_lines.exists()
+    assert not by_legacy("z4").part_lines.exists() and not by_legacy("z4").labor_lines.exists()
+    assert notes_by_key(run) == {}  # no "the lines were imported": there were none
+    assert run.summary["totals"]["Costs"] == {"Total only $": "1350.00"}
+
+
+def test_in_house_hours_that_name_nobody_here_stay_in_house_spend(ctx, kim, pump, techs):
+    """A labor line without a technician is vendor time wherever it is read: in-house hours with a blank or unknown technician are
+    an in-house cost line of hours × rate instead, and only vendor service records time without one."""
+    run = run_file(kim, line(number="r1", completed="2024-03-08", hours="2", labor="164"),
+                   line(number="r2", completed="2024-03-08", hours="1", technician="J.S."),
+                   line(number="v1", completed="2024-03-08", hours="1", labor="215", vendor="BD field service"))
+    r1, r2, v1 = by_legacy("r1"), by_legacy("r2"), by_legacy("v1")
+    assert not r1.labor_lines.exists() and not r2.labor_lines.exists() and not r1.vendor_service
+    assert [(p.description, p.quantity, p.unit_cost) for p in r1.part_lines.all()] == [("In-house labor (imported)", 2, Decimal("82.00"))]
+    assert [(p.quantity, p.unit_cost) for p in r2.part_lines.all()] == [(1, get_settings().labor_rate)]
+    assert v1.labor_lines.get().technician is None  # the vendor's time
+    notes = notes_by_key(run)
+    assert notes["r1"] == ["In-house hours without a technician here: recorded as an in-house labor cost"]
+    assert notes["r2"] == ["Technician not found here: imported without one", "Labor cost estimated at today's rate", legacy.UNNAMED]
+    cost = cost_of_service(date(2024, 4, 15), acquisition=3200)
+    in_house = 164 + float(get_settings().labor_rate)
+    assert round(cost["in_house"], 2) == round(in_house * 365 / 182, 2) and round(cost["vendor_tm"], 2) == round(215 * 365 / 182, 2)
+    assert [e["text"] for e in timeline(r1)] == ["Opened: Imported from the previous system (work order r1)",
+                                                 "Part: In-house labor (imported) × 2 ($164.00)", "Status changed to closed: Imported"]
+    totals = run.summary["totals"]["Costs"]
+    assert Decimal(totals["Labor hours"]) == 4 and Decimal(totals["Labor $"]) == Decimal(str(in_house)) + 215  # the file's labor, all of it
+    with pytest.raises(ValidationError, match="In-house time is recorded with its technician"):
+        costs.add_imported_labor(r1, hours="1", rate="80", at=timezone.now(), by=kim)
+    with pytest.raises(ValidationError, match="Vendor service time"):
+        costs.add_imported_unnamed_labor(v1, hours="1", rate="80", at=timezone.now(), by=kim)
+
+
+def test_imported_time_never_fills_a_technicians_day_but_time_logged_here_does(ctx, kim, pump, vent, techs):
+    """An imported line is a whole job's time on the day it was completed, never that day's work: live time that day still fits."""
+    day = TODAY - timedelta(days=1)
+    run_file(kim, line(number="d1", opened=str(day - timedelta(days=3)), completed=str(day), technician="Dana Whitfield", hours="26"),
+             line(number="d2", status="In progress", opened=str(day), completed="", technician="Dana Whitfield", hours="3"))
+    live = create_work_order(asset=vent, type="repair", priority="normal", problem="Flow sensor", opened_on=day, assigned_to=techs["dana"])
+    assert costs.add_labor(live, hours="2", worked_on=day, by=kim).technician == techs["dana"]
+    costs.add_labor(by_legacy("d2"), hours="20", worked_on=day, by=kim)  # time logged here on an imported work order counts
+    with pytest.raises(ValidationError, match=f"Dana Whitfield already has 22 h logged on {day:%b %-d, %Y}"):
+        costs.add_labor(live, hours="3", worked_on=day, by=kim)
 
 
 def test_costs_no_line_can_hold_skip_the_row_in_words(ctx, kim, pump):
@@ -299,7 +352,8 @@ def test_values_it_reads_around_are_noted_and_the_rest_imports(ctx, kim, pump, t
 # --- re-runs and the file as a whole ------------------------------------------------------------------------------------------------
 
 def test_a_rerun_finds_what_it_imported_and_never_doubles(ctx, kim, pump, vent, techs):
-    rows = [line(number="10423", hours="1", labor="80"), line(number="10424", status="In progress", completed="", opened=str(TODAY))]
+    rows = [line(number="10423", technician="Dana Whitfield", hours="1", labor="80"),
+            line(number="10424", status="In progress", completed="", opened=str(TODAY))]
     run_file(kim, *rows)
     assert WorkOrder.objects.count() == 2 and LaborLine.objects.count() == 1
     rows[1] = line(number="10424", status="Completed", opened=str(TODAY), completed=str(TODAY))

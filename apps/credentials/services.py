@@ -4,6 +4,7 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.utils import timezone
 
 from apps.pm.dates import add_months
@@ -97,6 +98,38 @@ def coverage_by_category(as_of: date | None = None) -> list[dict]:
 TECHNICIAN_FIELDS = ("name", "title", "certification", "weekly_capacity_hours", "is_active")
 DEFAULT_WEEKLY_HOURS = Decimal(Technician._meta.get_field("weekly_capacity_hours").default)
 MAX_WEEKLY_HOURS = Decimal(80)
+# Words a name can end with after a comma, which never start a first name ("John Smith, Jr.", "Dana Whitfield, CBET"): a suffix is
+# part of the name, a credential is not.
+NAME_SUFFIXES = frozenset({"jr", "sr", "ii", "iii", "iv"})
+NAME_CREDENTIALS = frozenset({"cbet", "cres", "cles", "cabt", "chtm", "cce", "bmet", "phd", "rn"})
+
+
+def _ends_a_name(text: str) -> bool:
+    """Whether `text` is only suffixes and credentials ("Jr.", "CBET", "III CBET")."""
+    words = [w.strip(".").lower() for w in text.replace(",", " ").split()]
+    return bool(words) and all(w in NAME_SUFFIXES or w in NAME_CREDENTIALS for w in words)
+
+
+def technician_name(name: str) -> str:
+    """A name as Cadence writes it: First Last ("Whitfield, Dana" -> "Dana Whitfield"), single spaces. A comma before a suffix or a
+    credential is not Last, First ("John Smith, Jr." and "Dana Whitfield, CBET" stay in their order), and a name with more than one
+    comma is left in its order: which part is the last name is not clear."""
+    name = " ".join((name or "").split())
+    if name.count(",") == 1:
+        last, first = (part.strip() for part in name.split(","))
+        if last and first and not _ends_a_name(first):
+            return f"{first} {last}"
+    return name
+
+
+def name_key(name: str) -> str:
+    """What two technicians' names are compared by (the technicians and work order imports, and Invite user's technician profile):
+    First Last, lowercase, without commas, a suffix without its period, and no credential at the end ("Smith Jr., John", "John Smith,
+    Jr." and "john smith jr" are one name, as are "Dana Whitfield, CBET" and "Dana Whitfield")."""
+    words = [w.strip(".") if w.strip(".") in NAME_SUFFIXES else w for w in technician_name(name).replace(",", " ").lower().split()]
+    while len(words) > 2 and words[-1].strip(".") in NAME_CREDENTIALS:  # a first and a last name stay
+        words.pop()
+    return " ".join(words)
 
 
 def _clean_technician(technician: Technician) -> None:
@@ -128,7 +161,8 @@ def _clean_technician(technician: Technician) -> None:
 
 def create_technician(*, name: str, title: str = "", certification: str = "", weekly_capacity_hours=None, is_active: bool = True) -> Technician:
     """A technician with no user account: one the import brings over, current or former (a former one is inactive, so imported
-    work orders can still name who did the work). Invite user's create_technician adds one linked to the new account."""
+    work orders can still name who did the work). Invite user's create_technician links one to the new account
+    (add_account_technician)."""
     technician = Technician(name=name, title=title, certification=certification, is_active=is_active,
                             weekly_capacity_hours=DEFAULT_WEEKLY_HOURS if weekly_capacity_hours is None else weekly_capacity_hours)
     _clean_technician(technician)
@@ -148,6 +182,28 @@ def update_technician(technician: Technician, **fields) -> Technician:
     if fields:
         technician.save(update_fields=[*fields, "updated_at"])
     return technician
+
+
+@transaction.atomic
+def add_account_technician(user, *, name: str, title: str) -> tuple[Technician, bool]:
+    """The technician profile of `user`, a new account (Invite user's create_technician): the facility's one technician without an
+    account whose name is `name` (name_key), linked and made active (the person works here now), so a technician the import added
+    is never doubled (two with one name, and neither import could name either again); else a new one with `title`. Several without
+    an account and with that name are refused: which one is this person is for the facility to say. Returns (the technician,
+    whether it was already here)."""
+    key = name_key(name)
+    unlinked = Technician.objects.select_for_update().filter(tenant_id=user.tenant_id, user__isnull=True)  # locked: one account each
+    found = [t for t in unlinked if name_key(t.name) == key]
+    if len(found) > 1:
+        many = "Two" if len(found) == 2 else str(len(found))
+        raise ValidationError(f"{many} technicians here without an account are named {name}, so which one this person is cannot be told. "
+                              "Invite them without a technician profile.")
+    if found:
+        technician = found[0]
+        technician.user, technician.is_active = user, True
+        technician.save(update_fields=["user", "is_active", "updated_at"])
+        return technician, True
+    return Technician.objects.create(tenant_id=user.tenant_id, user=user, name=name, title=title), False
 
 
 # --- credential lifecycle (the Users and access tab) ---------------------------------------------
