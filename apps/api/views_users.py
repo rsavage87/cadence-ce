@@ -61,7 +61,7 @@ Roles
                                             back as a GET returned it is fine, the Director's and your own role's included). PUT and
                                             DELETE are not offered.
 
-Technicians (read only: no service adds or edits a technician; Invite user's create_technician adds one with the account)
+Technicians (read only here: Invite user's create_technician adds one with the account, and the technicians import adds and edits them)
   GET    /api/v1/technicians/               View. Each with their credentials.
   GET    /api/v1/technicians/{id}/          View.
 
@@ -370,7 +370,7 @@ class RoleViewSet(UsersModule):
 # --- technicians and credentials -------------------------------------------------------------------------------------------------
 
 class TechnicianViewSet(FacilityRequired, TenantViewSet):
-    """Read only: no service adds or edits a technician (Invite user's create_technician adds one with the account)."""
+    """Read only here: Invite user's create_technician adds one with the account; the technicians import (slice 23) adds and edits them."""
 
     model, module, serializer_class = Technician, Module.USERS, su.TechnicianSerializer
     http_method_names = ["get", "head", "options"]

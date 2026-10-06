@@ -204,7 +204,7 @@ class AssetViewSet(EquipmentWrites, TenantViewSet):
 
 class WorkOrderViewSet(TenantViewSet):
     model, module, serializer_class = WorkOrder, "workorders", s.WorkOrderSerializer
-    search_fields = ["number", "asset__tag", "problem", "requester"]
+    search_fields = ["number", "legacy_number", "asset__tag", "problem", "requester"]
     ordering_fields = ["opened_on", "due_on", "priority"]
     # Slice 16: a scoped user reads and works (at the usual levels) only the work orders in their share. Creating is refused to a
     # company-scoped user (create below) and takes only devices in the share; deleting stays closed to them.

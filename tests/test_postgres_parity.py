@@ -68,8 +68,9 @@ def test_the_importer_skips_a_row_with_a_value_too_long_for_its_column(ctx, tmp_
                  f"ZZ-1,Acme,M1,ICU,{'R' * 45},12,100\nZZ-2,Acme,M1,ICU,4,99999,100\nZZ-3,Acme,M1,ICU,5,12,99999999999\n")
     out, err = StringIO(), StringIO()
     call_command("import_assets", "--tenant", "riverside", str(f), stdout=out, stderr=err)
-    assert "1 created" in out.getvalue() and "2 skipped" in out.getvalue()
-    assert "the room is longer than 40 characters" in err.getvalue() and "is too large" in err.getvalue()
+    # Slice 23: a value too long for its column still skips the row; a cost it cannot read is left blank with a note
+    assert "2 created, 0 updated, 1 skipped" in out.getvalue() and "Room is longer than 40 characters" in err.getvalue()
+    assert "Acquisition cost not read" in out.getvalue() and Asset.objects.get(tag="ZZ-3").acquisition_cost == 0
     assert Asset.objects.get(tag="ZZ-2").device_model.oem_pm_interval_months == 12  # out of range: the default
 
 

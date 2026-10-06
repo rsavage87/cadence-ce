@@ -12,10 +12,10 @@ The row's device goes on the contract (add_asset). A tag not here, or a retired 
 imports; a device on another contract that ends later than this one stays there, with a note (the later contract is the one that
 covers it); otherwise it moves. Notes never name the tag: the line does.
 
-A chunk knows only its own lines, and the check rolls each chunk back (apps.imports.services). So a disagreement is noted between
-lines of one chunk, and during the check a contract a line adds is there for the later lines of that chunk only: in the check, a
-line of a later chunk that repeats the contract's values reads as adding it again, and one with only its reference and a tag as a
-skip, while the import finds the contract the earlier chunk committed.
+A chunk knows only its own lines, and the check rolls each chunk back (apps.imports.services). A contract's consecutive lines are
+kept in one chunk (keep_together), so in a file sorted by contract, as exports are, the check sees what the import will. Lines of
+one contract spread through the file are checked chunk by chunk: a later chunk's line then reads as adding the contract again (or,
+with only a reference and a tag, as a skip), while the import finds the contract the earlier chunk committed.
 """
 from apps.accounts.models import Level, Module
 from apps.contracts import services as contracts
@@ -53,6 +53,7 @@ class ContractsImporter(Importer):
     module = Module.CONTRACTS
     level = Level.EDIT
     key = "reference"
+    keep_together = True  # a contract's lines in one chunk (apps.imports.services._chunk_end)
     order = 20
     description = ("Service contracts, by reference: one row per contract, or one per covered device with its asset tag (the reference "
                    "repeats). Contracts already here are updated; a blank cell keeps what is here.")

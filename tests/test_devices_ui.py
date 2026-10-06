@@ -554,7 +554,7 @@ def test_forms_cover_what_the_services_take(ctx):
     assert not {"tag", "status", "contract", "last_pm_on"} & set(EditDeviceForm.base_fields)
     params = set(inspect.signature(eq.create_device_model).parameters) - {"by"}
     assert set(MODEL_FIELDS) == params
-    create = set(inspect.signature(eq.create_asset).parameters) - {"by", "today", "device_model", "department"}
+    create = set(inspect.signature(eq.create_asset).parameters) - {"by", "today", "device_model", "department", "added_on"}  # added_on: the importer's
     assert create <= set(NewDeviceForm.base_fields)
 
 

@@ -228,3 +228,20 @@ def test_a_contracts_import_under_the_policies(ctx, make_user, vent, pump):
     run = run_through(services.start_import(run, kim), kim)  # the long vendor never reaches PostgreSQL, which would refuse it
     assert run.counts == {"create": 1, "unchanged": 1, "skip": 1} and notes(run)[4] == ("skip", ["Vendor is longer than 120 characters"])
     assert Asset.objects.get(pk=vent.pk).contract.reference == "SC-1" and Asset.objects.get(pk=pump.pk).contract == later
+
+
+def test_a_contracts_lines_are_checked_in_one_chunk_so_the_check_matches_the_import(ctx, device, make_user, monkeypatch):
+    """Merge fix: the check rolls each chunk back, so a contract added by a line of one chunk would be missing for its lines in the
+    next; a contract's consecutive lines stay in one chunk (keep_together), and the check reads as the import does."""
+    monkeypatch.setattr(services, "CHUNK", 2)
+    kim = make_user("director")
+    for n in range(1, 6):
+        device(f"P-{n}")
+    lines = [HEADER, "SC-9,Acme,OEM,Full,2026-01-01,2026-12-31,5000,P-1"] + [f"SC-9,,,,,,,P-{n}" for n in range(2, 6)] + \
+        ["SC-10,Acme,OEM,Full,2026-01-01,2026-12-31,100,"]
+    run = checked(kim, *lines)
+    check = (dict(run.counts), sorted(notes(run).items()))
+    assert run.counts == {"create": 2, "update": 4}, run.results
+    run = run_through(services.start_import(run, kim), kim)
+    assert (dict(run.counts), sorted(notes(run).items())) == check
+    assert Contract.objects.get(reference="SC-9").covered_assets().count() == 5

@@ -35,6 +35,7 @@ from .permissions import can_import
 logger = logging.getLogger(__name__)
 
 CHUNK = 200
+KEEP_TOGETHER_MAX = 2_000  # rows of one key kept in one chunk (a contract covering that many devices)
 EXPIRE_DAYS = 14
 CREATED_SHOWN = 500  # names kept per group of "what the import adds"
 RESULTS_KEPT = 5_000  # rows with notes kept on a run (a file whose every row has a note says the same thing many times over)
@@ -158,7 +159,7 @@ def process(run, user) -> ImportRun:
         importing = run.status == Status.IMPORTING
         importer = _importer(run)
         start = run.offset
-        end = min(start + getattr(importer, "chunk", CHUNK), run.row_count)
+        end = _chunk_end(run, importer, start)
         rows = [dict(zip(run.columns, (base.clean(c) for c in cells))) for cells in run.rows[start:end]]
         ctx = base.Context(user=user, today=timezone.localdate(), check=not importing)
         results = []
@@ -183,6 +184,19 @@ def process(run, user) -> ImportRun:
             _finish(run, user, importing)
         run.save()
     return run
+
+
+def _chunk_end(run, importer, start: int) -> int:
+    """Where the chunk starting at `start` ends. An importer whose file repeats its key on purpose (a contract once per covered
+    device: keep_together) gets each key's consecutive rows in one chunk, up to KEEP_TOGETHER_MAX, so the check, which rolls every
+    chunk back, sees a contract the key's first row adds, as the import will."""
+    end = min(start + getattr(importer, "chunk", CHUNK), run.row_count)
+    if getattr(importer, "keep_together", False) and importer.key in run.columns:
+        i = run.columns.index(importer.key)
+        same = lambda a, b: base.clean(run.rows[a][i]).lower() == base.clean(run.rows[b][i]).lower()  # noqa: E731
+        while end < min(run.row_count, start + KEEP_TOGETHER_MAX) and same(end, end - 1):
+            end += 1
+    return end
 
 
 def _apply(importer, ctx, row: dict, result) -> None:

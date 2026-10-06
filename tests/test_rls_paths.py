@@ -207,3 +207,15 @@ def test_seed_demo(rls, db):
         call_command("seed_demo", stdout=(again := StringIO()))  # the second run sees the devices and stops
     assert rls.violations == []
     assert "already seeded" in again.getvalue()
+
+
+def test_the_import_commands(rls, tenant, tmp_path):
+    """Slice 23: import_assets and import_data find the facility (Tenant only) before tenant_context, then work inside it."""
+    path = tmp_path / "inventory.csv"
+    path.write_text("Asset Tag,Manufacturer,Model,Department\nCT-1,GE HealthCare,Revolution CT,Radiology\n")
+    techs = tmp_path / "technicians.csv"
+    techs.write_text("Name,Title\nDana Whitfield,BMET II\n")
+    with rls:
+        call_command("import_assets", "--tenant", "riverside", str(path), stdout=StringIO(), stderr=StringIO())
+        call_command("import_data", "--tenant", "riverside", "--kind", "technicians", str(techs), stdout=StringIO(), stderr=StringIO())
+    assert rls.violations == []

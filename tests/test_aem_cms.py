@@ -531,7 +531,8 @@ def test_an_import_never_changes_a_models_mark(ctx, dept, c_arm, pump_model, peo
 def test_an_unreadable_mark_skips_the_row(ctx, tmp_path):
     out, err = _import(tmp_path, "CT-1,GE HealthCare,Revolution CT,Radiology,maybe\nCT-2,GE HealthCare,Revolution CT,Radiology,yes\n")
     assert "1 created, 0 updated, 1 skipped" in out
-    assert "Skipped 'CT-1': OEM schedule required is 'maybe'; use yes or no (blank is no)." in err
+    # slice 23: the importer reports skips grouped, by line and key, never echoing the cell
+    assert "Skipped 1 row: OEM schedule required not read: use yes or no (blank is no)" in err and "(CT-1)" in err
     assert list(Asset.objects.values_list("tag", flat=True)) == ["CT-2"] and DeviceModel.objects.get().oem_schedule_required
 
 
@@ -566,6 +567,7 @@ def test_marking_a_model_on_aem_under_the_policies(client, people, c_arm, tenant
 def test_importing_the_mark_under_the_policies(ctx, tmp_path):
     as_app_role()
     out, err = _import(tmp_path, "CT-1,GE HealthCare,Revolution CT,Radiology,yes\nCT-2,GE HealthCare,Revolution CT,Radiology,perhaps\n")
-    assert "1 created, 0 updated, 1 skipped" in out and "'perhaps'" in err
+    # slice 23: CT-2's model is already there (CT-1 added it), so the mark column is not read for it
+    assert "2 created, 0 updated, 0 skipped" in out
     with tenant_context(ctx):
         assert DeviceModel.objects.get(model="Revolution CT").oem_schedule_required
