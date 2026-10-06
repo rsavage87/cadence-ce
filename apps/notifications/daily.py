@@ -4,8 +4,10 @@ sends them once a day (apps.jobs: staff_notifications, after the report emails),
 
 The daily digest goes to each person who chose it on their Notifications page (apps.notifications.services.wants) and who works the
 facility's work orders as a technician: an active Technician record linked to their account, Work orders View, and a role that sees
-the whole facility. It lists their open work orders due today or overdue, and their open PMs due in the next seven days; a day with
-nothing to list sends nothing. At most one a day (NotificationSent: digest, the day).
+the whole facility. It lists their work due today or overdue, and their open PMs due in the next seven days; a day with nothing to
+list sends nothing. At most one a day (NotificationSent: digest, the day). Slice 24: their work is My work's, and "due" is My work's
+one definition (apps.workorders.my_work.mine and due: open or in progress, due today or before, not waiting on parts), so the email,
+the page, and its nav badge count the same work; its "all your open work" link opens My work.
 
 Contract reminders go to each person with Contracts Edit (who renews or replaces a contract) who has not turned them off, about each
 contract that still covers devices in use and ends in 90, 30, or 7 days, or has just ended. Each contract and stage is reminded once
@@ -48,9 +50,9 @@ from apps.credentials.models import Technician
 from apps.equipment.models import Asset
 from apps.tenants.context import tenant_context
 from apps.tenants.models import Tenant
-from apps.workorders import scoping
+from apps.workorders import my_work, scoping
 from apps.workorders.models import WoType
-from apps.workorders.services import PRIORITY_RANK, open_work_orders
+from apps.workorders.services import PRIORITY_RANK
 
 from .models import NotificationSent
 from .services import preferences_for, wants
@@ -142,13 +144,15 @@ def _wo_line(wo, tenant, today: date) -> dict:
             "tag": asset.tag, "device": asset.device_model.description, "department": asset.department.name, "url": _url(tenant, "web:wo", wo.number)}
 
 
-def digest_for(user, technician, tenant, today: date) -> dict:
+def digest_for(user, tenant, today: date) -> dict:
     """What `user`'s digest for `today` lists: {"due": [...], "due_total", "pms": [...], "pms_total"}, each list at most LIST_CAP
-    lines (_wo_line). Due: their open work orders due today or before. PMs: their open PM work orders due in the next PM_DAYS."""
-    mine = scoping.work_orders(user, open_work_orders().filter(assigned_to=technician))  # the whole facility: a scoped user is refused
+    lines (_wo_line). Their work is My work's (apps.workorders.my_work.mine: the work orders assigned to their own active technician
+    profile; digest_refusal has refused a scoped user and one without a profile). Due: my_work.due, the one "due" My work and its
+    badge show (open or in progress, due today or before; work waiting on parts is not due). PMs: their open PM work orders due in
+    the next PM_DAYS, whatever their status."""
     related = ("asset", "asset__device_model", "asset__department")
-    due = mine.filter(due_on__lte=today).select_related(*related).order_by(PRIORITY_RANK, "due_on", "number")
-    pms = (mine.filter(type=WoType.PM, due_on__gt=today, due_on__lte=today + timedelta(days=PM_DAYS)).select_related(*related)
+    due = my_work.due(user, today).select_related(*related).order_by(PRIORITY_RANK, "due_on", "number")
+    pms = (my_work.mine(user).filter(type=WoType.PM, due_on__gt=today, due_on__lte=today + timedelta(days=PM_DAYS)).select_related(*related)
            .order_by("due_on", "asset__tag"))
     return {"due": [_wo_line(wo, tenant, today) for wo in due[:LIST_CAP]], "due_total": due.count(),
             "pms": [_wo_line(wo, tenant, today) for wo in pms[:LIST_CAP]], "pms_total": pms.count()}
@@ -253,7 +257,7 @@ def send_digest(user, technician, tenant, today: date) -> str:
     reason = digest_refusal(user, technician)
     if reason:
         return reason
-    items = digest_for(user, technician, tenant, today)
+    items = digest_for(user, tenant, today)
     if not items["due_total"] and not items["pms_total"]:
         return "quiet"
     claim = _claim(Kind.DIGEST, today.isoformat(), user)
@@ -261,7 +265,7 @@ def send_digest(user, technician, tenant, today: date) -> str:
         raise AlreadySent
     context = {**items, "name": _name(user), "facility": tenant.name, "today": today, "pm_days": PM_DAYS,
                "due_more": items["due_total"] - len(items["due"]), "pms_more": items["pms_total"] - len(items["pms"]),
-               "list_url": _url(tenant, "web:workorders", query=f"assigned={technician.id}"), "preferences_url": _url(tenant, "web:notifications")}
+               "my_work_url": _url(tenant, "web:my_work"), "preferences_url": _url(tenant, "web:notifications")}
     return "sent" if _send_claimed(user, DIGEST_TEMPLATE, context, [claim]) else "failed"
 
 

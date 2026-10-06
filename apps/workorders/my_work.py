@@ -15,8 +15,9 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from django.db.models import Sum
+from django.urls import reverse
 
-from apps.accounts.models import DataScope
+from apps.accounts.models import DataScope, Level, Module
 from apps.credentials.services import technician_of
 
 from . import scoping
@@ -153,3 +154,40 @@ def hours(user, today: date) -> dict | None:
     monday = today - timedelta(days=today.weekday())
     total = lambda qs: qs.aggregate(h=Sum("hours"))["h"] or Decimal(0)  # noqa: E731
     return {"today": total(lines.filter(worked_on=today)), "week": total(lines.filter(worked_on__gte=monday, worked_on__lte=today))}
+
+
+# --- what a scanned label opens (slice 24, part D) ----------------------------------------------------------------------------
+
+WO_TAB = "wo"  # the device drawer's Work orders tab (apps.web.views.asset_drawer_context)
+
+
+@dataclass(frozen=True)
+class ScanTarget:
+    """What scanning a device's label opens (scan_target): one work order, or the device's drawer at `tab` (blank: its first)."""
+
+    asset: object
+    work_order: object = None
+    tab: str = ""
+
+    @property
+    def url(self) -> str:
+        """Its page, opened directly: the work order's, or the device's at `tab`."""
+        if self.work_order is not None:
+            return reverse("web:wo", args=[self.work_order.number])
+        url = reverse("web:asset", args=[self.asset.tag])
+        return f"{url}?tab={self.tab}" if self.tab else url
+
+
+def scan_target(user, asset) -> ScanTarget:
+    """What scanning `asset`'s label opens for `user`: the one rule for Scan opened from My work (apps.web.views_scan) and the portal's
+    "Open in Cadence" link for a signed-in member (apps.portal.views; an iPhone's Camera app opens a label's link there). For someone
+    with My work and Work orders View, the one open work order of theirs on the device (mine(): their share first) when there is
+    exactly one; otherwise (none of theirs, or several to choose from) the device at its Work orders tab. Anyone else gets the device,
+    as before. The caller has checked that `user` may see the device (Equipment View, scoping.can_see_asset); call inside the
+    facility's context (the role and the technician profile are its rows)."""
+    if not user.has_level(Module.WORKORDERS, Level.VIEW) or not has_my_work(user):
+        return ScanTarget(asset)
+    theirs = list(mine(user).filter(asset=asset).order_by("number")[:2])
+    if len(theirs) == 1:
+        return ScanTarget(asset, work_order=theirs[0])
+    return ScanTarget(asset, tab=WO_TAB)

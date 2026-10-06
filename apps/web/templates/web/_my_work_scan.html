@@ -1,0 +1,11 @@
+{% load web %}
+{% comment %}My work's Scan button (slice 24, part D), at the top of the page: one large target that opens Scan tag in the modal with
+   from=my_work, so a device found opens what apps.workorders.my_work.scan_target says (the one open work order of theirs on it, else
+   the device's work orders) over My work. Without JavaScript the link opens the scan page. Shown to whoever may use Scan tag (its
+   door is Equipment View, a scoped user's share included: exactly when the nav has Equipment).{% endcomment %}
+{% for item in shell.nav %}{% if item.key == "equipment" %}
+<div class="mw-scan">
+  <a class="btn primary mw-scan-btn" href="{% url 'web:scan' %}?from=my_work" hx-get="{% url 'web:scan' %}?from=my_work" hx-target="#modal-card"
+     hx-swap="innerHTML">{% icon "scan" %} Scan a label</a>
+</div>
+{% endif %}{% endfor %}

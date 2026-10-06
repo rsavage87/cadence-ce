@@ -223,7 +223,7 @@ def test_the_digest_lists_due_or_overdue_work_and_the_weeks_pms(tenant, crew, ma
     assert f"{wos['week_end_pm']} · Normal priority · Open" in body
     for key in ("far_pm", "soon_repair", "done", "toms"):
         assert wos[key] not in body, key
-    assert f"{APP}/work-orders/?assigned={crew['techs']['dana'].id}&facility=riverside\n" in body
+    assert f"All your open work, on My work:\n{APP}/my-work/?facility=riverside\n" in body  # slice 24: My work, not the list
     assert f"{APP}/account/notifications/?facility=riverside\n" in body
     assert body.index(wos["late"]) < body.index(wos["today_pm"])  # high priority first
 

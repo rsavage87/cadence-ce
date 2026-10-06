@@ -14,6 +14,10 @@ them, with a link that opens the device in Cadence. Everyone else gets the page 
 facility, a role without Equipment View, a share that leaves the device out, or a tag that is no device. The signed-in user is loaded
 without their role (apps.accounts.backends.get_user: the role is a tenant-scoped row), so the role is read only for a member of
 this facility and only inside its tenant_context, where row-level security shows it; another facility's user's role is never read.
+
+Slice 24: the link opens what Scan from My work opens (apps.workorders.my_work.scan_target, one rule): for someone with My work and
+Work orders View, the one open work order of theirs on the device (the link names it), else the device at its Work orders tab;
+anyone else the device. So a technician whose iPhone's Camera app opened the label lands on their work.
 """
 from contextlib import contextmanager
 
@@ -21,7 +25,6 @@ from django.conf import settings
 from django.core.cache import caches
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
-from django.urls import reverse
 from django.views.decorators.csrf import csrf_protect
 from simple_history.models import HistoricalRecords
 
@@ -31,7 +34,7 @@ from apps.equipment.models import Asset, Department
 from apps.facility import services as fs
 from apps.tenants.context import tenant_context
 from apps.tenants.models import Tenant
-from apps.workorders import scoping
+from apps.workorders import my_work, scoping
 from apps.workorders.models import ServiceRequest, Urgency
 from apps.workorders.services import create_service_request
 
@@ -64,7 +67,10 @@ def _open_in_cadence(request, tenant, asset) -> dict | None:
         return None
     if not user.has_level(Module.EQUIPMENT, Level.VIEW) or not scoping.can_see_asset(user, asset):
         return None
-    return {"name": str(user), "url": reverse("web:asset", args=[asset.tag])}
+    target = my_work.scan_target(user, asset)  # slice 24: what Scan from My work opens (an iPhone's Camera app lands here)
+    wo = target.work_order
+    return {"name": str(user), "url": target.url,
+            "label": f"Open {wo.number} on {asset.tag} in Cadence" if wo is not None else f"Open {asset.tag} in Cadence"}
 
 
 @contextmanager

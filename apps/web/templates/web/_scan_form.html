@@ -1,8 +1,12 @@
 {% load web %}
 {% comment %}The Scan tag form (slice 18, views_scan.scan), in the modal (`modal`: HTMX into #modal-card) and on the page (a plain GET).
    A handheld scanner types into the field and presses Enter; the camera block is static/web/scan.js's, which shows "Use camera" only
-   where the browser can read codes with a camera and otherwise leaves the line saying so (also what shows without JavaScript).{% endcomment %}
-<form class="scan-form" action="{% url 'web:scan' %}" method="get"{% if modal %} hx-get="{% url 'web:scan' %}" hx-target="#modal-card" hx-sync="this:replace"{% endif %}>
+   where the browser can read codes with a camera and otherwise leaves the line saying so (also what shows without JavaScript).
+   Slice 24: opened from My work (`from_my_work`) the form keeps from=my_work, so a device found opens what my_work.scan_target says,
+   its targets are 44px tall (from-my-work), and the line where the browser cannot read codes tells an iPhone to use the Camera app,
+   whose label link opens the portal page with its "Open … in Cadence" link (the same rule).{% endcomment %}
+<form class="scan-form{% if from_my_work %} from-my-work{% endif %}" action="{% url 'web:scan' %}" method="get"{% if modal %} hx-get="{% url 'web:scan' %}" hx-target="#modal-card" hx-sync="this:replace"{% endif %}>
+  {% if from_my_work %}<input type="hidden" name="from" value="my_work">{% endif %}
   <label for="scan-code">Asset tag or label</label>
   <div class="scan-row">
     <input id="scan-code" name="code" type="text" value="{{ code }}" data-scan-field autofocus autocomplete="off" autocapitalize="characters"
@@ -10,14 +14,22 @@
     <button class="btn primary" type="submit">Open</button>
   </div>
   {% if error %}<p class="err" id="scan-error" role="alert">{{ error }}</p>{% endif %}
+  {% if from_my_work %}
+  <p class="hint" id="scan-help">Scan the device's label or type its tag. Your one open work order on it opens; otherwise the device's work orders do.</p>
+  {% else %}
   <p class="hint" id="scan-help">Scan the device's label with a handheld scanner, or type its tag. A label's QR code link works too.</p>
+  {% endif %}
   <div class="scan-cam" data-scan-camera>
     <video data-scan-video playsinline muted hidden aria-label="Camera view"></video>
     <div class="scan-cam-actions">
       <button class="btn" type="button" data-scan-start hidden>{% icon "scan" %} Use camera</button>
       <button class="btn" type="button" data-scan-stop hidden>Stop camera</button>
     </div>
+    {% if from_my_work %}
+    <p class="hint" data-scan-none>This browser cannot read codes with the camera: type the tag. On an iPhone, point the Camera app at the label and open its link, then tap “Open … in Cadence” at the top of that page.</p>
+    {% else %}
     <p class="hint" data-scan-none>This browser cannot read codes with the camera. Use a handheld scanner or type the tag; on a phone, the camera app opens a label's QR code.</p>
+    {% endif %}
     <p class="hint" data-scan-status role="status" aria-live="polite"></p>
   </div>
 </form>

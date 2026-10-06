@@ -1,12 +1,17 @@
 {% extends "web/base.html" %}
 {% comment %}Scan tag opened directly (slice 18, views_scan.scan): the modal's form on a page of its own, for a phone or a bookmark. A
-   device found redirects to its page (/equipment/<tag>/, the drawer open over Equipment).{% endcomment %}
+   device found redirects to its page (/equipment/<tag>/, the drawer open over Equipment); opened from My work (slice 24), to what
+   my_work.scan_target says, and the way back is to My work.{% endcomment %}
 {% block title %}Scan tag{% endblock %}
 {% block content %}
 <div class="page-head">
   <div>
     <h1>Scan tag</h1>
+    {% if from_my_work %}
+    <p class="sub">Open your work on a device from its label. <a href="{% url 'web:my_work' %}">Back to My work</a></p>
+    {% else %}
     <p class="sub">Open a device from its label. <a href="{% url 'web:equipment' %}">Back to Equipment</a></p>
+    {% endif %}
   </div>
 </div>
 <div class="panel scan-page">
