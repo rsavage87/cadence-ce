@@ -747,6 +747,44 @@ form.facility{margin:0}
 /* Slice 24, part A: My work (the page, its cards, and their actions; phone first, 44px targets) */
 
 /* Slice 24, part B: completing on a phone (the completion modal's checklist and hours) */
+/* Each step's Pass / Fail / N/A is a label covering its cell (a click anywhere in it chooses); its word shows on a phone only */
+.wc-steps td.c .wc-pick{display:flex;align-items:center;justify-content:center;margin:-6px -4px;padding:6px 4px;cursor:pointer}
+.wc-pick span{display:none}
+.wc-form .wc-hours-for{align-self:end;padding-bottom:8px}
+@media (max-width:760px){
+  /* One-handed, with gloves: every target 44px tall, boxes at 16px (iOS zooms into smaller ones), Mark completed always in reach */
+  .wc-h .iconbtn{width:44px;height:44px}
+  .wc-form .form input:not([type=radio]):not([type=checkbox]),.wc-steps input.rd{min-height:44px;font-size:16px}
+  .wc-form .form textarea{font-size:16px}
+  .wc-head{flex-direction:column;align-items:stretch}
+  .wc-head .wc-rest{justify-content:center;min-height:44px;font-size:14px}
+  .wc-results label{min-height:44px}
+  .wc-fail .check-row{min-height:44px}
+  .wc-fail .check-row input{width:20px;height:20px}
+  /* The checklist as stacked steps: the number and the step (with its reading box), then a row of three buttons under it */
+  .wc-steps,.wc-steps tbody{display:block}
+  .wc-steps thead{display:none}
+  .wc-steps tbody tr{display:grid;grid-template-columns:22px repeat(3,minmax(0,1fr));gap:8px 6px;padding:10px;border-bottom:1px solid var(--line)}
+  .wc-steps tbody tr:last-child{border-bottom:0}
+  .wc-steps td,.wc-steps td.c{padding:0;border:0;width:auto;white-space:normal}
+  .wc-steps td.n{grid-row:1;grid-column:1}
+  .wc-steps td.st{grid-row:1;grid-column:2/-1;min-width:0}
+  .wc-steps td.c{grid-row:2}
+  .wc-steps td.c:nth-child(3){grid-column:2}
+  .wc-steps td.c:nth-child(4){grid-column:3}
+  .wc-steps td.c:nth-child(5){grid-column:4}
+  .wc-steps input.rd{max-width:none;margin-top:8px}
+  .wc-steps td.c .wc-pick{margin:0;padding:0 6px;gap:6px;min-height:44px;border:1px solid var(--line-2);border-radius:8px;background:var(--surface);font-size:14px;font-weight:500;color:var(--ink)}
+  .wc-steps td.c input{width:18px;height:18px}
+  .wc-pick span{display:inline}
+  .wc-steps td.c .wc-pick:has(input:checked){border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+  .wc-steps td.c .wc-pick:has(input[value="fail"]:checked){border-color:var(--crit);background:var(--crit-soft);color:var(--crit)}
+  .wc-steps tr:has(input[value="fail"]:checked){background:var(--crit-soft)}
+  .wc-steps tr:has(input[value="fail"]:checked) td{background:none}
+  .wc-form .wc-hours-for{padding-bottom:0}
+  .wc-foot{position:sticky;bottom:0;z-index:1;background:var(--surface);border-top:1px solid var(--line);padding:10px 16px calc(10px + env(safe-area-inset-bottom,0px))}
+  .wc-foot .btn{flex:1;justify-content:center;min-height:44px;font-size:14px}
+}
 
 /* Slice 24, part D: Scan from My work */
 
