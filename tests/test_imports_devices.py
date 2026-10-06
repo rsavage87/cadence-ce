@@ -140,6 +140,24 @@ def test_a_device_retired_in_the_file_is_retired_on_its_day(ctx, director, today
         assert last.status == "retired" and timezone.localdate(last.history_date) == today
 
 
+def test_a_retirement_without_its_day_says_it_is_retired_as_of_today(ctx, director, dept, vent_model, today):
+    """Review fix: a device retired in the file without a day it can use was retired as of today with no note (the AEM evidence
+    counts it in use until then), and one already here retired by the file silently left the file's day unused."""
+    here = eq.create_asset(tag="R-9", device_model=vent_model, department=dept)
+    run = imported(director, "Asset Tag,Manufacturer,Model,Department,Installed,Status,Retired On",
+                   "R-1,Acme,Vent,ICU,2010-01-01,Retired,", "R-2,Acme,Vent,ICU,2010-01-01,Disposed,someday",
+                   f"R-9,,,,,Retired,{today - timedelta(days=30)}", "R-3,Acme,Vent,ICU,2010-01-01,In service,",
+                   f"R-4,Acme,Vent,ICU,2010-01-01,Retired,{today - timedelta(days=30)}")
+    assert run.counts == {"create": 4, "update": 1}
+    keys = {note: g["keys"] for note, g in notes(run).items() if "etired" in note}
+    assert keys == {"No retired-on date: retired as of today": ["R-1"], "Retired on not read: retired as of today": ["R-2"],
+                    "Retired on not used: a device already here is retired as of today": ["R-9"]}
+    here.refresh_from_db()
+    assert here.status == AssetStatus.RETIRED
+    without = imported(director, "Asset Tag,Manufacturer,Model,Status", "R-5,Acme,Vent,Retired")  # no Retired On column at all
+    assert notes(without)["No retired-on date: retired as of today"]["keys"] == ["R-5"]
+
+
 def test_set_status_and_create_asset_refuse_a_day_out_of_range(ctx, dept, vent_model, today):
     with pytest.raises(ValidationError) as e:
         eq.create_asset(tag="X-1", device_model=vent_model, department=dept, added_on=today + timedelta(days=1))
@@ -253,6 +271,48 @@ def test_dates_against_the_device_rules_are_left_out_and_the_device_still_comes_
     assert devices["D-4"].next_pm_on == add_months(today, 12) and devices["D-5"].next_pm_on == add_months(today, 12)
     assert devices["D-6"].installed_on is None and devices["D-6"].last_pm_on == today - timedelta(days=10)  # the install date went first
     assert run.summary["totals"]["Next PM"] == {"worked out": "6", "due today": "2"}  # D-2, D-3: a year since 2020 has passed
+
+
+def test_a_re_import_leaves_out_a_future_install_date_before_measuring_the_last_pm_from_it(ctx, director, dept, pump_model, today):
+    """Review fix: for a device already here, update_asset measured the file's last PM against the file's install date before
+    refusing that install date (in the future), so the last PM was left out, blamed on the install date, and then the install
+    date too; a new device kept its last PM. The install date goes first for both."""
+    here = eq.create_asset(tag="B-1", device_model=pump_model, department=dept)
+    future, last_pm = today + timedelta(days=30), today - timedelta(days=10)
+    with pytest.raises(ValidationError) as e:
+        eq.update_asset(here, installed_on=future, imported_last_pm=last_pm)
+    assert list(e.value.message_dict) == ["installed_on"]
+    run = imported(director, "Asset Tag,Manufacturer,Model,Department,Installed,Last PM", f"B-1,,,,{future},{last_pm}",
+                   f"B-2,BD,Alaris 8015 PCU,ICU,{future},{last_pm}")
+    assert run.counts == {"update": 1, "create": 1}
+    assert {note: g["keys"] for note, g in notes(run).items()} == {"Install date left out: the install date cannot be in the future.": ["B-1", "B-2"]}
+    assert {a.tag: (a.installed_on, a.last_pm_on) for a in Asset.objects.all()} == {"B-1": (None, last_pm), "B-2": (None, last_pm)}
+
+
+def test_a_later_chunk_is_checked_as_the_import_finds_what_earlier_chunks_add(ctx, director, monkeypatch, today):
+    """Review fix: the check rolls each chunk back, so a model or department a row of an earlier chunk adds was not there when a
+    later chunk was checked, and the later chunk's first row naming it added it again from its own cells: an unreadable CMS mark
+    skipped it, its PM interval worked out its next PM, and a department in another letter case was listed as added again. The
+    import finds them, and never reads those cells. The check now adds them first, quietly, from the row that adds them in the
+    import: not a row the import skips (a tag the device rules refuse, or a model it cannot add, takes back what its row added)."""
+    monkeypatch.setattr(services, "CHUNK", 2)
+    installed = add_months(today, -4)
+    run = check(director, "Asset Tag,Manufacturer,Model,Department,OEM Schedule Required,PM Interval,Risk,Installed",
+                f"BAD TAG,Acme,M1,Oncology,,3,,{installed}",
+                f"C-1,Acme,M1,ICU,no,6,High,{installed}",  # adds M1, every 6 months: its next PM is two months out
+                f"C-2,acme,m1,icu,maybe,3,,{installed}",   # the next chunk: M1 and ICU are found, these cells are not read
+                f"C-5,Acme,M2,Surgery,maybe,,,{installed}",  # skipped for the mark of the model it would add, before its department
+                f"C-3,ACME,M1,Oncology,,,,{installed}",    # Oncology: the refused row's went with it, so this row adds it
+                f"C-4,BD,M3,surgery,,12,Low,{installed}")  # and this one adds Surgery, as it spells it
+    checked = (dict(run.counts), run.results, run.summary)
+    run = run_through(services.start_import(run, director), director)
+    assert (dict(run.counts), run.results, run.summary) == checked
+    assert run.counts == {"skip": 2, "create": 4} and [r[1] for r in run.results if r[2] == "skip"] == ["BAD TAG", "C-5"]
+    assert run.summary["created"] == {"Device models": ["Acme M1", "BD M3"], "Departments": ["ICU", "Oncology", "surgery"]}
+    assert run.summary["totals"]["Next PM"] == {"worked out": "4"}
+    assert run.summary["values"]["PM interval"] == {"6": ["6 months", 1], "12": ["12 months", 1]}
+    m1 = DeviceModel.objects.get(model="M1")
+    assert (m1.oem_pm_interval_months, m1.risk_class, Department.objects.count()) == (6, RiskClass.HIGH, 3)
 
 
 def test_values_it_cannot_read_are_never_defaults_without_a_note(ctx, director, dept, pump_model):

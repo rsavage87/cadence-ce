@@ -10,20 +10,26 @@ never imported: they are free text.
 
 The row's device goes on the contract (add_asset). A tag not here, or a retired device, is noted and the contract row still
 imports; a device on another contract that ends later than this one stays there, with a note (the later contract is the one that
-covers it); otherwise it moves. Notes never name the tag: the line does.
+covers it); otherwise it moves. A device listed under two contracts goes by that rule in the file's order, and the later line says
+the device is listed twice. Notes never name the tag: the line does.
 
-A chunk knows only its own lines, and the check rolls each chunk back (apps.imports.services). A contract's consecutive lines are
-kept in one chunk (keep_together), so in a file sorted by contract, as exports are, the check sees what the import will. Lines of
-one contract spread through the file are checked chunk by chunk: a later chunk's line then reads as adding the contract again (or,
-with only a reference and a tag, as a skip), while the import finds the contract the earlier chunk committed.
+The check rolls each chunk back (apps.imports.services), so a contract the lines of an earlier chunk add or change, and a device
+they put on one, are as they were when a later chunk is checked; the import, which committed that chunk, finds them changed. The
+check therefore first brings a line's contract and device to where the lines before its chunk leave them, from those lines' values
+and quietly (their notes and totals were reported in their own chunks). A contract's consecutive lines are still kept in one chunk
+(keep_together), so a file sorted by contract, as exports are, seldom needs it. The one skip the check cannot see in an earlier
+chunk is a line with more values than the file has columns.
 """
+from django.core.exceptions import ValidationError
+from django.db import transaction
+
 from apps.accounts.models import Level, Module
 from apps.contracts import services as contracts
 from apps.contracts.models import Contract, ContractType, Coverage
 from apps.equipment.models import Asset, AssetStatus
 
 from .. import parse
-from ..base import Column, Importer, RowSkip
+from ..base import Column, Importer, RowResult, RowSkip
 
 
 def _words(choices, **extra) -> dict[str, str]:
@@ -45,6 +51,7 @@ COVERAGE_WORDS = _words(Coverage, full=("full coverage", "comprehensive", "full 
 FIELDS = {"vendor": "vendor", "type": "type", "coverage": "coverage", "start": "start_on", "end": "end_on", "annual_cost": "annual_cost"}  # column -> field
 NEW_NEEDS = ("vendor", "start_on", "end_on")
 COVERED, MOVED = "put on a contract", "moved from another contract"
+LISTED_TWICE = "The device is also under another contract on an earlier line: the one that ends later keeps it"
 
 
 class ContractsImporter(Importer):
@@ -96,31 +103,26 @@ class ContractsImporter(Importer):
         return problems
 
     def apply(self, ctx, row, result):
+        ctx.cache.setdefault("first", ctx.index)  # the chunk's first line: the check reads the lines before it (_before)
         reference = row["reference"]
         if not reference:
             raise RowSkip("Contract reference is blank")
+        brought = self._catch_up(ctx, reference, row.get("tag")) if ctx.check else set()
         contract = Contract.objects.filter(reference__iexact=reference).first()
         values, reads = self._read(row, result, new=contract is None)
         earlier = ctx.cache.setdefault("given", {}).get(reference.lower(), {})  # what this chunk's earlier lines gave the contract
         for field, value in values.items():
             if field in earlier and earlier[field] != value:
                 result.warn(f"{self.field_labels[field]} differs from an earlier line of this contract: this line's value is used")
-        changes = {}
-        if contract is None:
-            if any(field not in values for field in NEW_NEEDS):
-                raise RowSkip("No contract with this reference here; a new one needs Vendor, Start date and End date")
-            contract = contracts.create_contract(by=ctx.user, reference=reference, **values)
-            result.outcome = result.CREATE
-        else:
-            changes = {field: value for field, value in values.items() if getattr(contract, field) != value}
-            if changes:
-                contracts.update_contract(contract, by=ctx.user, **changes)
-                result.outcome = result.UPDATE
+        contract, changes = self._save(ctx, reference, contract, values, result)
+        if self._listed_before(ctx, row):
+            result.warn(LISTED_TWICE)
         covered = self._cover(contract, row.get("tag"), result)
         if covered and result.outcome == result.UNCHANGED:
             result.outcome = result.UPDATE
         # Recorded once the row's changes are made, so a row skipped part way leaves nothing in the summary.
         ctx.cache["given"][reference.lower()] = {**earlier, **values}
+        ctx.cache.setdefault("caught_up", set()).update(brought)
         for column, value, shown in reads:
             ctx.read_as(column, value, shown)
         if result.outcome == result.CREATE:
@@ -129,6 +131,90 @@ class ContractsImporter(Importer):
             ctx.total("Changes", self.field_labels[field])
         if covered:
             ctx.total("Devices", covered)
+
+    def _save(self, ctx, reference: str, contract, values: dict, result) -> tuple[Contract, dict]:
+        """Add the contract with the line's values (a new one needs a vendor and both dates), or change the one here to them.
+        Returns the contract and the fields that changed."""
+        if contract is None:
+            if any(field not in values for field in NEW_NEEDS):
+                raise RowSkip("No contract with this reference here; a new one needs Vendor, Start date and End date")
+            contract = contracts.create_contract(by=ctx.user, reference=reference, **values)
+            result.outcome = result.CREATE
+            return contract, {}
+        changes = {field: value for field, value in values.items() if getattr(contract, field) != value}
+        if changes:
+            contracts.update_contract(contract, by=ctx.user, **changes)
+            result.outcome = result.UPDATE
+        return contract, changes
+
+    def _listed_before(self, ctx, row) -> bool:
+        """Whether a line before this one, in any chunk, names the line's device under another contract (said in both passes)."""
+        tag = (row.get("tag") or "").lower()
+        if not tag:
+            return False
+        if "listed" not in ctx.cache:
+            listed = {}
+            for i, line in enumerate(ctx.rows):
+                if line.get("tag") and line.get("reference"):
+                    listed.setdefault(line["tag"].lower(), []).append((i, line["reference"].lower()))
+            ctx.cache["listed"] = listed
+        reference = row["reference"].lower()
+        return any(i < ctx.index and other != reference for i, other in ctx.cache["listed"].get(tag, ()))
+
+    # --- the check: what earlier chunks did -------------------------------------------------------------------------------------
+
+    def _before(self, ctx, column: str, value: str) -> list[dict]:
+        """In the check, the lines before this chunk whose `column` ("reference" or "tag") is `value` in any letter case, in file
+        order, leaving out those the import skips whatever the database holds: no reference, a pair the file repeats (prepare), a
+        value too long for its column. Indexed once per chunk."""
+        if "before" not in ctx.cache:
+            rows = ctx.rows[:ctx.cache["first"]]
+            repeated, index = self.prepare(rows), {}
+            for i, row in enumerate(rows):
+                if not row.get("reference") or i in repeated or any(c.max_length and len(row.get(c.key) or "") > c.max_length for c in self.columns):
+                    continue
+                for key in ("reference", "tag"):
+                    if row.get(key):
+                        index.setdefault((key, row[key].lower()), []).append(row)
+            ctx.cache["before"] = index
+        return ctx.cache["before"].get((column, value.lower()), [])
+
+    def _catch_up(self, ctx, reference: str, tag: str) -> set:
+        """The check's part: bring the line's contract, and its device, to where the lines before this chunk leave them in the
+        import (the check rolled those chunks back). Returns what it brought up to date, which apply records once the line has gone
+        in: a line skipped part way takes it back with its savepoint, and the chunk's next line brings it up again."""
+        done, brought = ctx.cache.setdefault("caught_up", set()), set()
+
+        def contract_of(ref):
+            if ("contract", ref.lower()) in done | brought:
+                return Contract.objects.filter(reference__iexact=ref).first()
+            brought.add(("contract", ref.lower()))
+            return self._replay_contract(ctx, ref)
+
+        contract_of(reference)
+        if tag and ("device", tag.lower()) not in done:
+            for earlier in self._before(ctx, "tag", tag):  # each line that named the device, in order, under its contract
+                contract = contract_of(earlier["reference"])
+                if contract is not None:
+                    self._cover(contract, earlier["tag"], RowResult(0, ""))
+            brought.add(("device", tag.lower()))
+        return brought
+
+    def _replay_contract(self, ctx, reference: str):
+        """The contract as the lines before this chunk with its reference leave it: added by the first that can add it, changed by
+        each later one, a line the contract rules refuse changing nothing, as in the import. Quietly: those lines' notes and totals
+        were reported in their own chunks."""
+        contract = Contract.objects.filter(reference__iexact=reference).first()
+        for earlier in self._before(ctx, "reference", reference):
+            quiet = RowResult(0, "")
+            try:
+                with transaction.atomic():
+                    values, _reads = self._read(earlier, quiet, new=contract is None)
+                    contract, _changes = self._save(ctx, earlier["reference"], contract, values, quiet)
+            except (RowSkip, ValidationError):
+                if contract is not None:
+                    contract.refresh_from_db()  # a refused change was set on it
+        return contract
 
     def _read(self, row, result, *, new: bool) -> tuple[dict, list]:
         """The row's values for the contract (a blank cell, or a column not in the file, is left out) and how its choices were read.

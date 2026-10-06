@@ -13,19 +13,28 @@ did not choose, or a blank cell, keeps what Cadence has.
 Nothing it cannot read becomes a default without a note. A date that breaks the device rules (a last PM before the install date, a
 warranty that ends before it, an install date in the future, a next PM more than ten years out) or that means "none" is left out,
 and the device still comes in. A status change the rules refuse (retiring a device with open work) is noted and the row's other
-changes stay. Retiring, reinstating, and the CMS mark need Equipment Approve, as on the screen.
+changes stay. Retiring, reinstating, and the CMS mark need Equipment Approve, as on the screen. A device retired without a day it
+can use is retired as of today, and the row says so: the AEM evidence counts it in use until then.
+
+The check rolls each chunk back (apps.imports.services), so a model or department a row of an earlier chunk adds is not there when
+a later chunk is checked, though the import, which committed that chunk, finds it and never reads the later row's model cells. The
+check therefore adds it first, quietly, from the row before this chunk that adds it in the import (its notes and values read are
+that row's, reported in its own chunk): the first row naming it that the import does not skip whatever its model (a tag missing,
+repeated, or refused by the device rules; a value too long; a new device retired by a user who may not retire), whose own values
+for the model are accepted. The one skip the check cannot see in an earlier chunk is a line with more values than the file has
+columns.
 """
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.db.models.functions import Lower
 
 from apps.accounts.models import Level, Module
 from apps.equipment import permissions as eq_perms
 from apps.equipment import services as eq
-from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, RiskClass
+from apps.equipment.models import TAG_VALIDATOR, Asset, AssetStatus, Department, DeviceModel, RiskClass
 
 from .. import parse
-from ..base import Column, Importer, RowSkip
+from ..base import Column, Importer, RowResult, RowSkip
 
 UNASSIGNED = "Unassigned"
 UNCATEGORIZED = "Uncategorized"
@@ -56,6 +65,7 @@ WORDS = {"serial": "Serial number", "device_model": "Device model", "department"
 DROPPABLE = {"installed_on", "warranty_end", "last_pm_on", "next_pm_on", "acquisition_cost", "retired_on"}
 SERVICE_KEYS = {"added_on": "retired_on", "changed_on": "retired_on"}  # the services' names for the retirement day
 DATES = {"installed": "installed_on", "warranty": "warranty_end", "last_pm": "last_pm_on", "next_pm": "next_pm_on", "retired_on": "retired_on"}
+NEW_DEVICE_OUTCOME = {"next_pm_on": "worked out from the PM interval", "retired_on": "retired as of today"}  # else "left blank"
 
 
 def _words(value) -> str:
@@ -65,6 +75,15 @@ def _words(value) -> str:
 
 def _lower_first(text: str) -> str:
     return text[:1].lower() + text[1:]
+
+
+def _tag_refused(tag: str) -> bool:
+    """Whether create_asset refuses a new device's tag (which skips the row, and takes back the model and department it added)."""
+    try:
+        TAG_VALIDATOR(tag)
+    except ValidationError:
+        return True
+    return tag.lower() in eq.RESERVED_TAGS
 
 
 class _Later:
@@ -162,6 +181,7 @@ class DevicesImporter(Importer):
     # --- one row --------------------------------------------------------------------------------------------------------------------
 
     def apply(self, ctx, row, result):
+        ctx.cache.setdefault("first", ctx.index)  # the chunk's first row: the check reads the rows before it (_earlier)
         tag = row.get("tag") or ""
         if not tag:
             raise RowSkip("No asset tag: a device is found or added by its tag")
@@ -182,6 +202,8 @@ class DevicesImporter(Importer):
         # A retired device has no next PM; the retirement day is read only for a device that is retired.
         unused = ("next_pm_on",) if status == AssetStatus.RETIRED else ("retired_on",)
         values = {k: v for k, v in self._dates(row, result, kept=False, unused=unused).items() if v is not None}
+        if status == AssetStatus.RETIRED and not row.get("retired_on"):
+            result.warn("No retired-on date: retired as of today")
         cost = self._cost(row, result, later, kept=False)
         if cost is not None:
             values["acquisition_cost"] = cost
@@ -209,6 +231,8 @@ class DevicesImporter(Importer):
         status = self._status(row, result, later, current=asset.status)
         if status and status != asset.status and self._set_status(ctx, asset, status, result):
             changed.append("Status")
+            if status == AssetStatus.RETIRED and row.get("retired_on"):
+                result.warn("Retired on not used: a device already here is retired as of today")
         fields = {}
         device_model = self._model(ctx, row, result, later, adding=False)
         if device_model is not None and device_model.pk != asset.device_model_id:
@@ -323,7 +347,7 @@ class DevicesImporter(Importer):
         for key, name in DATES.items():
             if key not in row or name in unused:
                 continue
-            outcome = "unchanged" if kept else ("worked out from the PM interval" if name == "next_pm_on" else "left blank")
+            outcome = "unchanged" if kept else NEW_DEVICE_OUTCOME.get(name, "left blank")
             try:
                 out[name] = parse.parse_date(row[key])
             except parse.Placeholder:
@@ -353,15 +377,18 @@ class DevicesImporter(Importer):
             result.warn(f"No department: added to {UNASSIGNED}")
             name = UNASSIGNED
         found = self._department(ctx, name)
+        if found is None and ctx.check:
+            found = self._department_added_earlier(ctx, name)
         if found is not None:
             return found
         department = eq.create_department(name)
         later.add_created("Departments", department.name)
         return department
 
-    def _model(self, ctx, row, result, later, *, adding: bool):
+    def _model(self, ctx, row, result, later, *, adding: bool, before: int | None = None):
         """The row's device model, found by manufacturer and model in any letter case, or added with the row's details. None (kept)
-        when either is blank on a device already here."""
+        when either is blank on a device already here. `before`: the check's copy of an earlier row (_department_added_earlier),
+        which finds only what the rows before that one add."""
         manufacturer, model = _words(row.get("manufacturer")), _words(row.get("model"))
         if not manufacturer or not model:
             if adding:
@@ -370,14 +397,83 @@ class DevicesImporter(Importer):
                 result.warn("Device model unchanged: it needs both the manufacturer and the model")
             return None
         found = self._device_model(ctx, manufacturer, model)
+        if found is None and ctx.check:
+            found = self._model_added_earlier(ctx, manufacturer, model, before)
         if found is not None:
             return found
+        return self._add_model(ctx, row, result, later, manufacturer, model)
+
+    def _add_model(self, ctx, row, result, later, manufacturer: str, model: str):
         mark = self._mark(ctx, row, result, later)
         device_model = eq.create_device_model(manufacturer=manufacturer, model=model, description=_words(row.get("description")) or model,
                                               category=_words(row.get("category")) or UNCATEGORIZED, risk_class=self._risk(row, result, later),
                                               oem_pm_interval_months=self._interval(row, result, later), oem_schedule_required=mark, by=ctx.user)
         later.add_created("Device models", f"{device_model.manufacturer} {device_model.model}")
         return device_model
+
+    # --- the check: what earlier chunks add -------------------------------------------------------------------------------------
+
+    def _earlier(self, ctx, key: tuple) -> list[tuple[int, dict]]:
+        """In the check, the rows before this chunk naming `key` (("model", manufacturer, model) or ("department", name), in lower
+        case), with their places in the file, leaving out those the import skips whatever they name: no tag, a tag the file repeats
+        (prepare), a value too long for its column. Indexed once per chunk."""
+        if "earlier" not in ctx.cache:
+            rows = ctx.rows[:ctx.cache["first"]]
+            repeated, named = self.prepare(rows), {}
+            for i, row in enumerate(rows):
+                if not row.get("tag") or i in repeated or any(c.max_length and len(row.get(c.key) or "") > c.max_length for c in self.columns):
+                    continue
+                manufacturer, model, department = (_words(row.get(k)).lower() for k in ("manufacturer", "model", "department"))
+                if manufacturer and model:
+                    named.setdefault(("model", manufacturer, model), []).append((i, row))
+                if department:
+                    named.setdefault(("department", department), []).append((i, row))
+            ctx.cache["earlier"] = named
+        return ctx.cache["earlier"].get(key, [])
+
+    def _adding(self, ctx, row) -> bool | None:
+        """For a row before this chunk: whether the import adds its device (else it changes one here), or None when the import skips
+        it, taking back what it added: a new device's tag the device rules refuse, or one retired in the file by a user who may not."""
+        if Asset.objects.filter(tag__iexact=row["tag"]).exists():
+            return False
+        try:
+            retired = parse.parse_choice(row.get("status") or "", STATUS_WORDS, what="status") == AssetStatus.RETIRED
+        except parse.Unreadable:
+            retired = False
+        if _tag_refused(row["tag"]) or (retired and not self._may(ctx, eq_perms.RETIRE_LEVEL)):
+            return None
+        return True
+
+    def _model_added_earlier(self, ctx, manufacturer: str, model: str, before: int | None):
+        """The check's copy of a model a row before this chunk (or before `before`) adds in the import: added again from the first
+        such row whose values for it are accepted, with those values. Quietly: that row's notes, values read, and the model's place
+        among those added were reported in its own chunk, and the CMS mark's refusal is that row's. None when no row adds it."""
+        for i, earlier in self._earlier(ctx, ("model", manufacturer.lower(), model.lower())):
+            if before is not None and i >= before:
+                break
+            if self._adding(ctx, earlier) is None:
+                continue
+            try:
+                with transaction.atomic():
+                    return self._add_model(ctx, earlier, RowResult(0, ""), _Later(ctx), _words(earlier["manufacturer"]), _words(earlier["model"]))
+            except (RowSkip, ValidationError, PermissionDenied):
+                continue  # the import skips that row too (an unreadable CMS mark): the next row naming the model adds it
+        return None
+
+    def _department_added_earlier(self, ctx, name: str):
+        """The check's copy of a department a row before this chunk adds in the import: the first such row that gets as far as its
+        department (its model found or added, as _model_added_earlier finds them), with its spelling. Quietly, as for models."""
+        for i, earlier in self._earlier(ctx, ("department", name.lower())):
+            adding = self._adding(ctx, earlier)
+            if adding is None:
+                continue
+            try:
+                with transaction.atomic():
+                    self._model(ctx, earlier, RowResult(0, ""), _Later(ctx), adding=adding, before=i)
+                    return eq.create_department(_words(earlier["department"]))
+            except (RowSkip, ValidationError, PermissionDenied):
+                continue
+        return None
 
     def _risk(self, row, result, later) -> str:
         value = row.get("risk") or ""

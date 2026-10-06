@@ -245,3 +245,46 @@ def test_a_contracts_lines_are_checked_in_one_chunk_so_the_check_matches_the_imp
     run = run_through(services.start_import(run, kim), kim)
     assert (dict(run.counts), sorted(notes(run).items())) == check
     assert Contract.objects.get(reference="SC-9").covered_assets().count() == 5
+
+
+def test_a_device_under_two_contracts_is_noted_and_checked_as_the_import_finds_it(ctx, device, make_user, monkeypatch):
+    """Review fix: the check rolls each chunk back, so a device an earlier chunk's line put on a contract was back on its own when
+    a later chunk's line under another contract reached it, and the ends-later rule was checked against the wrong contract: the
+    check put it on an expired contract the import leaves it off. The check now puts the device where the lines before the chunk
+    leave it, and in both passes a line naming a device an earlier line put under another contract says so."""
+    monkeypatch.setattr(services, "CHUNK", 2)
+    kim = make_user("director")
+    device("X1")
+    run = checked(kim, "Reference,Vendor,Start date,End date,Asset tag", "NEW-9,Acme,2026-01-01,2027-12-31,X1",
+                  "NEW-9,Acme,2026-01-01,2027-12-31,", "OLD-1,Acme,2024-01-01,2024-12-31,x1", "NEW-10,Acme,2026-01-01,2028-12-31,X1")
+    check = (dict(run.counts), run.results, run.summary)
+    run = run_through(services.start_import(run, kim), kim)
+    assert (dict(run.counts), run.results, run.summary) == check
+    assert run.counts == {"create": 3, "unchanged": 1} and notes(run) == {
+        4: ("create", ["The device is also under another contract on an earlier line: the one that ends later keeps it",
+                       "The device is on another contract that ends later: left there"]),
+        5: ("create", ["The device is also under another contract on an earlier line: the one that ends later keeps it"])}
+    assert run.summary["totals"] == {"Devices": {"put on a contract": "1", "moved from another contract": "1"}}
+    assert Asset.objects.get(tag="X1").contract.reference == "NEW-10"
+
+
+def test_a_contract_an_earlier_chunk_adds_or_changes_is_checked_as_the_import_finds_it(ctx, device, make_user, monkeypatch):
+    """Review fix: a contract's lines beyond what one chunk keeps together, or spread through the file, were checked against the
+    contract as it was before the import (the check rolled the earlier chunk back): a line with only a reference and a tag was a
+    skip, and values an earlier line had already given a contract here were counted as changes again. The import finds the
+    contract as those lines left it, and so does the check now."""
+    monkeypatch.setattr(services, "CHUNK", 2)
+    monkeypatch.setattr(services, "KEEP_TOGETHER_MAX", 3)
+    kim = make_user("director")
+    for n in range(1, 9):
+        device(f"P-{n}")
+    here = contract("OLD", start_on=date(2025, 1, 1), end_on=date(2025, 12, 31))
+    run = checked(kim, HEADER, "SC-9,Acme,OEM,Full,2026-01-01,2026-12-31,5000,P-1", *(f"SC-9,,,,,,,P-{n}" for n in range(2, 6)),
+                  "OLD,Acme,OEM,Full,2026-01-01,2027-12-31,1000,P-6", "SC-1,Acme,OEM,Full,2026-01-01,2026-12-31,100,P-7",
+                  "old,Acme,OEM,Full,2026-01-01,2027-12-31,1000,P-8")
+    check = (dict(run.counts), run.results, run.summary)
+    run = run_through(services.start_import(run, kim), kim)
+    assert (dict(run.counts), run.results, run.summary) == check
+    assert run.counts == {"create": 2, "update": 6} and run.results == []
+    assert run.summary["totals"] == {"Devices": {"put on a contract": "8"}, "Changes": {"Start date": "1", "End date": "1"}}
+    assert Contract.objects.get(reference="SC-9").covered_assets().count() == 5 and here.covered_assets().count() == 2

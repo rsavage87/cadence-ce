@@ -631,6 +631,11 @@ def update_asset(asset: Asset, *, by=None, today: date | None = None, imported_l
     unknown = set(fields) - set(EDITABLE_FIELDS)
     if unknown:
         raise ValidationError(f"These cannot be changed here: {', '.join(sorted(unknown))}.")
+    # The install and warranty dates only when one of them changes: a stored pair that breaks the rule (imported data) must not
+    # block an edit of the room or the notes. Before the imported last PM, which is measured from the install date: a refused
+    # install date is named first, so the importer leaves it out and keeps the last PM, as it does for a new device.
+    if any(f in fields and fields[f] != getattr(asset, f) for f in ("installed_on", "warranty_end")):
+        _check_dates(**{f: fields.get(f, getattr(asset, f)) for f in ("installed_on", "warranty_end")}, today=today)
     if imported_last_pm is not _UNSET and imported_last_pm != asset.last_pm_on:
         _check_last_pm(imported_last_pm, installed_on=fields.get("installed_on", asset.installed_on), today=today)
         fields["last_pm_on"] = imported_last_pm
@@ -641,10 +646,6 @@ def update_asset(asset: Asset, *, by=None, today: date | None = None, imported_l
     if "next_pm_on" in fields and fields["next_pm_on"] is None and asset.status != AssetStatus.RETIRED:
         raise ValidationError({"next_pm_on": "A device in use needs a next PM date."})
     _check_next_pm(fields.get("next_pm_on"), today)
-    # The install and warranty dates only when one of them changes: a stored pair that breaks the rule (imported data) must not
-    # block an edit of the room or the notes.
-    if any(f in fields and fields[f] != getattr(asset, f) for f in ("installed_on", "warranty_end")):
-        _check_dates(**{f: fields.get(f, getattr(asset, f)) for f in ("installed_on", "warranty_end")}, today=today)
     # The last PM against the install date only when the install date changes, and on the field the form has: a device added
     # before this rule (import, the demo) may have an older PM on record, and must stay editable.
     new_install, last_pm = fields.get("installed_on"), fields.get("last_pm_on", asset.last_pm_on)
