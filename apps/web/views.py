@@ -253,6 +253,7 @@ def _wo_drawer_context(request, wo) -> dict:
     unassigned = wo.assigned_to_id is None and not wo.vendor_service
     actions = [] if unassigned else [{"to": to, "label": label, "primary": primary} for to, label, primary in WO_ACTIONS.get(wo.status, [])
                                      if to in ALLOWED_TRANSITIONS[wo.status] and wo_perms.can_transition(user, wo.status, to)]
+    actions = views_wo_complete.drawer_actions(user, wo, actions)  # slice 24: Mark completed on a PM still open, in one step
     is_open = wo.status in OPEN_STATUSES
     can_assign = is_open and wo_perms.can_assign(user) and not scoped  # wo_assign refuses scoped users
     current = VENDOR if wo.vendor_service else (str(wo.assigned_to_id) if wo.assigned_to_id else "")

@@ -19,15 +19,24 @@ Slice 16: a scoped user (apps.workorders.scoping) completes the work orders in t
 vendor's failed PM on a device whose contract leaves repairs out opens a repair for CE to assign) is neither linked nor named to
 them: not in the drawer's section, the modal's failed-PM options, or the toast; where completion.py wrote its number into the PM's
 resolution and history, the drawer reads "another work order" (templatetags/scoping_tags).
+
+Slice 24, completing on a phone: a PM still open is completed in one step (the service starts it first, for someone who may start
+and complete it: completion.starts_on_completion), so the drawer offers Mark completed on it next to Start work (drawer_actions). An
+optional Hours box logs time with the completion (today, for costs.default_technician, in the same transaction; a refusal is shown
+in the modal and nothing is saved). Opened from a My work card (from=my_work, kept as a hidden field), a save leaves the technician
+on My work: no drawer (HX-Reswap none), only the toast, wo-changed (the list re-fetches itself), and the modal's close; a failed PM
+still answers with its drawer, which names the repair it opened. Each step's Pass / Fail / N/A is a label filling its cell (a row
+of three 44px buttons on a phone), and a reading box brings up the number pad when its step reads a number.
 """
 
 from django.core.exceptions import PermissionDenied, ValidationError
+from django.http import HttpResponse
 from django.shortcuts import render
 from django.utils import timezone
-from django_htmx.http import retarget, trigger_client_event
+from django_htmx.http import reswap, retarget, trigger_client_event
 
 from apps.equipment.models import AssetStatus
-from apps.workorders import completion, scoping
+from apps.workorders import completion, costs, scoping
 from apps.workorders import permissions as wo_perms
 from apps.workorders.models import OPEN_STATUSES, PmResult, ServiceRequest, Source, WoStatus, WoType
 
@@ -39,6 +48,18 @@ from .views import _render_wo_drawer, get_wo
 MODAL = "web/_wo_complete.html"
 RESULT_CSS = {PmResult.PASS: "ok", PmResult.PASS_MINOR_REPAIR: "warn", PmResult.FAIL: "crit"}
 STEP_CSS = {completion.PASS: "ok", completion.FAIL: "crit", completion.NA: "neutral"}
+FROM_MY_WORK = "my_work"  # the modal opened from a My work card: ?from=my_work, then a hidden field the form posts
+
+
+# --- the drawer's footer (slice 24) --------------------------------------------------------------------------------------------
+
+def drawer_actions(user, wo, actions: list[dict]) -> list[dict]:
+    """The drawer's moves (views._wo_drawer_context), with Mark completed first on a PM still open that the user may start and
+    complete in one step (completion.starts_on_completion). Start work stays, for a PM done over more than one visit. No moves (an
+    unassigned work order, a user who may not start it): none added."""
+    if not actions or not completion.starts_on_completion(wo, user):
+        return actions
+    return [{"to": WoStatus.COMPLETED, "label": "Mark completed", "primary": True}, *({**a, "primary": False} for a in actions)]
 
 
 # --- the drawer's section ------------------------------------------------------------------------------------------------------
@@ -99,11 +120,26 @@ def _revised(form, kwargs) -> CompleteForm:
     return fresh
 
 
-def _form_kwargs(wo, steps, offers) -> dict:
-    return {"steps": steps, "is_pm": wo.type == WoType.PM, "offer_open_repair": offers["offer_open_repair"], "offer_tag_out": offers["offer_tag_out"]}
+def _form_kwargs(wo, steps, offers, hours) -> dict:
+    return {"steps": steps, "is_pm": wo.type == WoType.PM, "offer_open_repair": offers["offer_open_repair"], "offer_tag_out": offers["offer_tag_out"],
+            "offer_hours": hours["offer_hours"]}
 
 
-def _modal(request, wo, form=None, *, steps=(), offers=None, reason=""):
+def _hours(request, wo) -> dict:
+    """The optional Hours box (slice 24): offered to whoever may log time when the line has someone to go to (costs.default_technician:
+    the technician assigned, else the user's own profile; vendor service is the vendor's time, logged without one). Logged today, at
+    the Settings rate; another day, another technician, or another rate is the drawer's Log time."""
+    tech = None if wo.vendor_service else costs.default_technician(wo, request.user)
+    offer = wo_perms.can_record_work(request.user) and not costs.locked_reason(wo) and (wo.vendor_service or tech is not None)
+    return {"offer_hours": offer, "hours_for": tech, "hours_rate": costs.default_rate(wo) if offer else None}
+
+
+def from_my_work(request) -> bool:
+    """Whether the modal was opened from a My work card (the GET that opens it, then the hidden field it posts and sends back)."""
+    return (request.POST if request.method == "POST" else request.GET).get("from") == FROM_MY_WORK
+
+
+def _modal(request, wo, form=None, *, steps=(), offers=None, hours=None, reason=""):
     if form is not None and form.is_bound:
         form.focus_first_error()
     procedure = completion.procedure_for(wo)
@@ -113,6 +149,9 @@ def _modal(request, wo, form=None, *, steps=(), offers=None, reason=""):
         "has_checklist": bool(steps), "step_choices": STEP_CHOICES, "reading_max": completion.READING_MAX, **(offers or {}),
         **_follow_up(wo),
         "requester_emailed": _requester_email(wo),
+        # Slice 24: an open PM is started as it is completed; the Hours box; where the modal was opened from
+        "starting": not reason and wo.status == WoStatus.OPEN, **(hours or {"offer_hours": False}),
+        "from_my_work": from_my_work(request), "from_value": FROM_MY_WORK,
     })
 
 
@@ -133,8 +172,9 @@ def _requester_email(wo) -> bool:
 
 
 def _message(request, wo, done) -> str:
+    logged = f"; {costs.plain(done.labor.hours)} h logged" if done.labor is not None else ""
     if wo.type != WoType.PM:
-        return f"{wo.number} completed"
+        return f"{wo.number} completed{logged}"
     note = completion.result_note(wo.pm_result, done)
     if done.repair is not None and not _number(request.user, done.repair):
         # A repair outside the user's share: say what happened without its number.
@@ -143,11 +183,16 @@ def _message(request, wo, done) -> str:
     message = f"{wo.number} completed: {note}"
     if done.tagged_out:
         message += f"; {wo.asset.tag} tagged out of service"
-    return message
+    return message + logged
 
 
 def _saved(request, wo, done):
-    response = retarget(_render_wo_drawer(request, wo), "#drawer")
+    """The drawer, as the work order is now; from My work (slice 24) nothing is swapped, so the technician stays on the list, which
+    re-fetches itself on wo-changed. A failed PM shows its drawer either way: it names the repair it opened."""
+    if from_my_work(request) and wo.pm_result != PmResult.FAIL:
+        response = reswap(HttpResponse(), "none")
+    else:
+        response = retarget(_render_wo_drawer(request, wo), "#drawer")
     for event in ("wo-changed", *(("devices-changed",) if done.device_changed else ())):
         trigger_client_event(response, event, {})
     toast(response, _message(request, wo, done))
@@ -156,19 +201,21 @@ def _saved(request, wo, done):
 
 @web_view(wo_perms.MODULE, wo_perms.RECORD_LEVEL, scoped=True)
 def wo_complete(request, number):
-    # In progress is the one status a work order is completed from; whether it is in progress now is the modal's to say.
+    # A work order is completed from in progress, and (slice 24) a PM from open, started as it is completed by someone who may also
+    # start it (completion.blocker checks that move too). Whether it can be completed now is the modal's to say.
     _require(wo_perms.can_transition(request.user, WoStatus.IN_PROGRESS, WoStatus.COMPLETED))
     wo = get_wo(request, number)  # another facility's number, or one outside a scoped user's share, is a 404
     today = timezone.localdate()
-    reason = completion.blocker(wo, today)
+    reason = completion.blocker(wo, today, request.user)
     if reason:
         return _modal(request, wo, reason=reason)
     steps = completion.checklist_of(completion.procedure_for(wo))
     offers = _offers(wo, request.user)
-    kwargs = _form_kwargs(wo, steps, offers)
+    hours = _hours(request, wo)
+    kwargs = _form_kwargs(wo, steps, offers, hours)
     if request.method != "POST":
         form = CompleteForm.filled(request.GET, fill=request.GET.get("fill", ""), **kwargs) if "fill" in request.GET else CompleteForm(**kwargs)
-        return _modal(request, wo, form, steps=steps, offers=offers)
+        return _modal(request, wo, form, steps=steps, offers=offers, hours=hours)
     form = CompleteForm(request.POST, **kwargs)
     done = None
     if form.is_valid():
@@ -178,8 +225,8 @@ def wo_complete(request, number):
             form.add_service_errors(e)
     if done is None:
         wo = get_wo(request, number)  # as it is now: a refusal for its state (completed meanwhile) re-renders as the blocker
-        reason = completion.blocker(wo, today)
+        reason = completion.blocker(wo, today, request.user)
         if not reason and "checklist" in form.errors:
             form = _revised(form, kwargs)
-        return _modal(request, wo, None if reason else form, steps=steps, offers=offers, reason=reason)
+        return _modal(request, wo, None if reason else form, steps=steps, offers=offers, hours=hours, reason=reason)
     return _saved(request, wo, done)  # the service refreshed wo

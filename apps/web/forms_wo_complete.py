@@ -3,7 +3,12 @@ Input parsing for completing a work order (slice 15, web/_wo_complete.html). The
 their fields (step_<n>: pass, fail, or na; reading_<n>) are built in __init__ from the checklist the modal shows. The rules live
 in apps.workorders.completion; this form passes on what was typed, and puts the service's errors back on the fields they name
 (the service keys them by these same names).
+
+Slice 24, on a phone: a reading box brings up the number pad (inputmode="decimal") when its step reads a number (reads_number), and
+an optional Hours box logs time with the completion (offered by the view when there is someone to log it for).
 """
+import re
+
 from django import forms
 
 from apps.workorders import completion
@@ -19,11 +24,31 @@ RESULT_CHOICES = [
 ]
 STEP_CHOICES = [(completion.PASS, "Pass"), (completion.FAIL, "Fail"), (completion.NA, "N/A")]
 # The fields after the checklist, in the modal's order: a form sent back with errors focuses the first one on screen
-LAYOUT_TAIL = ("pm_result", "resolution", "open_repair")
+LAYOUT_TAIL = ("pm_result", "resolution", "open_repair", "hours")
+# What a step records reads as a number when it names a limit or a unit ("leakage µA, limit 100", "Ω", "mmHg"). Anything else
+# ("serial number", or a reading that says nothing of what) keeps the keyboard: the number pad has no letters. So does a reading that
+# may be below zero ("±0.5 °C", "-10 to 10 mV"): a phone's number pad has no minus sign.
+UNITS = frozenset(("µa ua ma amps v mv kv volts ω ohm ohms mω kω % sec secs seconds min mins minutes ms hz bpm psi kpa mmhg cmh2o mbar "
+                   "ml l/min lpm ml/h ml/hr ml/min j joules w watts °c °f db lux kg lb lbs").split())
+_WORD = re.compile(r"[^\s,;:()]+")
+_NEGATIVE = re.compile(r"±|(^|[\s(,;:])[-−]\s?\d")
+
+
+def reads_number(measure) -> bool:
+    """Whether a step's reading is a number (its box brings up the number pad). `measure` as completion.checklist_of gives it."""
+    if not isinstance(measure, str):
+        return False
+    text = measure.lower()
+    if _NEGATIVE.search(text):
+        return False
+    return any(c.isdigit() for c in text) or any(word in UNITS for word in _WORD.findall(text))
 
 
 class CompleteForm(forms.Form):
     resolution = forms.CharField(required=False, strip=False, widget=forms.Textarea(attrs={"rows": 3, "maxlength": completion.RESOLUTION_MAX}))
+    # Text, not a number field: apps.workorders.costs says what a valid number of hours is. inputmode brings up the number pad.
+    hours = forms.CharField(required=False, widget=forms.TextInput(attrs={"inputmode": "decimal", "autocomplete": "off", "placeholder": "e.g. 1.5",
+                                                                          "aria-describedby": "wc-hours-for"}))
     pm_result = forms.CharField(required=False)
     open_repair = forms.BooleanField(required=False, initial=True)
     tag_out = forms.BooleanField(required=False, initial=True)
@@ -33,13 +58,16 @@ class CompleteForm(forms.Form):
     shown_open_repair = forms.CharField(required=False)
     shown_tag_out = forms.CharField(required=False)
 
-    def __init__(self, *args, steps=(), is_pm=False, offer_open_repair=False, offer_tag_out=False, **kwargs):
+    def __init__(self, *args, steps=(), is_pm=False, offer_open_repair=False, offer_tag_out=False, offer_hours=False, **kwargs):
         """`steps`: the checklist the modal shows, as completion.checklist_of gives it. The two offers say whether the failed-PM
-        options are on screen: an option that is not offered is not taken from the post (a new repair is opened; no tag-out)."""
+        options are on screen: an option that is not offered is not taken from the post (a new repair is opened; no tag-out).
+        `offer_hours`: the Hours box is on screen; without it no hours are taken from the post."""
         kwargs.setdefault("auto_id", "wc-%s")
         super().__init__(*args, **kwargs)
         self.steps, self.is_pm = list(steps), is_pm
-        self.offer_open_repair, self.offer_tag_out = offer_open_repair, offer_tag_out
+        self.offer_open_repair, self.offer_tag_out, self.offer_hours = offer_open_repair, offer_tag_out, offer_hours
+        if not offer_hours:
+            del self.fields["hours"]
         self.first_error = ""
         for n in range(1, len(self.steps) + 1):
             self.fields[f"step_{n}"] = forms.CharField(required=False)
@@ -77,7 +105,7 @@ class CompleteForm(forms.Form):
         out = []
         for n, (text, measure) in enumerate(self.steps, 1):
             out.append({"n": n, "text": text, "measured": measure is not None, "measure": "" if measure in (None, True) else measure,
-                        "value": self._value(f"step_{n}"), "reading": self._value(f"reading_{n}"),
+                        "numeric": reads_number(measure), "value": self._value(f"step_{n}"), "reading": self._value(f"reading_{n}"),
                         "error": " ".join(self.errors.get(f"step_{n}", [])) if self.is_bound else "",
                         "reading_error": " ".join(self.errors.get(f"reading_{n}", [])) if self.is_bound else "",
                         "focus": "step" if self.first_error == f"step_{n}" else "reading" if self.first_error == f"reading_{n}" else ""})
@@ -95,6 +123,8 @@ class CompleteForm(forms.Form):
     def service_kwargs(self) -> dict:
         d = self.cleaned_data
         kwargs = {"resolution": d["resolution"], "signature": d["signature"] or completion.checklist_signature(self.steps)}
+        if self.offer_hours:
+            kwargs["hours"] = d["hours"]
         if self.is_pm:
             kwargs.update(pm_result=d["pm_result"],
                           results=[{"result": d[f"step_{n}"], "reading": d[f"reading_{n}"]} for n in range(1, len(self.steps) + 1)],

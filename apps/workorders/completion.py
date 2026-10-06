@@ -6,6 +6,13 @@ device (last and next PM, a tagged-out repair's return to service) and the porta
 The rules (complete_work_order checks them all and reports every problem at once, keyed by the modal's field names):
 - Only this facility's work order, only from a status that may move to completed (in progress), only once it is assigned (a
   technician or a vendor did the work), and never on a date before it was opened. `blocker` says which of these stops it now.
+- Slice 24: a PM still open is completed in one step (done in one visit): completing starts it first, through services.change_status
+  (open to in progress, so the status history keeps both moves) in the completion's transaction, for someone who may make both
+  moves (permissions.can_transition; no user, as for services and commands: allowed). A repair still needs Start: its start date
+  matters for downtime and turnaround (starts_on_completion).
+- hours (optional, slice 24): time logged with the completion, a labor line for costs.default_technician on the day it is completed,
+  by costs.add_labor's rules (at most 24 h for one technician on one day) in the same transaction. A refusal is an error on hours,
+  and nothing is saved.
 - resolution: what was found and done. Trimmed, at most RESOLUTION_MAX characters. Required for repairs and every other type;
   for a PM required with Pass with minor repair (what was repaired) and with Fail when there is no checklist (what failed),
   otherwise optional: a passed PM gets "PM completed per <procedure code>, all checks passed", a failed one names its failed steps.
@@ -28,7 +35,7 @@ The rules (complete_work_order checks them all and reports every problem at once
   create_work_order(tag_out=True) for a new repair (the portal's path: completing that repair returns the device), or, for a
   repair already open, by marking that repair tagged out and moving the device through equipment.services.set_status. Other
   results ignore open_repair and tag_out.
-- One transaction: a refusal anywhere (the repair, the tag-out, the completion) leaves nothing behind.
+- One transaction: a refusal anywhere (the start, the hours, the repair, the tag-out, the completion) leaves nothing behind.
 - The status history says the result: "PM passed", "PM passed with minor repair", "PM failed; WO-26-0057 opened for the repair".
 """
 import hashlib
@@ -45,8 +52,9 @@ from apps.equipment.models import AssetStatus, RiskClass
 from apps.pm.procedures import step_parts
 from apps.tenants.context import get_current_tenant
 
-from . import services
-from .models import ALLOWED_TRANSITIONS, OPEN_STATUSES, PmResult, Priority, WorkOrder, WorkOrderStatusHistory, WoStatus, WoType
+from . import costs, services
+from . import permissions as wo_perms
+from .models import ALLOWED_TRANSITIONS, OPEN_STATUSES, LaborLine, PmResult, Priority, WorkOrder, WorkOrderStatusHistory, WoStatus, WoType
 
 RESOLUTION_MAX = 1000
 READING_MAX = 60
@@ -56,6 +64,8 @@ DONE_STATUSES = (WoStatus.COMPLETED, WoStatus.CLOSED)
 # The status history's note (and the toast's wording) for each result
 RESULT_NOTES = {PmResult.PASS: "PM passed", PmResult.PASS_MINOR_REPAIR: "PM passed with minor repair", PmResult.FAIL: "PM failed"}
 _CONTROL = "Remove the invisible control character from {what}."
+# The hours box when there is nobody to credit them to (the technician assigned is no longer active, and the user has no profile)
+NO_TECHNICIAN = "There is no active technician to log these hours for. Log them with the work order's Log time, choosing who did the work."
 
 
 @dataclass
@@ -65,6 +75,8 @@ class Completion:
     repair: WorkOrder | None = None  # the repair a failed PM was recorded on: the new follow-up, or one already open
     tagged_out: bool = False  # the device went out of service with this completion
     device_changed: bool = False  # its status or its last or next PM moved (the Equipment list shows them)
+    started: bool = False  # an open PM, started as it was completed (slice 24)
+    labor: LaborLine | None = None  # the hours logged with it (slice 24)
 
 
 # --- reading -------------------------------------------------------------------------------------------------------------------
@@ -93,10 +105,19 @@ def checklist_signature(steps) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
-def blocker(wo: WorkOrder, today: date | None = None) -> str:
-    """Why `wo` cannot be completed now, or "" when it can."""
+def starts_on_completion(wo: WorkOrder, by=None) -> bool:
+    """Whether completing `wo` starts it first (slice 24): a PM still open, done in one visit, by someone who may both start and
+    complete it (no user: services and commands). A repair is started on its own: its start date matters for downtime and turnaround."""
+    if wo.type != WoType.PM or wo.status != WoStatus.OPEN:
+        return False
+    return by is None or (wo_perms.can_transition(by, WoStatus.OPEN, WoStatus.IN_PROGRESS)
+                          and wo_perms.can_transition(by, WoStatus.IN_PROGRESS, WoStatus.COMPLETED))
+
+
+def blocker(wo: WorkOrder, today: date | None = None, by=None) -> str:
+    """Why `wo` cannot be completed now by `by` (None: anyone allowed), or "" when it can."""
     today = today or timezone.localdate()
-    if WoStatus.COMPLETED not in ALLOWED_TRANSITIONS[wo.status]:
+    if WoStatus.COMPLETED not in ALLOWED_TRANSITIONS[wo.status] and not starts_on_completion(wo, by):
         return {
             WoStatus.OPEN: f"{wo.number} has not been started. Start work on it first.",
             WoStatus.AWAITING_PARTS: f"{wo.number} is waiting on parts. Resume it when they arrive, then complete it.",
@@ -240,6 +261,21 @@ def _check_result(wo, pm_result: str, snapshot: list[dict], has_checklist: bool,
         errors["resolution"] = "Say what failed."
 
 
+def _log_hours(wo: WorkOrder, hours, by, today: date, errors: dict) -> LaborLine | None:
+    """The hours typed with the completion, as a labor line for costs.default_technician today, by add_labor's rules (in its own
+    savepoint: a refusal writes nothing, and its message goes under "hours" in `errors`). Any refusal in the completion takes a line
+    logged here back with the rest (complete_work_order's transaction). None when no hours were given or they were refused."""
+    if hours is None or not str(hours).strip():
+        return None
+    try:
+        return costs.add_labor(wo, hours=hours, worked_on=today, by=by, today=today)
+    except ValidationError as e:
+        found = e.message_dict if hasattr(e, "error_dict") else {"hours": e.messages}
+        messages = [NO_TECHNICIAN] if "technician" in found else []
+        errors["hours"] = " ".join([*messages, *(m for key, ms in found.items() if key != "technician" for m in ms)])
+        return None
+
+
 def _check_tenant(wo) -> None:
     tenant = get_current_tenant()
     if tenant is None or wo is None or wo.tenant_id != tenant.id:
@@ -368,15 +404,16 @@ def result_note(pm_result: str, done: Completion) -> str:
 
 @transaction.atomic
 def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str = "", results=None, open_repair: bool = True,
-                        tag_out: bool | None = None, signature: str | None = None, by=None, today: date | None = None) -> Completion:
-    """Complete `wo` with its resolution and, for a PM, its result and checklist results (the module's rules). `results` is one
-    {"result": "pass" | "fail" | "na", "reading": "..."} per checklist step, in order. Raises ValidationError: a plain message
-    when the work order cannot be completed now, else a dict keyed by resolution, pm_result, checklist, step_<n>, reading_<n>,
-    and open_repair. `wo` is refreshed from the database afterwards."""
+                        tag_out: bool | None = None, signature: str | None = None, hours=None, by=None, today: date | None = None) -> Completion:
+    """Complete `wo` with its resolution and, for a PM, its result and checklist results (the module's rules); a PM still open is
+    started first (starts_on_completion). `results` is one {"result": "pass" | "fail" | "na", "reading": "..."} per checklist step, in
+    order. `hours` (None or blank: none) are logged with it. Raises ValidationError: a plain message when the work order cannot be
+    completed now, else a dict keyed by resolution, pm_result, checklist, step_<n>, reading_<n>, open_repair, and hours. `wo` is
+    refreshed from the database afterwards."""
     today = today or timezone.localdate()
     _check_tenant(wo)
     locked = WorkOrder.objects.select_for_update().get(pk=wo.pk)  # two clicks, or two people, complete it once
-    reason = blocker(locked, today)
+    reason = blocker(locked, today, by)
     if reason:
         raise ValidationError(reason)
     asset = locked.asset
@@ -401,11 +438,19 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
     if fail and not open_repair and own_open_repair(locked) is None and other_open_repair(locked, by) is None:
         errors["open_repair"] = f"{asset.tag} has no open repair work order to record the failure on, so a failed PM opens one."
     if errors:
+        _log_hours(locked, hours, by, today, errors)  # its refusal too, so every problem is reported at once (a line goes back with the rest)
         raise ValidationError(errors)
 
+    started = locked.status == WoStatus.OPEN  # blocker let it through: a PM done in one visit, started as it is completed
+    if started:
+        services.change_status(locked, WoStatus.IN_PROGRESS, by=by, as_of=today)
+    labor = _log_hours(locked, hours, by, today, errors)  # after the start: the timeline reads in the order the work was done
+    if errors:
+        raise ValidationError(errors)  # the start goes back with it
     done = Completion(work_order=locked)
     if fail:
         done = _record_failure(locked, asset, snapshot, text, open_repair=open_repair, tag_out=tag_out is None or bool(tag_out), by=by, today=today)
+    done.started, done.labor = started, labor
     if is_pm:
         locked.pm_result = pm_result
         locked.checklist_results = snapshot
