@@ -242,7 +242,7 @@ def test_compliance_report_renders_the_policy_target(client, signed_in, medium_f
     assert r.status_code == 200
     assert '<td class="num down"><b>90.0%</b></td><td class="muted">97.5%</td>' in body  # medium misses 97.5
     assert '<td class="num up"><b>100.0%</b></td><td class="muted">100%</td>' in body  # life support and high stay at 100
-    assert "other equipment follows the hospital policy target of 97.5% with completion within the due month" in body
+    assert "other equipment follows the hospital policy target of 97.5% with each PM done by its due date" in body
     assert "Target 97.5%" in body and "Target 80%" not in body and "target of 80%" not in body
     assert r.context["p"]["chart"]["target_label"] == "Target 97.5%"
     csv = csv_text(client.get("/reports/compliance.csv")).splitlines()

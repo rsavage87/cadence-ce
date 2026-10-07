@@ -5,7 +5,7 @@ a technician on My work; a card's refused move re-fetches the list; a card's Sta
 moves are named for a screen reader and findable after the list re-fetches.
 """
 import json
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 from urllib.parse import urlsplit
 
 from django.utils import timezone
@@ -20,11 +20,12 @@ from apps.workorders.services import assign, change_status
 
 
 def _waited(w, days, note):
-    """`w` moved into waiting `days` ago with `note`."""
+    """`w` moved into waiting `days` before the frozen TODAY with `note` (noon that day: the page counts days from TODAY, never the
+    real clock)."""
     change_status(w, WoStatus.IN_PROGRESS)
     change_status(w, WoStatus.AWAITING_PARTS, note=note)
-    WorkOrderStatusHistory.objects.filter(work_order=w, to_status=WoStatus.AWAITING_PARTS).update(
-        created_at=timezone.now() - timedelta(days=days))
+    noon = timezone.make_aware(datetime.combine(TODAY - timedelta(days=days), time(12)))
+    WorkOrderStatusHistory.objects.filter(work_order=w, to_status=WoStatus.AWAITING_PARTS).update(created_at=noon)
 
 
 def test_waiting_is_measured_from_the_move_into_waiting(client, dana, floor, make_user):  # noqa: F811
