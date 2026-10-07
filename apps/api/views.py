@@ -17,6 +17,7 @@ from rest_framework import routers, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import MethodNotAllowed, PermissionDenied
 from rest_framework.exceptions import ValidationError as DRFValidationError
+from rest_framework.fields import BooleanField
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -33,12 +34,20 @@ from apps.tenants.context import get_current_tenant
 from apps.workorders import permissions as wo_perms
 from apps.workorders import scoping
 from apps.workorders import services as wo_services
-from apps.workorders.models import OPEN_STATUSES, WorkOrder, WoStatus
+from apps.workorders.models import OPEN_STATUSES, WorkOrder, WoStatus, WoType
 
 from . import serializers as s
 from .base import TenantViewSet, _refuse_on_create, _via_service
 from .permissions import ModulePermission
 from .tenancy import TenantAPIMixin
+
+
+def _as_bool(value):
+    """A boolean as a body sends it (JSON true or false, or a form's "true", "1", "off"...), or None when it is not one."""
+    try:
+        return BooleanField().to_internal_value(value)
+    except DRFValidationError:
+        return None
 
 
 class APIRootView(TenantAPIMixin, routers.APIRootView):
@@ -144,7 +153,15 @@ class AssetViewSet(EquipmentWrites, TenantViewSet):
     where it changes instead, while sending back the value a GET returned is fine.
 
     Slice 25: adding takes added_as, as Add device's "Already in use here" box: "new" (the default) or "existing"; "imported" is the
-    importer's, refused in words. It never changes afterwards (FIXED_ON_UPDATE)."""
+    importer's, refused in words. It never changes afterwards (FIXED_ON_UPDATE).
+
+    Slice 26, incoming inspections: adding takes incoming_inspection ("" the default: the status given; "waiting": out of service,
+    waiting for its incoming inspection, an Incoming inspection work order opened unassigned) and inspection_due (that work order's
+    due date). A waiting device is new: added_as existing, a status, a last PM, or a next PM sent with "waiting" is refused in words,
+    keyed by that field, rather than ignored. The inspection is then assigned and completed as any work order: POST
+    /api/v1/work-orders/{id}/assign/ or take/, then transition to completed with inspection_result (only its pass puts the device in
+    service and starts its PMs). An edit of a waiting device takes no next PM (update_asset's refusal, keyed next_pm_on), and the flag
+    (awaiting_inspection) is read-only. POST {id}/use-before-inspection/ puts it in use before the inspection (Equipment Approve)."""
 
     model, module, serializer_class = Asset, "equipment", s.AssetSerializer
     search_fields = ["tag", "serial", "device_model__model", "device_model__manufacturer", "department__name", "contract__reference"]
@@ -153,7 +170,8 @@ class AssetViewSet(EquipmentWrites, TenantViewSet):
     # only those. Adding and deleting devices stay closed to them (a new device has no work orders, so a company-scoped user could
     # never see it; inventory is the facility-wide roles' work), as do the qualified technicians (the facility's staff, not a device).
     # Read only, as on the web: a device's status and details are facility-wide (retiring cancels every open PM on it, the facility's
-    # included), so a vendor's or a unit's share is to see devices, never to change them.
+    # included), so a vendor's or a unit's share is to see devices, never to change them. Slice 26: so is putting a device in use
+    # before its incoming inspection (use_before_inspection), which the drawer never offers them either.
     scoped_actions = frozenset({"list", "retrieve"})
     in_use = "{0.tag} has work orders or service requests, so it cannot be deleted; retire it instead."
     FIXED_ON_UPDATE = {
@@ -162,9 +180,25 @@ class AssetViewSet(EquipmentWrites, TenantViewSet):
         "contract": "Use POST /api/v1/contracts/{id}/add_assets/ or remove_asset/ to change the contract.",
         "last_pm_on": "The last PM date comes from completed PM work orders.",
         "added_as": "How a device was added is recorded when it is added and never changes.",  # slice 25
+        # Slice 26: taken only when the device is added (CREATE_ONLY)
+        "incoming_inspection": "A device waits for its incoming inspection from when it is added. To open an incoming inspection now, use "
+                               "POST /api/v1/work-orders/ with type inspection.",
+        "inspection_due": "Change the incoming inspection's due date on its work order: PATCH /api/v1/work-orders/{id}/ with due_on.",
     }
+    # Slice 26: no device field holds these (the serializer takes them write-only), so on an edit a blank one is no change and any
+    # value is refused.
+    CREATE_ONLY = ("incoming_inspection", "inspection_due")
     # Slice 25: what a device added here can be (create_asset's added_as). Imported is the importer's (Settings, Import data).
     ADDED_HERE = (AddedAs.NEW, AddedAs.EXISTING)
+    # Slice 26: what a device added waiting for its incoming inspection never comes with, in words, keyed by the field sent.
+    NOT_WITH_WAITING = {
+        "added_as": "A device already in use here does not wait for an incoming inspection: send added_as \"new\" with incoming_inspection "
+                    "\"waiting\", or leave incoming_inspection blank.",
+        "status": "A device waiting for its incoming inspection is added out of service and goes into service when its inspection passes: "
+                  "leave status out.",
+        "last_pm_on": "A new device's PM schedule starts when it passes its incoming inspection: leave last_pm_on out.",
+        "next_pm_on": "A new device's PM schedule starts when it passes its incoming inspection: leave next_pm_on out.",
+    }
 
     def get_queryset(self):
         return scoping.assets(self.request.user, Asset.objects.select_related("device_model", "department", "contract"))
@@ -177,7 +211,23 @@ class AssetViewSet(EquipmentWrites, TenantViewSet):
         if d["added_as"] not in self.ADDED_HERE:
             raise DRFValidationError({"added_as": ["Imported devices come in through Settings, Import data. A device added here is "
                                                    "\"new\" (new to the facility) or \"existing\" (already in use here)."]})
+        self._check_incoming(d)
         serializer.instance = _via_service(eq_services.create_asset, by=self.request.user, **d)
+
+    def _check_incoming(self, d):
+        """Slice 26: what a device added waiting for its incoming inspection is sent with. Every field that contradicts "waiting" is
+        refused at once, keyed by that field (create_asset names one at a time and would put a status sent with it aside), and an
+        inspection due date is refused without "waiting" rather than dropped."""
+        if d.get("incoming_inspection") != eq_services.INCOMING_WAITING:
+            if d.get("inspection_due") is not None:
+                raise DRFValidationError({"inspection_due": ["Only a device added waiting for its incoming inspection (incoming_inspection "
+                                                             "\"waiting\") has an inspection due date."]})
+            return
+        sent = {"added_as": d["added_as"] == AddedAs.EXISTING, "status": "status" in d,
+                "last_pm_on": d.get("last_pm_on") is not None, "next_pm_on": d.get("next_pm_on") is not None}
+        errors = {f: [self.NOT_WITH_WAITING[f]] for f, given in sent.items() if given}
+        if errors:
+            raise DRFValidationError(errors)
 
     def perform_update(self, serializer):
         asset, d = serializer.instance, dict(serializer.validated_data)
@@ -186,8 +236,17 @@ class AssetViewSet(EquipmentWrites, TenantViewSet):
             raise PermissionDenied("Moving a device to another department needs a role that sees the whole facility.")
         errors = {}
         for field, message in self.FIXED_ON_UPDATE.items():
-            if field in d and d.pop(field) != getattr(asset, field):
+            if field not in d:
+                continue
+            sent = d.pop(field)
+            if (sent not in (None, "")) if field in self.CREATE_ONLY else (sent != getattr(asset, field)):
                 errors[field] = [message]
+        # Slice 26: read-only (editable=False; only a passed incoming inspection clears it): a different value is refused rather than
+        # dropped, so a client never thinks it was saved. Sending back what a GET returned is fine.
+        body = self.request.data if hasattr(self.request.data, "get") else {}
+        if "awaiting_inspection" in body and _as_bool(body["awaiting_inspection"]) is not asset.awaiting_inspection:
+            errors["awaiting_inspection"] = ["A device stops waiting for its incoming inspection when that inspection passes: complete it "
+                                             "with POST /api/v1/work-orders/{id}/transition/ (status completed, inspection_result passed)."]
         if errors:
             raise DRFValidationError(errors)
         serializer.instance = _via_service(eq_services.update_asset, asset, by=self.request.user, **d)
@@ -203,6 +262,21 @@ class AssetViewSet(EquipmentWrites, TenantViewSet):
         if not eq_perms.can_set_status(request.user, asset.status, to):
             raise PermissionDenied("Retiring or reinstating a device needs Approve access.")
         _via_service(eq_services.set_status, asset, to, by=request.user, note=str(body.get("note") or ""))
+        return Response(self.get_serializer(asset).data)
+
+    @action(detail=True, methods=["post"], url_path="use-before-inspection", url_name="use-before-inspection")
+    def use_before_inspection(self, request, pk=None):
+        """Slice 26, the drawer's "Put in use before inspection": body {"reason": "<UseBeforeInspection value>"} (no free text) puts a
+        device waiting for its incoming inspection in service before it, through equipment.services.use_before_inspection. It keeps
+        waiting (no next PM: its PMs start when the inspection passes), and its inspection goes to high priority, due the next day.
+        Equipment Approve (permissions.can_use_before_inspection, the level retiring needs), and never a scoped user (not in
+        scoped_actions). A refusal is a 400 in the service's words: keyed reason for a reason not listed, else as detail."""
+        if not eq_perms.can_use_before_inspection(request.user):
+            raise PermissionDenied(eq_services.USE_BEFORE_PERMISSION)
+        asset = self.get_object()
+        body = request.data if hasattr(request.data, "get") else {}  # a JSON list or scalar body has no fields
+        reason = body.get("reason")
+        asset = _via_service(eq_services.use_before_inspection, asset, reason if isinstance(reason, str) else "", by=request.user)
         return Response(self.get_serializer(asset).data)
 
     @action(detail=True, methods=["get"])
@@ -245,10 +319,12 @@ class WorkOrderViewSet(TenantViewSet):
         d = serializer.validated_data
         if (d.get("assigned_to") or d.get("vendor_service")) and not wo_perms.can_assign(self.request.user):
             raise PermissionDenied("Assigning work orders needs Approve access.")
-        wo = wo_services.create_work_order(asset=d["asset"], type=d.get("type", "repair"), priority=d.get("priority", "normal"), problem=d["problem"],
-                                           requester=d.get("requester", ""), assigned_to=d.get("assigned_to"), vendor_service=d.get("vendor_service", False),
-                                           vendor_name=d.get("vendor_name", ""), due_on=d.get("due_on"), created_by=self.request.user,
-                                           tag_out=d.get("tagged_out", False))
+        # Slice 26: a refusal is a 400 in the service's words (keyed type: a PM, or a second open incoming inspection, on a device
+        # waiting for its incoming inspection), never a 500.
+        wo = _via_service(wo_services.create_work_order, asset=d["asset"], type=d.get("type", "repair"), priority=d.get("priority", "normal"),
+                          problem=d["problem"], requester=d.get("requester", ""), assigned_to=d.get("assigned_to"),
+                          vendor_service=d.get("vendor_service", False), vendor_name=d.get("vendor_name", ""), due_on=d.get("due_on"),
+                          created_by=self.request.user, tag_out=d.get("tagged_out", False))
         serializer.instance = wo
 
     ASSIGNMENT_FIELDS = ("assigned_to", "vendor_service", "vendor_name")
@@ -264,16 +340,46 @@ class WorkOrderViewSet(TenantViewSet):
         if "resolution" in self.request.data:
             raise DRFValidationError({"resolution": ["The resolution is recorded when the work order is completed (transition to completed)."]})
         # Slice 25: read-only here (the field is editable=False); a different value is refused rather than dropped, so a client never
-        # thinks it was saved. Sending back what a GET returned is fine.
-        sent = self.request.data.get("late_reason") if hasattr(self.request.data, "get") else None
+        # thinks it was saved. Sending back what a GET returned is fine. Slice 26: an incoming inspection's result likewise.
+        body = self.request.data if hasattr(self.request.data, "get") else {}
+        sent = body.get("late_reason")
         if sent is not None and sent != wo.late_reason:
             raise DRFValidationError({"late_reason": ["Use POST /api/v1/work-orders/{id}/late-reason/ to record why a PM was late."]})
+        sent = body.get("inspection_result")
+        if sent is not None and sent != wo.inspection_result:
+            raise DRFValidationError({"inspection_result": ["An incoming inspection's result is recorded when it is completed: POST "
+                                                            "/api/v1/work-orders/{id}/transition/ with status completed and inspection_result."]})
         changed = [f for f, v in d.items() if v != getattr(wo, f)]
         if changed and wo.status not in OPEN_STATUSES:
             raise DRFValidationError({"detail": f"{wo.number} is {wo.get_status_display().lower()}: what it records stays as it is. Reopen it first."})
+        self._check_inspection_change(wo, d)
         if "asset" in changed and (wo.labor_lines.exists() or wo.part_lines.exists()):
             raise DRFValidationError({"asset": [f"{wo.number} has labor or parts on file for {wo.asset.tag}; it stays with that device."]})
         serializer.save()
+
+    @staticmethod
+    def _check_inspection_change(wo, d):
+        """Slice 26: an edit of an open work order never makes or unmakes an incoming inspection, moves one off or onto a device
+        waiting for its incoming inspection, or puts a PM on a waiting device (its PMs start when it passes). Those are opened as their
+        own work orders (POST /api/v1/work-orders/, where create_work_order keeps a waiting device to one open inspection and no PM).
+        Refused in words, keyed type or asset."""
+        new_type, new_asset = d.get("type", wo.type), d.get("asset", wo.asset)
+        type_changed, asset_changed = new_type != wo.type, new_asset.pk != wo.asset_id
+        if type_changed and wo.type == WoType.INSPECTION:
+            raise DRFValidationError({"type": [f"{wo.number} is an incoming inspection and stays one. Cancel it (transition to cancelled) and "
+                                               "open the work order you need with POST /api/v1/work-orders/."]})
+        if type_changed and new_type == WoType.INSPECTION:
+            raise DRFValidationError({"type": [f"{wo.number} stays a {wo.get_type_display().lower()}. Open an incoming inspection as its own "
+                                               "work order: POST /api/v1/work-orders/ with type inspection."]})
+        if asset_changed and wo.type == WoType.INSPECTION and wo.asset.awaiting_inspection:
+            raise DRFValidationError({"asset": [f"{wo.number} is {wo.asset.tag}'s incoming inspection: it stays with that device while the "
+                                                "device waits for it."]})
+        if asset_changed and wo.type == WoType.INSPECTION and new_asset.awaiting_inspection:
+            raise DRFValidationError({"asset": [f"{new_asset.tag} is waiting for its incoming inspection: open that inspection on it with POST "
+                                                "/api/v1/work-orders/ (type inspection) rather than moving another device's here."]})
+        if new_type == WoType.PM and new_asset.awaiting_inspection and (type_changed or asset_changed):
+            raise DRFValidationError({"asset" if asset_changed else "type": [f"{new_asset.tag} is waiting for its incoming inspection: its PMs "
+                                                                             "start when it passes its incoming inspection."]})
 
     @action(detail=True, methods=["post"])
     def transition(self, request, pk=None):
@@ -283,10 +389,13 @@ class WorkOrderViewSet(TenantViewSet):
             raise PermissionDenied("Closing or reopening a closed work order needs Approve access.")
         if to_status == WoStatus.COMPLETED:
             # As the drawer's Mark completed: the resolution, and for a PM its result and one {"result", "reading"} per checklist step.
+            # Slice 26: an incoming inspection likewise, with inspection_result ("passed" or "failed"; required while its device waits
+            # for it, when only a pass puts the device in service) and, optionally, its checklist's results (all of them or none).
             from apps.workorders.completion import complete_work_order
 
             d = request.data
             kwargs = {"resolution": d.get("resolution", ""), "pm_result": d.get("pm_result", ""), "results": d.get("results"),
+                      "inspection_result": d.get("inspection_result", ""),
                       "late_reason": d.get("late_reason")}  # slice 25: why a PM completed after its due date was late, optional
             for flag in ("open_repair", "tag_out"):
                 if flag in d:

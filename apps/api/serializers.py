@@ -1,12 +1,14 @@
+from django.db import models
 from rest_framework import serializers
 
 from apps.contracts.models import Contract
 from apps.credentials.models import Credential, Technician
+from apps.equipment import services as eq_services
 from apps.equipment.models import AddedAs, Asset, Department, DeviceModel
 from apps.recalls.models import Alert, AlertMatch
 from apps.recalls.services import progress as recall_progress
 from apps.workorders import scoping
-from apps.workorders.models import LaborLine, PartLine, WorkOrder
+from apps.workorders.models import OPEN_STATUSES, LaborLine, PartLine, WorkOrder, WoType
 
 
 class DepartmentSerializer(serializers.ModelSerializer):
@@ -32,13 +34,51 @@ class DeviceModelSerializer(serializers.ModelSerializer):
                   "pm_interval_months", "oem_schedule_required", "expected_life_years", "list_cost", "pm_procedure"]
 
 
+def open_inspections(assets, user=None) -> dict:
+    """{device id: its open incoming inspection} for the devices among `assets` waiting for one (Asset.awaiting_inspection; slice 26):
+    the earliest opened, as apps.workorders.inspections.open_inspection reads it. One a scoped user (apps.workorders.scoping) may not
+    see is left out, as WorkOrderSerializer leaves out a follow_up_of outside the share. Two queries at most whatever the number of
+    devices, the second only for a scoped user; none when no device waits."""
+    waiting = [a.pk for a in assets if a.awaiting_inspection]
+    if not waiting:
+        return {}
+    found: dict = {}
+    rows = (WorkOrder.objects.filter(asset_id__in=waiting, type=WoType.INSPECTION, status__in=OPEN_STATUSES)
+            .order_by("opened_on", "number").only("id", "number", "asset_id", "opened_on"))
+    for wo in rows:
+        found.setdefault(wo.asset_id, wo)
+    if found and user is not None and scoping.is_scoped(user):
+        shown = set(scoping.work_orders(user, WorkOrder.objects.filter(pk__in=[wo.pk for wo in found.values()])).values_list("pk", flat=True))
+        found = {asset_id: wo for asset_id, wo in found.items() if wo.pk in shown}
+    return found
+
+
+class AssetListSerializer(serializers.ListSerializer):
+    """A page of devices: their open incoming inspections read in one go (open_inspections), not once per device."""
+
+    def to_representation(self, data):
+        items = list(data.all() if isinstance(data, models.manager.BaseManager) else data)
+        request = self.context.get("request")
+        found = open_inspections(items, getattr(request, "user", None))
+        self.context["_open_inspections"] = {a.pk: found.get(a.pk) for a in items}
+        return super().to_representation(items)
+
+
 class AssetSerializer(serializers.ModelSerializer):
     """Parses and shows devices. Writes never save through it: AssetViewSet hands the parsed fields to create_asset, update_asset,
     and set_status (apps.equipment.services), which validate and record the history.
 
     added_as (slice 25): how the device came to be in Cadence (AddedAs), with added_as_label in words. Taken when the device is added
     ("new", the default, or "existing": already in use here; "imported" is the importer's, refused by AssetViewSet with words), never
-    changed afterwards (AssetViewSet.FIXED_ON_UPDATE); blank for a device added before slice 25."""
+    changed afterwards (AssetViewSet.FIXED_ON_UPDATE); blank for a device added before slice 25.
+
+    Slice 26, incoming inspections: incoming_inspection and inspection_due are taken only when the device is added (write-only):
+    "waiting" adds a new device out of service and waiting for its incoming inspection, with no next PM and an Incoming inspection
+    work order opened unassigned (due inspection_due, else apps.workorders.inspections.INSPECTION_DUE_DAYS later); "" (the default)
+    adds it in the status given. Read back: awaiting_inspection (read-only: only its passed inspection clears it), status_label (the
+    status as the screens word it, equipment.services.status_label: "Awaiting inspection" for a device out of service waiting for
+    it), and, while it waits, its open inspection: open_inspection (the work order's id, as follow_up_of is given) and
+    open_inspection_number, both null for a scoped user outside whose share that work order is."""
 
     device_model_detail = DeviceModelSerializer(source="device_model", read_only=True)
     department_name = serializers.CharField(source="department.name", read_only=True)
@@ -47,13 +87,43 @@ class AssetSerializer(serializers.ModelSerializer):
     # The model field is editable=False (only create_asset writes it); declared here so the create can take it
     added_as = serializers.ChoiceField(choices=AddedAs.choices, required=False, allow_blank=True)
     added_as_label = serializers.CharField(source="get_added_as_display", read_only=True)
+    status_label = serializers.SerializerMethodField()
+    open_inspection = serializers.SerializerMethodField()
+    open_inspection_number = serializers.SerializerMethodField()
+    # create_asset's alone, no device field holds them: AssetViewSet refuses them on an edit (FIXED_ON_UPDATE)
+    incoming_inspection = serializers.ChoiceField(choices=[("", "Added in the status given"),
+                                                           (eq_services.INCOMING_WAITING, "Waiting for its incoming inspection")],
+                                                  required=False, allow_blank=True, write_only=True)
+    inspection_due = serializers.DateField(required=False, allow_null=True, write_only=True)
 
     class Meta:
         model = Asset
-        fields = ["id", "tag", "serial", "device_model", "device_model_detail", "department", "department_name", "room", "status", "installed_on",
-                  "acquisition_cost", "condition", "warranty_end", "support_type", "contract", "contract_reference", "under_contract",
-                  "last_pm_on", "next_pm_on", "notes", "added_as", "added_as_label", "updated_at"]
-        read_only_fields = ["support_type"]
+        fields = ["id", "tag", "serial", "device_model", "device_model_detail", "department", "department_name", "room", "status", "status_label",
+                  "awaiting_inspection", "open_inspection", "open_inspection_number", "installed_on", "acquisition_cost", "condition",
+                  "warranty_end", "support_type", "contract", "contract_reference", "under_contract", "last_pm_on", "next_pm_on", "notes",
+                  "added_as", "added_as_label", "incoming_inspection", "inspection_due", "updated_at"]
+        read_only_fields = ["support_type", "awaiting_inspection"]
+        list_serializer_class = AssetListSerializer
+
+    def get_status_label(self, obj) -> str:
+        return eq_services.status_label(obj)
+
+    def _open_inspection(self, obj):
+        """The device's open incoming inspection as this request's user may see it, or None: from the page's one read
+        (AssetListSerializer), else read for this device alone, once for both fields."""
+        known = self.context.setdefault("_open_inspections", {})
+        if obj.pk not in known:
+            request = self.context.get("request")
+            known[obj.pk] = open_inspections([obj], getattr(request, "user", None)).get(obj.pk)
+        return known[obj.pk]
+
+    def get_open_inspection(self, obj):
+        wo = self._open_inspection(obj)
+        return str(wo.pk) if wo is not None else None
+
+    def get_open_inspection_number(self, obj):
+        wo = self._open_inspection(obj)
+        return wo.number if wo is not None else None
 
 
 class LaborLineSerializer(serializers.ModelSerializer):
@@ -76,18 +146,21 @@ class WorkOrderSerializer(serializers.ModelSerializer):
     is_late = serializers.BooleanField(read_only=True)
     total_cost = serializers.FloatField(read_only=True)
     late_reason_label = serializers.CharField(source="get_late_reason_display", read_only=True)
+    inspection_result_label = serializers.CharField(source="get_inspection_result_display", read_only=True)
 
     class Meta:
         model = WorkOrder
         fields = ["id", "number", "asset", "asset_tag", "type", "priority", "status", "source", "requester", "callback", "reported_location",
                   "assigned_to", "assigned_to_name", "vendor_service", "vendor_name", "opened_on", "due_on", "started_on", "completed_on",
                   "problem", "resolution", "estimated_hours", "tagged_out", "is_late", "total_cost", "labor_lines", "part_lines", "updated_at",
-                  "pm_result", "checklist_results", "follow_up_of", "legacy_number", "late_reason", "late_reason_label"]
+                  "pm_result", "checklist_results", "follow_up_of", "legacy_number", "late_reason", "late_reason_label", "inspection_result",
+                  "inspection_result_label"]
         # Slice 15: what a completion recorded (transition to completed, apps.workorders.completion) is read here, never written.
         # Slice 23: so is an imported work order's number in the previous system (apps.workorders.legacy sets it, once).
         # Slice 25: so is why a PM was late (the model field is editable=False): POST {id}/late-reason/ or the completion records it.
+        # Slice 26: so is an incoming inspection's result (InspectionResult, editable=False): only its completion records it.
         read_only_fields = ["number", "status", "started_on", "completed_on", "resolution", "pm_result", "checklist_results", "follow_up_of",
-                            "legacy_number", "late_reason"]
+                            "legacy_number", "late_reason", "inspection_result"]
 
     def to_representation(self, instance):
         """As a scoped user (apps.workorders.scoping) may read it, the same as the web's drawer: the number of a work order outside
