@@ -40,6 +40,9 @@ it the moment the select changes; browsers without :has show them always, and th
   {% include "web/_asset_field.html" with field=form.last_pm_on %}
   {% include "web/_asset_field.html" with field=form.next_pm_on %}
   {% include "web/_asset_field.html" with field=form.status cls="full" %}
+  {% with f=form.already_in_use %}{# slice 25: how the device came to be in Cadence (create_asset's added_as) #}
+  <div class="fld full dv-existing"><label class="check-row" for="{{ f.id_for_label }}">{{ f }} {{ f.label }}</label><span class="hint" id="{{ f.auto_id }}_helptext">{{ f.help_text }}</span>{% if f.errors %}<span class="err" id="{{ f.auto_id }}_error">{{ f.errors|striptags }}</span>{% endif %}</div>
+  {% endwith %}
   {% else %}
   {% include "web/_asset_field.html" with field=form.next_pm_on cls="full" %}
   {% endif %}

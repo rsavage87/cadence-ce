@@ -35,7 +35,12 @@ The rules (complete_work_order checks them all and reports every problem at once
   create_work_order(tag_out=True) for a new repair (the portal's path: completing that repair returns the device), or, for a
   repair already open, by marking that repair tagged out and moving the device through equipment.services.set_status. Other
   results ignore open_repair and tag_out.
-- One transaction: a refusal anywhere (the start, the hours, the repair, the tag-out, the completion) leaves nothing behind.
+- late_reason (optional, slice 25): why a PM completed after its due date was late (LateReason), recorded through
+  services.set_late_reason in the same transaction, after the completion (the survey binder reads it). Blank keeps a reason already
+  recorded. Only a PM completed after its due date (completes_late) takes one; anything else, or a value not listed, is refused under
+  late_reason with the rest, and nothing is saved. Never required: an API client or a hurried technician still completes.
+- One transaction: a refusal anywhere (the start, the hours, the repair, the tag-out, the completion, the late reason) leaves nothing
+  behind.
 - The status history says the result: "PM passed", "PM passed with minor repair", "PM failed; WO-26-0057 opened for the repair".
 """
 import hashlib
@@ -54,7 +59,18 @@ from apps.tenants.context import get_current_tenant
 
 from . import costs, services
 from . import permissions as wo_perms
-from .models import ALLOWED_TRANSITIONS, OPEN_STATUSES, LaborLine, PmResult, Priority, WorkOrder, WorkOrderStatusHistory, WoStatus, WoType
+from .models import (
+    ALLOWED_TRANSITIONS,
+    OPEN_STATUSES,
+    LaborLine,
+    LateReason,
+    PmResult,
+    Priority,
+    WorkOrder,
+    WorkOrderStatusHistory,
+    WoStatus,
+    WoType,
+)
 
 RESOLUTION_MAX = 1000
 READING_MAX = 60
@@ -112,6 +128,12 @@ def starts_on_completion(wo: WorkOrder, by=None) -> bool:
         return False
     return by is None or (wo_perms.can_transition(by, WoStatus.OPEN, WoStatus.IN_PROGRESS)
                           and wo_perms.can_transition(by, WoStatus.IN_PROGRESS, WoStatus.COMPLETED))
+
+
+def completes_late(wo: WorkOrder, today: date) -> bool:
+    """Whether completing `wo` on `today` finishes a PM after its due date (slice 25): it is then one of the PMs that missed their due
+    date (apps.pm.services.missed_pms) and may record why (LateReason). The modal offers "Why was it late?" on these only."""
+    return wo.type == WoType.PM and wo.due_on is not None and today > wo.due_on
 
 
 def blocker(wo: WorkOrder, today: date | None = None, by=None) -> str:
@@ -276,6 +298,33 @@ def _log_hours(wo: WorkOrder, hours, by, today: date, errors: dict) -> LaborLine
         return None
 
 
+def _late_reason(wo: WorkOrder, value, by, today: date, errors: dict) -> str:
+    """The reason typed with the completion (slice 25), checked before anything is saved so its refusal is reported with the rest
+    ("late_reason" in `errors`). "" when none: blank keeps a reason already recorded. _record_late_reason saves it afterwards."""
+    reason = str(value if value is not None else "").strip()
+    if not reason:
+        return ""
+    if reason not in LateReason.values:
+        errors["late_reason"] = "Choose one of the reasons listed."
+    elif wo.type != WoType.PM:
+        errors["late_reason"] = "Only a PM records why it was late."
+    elif not completes_late(wo, today):
+        errors["late_reason"] = f"{wo.number} is done by its due date, so it has no reason to record."
+    elif by is not None and not by.has_level(wo_perms.MODULE, wo_perms.late_reason_level(WoStatus.COMPLETED)):
+        errors["late_reason"] = "Recording why a PM was late needs Work orders Edit."
+    return reason
+
+
+def _record_late_reason(wo: WorkOrder, reason: str, by, today: date) -> None:
+    """Record the reason on the PM just completed, through its one writer (services.set_late_reason). A refusal there (a rule
+    _late_reason does not foresee) is keyed late_reason and takes the completion back with it (complete_work_order's transaction)."""
+    try:
+        services.set_late_reason(wo, reason, by=by, today=today)
+    except ValidationError as e:
+        found = e.message_dict if hasattr(e, "error_dict") else {"late_reason": e.messages}
+        raise ValidationError({"late_reason": " ".join(m for ms in found.values() for m in ms)}) from e
+
+
 def _check_tenant(wo) -> None:
     tenant = get_current_tenant()
     if tenant is None or wo is None or wo.tenant_id != tenant.id:
@@ -404,12 +453,14 @@ def result_note(pm_result: str, done: Completion) -> str:
 
 @transaction.atomic
 def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str = "", results=None, open_repair: bool = True,
-                        tag_out: bool | None = None, signature: str | None = None, hours=None, by=None, today: date | None = None) -> Completion:
+                        tag_out: bool | None = None, signature: str | None = None, hours=None, late_reason=None, by=None,
+                        today: date | None = None) -> Completion:
     """Complete `wo` with its resolution and, for a PM, its result and checklist results (the module's rules); a PM still open is
     started first (starts_on_completion). `results` is one {"result": "pass" | "fail" | "na", "reading": "..."} per checklist step, in
-    order. `hours` (None or blank: none) are logged with it. Raises ValidationError: a plain message when the work order cannot be
-    completed now, else a dict keyed by resolution, pm_result, checklist, step_<n>, reading_<n>, open_repair, and hours. `wo` is
-    refreshed from the database afterwards."""
+    order. `hours` (None or blank: none) are logged with it, and `late_reason` (None or blank: none; slice 25) is recorded on a PM
+    completed after its due date. Raises ValidationError: a plain message when the work order cannot be completed now, else a dict
+    keyed by resolution, pm_result, checklist, step_<n>, reading_<n>, open_repair, hours, and late_reason. `wo` is refreshed from the
+    database afterwards."""
     today = today or timezone.localdate()
     _check_tenant(wo)
     locked = WorkOrder.objects.select_for_update().get(pk=wo.pk)  # two clicks, or two people, complete it once
@@ -437,6 +488,7 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
     fail = is_pm and pm_result == PmResult.FAIL
     if fail and not open_repair and own_open_repair(locked) is None and other_open_repair(locked, by) is None:
         errors["open_repair"] = f"{asset.tag} has no open repair work order to record the failure on, so a failed PM opens one."
+    late = _late_reason(locked, late_reason, by, today, errors)
     if errors:
         _log_hours(locked, hours, by, today, errors)  # its refusal too, so every problem is reported at once (a line goes back with the rest)
         raise ValidationError(errors)
@@ -457,6 +509,8 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
         text = text or _default_resolution(pm_result, procedure, snapshot, done)
     locked.resolution = text
     services.change_status(locked, WoStatus.COMPLETED, by=by, note=result_note(pm_result, done) if is_pm else "", as_of=today)
+    if late:
+        _record_late_reason(locked, late, by, today)  # once completed late, it is a PM that missed its due date (missed_pms)
     asset.refresh_from_db(fields=["status", "last_pm_on", "next_pm_on"])
     done.device_changed = (asset.status, asset.last_pm_on, asset.next_pm_on) != before
     wo.refresh_from_db()

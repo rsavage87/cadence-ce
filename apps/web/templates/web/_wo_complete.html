@@ -5,7 +5,9 @@
    Slice 24, on a phone: each step's Pass / Fail / N/A is a label filling its cell (a row of three 44px buttons under the step on a
    phone; the radio's own aria-label names it), a reading box brings up the number pad when its step reads a number, an optional
    Hours box logs time with the completion, a PM still open says it is started as it is completed, and a modal opened from My work
-   posts from=my_work (the save then leaves the technician on My work).{% endcomment %}
+   posts from=my_work (the save then leaves the technician on My work).
+   Slice 25: a PM completed after its due date gets an optional "Why was it late?" select (late_offer): before the result for a
+   life-support or high-risk PM, highlighted (the survey binder lists it until a reason is recorded), else after the hours.{% endcomment %}
 <div class="modal-h wc-h"><h2>Complete {{ wo.number }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
 {% if blocker %}
 <div class="form"><div class="full note">{{ blocker }}</div></div>
@@ -43,6 +45,14 @@
   </div>
   {% endif %}
   <div class="form">
+    {% if late_offer.prominent %}
+    <div class="full wc-late flag">
+      <label class="wc-label" for="wc-late_reason">Why was it late?</label>
+      {{ form.late_reason }}
+      <div class="hint" id="wc-late-hint">Due {{ late_offer.due_on|date:"M j, Y" }}, {{ late_offer.days }} day{{ late_offer.days|pluralize }} ago. Optional, but the survey binder lists a late life-support or high-risk PM until a reason is recorded.</div>
+      {% if form.late_reason.errors %}<span class="err">{{ form.late_reason.errors|striptags }}</span>{% endif %}
+    </div>
+    {% endif %}
     {% if is_pm %}
     <div class="full">
       <div class="wc-label" id="wc-result-label">Result</div>
@@ -75,6 +85,10 @@
     {% if offer_hours %}
     <label class="wc-hours">Hours worked, optional{{ form.hours }}{% if form.hours.errors %}<span class="err">{{ form.hours.errors|striptags }}</span>{% endif %}</label>
     <div class="hint wc-hours-for" id="wc-hours-for">{% if hours_for %}Logged for {{ hours_for.name }}{% else %}Vendor time{% if wo.vendor_name %}, {{ wo.vendor_name }}{% endif %}{% endif %} today, at the Settings rate of ${{ hours_rate|floatformat:"2g" }} an hour. For another day, use Log time on the work order.</div>
+    {% endif %}
+    {% if late_offer and not late_offer.prominent %}
+    <label class="wc-late">Why was it late? Optional{{ form.late_reason }}{% if form.late_reason.errors %}<span class="err">{{ form.late_reason.errors|striptags }}</span>{% endif %}</label>
+    <div class="hint wc-late-hint" id="wc-late-hint">Due {{ late_offer.due_on|date:"M j, Y" }}, {{ late_offer.days }} day{{ late_offer.days|pluralize }} ago.</div>
     {% endif %}
     {% if requester_emailed %}<div class="full hint">A portal request: the requester's done email never includes this resolution.</div>{% endif %}
   </div>

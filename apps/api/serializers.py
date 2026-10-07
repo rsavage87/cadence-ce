@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from apps.contracts.models import Contract
 from apps.credentials.models import Credential, Technician
-from apps.equipment.models import Asset, Department, DeviceModel
+from apps.equipment.models import AddedAs, Asset, Department, DeviceModel
 from apps.recalls.models import Alert, AlertMatch
 from apps.recalls.services import progress as recall_progress
 from apps.workorders import scoping
@@ -34,18 +34,25 @@ class DeviceModelSerializer(serializers.ModelSerializer):
 
 class AssetSerializer(serializers.ModelSerializer):
     """Parses and shows devices. Writes never save through it: AssetViewSet hands the parsed fields to create_asset, update_asset,
-    and set_status (apps.equipment.services), which validate and record the history."""
+    and set_status (apps.equipment.services), which validate and record the history.
+
+    added_as (slice 25): how the device came to be in Cadence (AddedAs), with added_as_label in words. Taken when the device is added
+    ("new", the default, or "existing": already in use here; "imported" is the importer's, refused by AssetViewSet with words), never
+    changed afterwards (AssetViewSet.FIXED_ON_UPDATE); blank for a device added before slice 25."""
 
     device_model_detail = DeviceModelSerializer(source="device_model", read_only=True)
     department_name = serializers.CharField(source="department.name", read_only=True)
     contract_reference = serializers.CharField(source="contract.reference", read_only=True, default=None)
     under_contract = serializers.BooleanField(read_only=True)
+    # The model field is editable=False (only create_asset writes it); declared here so the create can take it
+    added_as = serializers.ChoiceField(choices=AddedAs.choices, required=False, allow_blank=True)
+    added_as_label = serializers.CharField(source="get_added_as_display", read_only=True)
 
     class Meta:
         model = Asset
         fields = ["id", "tag", "serial", "device_model", "device_model_detail", "department", "department_name", "room", "status", "installed_on",
                   "acquisition_cost", "condition", "warranty_end", "support_type", "contract", "contract_reference", "under_contract",
-                  "last_pm_on", "next_pm_on", "notes", "updated_at"]
+                  "last_pm_on", "next_pm_on", "notes", "added_as", "added_as_label", "updated_at"]
         read_only_fields = ["support_type"]
 
 
@@ -68,17 +75,19 @@ class WorkOrderSerializer(serializers.ModelSerializer):
     part_lines = PartLineSerializer(many=True, read_only=True)
     is_late = serializers.BooleanField(read_only=True)
     total_cost = serializers.FloatField(read_only=True)
+    late_reason_label = serializers.CharField(source="get_late_reason_display", read_only=True)
 
     class Meta:
         model = WorkOrder
         fields = ["id", "number", "asset", "asset_tag", "type", "priority", "status", "source", "requester", "callback", "reported_location",
                   "assigned_to", "assigned_to_name", "vendor_service", "vendor_name", "opened_on", "due_on", "started_on", "completed_on",
                   "problem", "resolution", "estimated_hours", "tagged_out", "is_late", "total_cost", "labor_lines", "part_lines", "updated_at",
-                  "pm_result", "checklist_results", "follow_up_of", "legacy_number"]
+                  "pm_result", "checklist_results", "follow_up_of", "legacy_number", "late_reason", "late_reason_label"]
         # Slice 15: what a completion recorded (transition to completed, apps.workorders.completion) is read here, never written.
         # Slice 23: so is an imported work order's number in the previous system (apps.workorders.legacy sets it, once).
+        # Slice 25: so is why a PM was late (the model field is editable=False): POST {id}/late-reason/ or the completion records it.
         read_only_fields = ["number", "status", "started_on", "completed_on", "resolution", "pm_result", "checklist_results", "follow_up_of",
-                            "legacy_number"]
+                            "legacy_number", "late_reason"]
 
     def to_representation(self, instance):
         """As a scoped user (apps.workorders.scoping) may read it, the same as the web's drawer: the number of a work order outside

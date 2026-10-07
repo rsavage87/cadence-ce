@@ -852,6 +852,29 @@ form.facility{margin:0}
   .scan-form.from-my-work .scan-cam-actions .btn{flex:1}
 }
 
+/* Slice 25, part D: why a PM was late, and how a device was added */
+/* The work order drawer's "Why late" row (web/_wo_late.html): both columns of the drawer's details, its select the drawer's width.
+   A life-support or high-risk PM with no reason is highlighted (the survey binder lists it until one is recorded). */
+.dl .wo-late{grid-column:1/-1;display:grid;gap:3px}
+.dl .wo-late dd{overflow:visible;white-space:normal;display:flex;flex-direction:column;gap:4px}
+.wo-late select{font:inherit;font-weight:400;color:var(--ink);background:var(--surface);border:1px solid var(--line-2);border-radius:6px;padding:6px 8px;max-width:100%}
+.wo-late .hint{font-weight:400}
+.dl .wo-late.flag{background:var(--warn-soft);border-radius:8px;padding:8px 10px;margin:0 -10px}
+.wo-late.flag dt,.wo-late.flag .hint{color:var(--warn)}
+/* Completing a PM late (web/_wo_complete.html): the select before the result, highlighted, for life support and high risk; else a
+   box after the hours with its due date beside it */
+.wc-late.flag{display:grid;gap:4px;padding:10px 12px;border-radius:8px;background:var(--warn-soft)}
+.wc-late.flag .wc-label{margin-bottom:0;color:var(--warn);font-weight:600}
+.wc-late.flag .hint{color:var(--warn)}
+.wc-form .wc-late-hint{align-self:end;padding-bottom:8px}
+/* Add device's "Already in use here" box (web/_asset_fields.html) */
+.form .dv-existing .check-row{color:var(--ink);font-weight:500}
+@media (max-width:760px){
+  .wo-late select{min-height:44px;font-size:16px;width:100%}
+  .wc-form .form select{min-height:44px;font-size:16px}
+  .wc-form .wc-late-hint{padding-bottom:0}
+}
+
 /* Slice 11: printing app pages */
 /* What the browser prints of an app page (the Overview's Export button calls window.print(); any other screen prints from the
    browser's menu): the page's content on white, in the light theme whatever the screen shows, with chart and chip colours kept.
