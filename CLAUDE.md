@@ -107,7 +107,11 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   email (`str(user)`), never a username
 - `apps/equipment` Department, DeviceModel, Asset (tags carry no spaces or slashes: they are URL segments, and never change once a device is
   added; slice 25: `added_as`, how it came to be in Cadence: new, already in use here, or imported, blank before slice 25; only
-  `create_asset(added_as=)` sets it), CSV importer; `services.py` fleet queries plus adding devices, models, and departments, editing (`update_asset`,
+  `create_asset(added_as=)` sets it; slice 26: `awaiting_inspection`, new and not yet through its incoming inspection: no next PM, the
+  hold (`set_status` never puts it in service or on loan; Found and Reinstate bring it back out of service), `use_before_inspection`
+  (Approve, a `UseBeforeInspection` reason), `pass_incoming_inspection` (its one writer, on the locked row), `status_label` ("Awaiting
+  inspection"), and update_asset and set_status work on the device's row as it is, locked (`_locked_row`), never a caller's older copy),
+  CSV importer; `services.py` fleet queries plus adding devices, models, and departments, editing (`update_asset`,
   `update_device_model`, `rename_department`: names unique in any letter case), and status changes
   (`STATUS_CHANGES`; retiring cancels open PMs), risk scoring (`set_risk_score`, `clear_risk_score`, `RISK_SCORE_BANDS`; every model
   change goes through `_save_model`, which locks the row and tells `apps.pm.aem.model_changed`), `permissions.py` (Edit to add, edit,
@@ -130,7 +134,13 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   page, the nav badge, and the digest; `takeable`; `scan_target`, what a scanned label opens); `services.take` (a technician assigns
   themselves unassigned in-house work they are credentialed for, while the facility allows it); slice 25: `WorkOrder.late_reason`
   (`LateReason`, choices only) why a PM missed its due date, written only by `services.set_late_reason` on `pm.services.missed_pms`
-  (Edit; Approve once closed: `permissions.can_set_late_reason`), from the drawer's Why late row, Mark completed, and the API; `legacy.py` work
+  (Edit; Approve once closed: `permissions.can_set_late_reason`), from the drawer's Why late row, Mark completed, and the API;
+  slice 26, `inspections.py` incoming inspections (`state`, `open_inspection`, the one opener `open_for`, `banner` for the drawer,
+  `uses_before`, `waiting_for_inspector`, `lock_open` (the lock order: a device's open inspections, then its row), `pass_cleared_flag`,
+  the `INCOMING` checklist); `WorkOrder.inspection_result` (`InspectionResult`), written by completion: an inspection has a checklist
+  (the model's PM procedure or `INCOMING`) and a result (required while its device waits; a failed step needs Failed), completes in one
+  visit, and a fail opens or reuses a re-inspection (never a repair); `create_work_order` refuses a PM or a second open inspection on a
+  waiting device; `legacy.py` work
   orders imported from another system (slice 23: `legacy_number`, the previous number, unique per facility; `Source.IMPORTED`; created in
   their final state with backdated status rows, never emailing or changing the device; their lines through costs.py's import-only writers,
   in-house hours that name no technician here as an in-house cost line, never vendor time; imported labor never fills a technician's live day)
@@ -180,7 +190,9 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   (with its CSV and print); `views_notifications.py` the account menu's Notifications page; `views_facilities.py` the facility switch and
   an invitation's join page, `views_my_work.py` My work (slice 24: the cards, `wo_waiting`, `from=my_work` answers without the drawer), `views_survey.py` the survey
   binder (slice 25: the page for a period, a CSV per section table and one of every gap, the printable binder), `views_wo_late.py` the work
-  order drawer's Why late row, `views_imports.py` Settings' Import data (slice 23: upload, columns, the check and the import a chunk at a
+  order drawer's Why late row (slice 26: Add device's intake choice and Put in use before inspection in `views_equipment.py`, the
+  drawer's inspection banner through the `incoming_banner` tag, an inspection's checklist and result in `views_wo_complete.py`, its
+  print through `views_print.inspector`), `views_imports.py` Settings' Import data (slice 23: upload, columns, the check and the import a chunk at a
   time by HTMX, the problems CSV), `views_all_facilities.py` All facilities (slice 22; the top bar's facility menu and the account menu's list
   come from the shell context processor; `htmx.FacilityTabMiddleware` reloads a tab left in another facility; `web_view` answers a link
   whose `?facility=` names another facility with a page that offers the switch); `views_print.py` asset labels and the
@@ -195,7 +207,9 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   parts, notes; `views_contracts.py`; `views_pm.py` PM schedule, Auto-assign week, procedures, risk score, AEM; `views_reports.py` the
   Overview, reports, custom reports, report emails; `views_recalls.py` with Check FDA feed; `views_scan.py`; `views_users.py` users,
   roles, technicians, credentials; `views_facilities.py` and `views_all_facilities.py` the signed-in person's facilities and All
-  facilities (session only: `permissions.PersonPermission`); `views_survey.py` the survey binder; a work order's late-reason action; serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
+  facilities (session only: `permissions.PersonPermission`); `views_survey.py` the survey binder; a work order's late-reason action; slice 26: a device's
+  incoming_inspection and inspection_due on create, awaiting_inspection, status_label, its open inspection, and use-before-inspection;
+  a work order's inspection_result; serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
   same thing and calls the same service; the API never imports apps.web. `tenancy.py` (`TenantAPIMixin`: the tenant from the session or
   token user, set after authentication and restored once the response is rendered), `authentication.py` (DRF's token check plus the
   deactivated-facility refusal sign-in has)

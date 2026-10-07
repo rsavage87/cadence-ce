@@ -1,12 +1,12 @@
 # Build plan
 
 The mock (`cadence-ce-cmms-mock.html`) is the spec. Each slice below is shippable on its own and ends with green tests.
-Slices 0 to 25 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
+Slices 0 to 26 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
 export and print, devices are added and changed in the product, reports and request confirmations go out by email, each
 device model's PM program (risk score, procedure, AEM interval) is kept in the product, and the work itself (time, parts,
 what was done, a PM's results) is recorded on the work order; vendors and clinical requesters see only their own share; facilities
 build their own reports, and a label opens its device with Scan tag; the API covers what the screens do, by session or token; every record's changes and every access change can be read back;
-staff get the emails they choose about their own work; each facility works on its own clock; one person signs in once to every facility they work at; a facility brings its records over from the CMMS it is leaving; technicians work from their phones on My work; and a survey binder gathers the evidence surveyors ask for. What each slice deferred is noted in its row and below.
+staff get the emails they choose about their own work; each facility works on its own clock; one person signs in once to every facility they work at; a facility brings its records over from the CMMS it is leaving; technicians work from their phones on My work; a survey binder gathers the evidence surveyors ask for; and new equipment is inspected before its first use. What each slice deferred is noted in its row and below.
 
 | # | Slice | Mock screen(s) | Code | Status |
 |---|-------|----------------|------|--------|
@@ -36,6 +36,7 @@ staff get the emails they choose about their own work; each facility works on it
 | 23 | Onboarding imports | (none: Settings, Import data) | `imports` + `equipment` + `workorders` + `contracts` + `credentials` + `web` | done (credentials and the imports API deferred; no free text imported) |
 | 24 | My work | (none: the technician's phone page) | `workorders` + `facility` + `portal` + `notifications` + `web` + `api` | done (its own API endpoint and a route sheet per technician deferred) |
 | 25 | Survey readiness | (none: Reports, Survey binder; the work order's Why late; Add device's new or existing) | `reports` + `pm` + `workorders` + `equipment` + `credentials` + `web` + `api` | done (the incoming inspection workflow and a PM completion window deferred) |
+| 26 | Incoming inspections | (none: Add device, the device drawer, Mark completed for an inspection) | `equipment` + `workorders` + `reports` + `web` + `api` | done (a temporary-equipment kind for loaners and rentals, and bulk new devices through the importer, deferred) |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.
@@ -358,3 +359,19 @@ The mock's export and print buttons work since slice 11, Add device since slice 
   reinstatement and a second retirement is missed; PM figures are read on today, so a period that has ended counts the PM due on its last
   day (the Overview's past months and the monthly series too); a failed PM recorded on a repair already open names that repair; a
   recall match reviewed or acted on before and open again is a check, never a late first review.
+- Incoming inspections (slice 26, beyond the mock; slice 25 deferred it): Add device asks how a device arrives. New and waiting for its
+  incoming inspection: out of service, `Asset.awaiting_inspection` set, no next PM, and an Incoming inspection work order opened
+  (`create_asset(incoming_inspection="waiting")`; assigned through take() for oneself or assign() by a manager, never a credential
+  bypass). New and inspected now: the same, then the inspection's Mark completed. Already in use here: existing equipment. Completing
+  an inspection records its checklist (the model's PM procedure, else Cadence's incoming checklist with the leakage reading) and its
+  result (`WorkOrder.inspection_result`): a pass (`pass_incoming_inspection`, the flag's one writer) puts the device in service unless
+  a tagged-out repair holds it and starts its PM clock that day; a fail keeps it out with a re-inspection (never a repair: a
+  dead-on-arrival unit is no failure of the model in service). The hold: nothing else puts a waiting device in service or on loan (Return
+  to service, a completed repair, Found, Reinstate, the importer, the API), and no PM is opened on it; the only exception is Put in use
+  before inspection (Equipment Approve, a reason from a list), which keeps it waiting, makes its inspection high priority due the next day,
+  and is a survey binder finding. Retiring a waiting device (returned to the vendor) cancels its open inspections. The binder's evidence
+  is the first passed inspection; failed ones are listed; a device entered as already in use but installed within 30 days of being added
+  is a check. Rules settled in review: update_asset and set_status work on the device's row as it is, locked, so a copy read before a
+  pass (a page, the API, an import chunk) never puts the wait back; a failed checklist step needs the result Failed; only the
+  inspection whose pass ended the wait stays passed when reopened (a pass that changed nothing may be corrected); a device in use before
+  its inspection is an inventory gap whatever day it was added; a checklist sent to the API as anything but a list is a 400.

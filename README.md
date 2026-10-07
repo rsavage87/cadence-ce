@@ -185,6 +185,18 @@ late" row, when completing it late, or through the API; once a work order is clo
 the device is new or already in use here, since only new equipment needs an incoming inspection before first use; imported devices are
 marked as imported. On time stays "completed on or before the due date", as on the Overview, and the default PM policy texts now say so.
 
+## Incoming inspections
+A new device is inspected before its first clinical use. Add device asks how it arrives: new and waiting for its incoming inspection
+(out of service, with an Incoming inspection work order opened and due in 5 days unless you say otherwise; a technician can assign it
+to themselves when credentialed, a CE manager picks the inspector or the vendor), new and inspected now (the inspection opens in Mark
+completed), or already in use here (existing equipment). Mark completed records the inspection like a PM, step by step with the
+leakage reading, on the model's PM checklist or Cadence's incoming checklist, and its result: Passed puts the device in service and
+starts its PM schedule from that day; Failed keeps it out of service and opens a re-inspection (never a repair). Until it passes,
+nothing else puts it in use: not Return to service, not a completed repair, not a PM. When a device must be used before CE can inspect
+it (an emergency, a loaner or rental needed now, one that arrived on the unit already in use), a CE manager or director records "Put in
+use before inspection" with the reason; its inspection becomes high priority, due the next day, and the survey binder lists it. The
+device drawer says where the inspection stands, and the Work orders page tells a manager how many are waiting for a technician.
+
 ## Custom reports
 Reports' "+ Custom report" (Reports Edit: the director and Finance and quality by default) builds a report from work orders, devices,
 labor, or parts: pick the columns, filter by type, status, department, category, technician, or a date range (a rolling period such
