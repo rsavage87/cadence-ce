@@ -1,0 +1,23 @@
+{% comment %}The work order drawer's "Why late" row (slice 25, views_wo_late): on a PM that missed its due date, the reason recorded or
+   "Not recorded"; for someone who may record it, a select that saves itself (posted on change, answered with this row and a toast).
+   A life-support or high-risk PM with no reason is highlighted: the survey binder lists it until one is recorded. A refusal is said
+   in the row. Inside the drawer's <dl>, spanning both columns. Context: late_context, under "why_late".{% endcomment %}
+{% with r=why_late %}
+{% if r.gone %}
+<div id="wo-late" class="wo-late"><dt>Why late</dt><dd><span class="err" role="alert">{{ r.error }}</span></dd></div>
+{% elif r %}
+<div id="wo-late" class="wo-late{% if r.flag %} flag{% endif %}">
+  <dt>{% if r.can_set %}<label for="wo-late-select">Why late</label>{% else %}Why late{% endif %}</dt>
+  <dd>
+    {% if r.can_set %}
+    <select id="wo-late-select" name="late_reason" hx-post="{% url 'web:wo_late_reason' wo.number %}" hx-trigger="change" hx-target="#wo-late" hx-swap="outerHTML"{% if r.flag %} aria-describedby="wo-late-note"{% endif %}>
+      <option value=""{% if not r.reason %} selected{% endif %}>Not recorded</option>
+      {% for value, label in r.choices %}<option value="{{ value }}"{% if value == r.reason %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+    {% else %}{{ r.label|default:"Not recorded" }}{% endif %}
+    {% if r.flag %}<span class="hint" id="wo-late-note">{{ r.flag_note }}</span>{% elif r.imported and not r.reason %}<span class="hint">Imported from the previous system.</span>{% endif %}
+    {% if r.error %}<span class="err" role="alert">{{ r.error }}</span>{% endif %}
+  </dd>
+</div>
+{% endif %}
+{% endwith %}

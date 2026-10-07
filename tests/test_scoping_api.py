@@ -430,7 +430,8 @@ def test_only_work_orders_and_devices_opt_in():
                      FacilityViewSet, AllFacilitiesViewSet}
     assert FacilityViewSet.scoped_actions == AllFacilitiesViewSet.scoped_actions == {"list"}
     assert FacilityViewSet.permission_classes == AllFacilitiesViewSet.permission_classes == [PersonPermission]
-    assert WorkOrderViewSet.scoped_actions == {"list", "retrieve", "transition"}
+    # Slice 25: why a PM was late, on the work orders in the share (tests/test_late_reason.py has its leak test)
+    assert WorkOrderViewSet.scoped_actions == {"list", "retrieve", "transition", "late_reason"}
     assert AssetViewSet.scoped_actions == {"list", "retrieve"}
     assert WorkOrderLaborViewSet.scoped_actions == WorkOrderPartViewSet.scoped_actions == {"list", "create", "destroy"}
     assert WorkOrderNoteViewSet.scoped_actions == {"list", "create"} and ScanViewSet.scoped_actions == {"list"}

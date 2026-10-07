@@ -13,6 +13,7 @@ from . import (
                views_scan,
                views_wo_complete,
                views_wo_costs,
+               views_wo_late,
 )
 
 app_name = "web"
@@ -56,6 +57,7 @@ urlpatterns = [
     path("work-orders/<str:number>/parts/", views_wo_costs.part_add, name="wo_part_add"),
     path("work-orders/<str:number>/parts/<uuid:pk>/delete/", views_wo_costs.part_delete, name="wo_part_delete"),
     path("work-orders/<str:number>/complete/", views_wo_complete.wo_complete, name="wo_complete"),
+    path("work-orders/<str:number>/late-reason/", views_wo_late.wo_late_reason, name="wo_late_reason"),  # slice 25: why a PM was late
     path("work-orders/<str:number>/waiting/", views_my_work.wo_waiting, name="wo_waiting"),  # slice 24: Waiting on parts from My work, with a note
     path("pm/", include("apps.web.urls_pm")),
     path("contracts/", include("apps.web.urls_contracts")),

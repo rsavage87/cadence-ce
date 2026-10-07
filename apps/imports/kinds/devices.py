@@ -5,7 +5,8 @@ equipment services (create_asset, update_asset, set_status, create_department, c
 
 A device not here yet is added in service or out of service, then moved to on loan, missing, or retired when the file says so; one
 retired in the file is retired on its "retired on" day, so its history reads in order and the AEM evidence counts its years in use
-(apps.pm.aem). Its model and department are found by name in any letter case, or added: a model the import adds takes its
+(apps.pm.aem); it is recorded as imported (Asset.added_as, slice 25: the survey binder never asks it for an incoming inspection).
+Its model and department are found by name in any letter case, or added: a model the import adds takes its
 description, category, risk class, PM interval, and the CMS mark from the row that first names it; a model already in the catalog
 keeps all of those. A device already here (its tag in any letter case) changes only where the file has a value: a column the person
 did not choose, or a blank cell, keeps what Cadence has.
@@ -31,7 +32,7 @@ from django.db.models.functions import Lower
 from apps.accounts.models import Level, Module
 from apps.equipment import permissions as eq_perms
 from apps.equipment import services as eq
-from apps.equipment.models import TAG_VALIDATOR, Asset, AssetStatus, Department, DeviceModel, RiskClass
+from apps.equipment.models import TAG_VALIDATOR, AddedAs, Asset, AssetStatus, Department, DeviceModel, RiskClass
 
 from .. import parse
 from ..base import Column, Importer, RowResult, RowSkip
@@ -213,6 +214,7 @@ class DevicesImporter(Importer):
             asset = eq.create_asset(tag=tag, device_model=device_model, department=department, serial=_words(row.get("serial")),
                                     room=_words(row.get("room")), status=AssetStatus.OUT_OF_SERVICE if status == AssetStatus.OUT_OF_SERVICE
                                     else AssetStatus.IN_SERVICE, by=ctx.user, today=ctx.today, added_on=v.get("retired_on"),
+                                    added_as=AddedAs.IMPORTED,  # slice 25: the survey binder never asks an imported device for an inspection
                                     **{k: x for k, x in v.items() if k != "retired_on"})
             if then:
                 eq.set_status(asset, then, by=ctx.user, note="Imported", today=ctx.today, changed_on=v.get("retired_on"))

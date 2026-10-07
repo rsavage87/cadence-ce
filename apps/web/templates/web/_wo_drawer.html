@@ -24,6 +24,7 @@
     <div><dt>Due</dt><dd class="{% if late_days %}down{% endif %}">{{ wo.due_on|date:"M j, Y" }}</dd></div>
     <div><dt>Completed</dt><dd>{{ wo.completed_on|date:"M j, Y"|default:"—" }}</dd></div>
     <div><dt>{% if is_open %}Open for{% else %}Turnaround{% endif %}</dt><dd>{% if is_open %}{{ open_days }} days{% elif wo.turnaround_days is not None %}{{ wo.turnaround_days }} days{% if wo.downtime_days %} · {{ wo.downtime_days }} d downtime{% endif %}{% else %}—{% endif %}</dd></div>
+    {% include "web/_wo_late.html" %}{# slice 25: why a PM that missed its due date was late (full width) #}
     {% if wo.alert_id %}
     <div><dt>Recall</dt><dd>{% if recall_match %}<a class="link" href="{% url 'web:recalls' %}?match={{ recall_match.id }}">{{ wo.alert|alert_label }}</a>{% else %}{{ wo.alert|alert_label }}{% endif %} · {{ wo.alert.title }}</dd></div>
     {% endif %}

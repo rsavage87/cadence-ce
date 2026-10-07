@@ -27,6 +27,11 @@ in the modal and nothing is saved). Opened from a My work card (from=my_work, ke
 on My work: no drawer (HX-Reswap none), only the toast, wo-changed (the list re-fetches itself), and the modal's close; a failed PM
 still answers with its drawer, which names the repair it opened. Each step's Pass / Fail / N/A is a label filling its cell (a row
 of three 44px buttons on a phone), and a reading box brings up the number pad when its step reads a number.
+
+Slice 25, why a PM was late (the survey binder): completing a PM after its due date (completion.completes_late) offers an optional
+"Why was it late?" select (late_offer): before the result for a life-support or high-risk PM, prominent, since the binder lists such a
+PM until a reason is recorded; after the hours for the others. Blank keeps a reason already recorded. The drawer's "Why late" row
+(views_wo_late, on a PM that missed its due date) comes in through results_context, which the drawer already calls.
 """
 
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -40,6 +45,7 @@ from apps.workorders import completion, costs, scoping
 from apps.workorders import permissions as wo_perms
 from apps.workorders.models import OPEN_STATUSES, PmResult, ServiceRequest, Source, WoStatus, WoType
 
+from . import views_wo_late
 from .decorators import web_view
 from .forms_wo_complete import STEP_CHOICES, CompleteForm
 from .htmx import toast
@@ -81,7 +87,7 @@ def results_context(request, wo) -> dict:
         "steps": steps,
         "follow_ups": list(scoping.work_orders(request.user, wo.follow_ups.order_by("opened_on", "number"))) if is_pm else [],
         "follow_up_of": follow_up_of if follow_up_of is not None and scoping.can_see_work_order(request.user, follow_up_of) else None,
-    }}
+    }, **views_wo_late.late_context(request, wo)}  # slice 25: the "Why late" row (web/_wo_late.html), under "why_late"
 
 
 # --- the modal -----------------------------------------------------------------------------------------------------------------
@@ -120,9 +126,22 @@ def _revised(form, kwargs) -> CompleteForm:
     return fresh
 
 
-def _form_kwargs(wo, steps, offers, hours) -> dict:
+def _form_kwargs(wo, steps, offers, hours, late) -> dict:
+    offer = late["late_offer"]
     return {"steps": steps, "is_pm": wo.type == WoType.PM, "offer_open_repair": offers["offer_open_repair"], "offer_tag_out": offers["offer_tag_out"],
-            "offer_hours": hours["offer_hours"]}
+            "offer_hours": hours["offer_hours"], "offer_late_reason": offer is not None, "late_first": bool(offer and offer["prominent"]),
+            "late_recorded": offer["recorded"] if offer else ""}
+
+
+def _late(request, wo, today) -> dict:
+    """The "Why was it late?" select (slice 25), under "late_offer": None unless completing today finishes a PM after its due date
+    (completion.completes_late), for someone who may record the reason once it is completed (Work orders Edit). Prominent (before the
+    result) for a life-support or high-risk model (its class today) the binder would list, so never for one imported from the previous
+    system (the binder never calls those gaps); `recorded` names a reason already on record (blank keeps it)."""
+    if not completion.completes_late(wo, today) or not request.user.has_level(wo_perms.MODULE, wo_perms.late_reason_level(WoStatus.COMPLETED)):
+        return {"late_offer": None}
+    return {"late_offer": {"prominent": views_wo_late.flagged_class(wo) and wo.source != Source.IMPORTED, "due_on": wo.due_on,
+                           "days": (today - wo.due_on).days, "recorded": wo.get_late_reason_display() if wo.late_reason else ""}}
 
 
 def _hours(request, wo) -> dict:
@@ -139,7 +158,7 @@ def from_my_work(request) -> bool:
     return (request.POST if request.method == "POST" else request.GET).get("from") == FROM_MY_WORK
 
 
-def _modal(request, wo, form=None, *, steps=(), offers=None, hours=None, reason=""):
+def _modal(request, wo, form=None, *, steps=(), offers=None, hours=None, late=None, reason=""):
     if form is not None and form.is_bound:
         form.focus_first_error()
     procedure = completion.procedure_for(wo)
@@ -152,6 +171,7 @@ def _modal(request, wo, form=None, *, steps=(), offers=None, hours=None, reason=
         # Slice 24: an open PM is started as it is completed; the Hours box; where the modal was opened from
         "starting": not reason and wo.status == WoStatus.OPEN, **(hours or {"offer_hours": False}),
         "from_my_work": from_my_work(request), "from_value": FROM_MY_WORK,
+        **(late if late is not None and form is not None else {"late_offer": None}),  # slice 25: "Why was it late?"
     })
     if reason and from_my_work(request):  # review fix: a card offered a move the work order no longer allows; the list is behind
         trigger_client_event(response, "wo-changed", {})
@@ -174,7 +194,7 @@ def _requester_email(wo) -> bool:
     return bool(sr and sr.requester_email)
 
 
-def _message(request, wo, done) -> str:
+def _message(request, wo, done, late_given: bool = False) -> str:
     logged = f"; {costs.plain(done.labor.hours)} h logged" if done.labor is not None else ""
     if wo.type != WoType.PM:
         return f"{wo.number} completed{logged}"
@@ -186,19 +206,22 @@ def _message(request, wo, done) -> str:
     message = f"{wo.number} completed: {note}"
     if done.tagged_out:
         message += f"; {wo.asset.tag} tagged out of service"
+    if late_given and wo.late_reason:
+        message += f"; why late: {wo.get_late_reason_display()}"
     return message + logged
 
 
-def _saved(request, wo, done):
+def _saved(request, wo, done, late_given: bool = False):
     """The drawer, as the work order is now; from My work (slice 24) nothing is swapped, so the technician stays on the list, which
-    re-fetches itself on wo-changed. A failed PM shows its drawer either way: it names the repair it opened."""
+    re-fetches itself on wo-changed. A failed PM shows its drawer either way: it names the repair it opened. `late_given`: a reason
+    for lateness came with it (slice 25), which the toast names."""
     if from_my_work(request) and wo.pm_result != PmResult.FAIL:
         response = reswap(HttpResponse(), "none")
     else:
         response = retarget(_render_wo_drawer(request, wo), "#drawer")
     for event in ("wo-changed", *(("devices-changed",) if done.device_changed else ())):
         trigger_client_event(response, event, {})
-    toast(response, _message(request, wo, done))
+    toast(response, _message(request, wo, done, late_given))
     return trigger_client_event(response, "modal-close", {}, after="settle")
 
 
@@ -215,10 +238,11 @@ def wo_complete(request, number):
     steps = completion.checklist_of(completion.procedure_for(wo))
     offers = _offers(wo, request.user)
     hours = _hours(request, wo)
-    kwargs = _form_kwargs(wo, steps, offers, hours)
+    late = _late(request, wo, today)  # slice 25
+    kwargs = _form_kwargs(wo, steps, offers, hours, late)
     if request.method != "POST":
         form = CompleteForm.filled(request.GET, fill=request.GET.get("fill", ""), **kwargs) if "fill" in request.GET else CompleteForm(**kwargs)
-        return _modal(request, wo, form, steps=steps, offers=offers, hours=hours)
+        return _modal(request, wo, form, steps=steps, offers=offers, hours=hours, late=late)
     form = CompleteForm(request.POST, **kwargs)
     done = None
     if form.is_valid():
@@ -231,5 +255,5 @@ def wo_complete(request, number):
         reason = completion.blocker(wo, today, request.user)
         if not reason and "checklist" in form.errors:
             form = _revised(form, kwargs)
-        return _modal(request, wo, None if reason else form, steps=steps, offers=offers, hours=hours, reason=reason)
-    return _saved(request, wo, done)  # the service refreshed wo
+        return _modal(request, wo, None if reason else form, steps=steps, offers=offers, hours=hours, late=late, reason=reason)
+    return _saved(request, wo, done, late_given=bool(form.offer_late_reason and form.cleaned_data.get("late_reason")))  # the service refreshed wo

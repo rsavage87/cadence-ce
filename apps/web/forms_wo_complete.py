@@ -6,13 +6,17 @@ in apps.workorders.completion; this form passes on what was typed, and puts the 
 
 Slice 24, on a phone: a reading box brings up the number pad (inputmode="decimal") when its step reads a number (reads_number), and
 an optional Hours box logs time with the completion (offered by the view when there is someone to log it for).
+
+Slice 25: a PM completed after its due date (completion.completes_late) gets an optional "Why was it late?" select (late_reason,
+LateReason's choices). Blank keeps a reason already recorded; the blank choice says which. The view says where it sits: before the
+result for a life-support or high-risk PM (late_first), else after the hours.
 """
 import re
 
 from django import forms
 
 from apps.workorders import completion
-from apps.workorders.models import PmResult
+from apps.workorders.models import LateReason, PmResult
 
 RESOLUTION_PLACEHOLDER = "What was found and done. No patient information."
 PM_RESOLUTION_PLACEHOLDER = "Optional when the PM passed. What was found, repaired, or failed. No patient information."
@@ -23,8 +27,11 @@ RESULT_CHOICES = [
     (PmResult.FAIL, "Fail", "Needs a repair before it is relied on"),
 ]
 STEP_CHOICES = [(completion.PASS, "Pass"), (completion.FAIL, "Fail"), (completion.NA, "N/A")]
-# The fields after the checklist, in the modal's order: a form sent back with errors focuses the first one on screen
+# The fields after the checklist, in the modal's order: a form sent back with errors focuses the first one on screen. Slice 25: the
+# late reason comes first (late_first) or last (focus_first_error).
 LAYOUT_TAIL = ("pm_result", "resolution", "open_repair", "hours")
+LATE_BLANK = "Not recorded"
+LATE_KEEP = "Keep the reason recorded: {label}"
 # What a step records reads as a number when it names a limit or a unit ("leakage µA, limit 100", "Ω", "mmHg"). Anything else
 # ("serial number", or a reading that says nothing of what) keeps the keyboard: the number pad has no letters. So does a reading that
 # may be below zero ("±0.5 °C", "-10 to 10 mV"): a phone's number pad has no minus sign.
@@ -59,17 +66,28 @@ class CompleteForm(forms.Form):
     # device can change while the modal is open, and an option not shown was never declined.
     shown_open_repair = forms.CharField(required=False)
     shown_tag_out = forms.CharField(required=False)
+    # Slice 25: text, not a choice field: completion checks the value (a refusal keyed late_reason, in its words). Choices in __init__.
+    late_reason = forms.CharField(required=False, widget=forms.Select(attrs={"aria-describedby": "wc-late-hint"}))
 
-    def __init__(self, *args, steps=(), is_pm=False, offer_open_repair=False, offer_tag_out=False, offer_hours=False, **kwargs):
+    def __init__(self, *args, steps=(), is_pm=False, offer_open_repair=False, offer_tag_out=False, offer_hours=False, offer_late_reason=False,
+                 late_first=False, late_recorded="", **kwargs):
         """`steps`: the checklist the modal shows, as completion.checklist_of gives it. The two offers say whether the failed-PM
         options are on screen: an option that is not offered is not taken from the post (a new repair is opened; no tag-out).
-        `offer_hours`: the Hours box is on screen; without it no hours are taken from the post."""
+        `offer_hours`: the Hours box is on screen; without it no hours are taken from the post. `offer_late_reason` (slice 25): the
+        "Why was it late?" select is on screen (before the result when `late_first`); `late_recorded` names the reason already on
+        record, which its blank choice keeps."""
         kwargs.setdefault("auto_id", "wc-%s")
         super().__init__(*args, **kwargs)
         self.steps, self.is_pm = list(steps), is_pm
         self.offer_open_repair, self.offer_tag_out, self.offer_hours = offer_open_repair, offer_tag_out, offer_hours
+        self.offer_late_reason, self.late_first = offer_late_reason, offer_late_reason and late_first
         if not offer_hours:
             del self.fields["hours"]
+        if offer_late_reason:
+            blank = LATE_KEEP.format(label=late_recorded) if late_recorded else LATE_BLANK
+            self.fields["late_reason"].widget.choices = [("", blank), *LateReason.choices]
+        else:
+            del self.fields["late_reason"]
         self.first_error = ""
         for n in range(1, len(self.steps) + 1):
             self.fields[f"step_{n}"] = forms.CharField(required=False)
@@ -127,6 +145,8 @@ class CompleteForm(forms.Form):
         kwargs = {"resolution": d["resolution"], "signature": d["signature"] or completion.checklist_signature(self.steps)}
         if self.offer_hours:
             kwargs["hours"] = d["hours"]
+        if self.offer_late_reason:
+            kwargs["late_reason"] = d["late_reason"]
         if self.is_pm:
             kwargs.update(pm_result=d["pm_result"],
                           results=[{"result": d[f"step_{n}"], "reading": d[f"reading_{n}"]} for n in range(1, len(self.steps) + 1)],
@@ -147,7 +167,9 @@ class CompleteForm(forms.Form):
 
     def focus_first_error(self):
         """Sent back with errors: htmx focuses the [autofocus] element it swaps in, so the template marks the first one."""
-        names = ["checklist", *(f"{kind}_{n}" for n in range(1, len(self.steps) + 1) for kind in ("step", "reading")), *LAYOUT_TAIL]
+        late = ("late_reason",)
+        names = ["checklist", *(f"{kind}_{n}" for n in range(1, len(self.steps) + 1) for kind in ("step", "reading")),
+                 *(late if self.late_first else ()), *LAYOUT_TAIL, *(() if self.late_first else late)]
         self.first_error = next((name for name in names if name in self.errors), "")
         if self.first_error in self.fields:
             for field in self.fields.values():

@@ -26,7 +26,7 @@ from apps.credentials.models import Technician
 from apps.credentials.services import qualified_technicians
 from apps.equipment import permissions as eq_perms
 from apps.equipment import services as eq_services
-from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel
+from apps.equipment.models import AddedAs, Asset, AssetStatus, Department, DeviceModel
 from apps.facility import services as fac_services
 from apps.pm import permissions as pm_perms
 from apps.tenants.context import get_current_tenant
@@ -141,7 +141,10 @@ class DeviceModelViewSet(EquipmentWrites, TenantViewSet):
 class AssetViewSet(EquipmentWrites, TenantViewSet):
     """Adding and editing go through apps.equipment.services (create_asset, update_asset), status changes through POST {id}/status/
     (set_status). An edit never changes the fields in FIXED_ON_UPDATE: a PUT or PATCH that changes one is refused with a 400 saying
-    where it changes instead, while sending back the value a GET returned is fine."""
+    where it changes instead, while sending back the value a GET returned is fine.
+
+    Slice 25: adding takes added_as, as Add device's "Already in use here" box: "new" (the default) or "existing"; "imported" is the
+    importer's, refused in words. It never changes afterwards (FIXED_ON_UPDATE)."""
 
     model, module, serializer_class = Asset, "equipment", s.AssetSerializer
     search_fields = ["tag", "serial", "device_model__model", "device_model__manufacturer", "department__name", "contract__reference"]
@@ -158,7 +161,10 @@ class AssetViewSet(EquipmentWrites, TenantViewSet):
         "status": "Use POST /api/v1/assets/{id}/status/ to change the status.",
         "contract": "Use POST /api/v1/contracts/{id}/add_assets/ or remove_asset/ to change the contract.",
         "last_pm_on": "The last PM date comes from completed PM work orders.",
+        "added_as": "How a device was added is recorded when it is added and never changes.",  # slice 25
     }
+    # Slice 25: what a device added here can be (create_asset's added_as). Imported is the importer's (Settings, Import data).
+    ADDED_HERE = (AddedAs.NEW, AddedAs.EXISTING)
 
     def get_queryset(self):
         return scoping.assets(self.request.user, Asset.objects.select_related("device_model", "department", "contract"))
@@ -167,6 +173,10 @@ class AssetViewSet(EquipmentWrites, TenantViewSet):
         d = dict(serializer.validated_data)
         if d.pop("contract", None) is not None:
             raise DRFValidationError({"contract": ["Add the device first, then use POST /api/v1/contracts/{id}/add_assets/."]})
+        d["added_as"] = d.get("added_as") or AddedAs.NEW  # new to the facility unless said otherwise (Add device's box unticked)
+        if d["added_as"] not in self.ADDED_HERE:
+            raise DRFValidationError({"added_as": ["Imported devices come in through Settings, Import data. A device added here is "
+                                                   "\"new\" (new to the facility) or \"existing\" (already in use here)."]})
         serializer.instance = _via_service(eq_services.create_asset, by=self.request.user, **d)
 
     def perform_update(self, serializer):
@@ -211,7 +221,8 @@ class WorkOrderViewSet(TenantViewSet):
     # As on the web: scoped users read their share and move their work orders through the lifecycle (transition, which completes
     # through apps.workorders.completion). Opening, editing, and assigning stay the facility's: the web refuses them too (the choices
     # are the facility's devices and technicians). Leaving create/update out also keeps the browsable API's forms closed to them.
-    scoped_actions = frozenset({"list", "retrieve", "transition"})
+    # Slice 25: why a PM was late (late_reason), on the work orders in their share, as on the drawer.
+    scoped_actions = frozenset({"list", "retrieve", "transition", "late_reason"})
 
     def get_queryset(self):
         qs = WorkOrder.objects.select_related("asset", "assigned_to").prefetch_related("labor_lines", "part_lines")
@@ -252,6 +263,11 @@ class WorkOrderViewSet(TenantViewSet):
         # already on its work order keeps them (they are that device's cost).
         if "resolution" in self.request.data:
             raise DRFValidationError({"resolution": ["The resolution is recorded when the work order is completed (transition to completed)."]})
+        # Slice 25: read-only here (the field is editable=False); a different value is refused rather than dropped, so a client never
+        # thinks it was saved. Sending back what a GET returned is fine.
+        sent = self.request.data.get("late_reason") if hasattr(self.request.data, "get") else None
+        if sent is not None and sent != wo.late_reason:
+            raise DRFValidationError({"late_reason": ["Use POST /api/v1/work-orders/{id}/late-reason/ to record why a PM was late."]})
         changed = [f for f, v in d.items() if v != getattr(wo, f)]
         if changed and wo.status not in OPEN_STATUSES:
             raise DRFValidationError({"detail": f"{wo.number} is {wo.get_status_display().lower()}: what it records stays as it is. Reopen it first."})
@@ -270,7 +286,8 @@ class WorkOrderViewSet(TenantViewSet):
             from apps.workorders.completion import complete_work_order
 
             d = request.data
-            kwargs = {"resolution": d.get("resolution", ""), "pm_result": d.get("pm_result", ""), "results": d.get("results")}
+            kwargs = {"resolution": d.get("resolution", ""), "pm_result": d.get("pm_result", ""), "results": d.get("results"),
+                      "late_reason": d.get("late_reason")}  # slice 25: why a PM completed after its due date was late, optional
             for flag in ("open_repair", "tag_out"):
                 if flag in d:
                     kwargs[flag] = str(d[flag]).lower() in ("1", "true", "on", "yes")
@@ -302,6 +319,25 @@ class WorkOrderViewSet(TenantViewSet):
         anything else is a 400 in words. No body."""
         wo = self.get_object()
         _via_service(wo_services.take, wo, by=request.user)
+        return Response(self.get_serializer(wo).data)
+
+    @action(detail=True, methods=["post"], url_path="late-reason", url_name="late-reason")
+    def late_reason(self, request, pk=None):
+        """Slice 25, the drawer's "Why late": body {"late_reason": "<LateReason value>"} ("" or null clears it) on a PM that missed its
+        due date (apps.pm.services.missed_pms), through wo_services.set_late_reason. Work orders Edit, Approve once the work order is
+        closed (permissions.can_set_late_reason); a scoped user only on the work orders in their share (get_object: a 404 for any other).
+        A refusal is a 400 keyed late_reason in the service's words."""
+        wo = self.get_object()
+        if not wo_perms.can_set_late_reason(request.user, wo):
+            raise PermissionDenied(f"{wo.number} is closed: recording why it was late now needs Work orders Approve.")
+        body = request.data if hasattr(request.data, "get") else {}  # a JSON list or scalar body has no fields
+        if "late_reason" not in body:
+            raise DRFValidationError({"late_reason": ["Required: one of the reasons listed, or blank to clear it."]})
+        value = body.get("late_reason")
+        if value is not None and not isinstance(value, str):
+            raise DRFValidationError({"late_reason": ["Choose one of the reasons listed."]})
+        _via_service(wo_services.set_late_reason, wo, value or "", by=request.user)
+        wo.refresh_from_db()
         return Response(self.get_serializer(wo).data)
 
 

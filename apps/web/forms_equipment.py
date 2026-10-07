@@ -7,7 +7,7 @@ parse what was typed and put the services' errors back on the fields they name.
 from django import forms
 from django.utils import timezone
 
-from apps.equipment.models import AssetStatus, Department, DeviceModel, RiskClass
+from apps.equipment.models import AddedAs, AssetStatus, Department, DeviceModel, RiskClass
 from apps.equipment.services import EDITABLE_FIELDS
 
 NEW = "new"  # the model or department select's value that reveals the fields for adding one
@@ -19,7 +19,7 @@ MODEL_FIELDS = ("manufacturer", "model", "description", "category", "risk_class"
 NOTES_PLACEHOLDER = "Accessories, mounting, history. No patient information."
 # The order web/_asset_fields.html lays the fields out in, so a form sent back with errors focuses the first one on screen.
 LAYOUT = ("tag", "serial", "device_model", *MODEL_FIELDS, "department", "room", "new_department", "installed_on", "warranty_end", "acquisition_cost",
-          "condition", "last_pm_on", "next_pm_on", "status", "notes")
+          "condition", "last_pm_on", "next_pm_on", "status", "already_in_use", "notes")
 
 
 def _date(label, help_text=""):
@@ -124,6 +124,12 @@ class NewDeviceForm(DeviceForm):
                   "schedule, so the model never goes on AEM.")
     # The new department, used only when the department select says "Add a new department".
     new_department = forms.CharField(label="New department name", required=False, max_length=80)
+    # Slice 25: how the device came to be in Cadence (create_asset's added_as). Unticked, it is new to the facility, and the survey binder
+    # looks for its incoming inspection before first use; ticked, it was already in use here and is only being entered now.
+    already_in_use = forms.BooleanField(
+        label="Already in use here (existing equipment being entered)", required=False,
+        help_text="Leave clear for a device new to the facility: the survey binder looks for its incoming inspection before first use.")
+    service_fields = {"added_as": "already_in_use"}
 
     def __init__(self, *args, can_set_oem_schedule: bool = False, **kwargs):
         super().__init__(*args, **kwargs)
@@ -146,10 +152,12 @@ class NewDeviceForm(DeviceForm):
         return {name: self.cleaned_data.get(name) for name in MODEL_FIELDS if name in self.fields}
 
     def asset_fields(self) -> dict:
-        """create_asset's keyword arguments, but for the model and department (which may be new)."""
+        """create_asset's keyword arguments, but for the model and department (which may be new). added_as from the "Already in use
+        here" box (slice 25): existing when ticked, else new."""
         d = self.cleaned_data
-        return {name: d[name] for name in ("tag", "serial", "room", "installed_on", "acquisition_cost", "warranty_end", "condition", "last_pm_on",
-                                           "next_pm_on", "notes", "status")}
+        return {**{name: d[name] for name in ("tag", "serial", "room", "installed_on", "acquisition_cost", "warranty_end", "condition", "last_pm_on",
+                                              "next_pm_on", "notes", "status")},
+                "added_as": AddedAs.EXISTING if d.get("already_in_use") else AddedAs.NEW}
 
 
 class EditDeviceForm(DeviceForm):
