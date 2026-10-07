@@ -38,7 +38,7 @@ from django_htmx.http import reswap, trigger_client_event
 from apps.accounts.models import Level, Module
 from apps.credentials.models import Credential
 from apps.credentials.services import qualification
-from apps.workorders import costs, my_work, scoping
+from apps.workorders import completion, costs, my_work, scoping
 from apps.workorders import permissions as wo_perms
 from apps.workorders import services as wo_services
 from apps.workorders.models import ALLOWED_TRANSITIONS, Priority, Source, WorkOrderStatusHistory, WoStatus, WoType
@@ -134,7 +134,8 @@ def _pm(wo) -> str:
 def _actions(user, wo) -> list[dict]:
     """The moves a card offers, by status and the user's levels: the drawer's rules (apps.workorders.permissions), checked again
     by each endpoint. None on in-house work nobody is assigned to: a CE manager assigns it first, as the drawer says. A PM completes
-    from open (part B's one step), so it is not offered Start; a repair is started first (its start date counts for downtime)."""
+    from open (part B's one step), so it is not offered Start; a repair is started first (its start date counts for downtime). Which
+    work completes in one step is completion.starts_on_completion's to say, as for the drawer (slice 26: an incoming inspection too)."""
     if wo.assigned_to_id is None and not wo.vendor_service:
         return []
     status, number = wo.status, wo.number
@@ -150,7 +151,7 @@ def _actions(user, wo) -> list[dict]:
 
     out = []
     if status == WoStatus.OPEN:
-        if wo.type == WoType.PM and may(WoStatus.IN_PROGRESS) and wo_perms.can_transition(user, WoStatus.IN_PROGRESS, WoStatus.COMPLETED):
+        if completion.starts_on_completion(wo, user):
             out.append(modal("Complete", "web:wo_complete", primary=True))
         elif may(WoStatus.IN_PROGRESS):
             out.append(move("Start", WoStatus.IN_PROGRESS))

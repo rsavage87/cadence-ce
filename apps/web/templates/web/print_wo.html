@@ -2,7 +2,10 @@
 {% load web recalls_tags scoping_tags %}
 {% comment %}One work order on paper (views_print.wo_print): what a technician takes to the device, with the PM checklist or room to
    write findings, labor and parts so far, the timeline, and the sign-off. Once a PM is completed it prints its result and the
-   checklist as recorded (slice 15) instead of boxes. Everything typed by users is escaped as usual.{% endcomment %}
+   checklist as recorded (slice 15) instead of boxes. Everything typed by users is escaped as usual.
+   Slice 26: an incoming inspection prints like a PM (its checklist, or the incoming checklist when the model's procedure has no steps;
+   once completed, its result, who inspected it and when, and its steps as recorded), and a re-inspection names the failed
+   inspection it follows.{% endcomment %}
 {% block title %}{{ wo.number }}{% endblock %}
 {% block page_style %}<style>
 @page{size:letter;margin:.5in;@bottom-right{content:"{{ wo.number }} · page " counter(page) " of " counter(pages);font:9px sans-serif;color:#6a7280}}
@@ -19,6 +22,7 @@ table.steps .blank{min-width:1in}
 table.steps.recorded td.res{width:.7in;font-weight:600}
 table.steps.recorded tr.failed td{background:#fbe9eb}
 .pm-result{margin:2px 0 8px}
+.insp-result{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;margin-top:10px}
 tr.fill td{height:24px}
 tfoot td{font-weight:700;border-top:1px solid var(--ink);border-bottom:0}
 .totals{display:flex;flex-wrap:wrap;gap:6px 24px;justify-content:flex-end;margin-top:8px;font-variant-numeric:tabular-nums}
@@ -38,7 +42,8 @@ tfoot td{font-weight:700;border-top:1px solid var(--ink);border-bottom:0}
   <span class="chip">{{ wo.get_status_display }}</span>
   {% if past_due_days %}<span class="chip bad">Past due</span>{% endif %}
   {% if wo.tagged_out %}<span class="chip bad">Tagged out</span>{% endif %}
-  {% if recorded %}<span class="chip{% if wo.pm_result == 'fail' %} bad{% elif wo.pm_result == 'pass_minor_repair' %} warn{% endif %}">PM result: {{ wo.get_pm_result_display }}</span>{% endif %}
+  {% if recorded and is_inspection %}{% if wo.inspection_result %}<span class="chip{% if wo.inspection_result == 'failed' %} bad{% endif %}">Inspection result: {{ wo.get_inspection_result_display }}</span>{% endif %}
+  {% elif recorded %}<span class="chip{% if wo.pm_result == 'fail' %} bad{% elif wo.pm_result == 'pass_minor_repair' %} warn{% endif %}">PM result: {{ wo.get_pm_result_display }}</span>{% endif %}
 </div>
 <dl class="kv">
   <div><dt>Number</dt><dd class="mono">{{ wo.number }}</dd></div>
@@ -75,7 +80,7 @@ tfoot td{font-weight:700;border-top:1px solid var(--ink);border-bottom:0}
   <div><dt>Reported location</dt><dd>{{ wo.reported_location|default:"—" }}</dd></div>
   <div><dt>Source</dt><dd>{{ wo.get_source_display }}</dd></div>
   <div><dt>Tagged out</dt><dd>{% if wo.tagged_out %}Yes, removed from use by the unit{% else %}No{% endif %}</dd></div>
-  {% if follow_up_of %}<div><dt>Opened from</dt><dd>Failed PM <span class="mono">{{ follow_up_of.number }}</span>{% if follow_up_of.completed_on %}, done {{ follow_up_of.completed_on|date:"M j, Y" }}{% endif %}</dd></div>{% endif %}
+  {% if follow_up_of %}<div><dt>Opened from</dt><dd>Failed {% if follow_up_of.type == "inspection" %}incoming inspection{% else %}PM{% endif %} <span class="mono">{{ follow_up_of.number }}</span>{% if follow_up_of.completed_on %}, done {{ follow_up_of.completed_on|date:"M j, Y" }}{% endif %}</dd></div>{% endif %}
 </dl>
 
 <h2>Assignment</h2>
@@ -127,6 +132,42 @@ tfoot td{font-weight:700;border-top:1px solid var(--ink);border-bottom:0}
 {% if unrecorded %}<p class="muted">No step results were recorded when this PM was completed.</p>{% endif %}
 {% if not is_open and wo.resolution %}<h3>Resolution</h3><p style="white-space:pre-line">{% shown_text wo.resolution %}</p>{% endif %}
 {% for f in follow_ups %}<p>Repair opened from this PM: <b class="mono">{{ f.number }}</b> · {{ f.get_status_display }}</p>{% endfor %}
+{% elif is_inspection %}
+<h2>Inspection checklist</h2>
+{% if recorded %}
+<p class="pm-result"><b>Result: {{ wo.get_inspection_result_display|default:"not recorded" }}</b>{% if inspector %} · inspected by {{ inspector }}{% endif %}{% if wo.completed_on %} · completed {{ wo.completed_on|date:"M j, Y" }}{% endif %}</p>
+{% if recorded_steps %}
+<table class="steps recorded">
+  <thead><tr><th>#</th><th>Step</th><th>Result</th><th>Reading</th></tr></thead>
+  <tbody>
+  {% for s in recorded_steps %}<tr{% if s.result == "fail" %} class="failed"{% endif %}><td class="n">{{ s.n }}</td><td>{{ s.text }}</td><td class="res">{{ s.label }}</td><td class="meas">{% if s.reading %}{{ s.reading }}{% if s.measure %} <span class="muted">({{ s.measure }})</span>{% endif %}{% elif s.measured %}—{% endif %}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="muted">The checklist as it was when this inspection was done{% if procedure %}. The procedure on file now: {{ procedure.code }}{% if procedure.revision %}, revision {{ procedure.revision }}{% endif %}{% endif %}.</p>
+{% else %}
+<div class="note">No checklist was recorded with this inspection; the resolution says what was checked.</div>
+{% endif %}
+{% else %}
+{% if procedure %}
+<p><b class="mono">{{ procedure.code }}</b> · {{ procedure.name }}</p>
+<p class="muted">{{ procedure.get_source_kind_display }}{% if procedure.source_reference %} · {{ procedure.source_reference }}{% endif %}{% if procedure.revision %} · revision {{ procedure.revision }}{% endif %}</p>
+{% elif incoming %}
+<p><b>Incoming inspection checklist</b></p>
+<p class="muted">The model has no PM procedure with steps on file, so the inspection uses the incoming checklist.</p>
+{% endif %}
+<table class="steps">
+  <thead><tr><th aria-label="Done"></th><th>#</th><th>Step</th><th>Measured</th></tr></thead>
+  <tbody>
+  {% for s in steps %}<tr><td class="chk"><span class="box"></span></td><td class="n">{{ forloop.counter }}</td><td>{{ s.text }}</td><td class="meas">{% if s.measured %}<span class="blank"></span>{% if s.measure %} {{ s.measure }}{% endif %}{% endif %}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% if is_open %}<div class="insp-result"><b>Result</b><span><span class="box"></span> Passed</span><span><span class="box"></span> Failed</span></div>{% endif %}
+{% endif %}
+{% if unrecorded %}<p class="muted">No result or step results were recorded when this inspection was completed.</p>{% endif %}
+{% if not is_open %}<h3>Resolution</h3><p style="white-space:pre-line">{% if wo.resolution %}{% shown_text wo.resolution %}{% else %}No resolution recorded.{% endif %}</p>{% endif %}
+{% for f in follow_ups %}<p>Re-inspection opened when this inspection failed: <b class="mono">{{ f.number }}</b> · {{ f.get_status_display }}</p>{% endfor %}
 {% else %}
 {% if is_open %}
 <h2>Findings and repair</h2>
@@ -172,7 +213,7 @@ tfoot td{font-weight:700;border-top:1px solid var(--ink);border-bottom:0}
 <h2>Sign-off</h2>
 <div class="sign"><div>Technician</div><div>Date</div></div>
 <div class="safety"><b>Electrical safety test</b><span><span class="box"></span> Pass</span><span><span class="box"></span> Fail</span></div>
-<div class="sign"><div>Returned to service by</div><div>Date</div></div>
+<div class="sign"><div>{% if is_inspection %}Accepted for clinical use by{% else %}Returned to service by{% endif %}</div><div>Date</div></div>
 </section>
 {% endwith %}
 {% endblock %}

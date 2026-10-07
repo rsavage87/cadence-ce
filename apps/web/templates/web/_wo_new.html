@@ -15,8 +15,11 @@
       <div class="sugg" id="nw-sugg"></div>
       {% if form.asset.errors %}<span class="err">{{ form.asset.errors|striptags }}</span>{% endif %}
     </label>
+    {% if form.non_field_errors %}<div class="full"><span class="err">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
     <label>Type{{ form.type }}</label>
     <label>Priority{{ form.priority }}</label>
+    {# Slice 26: create_work_order's refusal for the type (a PM, or a second open inspection, on a device waiting for its incoming inspection) #}
+    {% if form.type.errors %}<div class="full"><span class="err" role="alert">{{ form.type.errors|striptags }}</span></div>{% endif %}
     <label>Requested by{{ form.requester }}</label>
     {% if form.assignee %}<label>Assign to{{ form.assignee }}</label>{% endif %}
     <label class="full">Problem description{{ form.problem }}{% if form.problem.errors %}<span class="err">{{ form.problem.errors|striptags }}</span>{% endif %}</label>

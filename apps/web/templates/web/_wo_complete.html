@@ -7,7 +7,11 @@
    Hours box logs time with the completion, a PM still open says it is started as it is completed, and a modal opened from My work
    posts from=my_work (the save then leaves the technician on My work).
    Slice 25: a PM completed after its due date gets an optional "Why was it late?" select (late_offer): before the result for a
-   life-support or high-risk PM, highlighted (the survey binder lists it until a reason is recorded), else after the hours.{% endcomment %}
+   life-support or high-risk PM, highlighted (the survey binder lists it until a reason is recorded), else after the hours.
+   Slice 26: an incoming inspection shows its checklist like a PM (the incoming checklist when the model's procedure has none; every
+   step or none), its result (Passed / Failed, each saying what it does to the device; optional when the device is not waiting for
+   its inspection), and a waiting device's "If it fails" (shown once Failed is chosen): the re-inspection, and the tag-out of a device
+   put in use before its inspection.{% endcomment %}
 <div class="modal-h wc-h"><h2>Complete {{ wo.number }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
 {% if blocker %}
 <div class="form"><div class="full note">{{ blocker }}</div></div>
@@ -20,18 +24,19 @@
     {% if starting %}<p class="full hint wc-start">Not started yet: completing it records it as started and completed today.</p>{% endif %}
     {% if form.non_field_errors %}<div class="full"><span class="err">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
   </div>
-  {% if is_pm %}
+  {% if is_pm or is_inspection %}
   <div class="wc-sec">
     {% if has_checklist %}
-    <div class="wc-head"><span class="hint">Checklist{% if procedure %}: <b>{{ procedure.code }}</b> · {{ procedure.name }}{% endif %}</span>
+    <div class="wc-head"><span class="hint">Checklist{% if procedure %}: {% if procedure.code %}<b>{{ procedure.code }}</b> · {% endif %}{{ procedure.name }}{% endif %}</span>
       <button class="btn sm wc-rest" type="button" hx-get="{% url 'web:wo_complete' wo.number %}" hx-vals='{"fill": "pass"}' hx-include="#wc-form" hx-target="#modal-card">Mark the rest pass</button></div>
+    {% if is_inspection %}<p class="hint wc-insp-note">{% if incoming_checklist %}The model has no PM procedure with steps, so this is the incoming checklist. {% endif %}Record every step, or none and say in the resolution what was checked (a vendor's acceptance report, say).</p>{% endif %}
     {% if form.checklist_errors %}<div class="err" role="alert" style="margin-bottom:6px">{{ form.checklist_errors }}</div>{% endif %}
     <div class="tbl-wrap"><table class="mini-tbl wc-steps">
       <thead><tr><th>#</th><th>Step</th><th class="c">Pass</th><th class="c">Fail</th><th class="c">N/A</th></tr></thead>
       <tbody>
       {% for r in rows %}<tr>
         <td class="muted n">{{ r.n }}</td>
-        <td class="st">{{ r.text }}{% if r.measure %}<small class="muted">Record {{ r.measure }}</small>{% endif %}{% if r.error %}<span class="err">{{ r.error }}</span>{% endif %}
+        <td class="st">{{ r.text }}{% if r.measure %}<small class="muted">{{ r.prompt }}</small>{% endif %}{% if r.error %}<span class="err">{{ r.error }}</span>{% endif %}
           {% if r.measured %}<input class="rd" type="text" name="reading_{{ r.n }}" value="{{ r.reading }}" maxlength="{{ reading_max }}" autocomplete="off" aria-label="Step {{ r.n }}: reading" placeholder="Reading"{% if r.focus == "reading" %} autofocus{% endif %}{% if r.numeric %} inputmode="decimal"{% endif %}>{% if r.reading_error %}<span class="err">{{ r.reading_error }}</span>{% endif %}{% endif %}</td>
         {% for value, label in step_choices %}<td class="c"><label class="wc-pick"><input type="radio" name="step_{{ r.n }}" value="{{ value }}" aria-label="Step {{ r.n }}: {{ label }}"{% if r.value == value %} checked{% endif %}{% if r.focus == "step" and forloop.first %} autofocus{% endif %}><span aria-hidden="true">{{ label }}</span></label></td>{% endfor %}
       </tr>
@@ -62,7 +67,33 @@
       {% if form.pm_result.errors %}<span class="err">{{ form.pm_result.errors|striptags }}</span>{% endif %}
     </div>
     {% endif %}
+    {% if is_inspection %}
+    <div class="full">
+      <div class="wc-label" id="wc-result-label">Result{% if not result_required %}, optional{% endif %}</div>
+      <div class="radio wc-results wc-results-2" role="radiogroup" aria-labelledby="wc-result-label">
+        {% for opt in inspection_results %}<label><input type="radio" name="inspection_result" value="{{ opt.value }}"{% if opt.checked %} checked{% endif %}{% if form.first_error == "inspection_result" and forloop.first %} autofocus{% endif %}><span>{{ opt.label }}<small>{{ opt.hint }}</small></span></label>{% endfor %}
+      </div>
+      {% if kept_pass %}<div class="hint">{{ wo.number }} passed and {{ asset.tag }} no longer waits for its incoming inspection, so it stays passed. If the device has failed since, tag it out and open a repair.</div>
+      {% elif not result_required %}<div class="hint">{{ asset.tag }} is not waiting for its incoming inspection, so the result changes nothing on the device.</div>{% endif %}
+      {% if form.inspection_result.errors %}<span class="err">{{ form.inspection_result.errors|striptags }}</span>{% endif %}
+    </div>
+    {% endif %}
     <label class="full">Resolution{{ form.resolution }}{% if form.resolution.errors %}<span class="err">{{ form.resolution.errors|striptags }}</span>{% endif %}</label>
+    {% if is_inspection and result_required %}
+    <div class="full wc-fail wc-insp-fail">
+      <div class="wc-label">If it fails</div>
+      {% if reinspection %}
+      <div class="hint">{% if reinspection_number %}Re-inspection {{ reinspection_number }} is already open{% else %}A re-inspection is already open{% endif %}: the failure is recorded on it.</div>
+      {% else %}
+      <div class="hint">A re-inspection is opened, due in {{ reinspection_days }} days{% if reinspection_vendor %}, sent to {{ reinspection_vendor }}{% elif reinspection_tech %}, assigned to {{ reinspection_tech.name }}{% else %}, unassigned until a CE manager assigns it{% endif %}.</div>
+      {% endif %}
+      {% if offer_tag_out %}
+      <label class="check-row">{{ form.tag_out }} Take {{ asset.tag }} out of service (it is {{ asset.get_status_display|lower }} before its inspection) until an inspection passes</label><input type="hidden" name="shown_tag_out" value="1">
+      {% else %}
+      <div class="hint">{{ asset.tag }} stays {{ asset.get_status_display|lower }} until an inspection passes.</div>
+      {% endif %}
+    </div>
+    {% endif %}
     {% if is_pm %}
     <div class="full wc-fail">
       <div class="wc-label">If the PM failed</div>

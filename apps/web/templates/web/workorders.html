@@ -15,6 +15,8 @@
   </div>
 </div>
 {% if unassigned_portal %}<div class="note warn" style="margin-bottom:12px">{{ unassigned_portal }} request{{ unassigned_portal|pluralize }} from the service portal {{ unassigned_portal|pluralize:"is,are" }} waiting for assignment (policy: {{ portal_policy }}). <a class="link" href="{{ list_url }}?assigned=unassigned&amp;q=&amp;open=1{% if mode == 'board' %}&amp;mode=board{% endif %}">Show {{ unassigned_portal|pluralize:"it,them" }}</a></div>{% endif %}
+{# Slice 26: for a CE manager (Work orders Approve), incoming inspections nobody has on devices waiting for them #}
+{% if waiting_inspections %}<div class="note warn wo-insp-note">{{ waiting_inspections }} incoming inspection{{ waiting_inspections|pluralize }} {{ waiting_inspections|pluralize:"is,are" }} waiting for a technician. <a class="link" href="{{ list_url }}?type=inspection&amp;assigned=unassigned&amp;q=&amp;open=1{% if mode == 'board' %}&amp;mode=board{% endif %}">Show {{ waiting_inspections|pluralize:"it,them" }}</a></div>{% endif %}
 <form class="toolbar" id="wo-filters" method="get" action="{{ list_url }}"
       hx-get="{{ list_url }}" hx-trigger="change, submit, input changed delay:300ms from:#wo-q" hx-target="#wo-body" hx-swap="outerHTML" hx-push-url="true">
   {% if mode == "board" %}<input type="hidden" name="mode" value="board">{% endif %}

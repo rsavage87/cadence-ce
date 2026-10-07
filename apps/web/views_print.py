@@ -10,6 +10,10 @@ A completed PM prints its result and its checklist as recorded (slice 15), and a
 
 Slice 16: a scoped user (apps.workorders.scoping) prints labels for their own devices and their own work orders; another tag or
 number is a 404, and a failed PM and its repair name each other only when both are theirs.
+
+Slice 26: an incoming inspection prints like a PM: open, its checklist to tick (completion.procedure_for: the model's PM procedure
+when it has steps, else the incoming checklist); completed, its result, who inspected it and when, and the steps as recorded. A failed
+inspection and its re-inspection name each other ("Opened from: Failed incoming inspection WO-...").
 """
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -21,7 +25,7 @@ from apps.accounts.models import Level, Module
 from apps.equipment.models import Asset
 from apps.equipment.services import filter_assets
 from apps.facility.services import asset_request_url, get_settings
-from apps.workorders import completion, scoping
+from apps.workorders import completion, inspections, scoping
 from apps.workorders import services as wo_services
 from apps.workorders.models import OPEN_STATUSES, LaborLine, PartLine, WorkOrder, WoType
 
@@ -101,15 +105,24 @@ def _step(step) -> dict:
 def checklist_steps(procedure) -> list[dict]:
     """A procedure's steps for the print. A step is a string, or {"text": ..., "measure": ...} when a reading is recorded;
     `measure` is what to record (e.g. "µA, limit 100"). Nothing in the JSON is dropped: a dict without "text" prints its other
-    values, and a checklist saved as one string prints a step per line."""
-    if procedure is None or procedure.checklist in (None, "", [], {}):
+    values, and a checklist saved as one string prints a step per line. Slice 26: the incoming checklist (inspections.INCOMING)
+    keeps its steps in a tuple."""
+    if procedure is None or procedure.checklist in (None, "", [], (), {}):
         return []
     steps = procedure.checklist
     if isinstance(steps, str):
         steps = [line.strip() for line in steps.splitlines() if line.strip()]
-    elif not isinstance(steps, list):
+    elif not isinstance(steps, (list, tuple)):
         steps = [steps]
     return [_step(s) for s in steps]
+
+
+def inspector(wo) -> str:
+    """Who did an incoming inspection (slice 26; the print and the drawer's results say so): the vendor for vendor service (their
+    field engineer or physicist), else the technician assigned."""
+    if wo.vendor_service:
+        return wo.vendor_name or "Vendor"
+    return wo.assigned_to.name if wo.assigned_to_id else ""
 
 
 @web_view(Module.WORKORDERS, Level.VIEW, scoped=True)
@@ -123,11 +136,19 @@ def wo_print(request, number):
         "follow_up_of").prefetch_related(labor_lines, part_lines)), number=number)
     today = timezone.localdate()
     is_open = wo.status in OPEN_STATUSES
-    is_pm = wo.type == WoType.PM
-    procedure = wo.asset.device_model.pm_procedure if is_pm else None
+    is_pm, is_inspection = wo.type == WoType.PM, wo.type == WoType.INSPECTION
+    done = wo.status in completion.DONE_STATUSES
+    # The procedure a PM is done to; slice 26, an inspection's (its model's PM procedure when that has steps, else the incoming checklist)
+    procedure = completion.procedure_for(wo) if is_pm or is_inspection else None
+    incoming = inspections.is_incoming_checklist(procedure)
     # Slice 15: a completed PM prints what was recorded (completion.recorded_steps: the checklist as it was, with each step's
-    # result and reading) instead of boxes to tick; an open one prints the procedure's checklist as it is now.
-    recorded = is_pm and wo.status in completion.DONE_STATUSES and bool(wo.pm_result)
+    # result and reading) instead of boxes to tick; an open one prints the procedure's checklist as it is now. Slice 26: an
+    # inspection likewise, recorded once it has its result or its steps (its checklist is optional; so is its result on a device
+    # that was not waiting for it).
+    if is_inspection:
+        recorded = done and (bool(wo.inspection_result) or bool(wo.checklist_results))
+    else:
+        recorded = is_pm and done and bool(wo.pm_result)
     # Each line to the cent first, and the totals from those, so the printed columns add up to the printed totals.
     labor = [(line, _cents(line.hours * line.rate)) for line in wo.labor_lines.all()]
     parts = [(line, _cents(line.quantity * line.unit_cost)) for line in wo.part_lines.all()]
@@ -135,11 +156,14 @@ def wo_print(request, number):
     parts_total = sum((cost for _line, cost in parts), Decimal(0))
     return render(request, "web/print_wo.html", {
         "wo": wo, "asset": wo.asset, "facility": request.tenant.name, "today": today, "is_open": is_open, "is_pm": is_pm,
+        "is_inspection": is_inspection, "checked": is_pm or is_inspection, "incoming": incoming,
+        "inspector": inspector(wo) if is_inspection else "",
         "past_due_days": (today - wo.due_on).days if is_open and wo.due_on < today else 0,
-        "procedure": procedure, "steps": checklist_steps(procedure),
+        # The procedure on file (never the incoming checklist, which is no procedure: no code, source, or revision to print)
+        "procedure": None if incoming else procedure, "steps": checklist_steps(procedure),
         "recorded": recorded, "recorded_steps": completion.recorded_steps(wo) if recorded else [],
-        "unrecorded": is_pm and wo.status in completion.DONE_STATUSES and not wo.pm_result,  # completed before results were recorded
-        "follow_ups": list(scoping.work_orders(user, wo.follow_ups.order_by("opened_on", "number"))) if is_pm else [],
+        "unrecorded": (is_pm or is_inspection) and done and not recorded,  # completed before results were recorded
+        "follow_ups": list(scoping.work_orders(user, wo.follow_ups.order_by("opened_on", "number"))) if is_pm or is_inspection else [],
         "follow_up_of": wo.follow_up_of if wo.follow_up_of_id and scoping.can_see_work_order(user, wo.follow_up_of) else None,
         "labor": labor, "parts": parts, "labor_hours": sum((line.hours for line, _cost in labor), Decimal(0)),
         "labor_total": labor_total, "parts_total": parts_total, "total": labor_total + parts_total,
