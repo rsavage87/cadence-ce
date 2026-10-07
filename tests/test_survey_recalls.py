@@ -173,7 +173,7 @@ def test_a_fixed_number_of_queries(ctx, vent, pump):
     small = _queries()
     _populate(models, 5, 45)
     assert len(rows_of(recalls.build(P, None), "matches")) == 50
-    assert _queries() == small <= 2
+    assert _queries() == small <= 3  # the matches, the in-progress counts, and which waiting ones were reviewed before (review fix)
 
 
 @needs_postgres

@@ -26,7 +26,7 @@ from apps.recalls.services import DONE_STATUSES, alert_label, fmt_date
 from apps.reports.operations import DONE_WO_STATUSES, _response
 from apps.workorders.models import WorkOrder
 
-from . import GAP, Figure, Gap, Period, Section, Table
+from . import CHECK, GAP, Figure, Gap, Period, Section, Table
 
 KEY, TITLE = "recalls", "Recalls and safety alerts"
 REVIEW_DAYS = 14  # a match still waiting for its first review this many days after it was received is a gap (Cadence's measure)
@@ -105,6 +105,24 @@ def _row(m: AlertMatch, today, completed: dict) -> list:
             m.get_status_display(), _response_words(m, today, completed), m.closed_on, _days_to_close(m), _days_open(m, today)]
 
 
+def _reviewed_before(matches: list) -> set:
+    """The ids of matches waiting again (needs action, under review) that were reviewed or acted on before: closed with a note
+    (reopening keeps it, apps.recalls.services.set_status) or with recall work orders on the model's devices. One query. Their wait is
+    not a first review's (review fix: a match reviewed in 2 days and reopened months later read as having waited months)."""
+    waiting = [m for m in matches if m.status in WAITING]
+    if not waiting:
+        return set()
+    acted = set(WorkOrder.objects.filter(alert_id__in={m.alert_id for m in waiting}, asset__device_model_id__in={m.device_model_id for m in waiting})
+                .order_by().values_list("alert_id", "asset__device_model_id").distinct())
+    return {m.pk for m in waiting if (m.disposition_note or "").strip() or (m.alert_id, m.device_model_id) in acted}
+
+
+def _reopened(m: AlertMatch) -> Gap:
+    a = m.alert
+    return Gap(CHECK, f"{alert_label(a)} on {m.device_model} was reviewed before and is {m.get_status_display().lower()} again",
+               url=f"{reverse('web:recalls')}?match={m.pk}", record=alert_label(a))
+
+
 def _gap(m: AlertMatch, today) -> Gap:
     a = m.alert
     cls = f"{a.classification.strip()} " if a.classification.strip() else ""
@@ -130,7 +148,9 @@ def build(period: Period, user) -> Section:
         Figure("Open now", len(still_open), "needs action, under review, or in progress, whatever day it was received"),
         Figure("Open Class I", sum(is_class_one(m.alert.classification) for m in still_open), "the most serious recalls"),
     ]
-    gaps = [_gap(m, today) for m in matches if m.status in WAITING and (today - m.received).days > REVIEW_DAYS]
+    before = _reviewed_before(matches)
+    gaps = ([_gap(m, today) for m in matches if m.status in WAITING and m.pk not in before and (today - m.received).days > REVIEW_DAYS]
+            + [_reopened(m) for m in matches if m.pk in before])
 
     rows = [_row(m, today, completed) for m in matches]
     table = Table(key="matches", title="Recall and alert matches", columns=list(COLUMNS), rows=lambda: iter(rows), count=len(rows),
@@ -146,7 +166,8 @@ def build(period: Period, user) -> Section:
             "Listed: every match received in the period, and every match still open today (needs action, under review, or in progress) "
             "whatever day it was received. Open Class I recalls come first, then the newest.",
             f"A match that still needs action or is still under review more than {REVIEW_DAYS} days after it was received is listed as a "
-            f"gap. {REVIEW_DAYS} days is Cadence's measure of a timely first review, not a rule of the standards.",
+            f"gap. {REVIEW_DAYS} days is Cadence's measure of a timely first review, not a rule of the standards. A match reviewed or "
+            "acted on before and open again is a check, never a late first review.",
             "Devices affected are the model's active devices today (retired ones are left out). Days to close run from received to the "
             "day it was closed or reviewed as not affected; days open, from received to today.",
             "Only notices that matched a device model in Cadence are listed: a notice for equipment the facility does not have never "

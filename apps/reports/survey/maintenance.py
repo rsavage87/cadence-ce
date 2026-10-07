@@ -33,7 +33,8 @@ from apps.core.history import _rows, who
 from apps.equipment.models import Asset, AssetStatus, RiskClass
 from apps.facility.services import compliance_targets
 from apps.pm.services import pm_due_queryset
-from apps.workorders.models import OPEN_STATUSES, LateReason, PmResult, Source, WorkOrder, WoStatus, WoType
+from apps.workorders.completion import RECORDED_ON
+from apps.workorders.models import OPEN_STATUSES, LateReason, PmResult, Source, WorkOrder, WorkOrderStatusHistory, WoStatus, WoType
 
 from . import DEVICE, FINDING, GAP, WORK_ORDER, Figure, Gap, Period, Section, Table
 
@@ -218,6 +219,19 @@ def _failed_rows(failed):
     for pm_id, number, status, completed_on in (WorkOrder.objects.filter(follow_up_of__in=failed.order_by().values("id"))
                                                 .order_by("opened_on", "number").values_list("follow_up_of_id", "number", "status", "completed_on")):
         repairs.setdefault(pm_id, (number, WoStatus(status).label, completed_on))
+    # A failure recorded on a repair that already followed another PM: its completion note names the repair (completion.RECORDED_ON;
+    # review fix). Two queries for all of them.
+    named: dict = {}
+    for pm_id, note in (WorkOrderStatusHistory.objects.filter(work_order_id__in=[r[0] for r in rows if r[0] not in repairs],
+                                                               to_status=WoStatus.COMPLETED, note__contains=RECORDED_ON)
+                        .order_by("created_at", "id").values_list("work_order_id", "note")):
+        named[pm_id] = note.rsplit(RECORDED_ON, 1)[1].strip()  # the last completion wins
+    if named:
+        found = {n: (n, WoStatus(st).label, c) for n, st, c in
+                 WorkOrder.objects.filter(number__in=set(named.values())).values_list("number", "status", "completed_on")}
+        for pm_id, number in named.items():
+            if number in found:
+                repairs[pm_id] = found[number]
     for pk, number, tag, completed_on in rows:
         repair = repairs.get(pk, ("", "", None))
         yield [number, tag, completed_on, *repair]
@@ -335,8 +349,8 @@ def build(period: Period, user) -> Section:
             "Risk class is each device model's class today, not the class it had when the PM was due.",
             "PMs imported from the previous system count in the rates. Their reason reads “Imported from the previous system”, and they "
             "are never listed as missing a reason.",
-            "A PM cancelled on a device that went into retirement on or before the PM's due date is not counted. One cancelled on a device "
-            "retired later still counts as not on time.",
+            "A PM cancelled while its device was retired on the PM's due date is not counted. One cancelled on a device still in use on its "
+            "due date, retired later or not, counts as not on time.",
             "A PM whose due date was moved counts against its current due date. Moves made after the old due date had passed are listed.",
             "Days late: to the PM's completion, or to today when it was never completed (cancelled, or still open). Done later on: the first PM "
             "completed on the device on or after this PM's due date, on any work order, so a cancelled PM shows when the device's PM was done.",

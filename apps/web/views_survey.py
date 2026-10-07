@@ -121,8 +121,8 @@ def ordered_gaps(section) -> list:
     return sorted(section.gaps, key=lambda g: KINDS.index(g.kind) if g.kind in KINDS else len(KINDS))
 
 
-def gap_view(gap, tenant=None) -> dict:
-    url = gap.url or ""
+def gap_view(gap, link, tenant=None) -> dict:
+    url = link(gap)  # no link the reader cannot open (sv.gap_links; review fix)
     return {"kind": gap.kind, "label": KIND_LABELS.get(gap.kind, gap.kind), "css": KIND_CSS.get(gap.kind, "neutral"), "help": KIND_HELP.get(gap.kind, ""),
             "text": gap.text, "record": gap.record, "url": people.with_facility(url, tenant) if url and tenant is not None else url,
             "drawer": bool(url) and tenant is None and opens_in_drawer(url)}
@@ -226,13 +226,13 @@ def page_context(request, today: date) -> dict:
     if period is None:
         return ctx
     binder = sv.binder(request.user, period)
-    can = linkable(request.user)
+    can, link = linkable(request.user), sv.gap_links(request.user)
     sections = []
     for s in binder.sections:
         gaps = ordered_gaps(s)
         sections.append({"key": s.key, "title": s.title, "topic": s.topic, "covers": s.covers, "notes": s.notes, "figures": _figures(s),
                          "tables": [_preview(s, t, period, can, tenant) for t in s.tables],
-                         "gaps": [gap_view(g) for g in gaps[:GAPS_SHOWN]], "more_gaps": max(0, len(gaps) - GAPS_SHOWN)})
+                         "gaps": [gap_view(g, link) for g in gaps[:GAPS_SHOWN]], "more_gaps": max(0, len(gaps) - GAPS_SHOWN)})
     query = period.query()
     return {**ctx, "binder": binder, "counts": binder.counts(), "counts_words": counts_words(binder.counts()), "cards": cards(binder),
             "incomplete": incomplete_words(binder), "sections": sections, "any_gaps": any(s["gaps"] for s in sections),
@@ -275,12 +275,15 @@ def survey_csv(request, section, table):
     return csv_response(_filename(f"{section}-{table}", period, today), t.columns, t.rows())
 
 
-def gap_rows(binder, tenant):
-    """Every gap of every section in the binder, with a link from APP_BASE_URL that names the facility (the file leaves the app)."""
+def gap_rows(binder, user, tenant):
+    """Every gap of every section in the binder, with a link from APP_BASE_URL that names the facility (the file leaves the app), when
+    the reader may open it."""
+    link = sv.gap_links(user)
     for s in binder.sections:
         for g in ordered_gaps(s):
-            link = people.with_facility(settings.APP_BASE_URL + g.url, tenant) if g.url else ""
-            yield [s.title, KIND_LABELS.get(g.kind, g.kind), g.record, g.text, link]
+            url = link(g)
+            yield [s.title, KIND_LABELS.get(g.kind, g.kind), g.record, g.text,
+                   people.with_facility(settings.APP_BASE_URL + url, tenant) if url else ""]
 
 
 @web_view(Module.REPORTS, Level.VIEW)
@@ -290,7 +293,7 @@ def survey_gaps_csv(request):
     if period is None:
         return _refused_period(errors)
     binder = sv.binder(request.user, period)
-    return csv_response(_filename("gaps", period, today), GAPS_COLUMNS, gap_rows(binder, request.tenant))
+    return csv_response(_filename("gaps", period, today), GAPS_COLUMNS, gap_rows(binder, request.user, request.tenant))
 
 
 # --- the print ----------------------------------------------------------------------------------------------------------------
@@ -317,10 +320,10 @@ def survey_print(request):
         return _refused_period(errors)
     tenant = request.tenant
     binder = sv.binder(request.user, period)
-    can = linkable(request.user)
+    can, link = linkable(request.user), sv.gap_links(request.user)
     sections = [{"key": s.key, "title": s.title, "topic": s.topic, "covers": s.covers, "notes": s.notes, "counts": counts_words(s.counts()),
                  "figures": _figures(s),
-                 "gaps": [gap_view(g, tenant) for g in ordered_gaps(s)],
+                 "gaps": [gap_view(g, link, tenant) for g in ordered_gaps(s)],
                  "tables": [_printed_table(t, s.key, period, can, tenant) for t in s.tables]} for s in binder.sections]
     ctx = {"today": today, "period": period, "binder": binder, "sections": sections, "counts": binder.counts(),
            "counts_words": counts_words(binder.counts()), "incomplete": incomplete_words(binder), "not_covered": sv.NOT_COVERED,

@@ -53,8 +53,9 @@ def ordered_gaps(section) -> list:
     return sorted(section.gaps, key=lambda g: sv.KINDS.index(g.kind) if g.kind in sv.KINDS else len(sv.KINDS))
 
 
-def _gap(gap, tenant) -> dict:
-    return {"kind": gap.kind, "text": gap.text, "record": gap.record, "url": people.with_facility(gap.url, tenant) if gap.url else ""}
+def _gap(gap, link, tenant) -> dict:
+    url = link(gap)  # no link the reader cannot open (sv.gap_links; review fix)
+    return {"kind": gap.kind, "text": gap.text, "record": gap.record, "url": people.with_facility(url, tenant) if url else ""}
 
 
 def _table(table, with_rows: bool) -> dict:
@@ -69,10 +70,10 @@ def _table(table, with_rows: bool) -> dict:
     return out
 
 
-def section_data(section, tenant, with_rows: bool = False) -> dict:
+def section_data(section, link, tenant, with_rows: bool = False) -> dict:
     return {"key": section.key, "title": section.title, "topic": section.topic, "covers": section.covers,
             "figures": [{"label": f.label, "value": json_value(f.value), "hint": f.hint} for f in section.figures],
-            "gaps": [_gap(g, tenant) for g in ordered_gaps(section)], "tables": [_table(t, with_rows) for t in section.tables],
+            "gaps": [_gap(g, link, tenant) for g in ordered_gaps(section)], "tables": [_table(t, with_rows) for t in section.tables],
             "notes": list(section.notes)}
 
 
@@ -91,9 +92,9 @@ class SurveyViewSet(ApiViewSet):
     def list(self, request):
         period = self._period(request)
         binder = sv.binder(request.user, period)
-        tenant = get_current_tenant()
+        tenant, link = get_current_tenant(), sv.gap_links(request.user)
         return Response({"period": period_data(period), "complete": binder.complete, "counts": binder.counts(),
-                         "sections": [section_data(s, tenant) for s in binder.sections],
+                         "sections": [section_data(s, link, tenant) for s in binder.sections],
                          "left_out": [{"key": lo.key, "title": lo.title, "reason": lo.reason} for lo in binder.left_out]})
 
     def retrieve(self, request, pk=None):
@@ -104,7 +105,7 @@ class SurveyViewSet(ApiViewSet):
             raise PermissionDenied(refusal)
         period = self._period(request)
         section = sv.build_section(pk, period, request.user)
-        return Response({"period": period_data(period), **section_data(section, get_current_tenant(), with_rows=True)})
+        return Response({"period": period_data(period), **section_data(section, sv.gap_links(request.user), get_current_tenant(), with_rows=True)})
 
 
 def register(router):

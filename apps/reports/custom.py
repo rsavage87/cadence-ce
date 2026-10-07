@@ -231,7 +231,7 @@ def _days_open(today):
 
 def _pm_on_time(today):
     """A PM done on or before its due date: yes. Done late, or not done and past due today: no; a PM cancelled on a device still
-    in use was missed, so it is no once past due too. Not due yet, cancelled on a device since retired, or not a PM: empty. The rule
+    in use was missed, so it is no once past due too. Not due yet, cancelled while its device was retired, or not a PM: empty. The rule
     of the PM completion KPI (apps.pm.services.pm_due_queryset, RETIRED_AND_CANCELLED), so the share agrees with the Overview."""
     return Case(When(~Q(type=WoType.PM) | RETIRED_AND_CANCELLED, then=_NONE_INT),
                 When(completed_on__isnull=False, completed_on__lte=F("due_on"), then=Value(1)),

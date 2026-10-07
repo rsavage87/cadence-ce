@@ -45,8 +45,8 @@ def overview_kpis(year: int, month: int, today: date | None = None) -> dict:
     overdue_count = open_at.filter(due_on__lt=as_of).count()
     awaiting_parts = open_at.filter(status=WoStatus.AWAITING_PARTS).count()
 
-    pm = pm_on_time_rate(start, end, as_of)
-    pm_ls = pm_on_time_rate(start, end, as_of, life_support_only=True)
+    pm = pm_on_time_rate(start, end, today)  # read on today: a past month counts the PM due on its last day too
+    pm_ls = pm_on_time_rate(start, end, today, life_support_only=True)
 
     repairs = list(WorkOrder.objects.filter(type=WoType.REPAIR, completed_on__gte=start, completed_on__lte=as_of).prefetch_related("labor_lines", "part_lines"))
     turnaround = [w.turnaround_days for w in repairs]

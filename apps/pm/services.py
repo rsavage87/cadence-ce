@@ -262,36 +262,40 @@ def _first_open_pms(asset_ids: list) -> dict:
 
 
 def _retired_by_due_date() -> Exists:
-    """The PM's device went into its current retirement on or before the PM's due date: a history row with status retired whose day
-    (the facility's: `__date` reads the active time zone when the query runs) is on or before due_on, after which the device never
-    left retirement (no later row with another status). One correlated EXISTS over the device's own history, matched by its id, so
-    it reads only this facility's rows and works inside .exclude() and a When() alike. A device retired with no history row (written
-    around the services) shows no retirement day, so its cancelled PM stays a miss."""
+    """The PM's device was retired on the PM's due date: its last history row on or before that day (the facility's day: `__date`
+    reads the active time zone when the query runs) has status retired. That is a retired row dated on or before due_on with no row of
+    another status after it and still on or before due_on; what happened to the device after the due date (reinstated, retired again)
+    does not matter (review fix: a second retirement once turned PMs the first one excused into misses). One correlated EXISTS over the
+    device's own history, matched by its id, so it reads only this facility's rows and works inside .exclude() and a When() alike. A
+    device retired with no history row (written around the services) shows no retirement day, so its cancelled PM stays a miss."""
     history = Asset.history.model
-    left_later = (history.objects.filter(id=OuterRef("id")).exclude(status=AssetStatus.RETIRED)
+    left_later = (history.objects.filter(id=OuterRef("id"), history_date__date__lte=OuterRef(OuterRef("due_on"))).exclude(status=AssetStatus.RETIRED)
                   .filter(Q(history_date__gt=OuterRef("history_date")) | Q(history_date=OuterRef("history_date"), history_id__gt=OuterRef("history_id"))))
     return Exists(history.objects.filter(id=OuterRef("asset_id"), status=AssetStatus.RETIRED, history_date__date__lte=OuterRef("due_on"))
                   .exclude(Exists(left_later)))
 
 
-# A PM cancelled on a device that is retired now (retiring cancels its open PMs, equipment.services.set_status) is not a missed PM
-# only when the device went into that retirement on or before the PM's due date: it left the fleet before the PM fell due. A
-# ventilator two months overdue and then retired keeps its miss (slice 25), as does one retired, reinstated, missed, and retired
-# again. A cancelled PM on a device still in use is missed, and stays counted. A Q, for .exclude() and for apps.reports.custom's
-# When(): pm_due_queryset, pm_on_time_series, missed_pms, and the custom report's PM on time column all use this one rule.
-RETIRED_AND_CANCELLED = Q(status=WoStatus.CANCELLED, asset__status=AssetStatus.RETIRED) & Q(_retired_by_due_date())  # the cheap test first
+# A cancelled PM is not a missed PM when its device was retired on its due date (retiring cancels its open PMs,
+# equipment.services.set_status): the device had left the fleet before the PM fell due. A ventilator two months overdue and then
+# retired keeps its miss (slice 25), as does a PM that fell due between a reinstatement and a second retirement; a PM that fell due
+# while the device was retired stays excused whatever happened to the device later. A cancelled PM on a device in use on its due
+# date is missed, and stays counted. A Q, for .exclude() and for apps.reports.custom's When(): pm_due_queryset, pm_on_time_series,
+# missed_pms, and the custom report's PM on time column all use this one rule.
+RETIRED_AND_CANCELLED = Q(status=WoStatus.CANCELLED) & Q(_retired_by_due_date())  # the cheap test first
 
 
 def pm_due_queryset(start: date, end: date, as_of: date | None = None, life_support_only: bool = False):
     """
-    PM work orders that count toward on-time completion for a period:
-    due inside [start, end] and, for the current period, already due or already completed. One counts as on time when it was
-    completed on or before its due date (the Overview's rule, the mock's KPI; the survey binder says so in words), with no grace
-    period. A PM cancelled on a device that went into retirement on or before its due date is left out (RETIRED_AND_CANCELLED).
+    PM work orders that count toward on-time completion for a period, read on `as_of` (today, the facility's, by default): due inside
+    [start, end] (up to as_of) and already due by as_of (due before it) or already completed. So for the current period a PM due today
+    is not counted until it is done, and for a period that has ended every PM due in it is counted, the one due on its last day too
+    (review fix: passing the period's end as as_of left a PM due that day and never done out of every figure). One counts as on time
+    when it was completed on or before its due date (the Overview's rule, the mock's KPI; the survey binder says so in words), with no
+    grace period. A PM cancelled while its device was retired on its due date is left out (RETIRED_AND_CANCELLED).
     """
-    as_of = min(end, as_of or timezone.localdate())
-    qs = (WorkOrder.objects.filter(type=WoType.PM, due_on__gte=start, due_on__lte=as_of).filter(Q(due_on__lt=as_of) | Q(completed_on__isnull=False))
-          .exclude(RETIRED_AND_CANCELLED))
+    as_of = as_of or timezone.localdate()
+    qs = (WorkOrder.objects.filter(type=WoType.PM, due_on__gte=start, due_on__lte=min(end, as_of))
+          .filter(Q(due_on__lt=as_of) | Q(completed_on__isnull=False)).exclude(RETIRED_AND_CANCELLED))
     if life_support_only:
         qs = qs.filter(asset__device_model__risk_class=RiskClass.LIFE_SUPPORT)
     return qs
@@ -321,8 +325,8 @@ def pm_on_time_rate(start: date, end: date, as_of: date | None = None, life_supp
 
 def pm_on_time_series(year: int, month: int, months: int = 12, life_support_only: bool = False, today: date | None = None) -> list[dict]:
     """Monthly on-time rates for the `months` months ending at (year, month): one query over the PM work orders due in the
-    range, bucketed by month with pm_due_queryset's rule (due inside the month and, for the current month, already due or
-    already completed). Months after `today` have no rate."""
+    range, bucketed by month with pm_due_queryset's rule read on `today` (due inside the month, up to today, and already due by
+    today or already completed). Months after `today` have no rate."""
     today = today or timezone.localdate()
     points = []
     y, m = year, month
@@ -346,7 +350,7 @@ def pm_on_time_series(year: int, month: int, months: int = 12, life_support_only
             out.append({"year": y, "month": m, "rate": None, "due": 0, "on_time": 0})
             continue
         as_of = min(end, today)
-        rows = [(d, c) for d, c in by_month.get((y, m), []) if d <= as_of and (d < as_of or c is not None)]
+        rows = [(d, c) for d, c in by_month.get((y, m), []) if d <= as_of and (d < today or c is not None)]
         due, on_time = len(rows), sum(1 for d, c in rows if c is not None and c <= d)
         out.append({"year": y, "month": m, "due": due, "on_time": on_time, "rate": (on_time / due * 100) if due else 100.0})
     return out

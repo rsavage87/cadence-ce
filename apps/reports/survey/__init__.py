@@ -25,8 +25,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Callable, Iterable
+from urllib.parse import urlsplit
 
 from django.core.exceptions import ValidationError
+from django.urls import Resolver404, resolve
+
+from apps.accounts.models import Level, Module
 
 GAP, FINDING, CHECK = "gap", "finding", "check"
 KINDS = (GAP, FINDING, CHECK)
@@ -105,6 +109,35 @@ class Gap:
     text: str  # plain words; the record's own number or tag may appear in it, never requester text
     url: str = ""  # the record's path (reverse("web:...")), no ?facility=: the print and the API add it (people.with_facility)
     record: str = ""  # what the url opens, as shown: "WO-26-0042", "CE-10241", "Hamilton G5"
+
+
+# The area a gap's link opens needs View on, by the link's view name in the web namespace. A reader without it gets the record's name
+# with no link (the page, the print, the gaps CSV, the API: gap_links), as table cells and the change log do: a section needs only the
+# areas it lists, and a gap may point into another (Program's checks open Settings, Inventory's open a model's PM program).
+LINK_NEEDS = {"settings": Module.SETTINGS, "pm_model": Module.PM, "asset": Module.EQUIPMENT, "wo": Module.WORKORDERS, "recalls": Module.RECALLS,
+              "credentials": Module.USERS}
+
+
+def gap_links(user) -> Callable[[Gap], str]:
+    """A function giving a gap's path when `user` may open it, else "" (an unknown path is never linked). Each area's level is read
+    once, however many gaps there are."""
+    levels: dict = {}
+
+    def url(gap: Gap) -> str:
+        if not gap.url:
+            return ""
+        try:
+            match = resolve(urlsplit(gap.url).path)
+        except Resolver404:
+            return ""
+        module = LINK_NEEDS.get(match.url_name) if match.namespace == "web" else None
+        if module is None:
+            return ""
+        if module not in levels:
+            levels[module] = user.has_level(module, Level.VIEW)
+        return gap.url if levels[module] else ""
+
+    return url
 
 
 @dataclass

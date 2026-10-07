@@ -290,4 +290,6 @@ def test_the_page_makes_a_fixed_number_of_queries(client, signed_in, monkeypatch
         return len(q)
 
     count(1)  # warm up: the first request of a test may fill per-process caches
-    assert count(5) == count(50)
+    # 40, not 50: past GAPS_SHOWN the Settings check is not shown, and a gap link reads its area's level once (review fix: links only
+    # to what the reader may open), so the pages must show the same kinds of link to compare
+    assert count(5) == count(40)

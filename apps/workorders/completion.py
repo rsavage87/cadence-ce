@@ -79,6 +79,9 @@ STEP_RESULTS = {PASS: "Pass", FAIL: "Fail", NA: "N/A"}
 DONE_STATUSES = (WoStatus.COMPLETED, WoStatus.CLOSED)
 # The status history's note (and the toast's wording) for each result
 RESULT_NOTES = {PmResult.PASS: "PM passed", PmResult.PASS_MINOR_REPAIR: "PM passed with minor repair", PmResult.FAIL: "PM failed"}
+# A failure recorded on a repair already open: the PM's completion note ends with the repair's number. The repair's follow_up_of names
+# only the first PM it follows, so the survey binder (apps.reports.survey.maintenance) reads a later PM's repair from this note.
+RECORDED_ON = "; recorded on open repair "
 _CONTROL = "Remove the invisible control character from {what}."
 # The hours box when there is nobody to credit them to (the technician assigned is no longer active, and the user has no profile)
 NO_TECHNICIAN = "There is no active technician to log these hours for. Log them with the work order's Log time, choosing who did the work."
@@ -445,7 +448,7 @@ def result_note(pm_result: str, done: Completion) -> str:
     """The status history's note, and the toast's wording: "PM passed", "PM failed; WO-26-0057 opened for the repair"."""
     note = RESULT_NOTES.get(pm_result, "")
     if pm_result == PmResult.FAIL and done.repair is not None:
-        note += f"; {done.repair.number} opened for the repair" if done.follow_up else f"; recorded on open repair {done.repair.number}"
+        note += f"; {done.repair.number} opened for the repair" if done.follow_up else f"{RECORDED_ON}{done.repair.number}"
     return note
 
 
