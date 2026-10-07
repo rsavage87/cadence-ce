@@ -10,10 +10,11 @@ shows the facility menu. A database seeded before slice 22 gets the North Campus
 
 Slice 25: the survey binder (apps.reports.survey) shows a few deliberate items, not nothing and not a flood. Work orders go to a
 technician credentialed for the device on the day (apps.credentials.services), and one credential lapsed and was renewed with a repair
-done during the lapse; most late life-support and high-risk PMs have a reason recorded, the latest one not; three devices were added as
-new to the facility (one waiting for its incoming inspection, one inspected before it went into service, one in service with no
-inspection); two models are risk-scored, one of them past its yearly review; and each recall match reached the facility the day its
-notice was published.
+done during the lapse; most late life-support and high-risk PMs have a reason recorded, the latest one not; four devices were added as
+new to the facility (slice 26 adds them through the incoming inspection's own services: one waiting for its inspection, one that
+failed it and passed its re-inspection, one put in use before it in an emergency and inspected the next day, and one in service with no
+inspection, added in service as the API's old path still allows); two models are risk-scored, one of them past its yearly review; and
+each recall match reached the facility the day its notice was published.
 """
 import random
 from datetime import date, datetime, time, timedelta
@@ -29,7 +30,7 @@ from apps.contracts.models import Contract, ContractType, Coverage
 from apps.credentials.models import Credential, Scope, Technician
 from apps.credentials.services import qualified_technicians, renew_credential
 from apps.equipment import services as equipment
-from apps.equipment.models import AddedAs, Asset, AssetStatus, Department, DeviceModel, RiskClass
+from apps.equipment.models import AddedAs, Asset, AssetStatus, Department, DeviceModel, RiskClass, UseBeforeInspection
 from apps.facility.services import labor_rates, update_settings
 from apps.notifications import assignments
 from apps.pm import aem
@@ -40,8 +41,9 @@ from apps.recalls.models import Alert, AlertMatch
 from apps.recalls.services import create_recall_work_orders, set_status
 from apps.tenants.context import tenant_context, zone_of
 from apps.tenants.models import Tenant
+from apps.workorders import inspections
 from apps.workorders.completion import complete_work_order
-from apps.workorders.models import LaborLine, LateReason, PartLine, PmResult, Priority, Source, WorkOrder, WoType
+from apps.workorders.models import InspectionResult, LaborLine, LateReason, PartLine, PmResult, Priority, Source, WorkOrder, WoType
 from apps.workorders.services import assign, change_status, create_work_order, set_late_reason
 
 MODELS = [
@@ -157,13 +159,15 @@ CREW_SEED = 20261008  # who does a work order when the technician drawn is not c
 LATE_REASONS = [LateReason.DEVICE_IN_USE, LateReason.STAFFING, LateReason.NOT_LOCATED, LateReason.WAITING_PARTS_VENDOR]
 # Devices added as new to the facility: tag (past the fleet's range), model, department, added days ago, and where it stands.
 NEW_DEVICES = [
-    ("CE-11001", "R Series Plus", "ED", 2, "waiting"),  # out of service, its incoming inspection open
-    ("CE-11002", "Connex Spot", "Med/Surg 3E", 12, "inspected"),  # inspected, then in service the same day
-    ("CE-11003", "Centrella", "Med/Surg 4E", 6, "in_use"),  # in service from the day it came, never inspected
+    ("CE-11001", "R Series Plus", "ED", 2, "waiting"),  # out of service, its incoming inspection open and nobody's yet (a manager's note)
+    ("CE-11002", "Connex Spot", "Med/Surg 3E", 12, "failed"),  # failed (leakage), the vendor swapped it, passed its re-inspection
+    ("CE-11004", "Hamilton-G5", "ICU", 9, "used_before"),  # in use before its inspection (an emergency), inspected the next day
+    ("CE-11003", "Centrella", "Med/Surg 4E", 6, "in_use"),  # in service from the day it came, never inspected (the API's old path)
 ]
-INSPECTED_AFTER_DAYS = 2
-INSPECTION_PROBLEM = "Incoming inspection before first use"
-INSPECTION_RESULT = "Incoming inspection: electrical safety and functional tests passed, labeled, and added to the PM schedule."
+INSPECTED_AFTER_DAYS = 2  # the failed inspection, after the device was added
+REINSPECTED_AFTER_DAYS = 5  # its re-inspection, after the fail (the vendor's swap)
+INCOMING_FAIL_READING = "640 µA"
+INCOMING_FAIL = "Leakage 640 µA, over the 100 µA limit. Vendor to swap the unit under warranty."
 # A credential that lapsed and was renewed: (technician, scope, value). It expired, the technician did a repair it covers, then it was
 # renewed (days ago for each).
 LAPSE = ("Tom Okafor", Scope.CATEGORY, "Beds & stretchers")
@@ -326,7 +330,7 @@ class Command(BaseCommand):
             self._vendor_work(today)
             self._credential_lapse(today)
             self._risk_scores(today)
-            self._new_devices(today, depts)
+            self._new_devices(today, depts, user)
             # Slice 24: this week's PMs on the technicians' plates, as a CE manager's Auto-assign week puts them, so a technician signing
             # in (dwhitfield@... and the others, once they have a password) finds their own work on My work
             assign_week(today=today)
@@ -458,30 +462,58 @@ class Command(BaseCommand):
         Credential.history.filter(id=credential.pk, history_type="~").update(history_date=_noon(renewed))
 
     @staticmethod
-    def _new_devices(today: date, depts: dict) -> None:
-        """Devices added as new to the facility (equipment.services.create_asset, added_as NEW), dated the day they came: one waiting
-        out of service with its incoming inspection open, one inspected and then put in service, one in service with no inspection."""
+    def _new_devices(today: date, depts: dict, director) -> None:
+        """Devices added as new to the facility (equipment.services.create_asset, added_as NEW), dated the day they came, through the
+        incoming inspection's own services (slice 26): Add device's way (incoming_inspection "waiting": out of service, no next PM, its
+        inspection open and unassigned), each inspection done by a technician credentialed for the device and completed with the
+        model's checklist and a result like any other (completion.complete_work_order; a pass puts the device in service and starts its
+        PM clock on the day it passed).
+        - waiting: still waiting, its inspection open and nobody's (the Work orders page tells a CE manager).
+        - failed: failed for leakage, which opened its re-inspection for the same technician; the vendor swapped the unit (its serial
+          edited) and the re-inspection passed. The binder lists the failed inspection and takes the passed one as the evidence.
+        - used_before: put in use before its inspection in an emergency by the director (use_before_inspection, Equipment Approve),
+          and inspected the next day: the binder's one finding there.
+        - in_use: added in service with no inspection (the API's old path): the binder's one gap there."""
         for tag, model, dept, days_ago, stage in NEW_DEVICES:
             dm = DeviceModel.objects.get(model=model)
             added = today - timedelta(days=days_ago)
-            inspected = added + timedelta(days=INSPECTED_AFTER_DAYS)
-            in_use = stage == "in_use"
-            installed = added if in_use else inspected if stage == "inspected" else None
-            asset = equipment.create_asset(tag=tag, device_model=dm, department=depts[dept], serial=f"{dm.manufacturer[:2].upper()}{tag[3:]}0042",
-                                           room="1", installed_on=installed, condition=5,
-                                           status=AssetStatus.IN_SERVICE if in_use else AssetStatus.OUT_OF_SERVICE, added_as=AddedAs.NEW,
-                                           added_on=added, today=today)
-            if not in_use:
-                credentialed = qualified_technicians(asset, added)
-                wo = create_work_order(asset=asset, type=WoType.INSPECTION, priority=Priority.NORMAL, problem=INSPECTION_PROBLEM,
-                                       requester="Clinical Engineering", opened_on=added, assigned_to=credentialed[0][0] if credentialed else None)
-                if stage == "inspected":
-                    change_status(wo, "in_progress", as_of=added)
-                    complete_work_order(wo, resolution=INSPECTION_RESULT, today=inspected)
-                    change_status(wo, "closed", as_of=inspected)
-                    equipment.set_status(asset, AssetStatus.IN_SERVICE, note="Incoming inspection passed", changed_on=inspected, today=today)
+            details = {"tag": tag, "device_model": dm, "department": depts[dept], "serial": f"{dm.manufacturer[:2].upper()}{tag[3:]}0042", "room": "1",
+                       "condition": 5, "added_as": AddedAs.NEW, "added_on": added, "today": today}
+            if stage == "in_use":
+                asset = equipment.create_asset(**details, installed_on=added, status=AssetStatus.IN_SERVICE)
+            else:  # installed on the unit the day it came when it was used before its inspection, else when it passes (below)
+                asset = equipment.create_asset(**details, installed_on=added if stage == "used_before" else None,
+                                               incoming_inspection=equipment.INCOMING_WAITING)
+            if stage == "failed":
+                inspected = added + timedelta(days=INSPECTED_AFTER_DAYS)
+                failed = Command._inspect(asset, inspected, InspectionResult.FAILED)
+                swapped = inspected + timedelta(days=REINSPECTED_AFTER_DAYS)
+                equipment.update_asset(Asset.objects.get(pk=asset.pk), serial=f"{details['serial']}S", installed_on=swapped, today=today)
+                Asset.history.filter(id=asset.pk, history_change_reason="Edited").update(history_date=_noon(swapped))  # the swap's day
+                Command._inspect(asset, swapped, InspectionResult.PASSED, wo=failed.follow_ups.get())
+            elif stage == "used_before":
+                equipment.use_before_inspection(asset, UseBeforeInspection.EMERGENCY, by=director, today=added)
+                Command._inspect(asset, added + timedelta(days=1), InspectionResult.PASSED)
             # The day it came, after the row's last save (a save writes back the created_at it holds).
             Asset.objects.filter(pk=asset.pk).update(created_at=_noon(added))
+
+    @staticmethod
+    def _inspect(asset, day: date, result: str, wo=None) -> WorkOrder:
+        """Complete the device's open incoming inspection (or `wo`) on `day` with `result`, by a technician credentialed for the device
+        that day (assigned first when nobody has it), with the model's checklist and its leakage reading: every step passed, or the
+        leakage over the limit for a fail. In one visit (completion starts it), then closed. Returns the inspection, read again."""
+        wo = wo or inspections.open_inspection(asset)
+        if wo.assigned_to_id is None:
+            assign(wo, technician=qualified_technicians(asset, day)[0][0])
+        results = [{"result": "pass", "reading": "21 µA" if i == LEAKAGE else ""} for i in range(len(CHECKLIST))]
+        resolution = ""
+        if result == InspectionResult.FAILED:
+            results[LEAKAGE] = {"result": "fail", "reading": INCOMING_FAIL_READING}
+            resolution = INCOMING_FAIL
+        complete_work_order(wo, inspection_result=result, results=results, resolution=resolution, today=day)
+        change_status(wo, "closed", as_of=day)
+        wo.refresh_from_db()
+        return wo
 
     @staticmethod
     def _can_fail(asset) -> bool:

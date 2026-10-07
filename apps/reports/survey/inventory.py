@@ -7,9 +7,12 @@ found or retired. Risk class is the model's class today. Strategy is the model's
 when an approved alternate interval applies, never for a model excluded from AEM (life support, the CMS mark), whatever is on file.
 A device's notes are never read: they are free text.
 
-Gaps: GAP an active device with no next PM date (it is on no PM schedule; the device's Edit sets one). FINDING a life-support or
-high-risk device marked missing, with the day it went missing (from its history). CHECK a risk-scored model with active devices whose
-yearly risk review is overdue (equipment.services.risk_review_due), linked to the model's drawer where the score is reviewed.
+Gaps: GAP an active device with no next PM date (it is on no PM schedule; the device's Edit sets one), but for a new device waiting
+for its incoming inspection (slice 26: Asset.awaiting_inspection; its PM schedule starts when the inspection passes, and the incoming
+inspection section lists it). FINDING a life-support or high-risk device marked missing, with the day it went missing (from its
+history). CHECK a risk-scored model with active devices whose yearly risk review is overdue (equipment.services.risk_review_due),
+linked to the model's drawer where the score is reviewed. A device's status is worded as every screen words it (equipment.services
+.status_label's rule: "Awaiting inspection" for a device out of service waiting for its incoming inspection).
 
 Queries: three for the figures and gaps, plus two when devices are missing (them, and their history in one read); the device list
 (two) and the risk class changes (one) are read only when their rows are.
@@ -20,7 +23,7 @@ from django.urls import reverse
 from apps.core.days import local_day
 from apps.core.history import _rows, who
 from apps.equipment.models import AddedAs, Asset, AssetStatus, DeviceModel, RiskClass
-from apps.equipment.services import risk_review_due, risk_review_due_on
+from apps.equipment.services import AWAITING_LABEL, risk_review_due, risk_review_due_on
 
 from . import CHECK, DEVICE, FINDING, GAP, Figure, Gap, Period, Section, Table
 
@@ -47,6 +50,16 @@ def _class(value: str) -> str:
     return _CLASS_LABELS.get(value, value)
 
 
+def _status(status: str, awaiting: bool) -> str:
+    """A device's status as equipment.services.status_label words it, from the two columns."""
+    return AWAITING_LABEL if awaiting and status == AssetStatus.OUT_OF_SERVICE else _STATUS_LABELS.get(status, status)
+
+
+# A device with no next PM that is on no PM schedule by mistake: not one waiting for its incoming inspection (slice 26), whose PM
+# schedule starts when it passes.
+NO_NEXT_PM = Q(next_pm_on__isnull=True, awaiting_inspection=False)
+
+
 def strategy(dm: DeviceModel) -> str:
     """"AEM" when an approved alternate interval is the one in force (the model's own rule), else "OEM"."""
     return "AEM" if dm.pm_interval_months != dm.oem_pm_interval_months else "OEM"
@@ -60,11 +73,11 @@ def _every_device():
     """Every active device, by tag (the CSV; never printed in full). Two queries whatever the fleet's size: the models, then the
     devices streamed in chunks."""
     models = {dm.pk: dm for dm in DeviceModel.objects.all()}
-    rows = (_active().order_by("tag").values_list("tag", "device_model_id", "department__name", "room", "status", "last_pm_on", "next_pm_on",
-                                                  "added_as"))
-    for tag, dm_id, department, room, status, last_pm, next_pm, added_as in rows.iterator(chunk_size=ROW_CHUNK):
+    rows = (_active().order_by("tag").values_list("tag", "device_model_id", "department__name", "room", "status", "awaiting_inspection", "last_pm_on",
+                                                  "next_pm_on", "added_as"))
+    for tag, dm_id, department, room, status, awaiting, last_pm, next_pm, added_as in rows.iterator(chunk_size=ROW_CHUNK):
         dm = models[dm_id]
-        yield [tag, dm.manufacturer, dm.model, dm.description, dm.category, _class(dm.risk_class), department, room, _STATUS_LABELS.get(status, status),
+        yield [tag, dm.manufacturer, dm.model, dm.description, dm.category, _class(dm.risk_class), department, room, _status(status, awaiting),
                strategy(dm), dm.pm_interval_months, last_pm, next_pm, _ADDED_LABELS.get(added_as, NOT_RECORDED)]
 
 
@@ -103,7 +116,7 @@ def build(period: Period, user) -> Section:
     by_category, by_class = {}, {rc: 0 for rc in CLASS_ORDER}
     missing_count = no_pm_count = 0
     grouped = (_active().order_by().values("device_model__category", "device_model__risk_class")
-               .annotate(n=Count("id"), missing=Count("id", filter=Q(status=AssetStatus.MISSING)), no_pm=Count("id", filter=Q(next_pm_on__isnull=True))))
+               .annotate(n=Count("id"), missing=Count("id", filter=Q(status=AssetStatus.MISSING)), no_pm=Count("id", filter=NO_NEXT_PM)))
     for row in grouped:
         category, rc, n = row["device_model__category"], row["device_model__risk_class"], row["n"]
         counts = by_category.setdefault(category, {c: 0 for c in CLASS_ORDER})
@@ -119,7 +132,7 @@ def build(period: Period, user) -> Section:
 
     gaps = []
     if no_pm_count:
-        for tag, mfr, model in (_active().filter(next_pm_on__isnull=True).order_by("tag")
+        for tag, mfr, model in (_active().filter(NO_NEXT_PM).order_by("tag")
                                 .values_list("tag", "device_model__manufacturer", "device_model__model")):
             gaps.append(Gap(GAP, f"{tag} ({mfr} {model}) is in use with no next PM date, so it is on no PM schedule. Set its next PM.",
                             reverse("web:asset", args=[tag]), tag))
@@ -169,6 +182,9 @@ def build(period: Period, user) -> Section:
         "equipment CMS keeps on the manufacturer's schedule never use one, whatever interval is on file.",
         "Added as: new to the facility, already in use here when entered, or imported from the previous system; \"Not recorded\" for "
         "devices added before Cadence recorded how.",
+        "A new device waiting for its incoming inspection has no next PM date until the inspection passes (its PM schedule starts "
+        "then), so it is not listed for one; the incoming inspection section lists it. Its status reads \"Awaiting inspection\" while it "
+        "waits out of service.",
         "Missing since is the day the device was last marked missing, from its history.",
         "The full device list is in its CSV.",
     ]

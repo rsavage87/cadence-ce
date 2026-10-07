@@ -2,7 +2,9 @@
 The survey binder's incoming inspection section (slice 25): the devices added as new in the period, each with its incoming inspection
 and first day in service; a new device in service with no inspection is a gap, one inspected after it went into service a finding, one
 waiting with no inspection open a check; devices entered as already in use, imported, or added before Cadence recorded how are only
-counted.
+counted. Slice 26's rules (the result, failed inspections, use before inspection, the recent install check) are in
+tests/test_incoming_binder.py; here, the slice 25 records (no result recorded) still read as they did, and the query count holds with
+all of it.
 """
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
@@ -11,17 +13,20 @@ import pytest
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
+from incoming_fixtures import incoming_results
 from pg_helpers import as_app_role, needs_postgres
 from survey_helpers import gaps_of, period, rows_of
 
 from apps.equipment import services as eq
-from apps.equipment.models import AddedAs, Asset, AssetStatus, Department, DeviceModel, RiskClass
+from apps.equipment.models import AddedAs, Asset, AssetStatus, Department, DeviceModel, RiskClass, UseBeforeInspection
 from apps.reports.survey import CHECK, DEVICE, FINDING, GAP, WORK_ORDER
 from apps.reports.survey import inspections as section
 from apps.tenants.context import tenant_context
 from apps.tenants.models import Tenant
-from apps.workorders.models import Priority, WorkOrder, WoStatus, WoType
-from apps.workorders.services import create_work_order
+from apps.workorders import inspections
+from apps.workorders.completion import complete_work_order
+from apps.workorders.models import InspectionResult, Priority, WorkOrder, WoStatus, WoType
+from apps.workorders.services import assign, create_work_order
 
 MARKER = "ZZ-REQUESTER-TEXT-ZZ"
 
@@ -92,17 +97,20 @@ def test_new_devices_with_their_inspection_and_first_day_in_service(ctx, today, 
     s = section.build(period(ago(today, 60), today), None)
     table = s.table("new_devices")
     assert table.links == {0: DEVICE, 5: WORK_ORDER} and table.count == 7
+    # Slice 26: these inspections were completed with no result recorded (as before Cadence recorded one): each counts as passed.
     assert rows_of(s, "new_devices") == [
-        ["N-7", "BD Alaris 8015 PCU", "High", ago(today, 30), "In service", "", "None recorded", None, ago(today, 30), None],
-        ["N-1", "Hamilton Medical Hamilton-G5", "Life support", ago(today, 20), "Out of service", ok_wo.number, "Closed", ago(today, 15),
-         ago(today, 15), None],
-        ["N-2", "BD Alaris 8015 PCU", "High", ago(today, 12), "In service", "", "None recorded", None, ago(today, 12), None],
-        ["N-3", "BD Alaris 8015 PCU", "High", ago(today, 10), "In service", late_wo.number, "Completed", ago(today, 5), ago(today, 10), 5],
-        ["N-4", "BD Alaris 8015 PCU", "High", ago(today, 8), "Out of service", "", "None recorded", None, None, None],
-        ["N-5", "Hamilton Medical Hamilton-G5", "Life support", ago(today, 4), "Out of service", open_wo.number, "Open", None, None, None],
-        ["N-6", "Hamilton Medical Hamilton-G5", "Life support", ago(today, 3), "Out of service", inspected_wo.number, "Completed", ago(today, 2),
-         None, None],
+        ["N-7", "BD Alaris 8015 PCU", "High", ago(today, 30), "In service", "", "None recorded", "", "", None, ago(today, 30), None, ""],
+        ["N-1", "Hamilton Medical Hamilton-G5", "Life support", ago(today, 20), "Out of service", ok_wo.number, "Closed", "Not recorded", "",
+         ago(today, 15), ago(today, 15), None, ""],
+        ["N-2", "BD Alaris 8015 PCU", "High", ago(today, 12), "In service", "", "None recorded", "", "", None, ago(today, 12), None, ""],
+        ["N-3", "BD Alaris 8015 PCU", "High", ago(today, 10), "In service", late_wo.number, "Completed", "Not recorded", "", ago(today, 5),
+         ago(today, 10), 5, ""],
+        ["N-4", "BD Alaris 8015 PCU", "High", ago(today, 8), "Out of service", "", "None recorded", "", "", None, None, None, ""],
+        ["N-5", "Hamilton Medical Hamilton-G5", "Life support", ago(today, 4), "Out of service", open_wo.number, "Open", "", "", None, None, None, ""],
+        ["N-6", "Hamilton Medical Hamilton-G5", "Life support", ago(today, 3), "Out of service", inspected_wo.number, "Completed", "Not recorded", "",
+         ago(today, 2), None, None, ""],
     ]
+    assert rows_of(s, "failed") == []
     assert [(g.kind, g.record, g.url) for g in s.gaps] == [
         (GAP, "N-7", "/equipment/N-7/"), (GAP, "N-2", "/equipment/N-2/"), (FINDING, late_wo.number, f"/work-orders/{late_wo.number}/"),
         (CHECK, "N-4", "/equipment/N-4/")]
@@ -110,8 +118,9 @@ def test_new_devices_with_their_inspection_and_first_day_in_service(ctx, today, 
     assert gaps_of(s, GAP)[1].text == f"N-2 has been in service since {_day(ago(today, 12))} with no incoming inspection recorded."
     assert gaps_of(s, FINDING)[0].text.startswith("N-3 was inspected 5 days after it went into service")
     assert gaps_of(s, CHECK)[0].text.startswith(f"N-4 has waited out of service since it was added on {_day(ago(today, 8))}")
-    assert _figures(s) == {"New devices added": 7, "Inspected before first use": 1, "Waiting: never in service yet": 3, "Inspected after first use": 1,
-                           "In service with no incoming inspection": 2, "Entered as already in use": 1, "Imported from the previous system": 1,
+    assert _figures(s) == {"New devices added": 7, "Inspected before first use": 1, "Waiting: never in service yet": 3, "Returned to the vendor": 0,
+                           "Inspected after first use": 1, "In use before its incoming inspection": 0, "In service with no incoming inspection passed": 2,
+                           "Failed incoming inspections": 0, "Entered as already in use": 1, "Imported from the previous system": 1,
                            "Added before Cadence recorded how": 1}
     assert MARKER not in repr(rows_of(s, "new_devices")) + repr(s.gaps)
 
@@ -140,7 +149,7 @@ def test_the_added_day_is_the_facilitys(db):
             Asset.objects.filter(pk=a.pk).update(created_at=moment)
             Asset.history.filter(id=a.pk).update(history_date=moment)
         s = section.build(period(start, today), None)
-        assert [(r[0], r[3], r[8]) for r in rows_of(s, "new_devices")] == [("DAWN", start, start)]
+        assert [(r[0], r[3], r[10]) for r in rows_of(s, "new_devices")] == [("DAWN", start, start)]
         assert [g.record for g in s.gaps] == ["DAWN"]
 
 
@@ -157,11 +166,29 @@ def test_another_facilitys_devices_and_history_are_never_read(ctx, today, dept, 
     assert _figures(s)["New devices added"] == 1 and _figures(s)["Entered as already in use"] == 0
 
 
-def _devices(first, n, dm, dept, today):
+def _devices(first, n, dm, dept, today, tech):
+    """New devices in every state, and some entered as already in use with a recent install date (slice 26: the check). Of the new
+    ones, some wait for their inspection through Add device's path; some of those are put in use before it, and some of those fail it."""
     for i in range(first, first + n):
-        a = _add(f"Q-{i:03d}", dm, dept, today, 1 + i % 20, status=AssetStatus.IN_SERVICE if i % 2 else AssetStatus.OUT_OF_SERVICE)
+        days = 1 + i % 20
+        if i % 5 == 0:
+            _add(f"E-{i:03d}", dm, dept, today, days, status=AssetStatus.IN_SERVICE, added_as=AddedAs.EXISTING)
+            Asset.objects.filter(tag=f"E-{i:03d}").update(installed_on=ago(today, days + 3))
+            continue
+        if i % 7 == 0:
+            a = eq.create_asset(tag=f"W-{i:03d}", device_model=dm, department=dept, incoming_inspection=eq.INCOMING_WAITING, added_on=ago(today, days),
+                                today=today)
+            Asset.objects.filter(pk=a.pk).update(created_at=_noon(ago(today, days)))
+            eq.use_before_inspection(a, UseBeforeInspection.EMERGENCY, today=ago(today, days))
+            if i % 2:
+                wo = inspections.open_inspection(a)
+                assign(wo, technician=tech)
+                complete_work_order(wo, inspection_result=InspectionResult.FAILED, results=incoming_results("pass", "fail", "pass", "pass", "pass"),
+                                    resolution=MARKER, tag_out=False, today=today)
+            continue
+        a = _add(f"Q-{i:03d}", dm, dept, today, days, status=AssetStatus.IN_SERVICE if i % 2 else AssetStatus.OUT_OF_SERVICE)
         if i % 3 == 0:
-            _inspection(a, today, 1 + i % 20, done_ago=0)
+            _inspection(a, today, days, done_ago=0)
         if i % 4 == 0 and a.status == AssetStatus.OUT_OF_SERVICE:
             _in_service(a, today, 0)
 
@@ -171,16 +198,17 @@ def _queries(p) -> int:
         s = section.build(p, None)
         for t in s.tables:
             list(t.rows())
-    assert s.gaps and s.tables[0].count
+    assert s.gaps and s.tables[0].count and s.tables[1].count
+    assert {g.kind for g in s.gaps} == {GAP, FINDING, CHECK}
     return len(q.captured_queries)
 
 
-def test_a_fixed_number_of_queries_whatever_the_size(ctx, today, dept, pump_model):
+def test_a_fixed_number_of_queries_whatever_the_size(ctx, today, dept, pump_model, techs):
     p = period(ago(today, 30), today)
-    _devices(0, 5, pump_model, dept, today)
+    _devices(0, 8, pump_model, dept, today, techs["dana"])
     few = _queries(p)
-    _devices(5, 45, pump_model, dept, today)
-    assert _queries(p) == few <= 4
+    _devices(8, 52, pump_model, dept, today, techs["dana"])
+    assert _queries(p) == few <= 6
 
 
 @needs_postgres
@@ -200,5 +228,5 @@ def test_the_history_reads_under_row_level_security(tenant, other_tenant):
     as_app_role()
     with tenant_context(tenant):
         s = section.build(period(ago(today, 5), today), None)
-        assert [(r[0], r[4], r[8]) for r in rows_of(s, "new_devices")] == [("N-1", "Out of service", today)]
+        assert [(r[0], r[4], r[10]) for r in rows_of(s, "new_devices")] == [("N-1", "Out of service", today)]
         assert [(g.kind, g.record) for g in s.gaps] == [(GAP, "N-1")]

@@ -70,8 +70,8 @@ def test_seed_demo_gives_kim_a_second_facility(db, client):
 
 def test_seed_demo_gives_the_survey_binder_a_few_deliberate_items(db):
     """Slice 25: work done by technicians credentialed for the device, one credential that lapsed and was renewed with a repair done
-    in the lapse, a reason on every late life-support and high-risk PM but the latest, three new devices (one gap), one model past its
-    yearly risk review, and recall matches dated by when their notice was published."""
+    in the lapse, a reason on every late life-support and high-risk PM but the latest, four new devices (one gap, one finding: slice
+    26), one model past its yearly risk review, and recall matches dated by when their notice was published."""
     from django.utils import timezone
 
     from apps.core.days import local_day
@@ -100,13 +100,69 @@ def test_seed_demo_gives_the_survey_binder_a_few_deliberate_items(db):
         assert len(late) >= 2 and all(w.late_reason for w in late[: len(late) - 1]) and late[len(late) - 1].late_reason == ""
         p = default_period(today)
         new = inspections.build(p, None)
-        assert [(g.kind, g.record) for g in new.gaps] == [(GAP, "CE-11003")]
+        assert [(g.kind, g.record) for g in new.gaps] == [(FINDING, "CE-11004"), (GAP, "CE-11003")]
         figures = {f.label: f.value for f in new.figures}
-        assert figures["New devices added"] == 3 and figures["Inspected before first use"] == 1 and figures["Waiting: never in service yet"] == 1
-        assert Asset.objects.filter(added_as=AddedAs.NEW).count() == 3
-        assert [(g.kind, g.record) for g in inventory.build(p, None).gaps] == [(CHECK, "Zoll R Series Plus")]
-        assert not [g for g in new.gaps + inventory.build(p, None).gaps if g.kind == FINDING]
+        assert figures["New devices added"] == 4 and figures["Inspected before first use"] == 1 and figures["Waiting: never in service yet"] == 1
+        assert figures["In use before its incoming inspection"] == 1 and figures["In service with no incoming inspection passed"] == 1
+        assert figures["Failed incoming inspections"] == 1 and figures["Inspected after first use"] == 0
+        assert Asset.objects.filter(added_as=AddedAs.NEW).count() == 4
+        assert [(g.kind, g.record) for g in inventory.build(p, None).gaps] == [(CHECK, "Zoll R Series Plus")]  # the waiting device: no gap
+        assert [g.record for g in new.gaps + inventory.build(p, None).gaps if g.kind == FINDING] == ["CE-11004"]
         assert all(local_day(m.created_at) == m.alert.published_on for m in AlertMatch.objects.select_related("alert"))
+
+
+def test_seed_demo_adds_its_new_devices_through_the_incoming_inspection(db):
+    """Slice 26: CE-11001 waits (its inspection open and nobody's), CE-11002 failed and passed its re-inspection (the evidence, the
+    failed one listed), CE-11004 was put in use before its inspection in an emergency and inspected the next day, CE-11003 came in
+    service with none. Every inspection completed with the model's checklist and its leakage reading."""
+    from django.utils import timezone
+
+    from apps.equipment.models import AssetStatus
+    from apps.pm.dates import add_months
+    from apps.reports.survey import default_period
+    from apps.reports.survey import inspections as section
+    from apps.workorders import inspections
+    from apps.workorders.models import InspectionResult, Priority, WoStatus
+
+    call_command("seed_demo", stdout=StringIO())
+    with tenant_context(Tenant.objects.get(slug="riverside")):
+        today = timezone.localdate()
+        days ={tag: today - timedelta(days=ago) for tag, _model, _dept, ago, _stage in seed_demo.NEW_DEVICES}
+        waiting, failed, used, in_use = (Asset.objects.get(tag=t) for t in ("CE-11001", "CE-11002", "CE-11004", "CE-11003"))
+        assert (waiting.awaiting_inspection, waiting.status, waiting.next_pm_on) == (True, AssetStatus.OUT_OF_SERVICE, None)
+        open_ = inspections.open_inspection(waiting)
+        assert open_.opened_on == days["CE-11001"] and open_.assigned_to_id is None and list(inspections.waiting_for_inspector()) == [open_]
+        first = WorkOrder.objects.get(asset=failed, type=WoType.INSPECTION, follow_up_of__isnull=True)
+        again = first.follow_ups.get()
+        inspected = days["CE-11002"] + timedelta(days=seed_demo.INSPECTED_AFTER_DAYS)
+        passed_on = inspected + timedelta(days=seed_demo.REINSPECTED_AFTER_DAYS)
+        assert (first.inspection_result, first.status, first.completed_on) == (InspectionResult.FAILED, WoStatus.CLOSED, inspected)
+        assert first.checklist_results[seed_demo.LEAKAGE]["reading"] == seed_demo.INCOMING_FAIL_READING
+        assert (again.inspection_result, again.status, again.completed_on, again.assigned_to_id) == (
+            InspectionResult.PASSED, WoStatus.CLOSED, passed_on, first.assigned_to_id)
+        assert again.resolution.startswith("Incoming inspection passed per ") and all(s["result"] == "pass" for s in again.checklist_results)
+        assert (failed.awaiting_inspection, failed.status, failed.installed_on) == (False, AssetStatus.IN_SERVICE, passed_on)
+        assert failed.next_pm_on == add_months(passed_on, failed.pm_interval_months) and failed.serial.endswith("S")
+        assert inspections.state(failed).passed == again
+        done = WorkOrder.objects.get(asset=used, type=WoType.INSPECTION)
+        assert (done.inspection_result, done.completed_on, done.priority) == (InspectionResult.PASSED, days["CE-11004"] + timedelta(days=1),
+                                                                              Priority.HIGH)
+        assert (used.awaiting_inspection, used.status) == (False, AssetStatus.IN_SERVICE)
+        assert used.next_pm_on == add_months(done.completed_on, used.pm_interval_months)
+        [use] = inspections.uses_before([used.pk])[used.pk]
+        assert (use.on, use.reason, use.by.username) == (days["CE-11004"], "emergency", "kim@riverside.example")
+        assert not in_use.awaiting_inspection and not WorkOrder.objects.filter(asset=in_use).exists()
+        for wo in WorkOrder.objects.filter(type=WoType.INSPECTION, status=WoStatus.CLOSED):
+            assert all(s["reading"] for s in wo.checklist_results if s["measure"]) and len(wo.checklist_results) == len(seed_demo.CHECKLIST)
+        s = section.build(default_period(today), None)
+        rows = {r[0]: r for r in s.table("new_devices").rows()}
+        assert list(rows) == ["CE-11002", "CE-11004", "CE-11003", "CE-11001"]
+        assert rows["CE-11002"][5:12] == [again.number, "Closed", "Passed", again.assigned_to.name, passed_on, passed_on, None]
+        assert rows["CE-11001"][4:8] == ["Awaiting inspection", open_.number, "Open", ""]
+        assert rows["CE-11004"][11:] == [1, "Emergency clinical need"]
+        assert list(s.table("failed").rows()) == [[first.number, "CE-11002", inspected, first.assigned_to.name, again.number, "Closed", passed_on]]
+        finding = s.gaps[0].text
+        assert finding.startswith("CE-11004 was in use 1 day before its incoming inspection: Emergency clinical need (approved by Kim Alvarez;")
 
 
 def test_a_database_seeded_before_slice_22_gets_the_north_campus(db, monkeypatch):

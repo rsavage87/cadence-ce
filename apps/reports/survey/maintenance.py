@@ -5,8 +5,8 @@ facility's targets, and the PMs and devices behind every miss.
 One definition: the PMs counted are apps.pm.services.pm_due_queryset's for the period (as_of today), the rule of the Overview and
 pm_on_time_rate, so the binder's totals are the Overview's for the same days. A PM is on time when completed on or before its due date;
 the ones not on time are missed_pms' within the period. Devices past their PM date today follow the PM compliance report
-(apps.reports.fleet.report_compliance): active, with a next PM date before today, or marked missing. Risk class is each device model's
-class today.
+(apps.reports.fleet.report_compliance): active, with a next PM date before today, or marked missing (but for a new device waiting for
+its incoming inspection, slice 26: its PM schedule has not started). Risk class is each device model's class today.
 
 Tables: the figures by class; "PMs not on time" (why late, from WorkOrder.late_reason, and when that reason was recorded, from the work
 order's history); "Due dates moved after they had passed" (from WorkOrder history: a PM's due date moved later on a day after the old
@@ -49,8 +49,9 @@ NOT_ON_TIME = Q(completed_on__isnull=True) | Q(completed_on__gt=F("due_on"))
 
 def _past_pm_date(today) -> Q:
     """The PM compliance report's "overdue now" (apps.reports.fleet.report_compliance): a next PM date before today, or marked missing
-    (a missing device can never be shown compliant). For active devices."""
-    return Q(next_pm_on__lt=today) | Q(status=AssetStatus.MISSING)
+    (a missing device can never be shown compliant), but for a new device waiting for its incoming inspection (slice 26: its PM schedule
+    starts when it passes, so it has no PM to be past). For active devices."""
+    return Q(next_pm_on__lt=today) | Q(status=AssetStatus.MISSING, awaiting_inspection=False)
 
 
 def _day(d) -> str:
@@ -355,7 +356,8 @@ def build(period: Period, user) -> Section:
             "Days late: to the PM's completion, or to today when it was never completed (cancelled, or still open). Done later on: the first PM "
             "completed on the device on or after this PM's due date, on any work order, so a cancelled PM shows when the device's PM was done.",
             "Devices past their PM date today: active devices whose next PM date is before today, or that are marked missing, as the PM "
-            "compliance report counts them. This counts devices now, not PMs in the period.",
+            "compliance report counts them. This counts devices now, not PMs in the period. A new device waiting for its incoming "
+            "inspection is never past its PM date, missing or not: its PM schedule starts when the inspection passes.",
             "On-time shares are cut to one decimal, never rounded up, so a class that missed its target never shows reaching it.",
         ],
     )
