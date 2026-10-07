@@ -17,7 +17,7 @@ from django.utils import timezone
 from apps.recalls.models import AlertMatch
 
 from . import permissions
-from .models import TAG_VALIDATOR, Asset, AssetStatus, Department, DeviceModel, RiskClass, SupportType
+from .models import TAG_VALIDATOR, AddedAs, Asset, AssetStatus, Department, DeviceModel, RiskClass, SupportType
 
 PM_DUE_SOON_DAYS = 30
 
@@ -578,13 +578,16 @@ def rename_department(department: Department, name: str) -> Department:
 @transaction.atomic
 def create_asset(*, tag, device_model, department, serial="", room="", installed_on=None, acquisition_cost=None, warranty_end=None, condition=3,
                  last_pm_on=None, next_pm_on=None, notes="", status=AssetStatus.IN_SERVICE, by=None, today: date | None = None,
-                 added_on: date | None = None) -> Asset:
+                 added_on: date | None = None, added_as: str = AddedAs.NEW) -> Asset:
     """Add a device. Its first PM is `next_pm_on` when given, else first_pm_due(); its acquisition cost defaults to the model's list
     cost. Tags are unique in the facility in any letter case and can never change afterwards (they are on the sticker and in URLs).
     `added_on` dates the history's "added" row on an earlier day: the importer (apps.imports.kinds.devices) adds a device retired
     years ago in the previous system with both its rows on the day it was retired (set_status's `changed_on`), so its history reads
-    in order."""
+    in order. `added_as` (slice 25): new to the facility (the survey binder then looks for its incoming inspection), already in use
+    here (entered after the fact), or imported (the importer's)."""
     today = today or timezone.localdate()
+    if added_as not in AddedAs.values:
+        raise ValidationError({"added_as": "Say whether the device is new, already in use here, or imported."})
     if added_on is not None and added_on > today:
         raise ValidationError({"added_on": "A device cannot be added on a day after today."})
     tag = (tag or "").strip()
@@ -611,7 +614,7 @@ def create_asset(*, tag, device_model, department, serial="", room="", installed
         raise ValidationError({"tag": f"{tag} is already on another device."})
     asset = Asset(tag=tag, device_model=device_model, department=department, serial=_clean_text(serial, 80), room=_clean_text(room, 40),
                   installed_on=installed_on, acquisition_cost=acquisition_cost, warranty_end=warranty_end, condition=condition,
-                  last_pm_on=last_pm_on, status=status, notes=(notes or "").strip(),
+                  last_pm_on=last_pm_on, status=status, notes=(notes or "").strip(), added_as=added_as,
                   next_pm_on=next_pm_on or first_pm_due(device_model, installed_on=installed_on, last_pm_on=last_pm_on, today=today))
     asset._change_reason = "Added"
     _save_on(asset, added_on)

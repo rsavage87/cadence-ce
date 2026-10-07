@@ -28,6 +28,15 @@ class SupportType(models.TextChoices):
     THIRD_PARTY = "third_party", "Third-party"
 
 
+class AddedAs(models.TextChoices):
+    """How a device came to be in Cadence (slice 25): the survey binder asks new devices for an incoming inspection before first use,
+    and only them. Blank: added before slice 25, or written without the services (the demo seed), so nobody knows; the binder counts
+    those and never calls them gaps."""
+    NEW = "new", "New to the facility"
+    EXISTING = "existing", "Already in use here"
+    IMPORTED = "imported", "Imported from the previous system"
+
+
 # Tags appear in URLs (/equipment/<tag>/), so no whitespace or slashes; forms, the API, and the importer all check this.
 TAG_VALIDATOR = RegexValidator(r"^[^\s/]+$", "Asset tags cannot contain spaces or slashes.")
 
@@ -118,6 +127,8 @@ class Asset(TenantModel):
     last_pm_on = models.DateField(null=True, blank=True)
     next_pm_on = models.DateField(null=True, blank=True)
     notes = models.TextField(blank=True)
+    added_as = models.CharField(max_length=20, choices=AddedAs.choices, blank=True, editable=False,
+                                help_text="How the device came to be in Cadence (create_asset): new, already in use, or imported")
     history = HistoricalRecords()
 
     class Meta:

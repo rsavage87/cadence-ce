@@ -279,6 +279,21 @@ def pm_due_queryset(start: date, end: date, as_of: date | None = None, life_supp
     return qs
 
 
+def missed_pms(today: date | None = None):
+    """PM work orders that missed their due date as of `today` (slice 25): due before today and not completed by it, whether still
+    open, completed late, or cancelled. RETIRED_AND_CANCELLED is the one exclusion, as in pm_due_queryset, so these are exactly the
+    PMs the on-time figures count as not on time. Why one was late (WorkOrder.late_reason) is recorded on these and only these
+    (apps.workorders.services.set_late_reason)."""
+    today = today or timezone.localdate()
+    return (WorkOrder.objects.filter(type=WoType.PM, due_on__lt=today).exclude(completed_on__lte=F("due_on"))
+            .exclude(RETIRED_AND_CANCELLED))
+
+
+def missed_due_date(wo, today: date | None = None) -> bool:
+    """Whether `wo` is one of missed_pms(today)."""
+    return wo.type == WoType.PM and missed_pms(today).filter(pk=wo.pk).exists()
+
+
 def pm_on_time_rate(start: date, end: date, as_of: date | None = None, life_support_only: bool = False) -> dict:
     due = pm_due_queryset(start, end, as_of, life_support_only)
     total = due.count()

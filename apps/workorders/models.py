@@ -52,6 +52,20 @@ class Source(models.TextChoices):
     IMPORTED = "imported", "Imported"  # slice 23: history and open work from the previous system (apps.workorders.legacy)
 
 
+class LateReason(models.TextChoices):
+    """Why a PM missed its due date (slice 25, the survey binder): a choice, never free text (a note about it goes in the work order's
+    notes, which the binder never prints). Recorded through workorders.services.set_late_reason, on a PM that missed its due date only
+    (apps.pm.services.missed_pms)."""
+    DEVICE_IN_USE = "device_in_use", "Device in use, not available"
+    NOT_LOCATED = "not_located", "Device could not be located"
+    OUT_OF_SERVICE = "out_of_service", "Out of service or in repair when due"
+    WAITING_PARTS_VENDOR = "waiting_parts_vendor", "Waiting on parts or the vendor"
+    STAFFING = "staffing", "Staffing or workload"
+    SCHEDULING = "scheduling", "Scheduling error"
+    DUPLICATE = "duplicate", "Duplicate work order (the PM was done on another)"
+    OTHER = "other", "Other (see the work order's notes)"
+
+
 OPEN_STATUSES = (WoStatus.OPEN, WoStatus.IN_PROGRESS, WoStatus.AWAITING_PARTS)
 
 ALLOWED_TRANSITIONS = {
@@ -99,6 +113,8 @@ class WorkOrder(TenantModel):
     # searchable, so a technician holding old paperwork finds it; it is what makes a re-run of the import find, not double, the row.
     legacy_number = models.CharField("previous number", max_length=40, blank=True, editable=False,
                                      help_text="The work order's number in the previous system, when it was imported")
+    # Slice 25: why a PM missed its due date, for the survey binder. Only set_late_reason writes it (the API keeps it read-only).
+    late_reason = models.CharField("why late", max_length=30, choices=LateReason.choices, blank=True, editable=False)
     history = HistoricalRecords()
 
     class Meta:

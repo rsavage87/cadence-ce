@@ -25,6 +25,7 @@ from .models import (
     ALLOWED_TRANSITIONS,
     DUE_DAYS,
     OPEN_STATUSES,
+    LateReason,
     Priority,
     ServiceRequest,
     Source,
@@ -127,6 +128,30 @@ def assign(wo: WorkOrder, technician=None, vendor_name: str = "", by=None) -> Wo
     if technician is not None and not vendor_name:
         assignments.announce(wo, technician, by=by)  # slice 20: emailed once this commits, at most once per work order and person
     return wo
+
+
+# --- why a PM was late (slice 25) -----------------------------------------------------------------
+
+@transaction.atomic
+def set_late_reason(wo: WorkOrder, reason: str, by=None, today: date | None = None) -> WorkOrder:
+    """Record why a PM missed its due date (LateReason; blank clears it), for the survey binder. Only on a PM that missed its due date
+    (apps.pm.services.missed_pms: open past due, completed late, or cancelled), at any status: it documents the work, never changes
+    it. The caller checks the level (permissions.can_set_late_reason: Approve once the work order is closed). Audited in the work
+    order's history, which is where the binder reads when a reason was recorded."""
+    from apps.pm.services import missed_due_date
+
+    reason = str(reason or "").strip()
+    if reason and reason not in LateReason.values:
+        raise ValidationError({"late_reason": "Choose one of the reasons listed."})
+    locked = WorkOrder.objects.select_for_update().get(pk=wo.pk)
+    if not missed_due_date(locked, today):
+        raise ValidationError({"late_reason": f"{locked.number} is not a PM that missed its due date, so it has no reason to record."})
+    if reason != locked.late_reason:
+        locked.late_reason = reason
+        locked._change_reason = f"Why late: {LateReason(reason).label}" if reason else "Why late cleared"
+        locked.save(update_fields=["late_reason", "updated_at"])
+    wo.late_reason = locked.late_reason
+    return locked
 
 
 # --- taking work (slice 24) -------------------------------------------------------------------------

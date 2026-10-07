@@ -14,6 +14,7 @@ from . import (
     views_recalls,
     views_reports,
     views_scan,
+    views_survey,
     views_users,
     views_work,
 )
@@ -25,7 +26,7 @@ router.register("device-models", views.DeviceModelViewSet, basename="devicemodel
 router.register("assets", views.AssetViewSet, basename="asset")
 router.register("work-orders", views.WorkOrderViewSet, basename="workorder")
 for area in (views_work, views_contracts, views_users, views_recalls, views_reports, views_pm, views_scan, views_history, views_notifications,
-             views_facilities, views_all_facilities):
+             views_facilities, views_all_facilities, views_survey):
     area.register(router)
 
 urlpatterns = router.urls + [

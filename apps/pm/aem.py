@@ -39,6 +39,7 @@ from django.db import transaction
 from django.db.models import Count, F, Q
 from django.utils import timezone
 
+from apps.core.days import local_day
 from apps.equipment.models import Asset, AssetStatus, DeviceModel, RiskClass
 
 from .dates import add_months
@@ -75,17 +76,13 @@ def history_start(today: date) -> date:
 # --- the evidence ---------------------------------------------------------------------------------------------------------
 
 
-def _local_day(moment) -> date:
-    return timezone.localdate(moment) if timezone.is_aware(moment) else moment.date()
-
-
 def _retired_on(asset_ids) -> dict:
     """{asset id: the day it last went into retirement}, from the devices' own history. One query."""
     out, previous = {}, {}
     rows = Asset.history.filter(id__in=asset_ids).order_by("id", "history_date", "history_id").values_list("id", "status", "history_date")
     for pk, status, when in rows:
         if status == AssetStatus.RETIRED and previous.get(pk) != AssetStatus.RETIRED:
-            out[pk] = _local_day(when)
+            out[pk] = local_day(when)
         previous[pk] = status
     return out
 
@@ -113,14 +110,14 @@ def evidence(dm: DeviceModel, today: date | None = None) -> dict:
             continue  # installed after the day this evidence is for
         end = today
         if d["status"] == AssetStatus.RETIRED:
-            end = retired.get(d["id"]) or _local_day(d["updated_at"])  # no history row (bulk import): its last change
+            end = retired.get(d["id"]) or local_day(d["updated_at"])  # no history row (bulk import): its last change
             if end < since:
                 continue  # out of use before the window opened
         if d["status"] == AssetStatus.RETIRED and end <= today:
             retired_counted += 1
         else:
             active += 1  # in use on that day (one retired since then was still in use)
-        start = d["installed_on"] or min(_local_day(d["created_at"]), today)
+        start = d["installed_on"] or min(local_day(d["created_at"]), today)
         if not d["installed_on"]:
             undated += 1
         elif oldest is None or d["installed_on"] < oldest:

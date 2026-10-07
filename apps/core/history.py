@@ -311,6 +311,12 @@ def _who(rec) -> tuple[str, int | None]:
     return _person(getattr(rec, "history_user", None))
 
 
+def who(rec) -> str:
+    """Who made the change a historical row records, as this facility may read it (the survey binder, slice 25): a name, "Cadence"
+    for a job, or "Someone outside this facility"."""
+    return _who(rec)[0]
+
+
 # How a related row is named, live or as its last historical record (whose __str__ is simple_history's, not the model's).
 _NAMERS = {
     "equipment.asset": lambda o: o.tag,

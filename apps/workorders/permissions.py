@@ -49,3 +49,18 @@ def can_record_work(user) -> bool:
 def can_set_rate(user) -> bool:
     """Log time at a rate other than the Settings rate for the work order (apps.workorders.costs.default_rate)."""
     return user.has_level(MODULE, RATE_LEVEL)
+
+
+# Slice 25: why a PM missed its due date (WorkOrder.late_reason, for the survey binder). Recording it is documenting the work, so Edit,
+# as recording time is, while the work order is open, completed, or cancelled; a closed work order is the record, so Approve then.
+LATE_REASON_LEVEL = Level.EDIT
+
+
+def late_reason_level(status: str) -> int:
+    return Level.APPROVE if status == WoStatus.CLOSED else LATE_REASON_LEVEL
+
+
+def can_set_late_reason(user, wo) -> bool:
+    """Record or change why `wo` (a PM that missed its due date: apps.pm.services.missed_pms) was late. Scoped users only on what they
+    can see (the caller narrows through apps.workorders.scoping, as for every move)."""
+    return user.has_level(MODULE, late_reason_level(wo.status))
