@@ -8,6 +8,7 @@ import pytest
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
+from incoming_fixtures import waiting_device
 from pg_helpers import as_app_role, needs_postgres
 from survey_helpers import gaps_of, period, rows_of
 
@@ -76,9 +77,11 @@ def test_the_inventory_by_category_and_class_and_every_device(ctx, today, year, 
 def test_a_device_with_no_next_pm_is_a_gap(ctx, year, dept, vent_model):
     _device("V-1", vent_model, dept, next_pm_on=None)
     _device("V-2", vent_model, dept, status=AssetStatus.RETIRED, next_pm_on=None)  # retired: off the schedule on purpose
+    waiting_device(vent_model, "V-3", department=dept)  # slice 26: waiting for its incoming inspection, its PMs start when it passes
     gaps = gaps_of(inventory.build(year, None))
     assert [(g.kind, g.record, g.url) for g in gaps] == [(GAP, "V-1", "/equipment/V-1/")]
     assert "V-1 (Hamilton Medical Hamilton-G5) is in use with no next PM date" in gaps[0].text
+    assert [r[8] for r in rows_of(inventory.build(year, None), "devices")] == ["In service", "Awaiting inspection"]
 
 
 def test_missing_devices_with_the_day_they_went_missing(ctx, today, year, dept, vent_model, pump_model):

@@ -37,10 +37,11 @@ def _repairs_in_window(today: date):
 def report_compliance(today: date) -> dict:
     """One row per risk class: active devices, this month's PMs (due, completed, on time), devices overdue now, and compliance
     (the share of active devices whose PM is not past due today) against the class's target. Two grouped queries, no per-class work.
-    A device marked missing stays in the active count and is always overdue (the mock's rule: it can never be shown compliant), and
-    this month's PMs are counted on active devices only, so every column describes the same fleet."""
+    A device marked missing stays in the active count and is always overdue (the mock's rule: it can never be shown compliant), but
+    for a new device waiting for its incoming inspection (slice 26: it has no PM schedule until the inspection passes, so no PM to be
+    overdue, missing or not), and this month's PMs are counted on active devices only, so every column describes the same fleet."""
     start, end = month_bounds(today.year, today.month)
-    overdue_q = Q(next_pm_on__lt=today) | Q(status=AssetStatus.MISSING)
+    overdue_q = Q(next_pm_on__lt=today) | Q(status=AssetStatus.MISSING, awaiting_inspection=False)
     fleet = {row["device_model__risk_class"]: row for row in
              _active_assets().order_by().values("device_model__risk_class").annotate(devices=Count("id"), overdue=Count("id", filter=overdue_q))}
     pms = {row["asset__device_model__risk_class"]: row for row in
