@@ -151,7 +151,7 @@ def use_before_reason(label: str) -> str:
 def uses_before(asset_ids) -> dict:
     """{device id: [UseBefore, oldest first]} for the devices among `asset_ids` ever put in use before their incoming inspection. One
     query on the devices' history, in the current facility (the historical tables' managers are not tenant-scoped)."""
-    from apps.equipment.models import Asset, UseBeforeInspection
+    from apps.equipment.models import Asset, AssetStatus, UseBeforeInspection
     from apps.tenants.context import get_current_tenant
 
     tenant = get_current_tenant()
@@ -160,7 +160,10 @@ def uses_before(asset_ids) -> dict:
         return {}
     slugs = {label: slug for slug, label in UseBeforeInspection.choices}
     out: dict = {}
-    rows = (Asset.history.filter(tenant_id=tenant.id, id__in=ids, history_change_reason__startswith=USE_BEFORE_PREFIX)
+    # Only use_before_inspection's own rows: the device in service while still awaiting its inspection, with one of the listed reasons
+    # word for word (review fix: a note typed with a status change could start with the same words).
+    rows = (Asset.history.filter(tenant_id=tenant.id, id__in=ids, status=AssetStatus.IN_SERVICE, awaiting_inspection=True,
+                                 history_change_reason__in=[use_before_reason(label) for label in slugs])
             .select_related("history_user").order_by("history_date", "history_id"))
     for h in rows:
         label = h.history_change_reason[len(USE_BEFORE_PREFIX):]

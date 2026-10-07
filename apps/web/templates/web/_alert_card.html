@@ -19,7 +19,7 @@
         <tr{% if can_view_asset %} class="row" hx-get="{% url 'web:asset' x.tag %}" hx-target="#drawer"{% endif %}>
           <td class="tag">{% if can_view_asset %}<a class="tag" href="{% url 'web:asset' x.tag %}">{{ x.tag }}</a>{% else %}{{ x.tag }}{% endif %}</td>
           <td>{{ x.department }}</td><td class="muted">{{ x.serial|default:"—" }}</td>
-          <td>{% asset_status_chip x.status %}</td><td>{% pm_sticker x %}</td>
+          <td>{% asset_status_chip x %}</td><td>{% pm_sticker x %}</td>
         </tr>{% endfor %}
       </tbody>
     </table></div>

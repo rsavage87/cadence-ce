@@ -149,7 +149,8 @@ def test_compliance_renders_with_chips_targets_and_trend(client, signed_in, comp
     assert '<td class="num down"><b>50.0%</b></td><td class="muted">100%</td>' in body
     assert '<td class="num up"><b>100.0%</b></td><td class="muted">95%</td>' in body
     assert '<td class="num down">1</td>' in body  # the overdue count is red
-    assert "Devices marked missing are still counted as active and are never counted as compliant." in body and "PM completion rate by month" in body
+    assert ("Devices marked missing are still counted as active and are never counted as compliant, except a new device waiting for its incoming "
+            "inspection, whose PMs have not started.") in body and "PM completion rate by month" in body
     assert 'aria-label="PM completion rate by month"' in body and "Target 95%" in body
     chart = r.context["p"]["chart"]
     assert chart["paths"][0]["name"] == "All devices" and chart["xlabels"][0]["label"] == "Oct '25"  # 12 months ending at the report's month
