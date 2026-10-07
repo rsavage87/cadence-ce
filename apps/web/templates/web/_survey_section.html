@@ -1,0 +1,23 @@
+{% load web %}
+{% comment %}One section of the survey binder on the screen (views_survey.page_context): what it is evidence for, what it covers, its
+   figures and notes, and each table's first rows with links to the records (the drawer) and its CSV.{% endcomment %}
+<details class="panel sv-sec" id="sv-{{ s.key }}" open>
+  <summary class="sv-sec-h"><h2>{{ s.title }}</h2><span class="sub">{{ s.covers }}</span></summary>
+  <div class="panel-b">
+    {% if s.topic %}<p class="sv-topic">{{ s.topic }}</p>{% endif %}
+    {% if s.figures %}<dl class="sv-figs">{% for f in s.figures %}<div class="stat"><dt class="l">{{ f.label }}</dt><dd class="v">{{ f.value }}</dd>{% if f.hint %}<dd class="hint">{{ f.hint }}</dd>{% endif %}</div>{% endfor %}</dl>{% endif %}
+    {% if s.notes %}<ul class="sv-notes">{% for n in s.notes %}<li>{{ n }}</li>{% endfor %}</ul>{% endif %}
+    {% for t in s.tables %}
+    <div class="sv-tbl" id="sv-{{ s.key }}-{{ t.key }}">
+      <div class="sv-tbl-h"><h3>{{ t.title }}</h3>{% if t.count is not None %}<span class="muted">{{ t.count }} row{{ t.count|pluralize }}</span>{% endif %}<a class="btn sm" href="{{ t.csv }}" download title="Every row of {{ t.title }} as CSV">{% icon "dl" %} CSV</a></div>
+      {% if t.rows %}
+      <div class="tbl-wrap"><table>
+        <thead><tr>{% for c in t.columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+        <tbody>{% for row in t.rows %}<tr>{% for c in row %}<td{% if c.num %} class="num"{% elif c.nowrap %} class="nw"{% endif %}>{% if c.url %}<a class="link" href="{{ c.url }}" hx-get="{{ c.url }}" hx-target="#drawer">{{ c.text }}</a>{% else %}{{ c.text }}{% endif %}</td>{% endfor %}</tr>{% endfor %}</tbody>
+      </table></div>
+      {% if t.more %}<p class="hint sv-more">The first {{ preview_rows }}{% if t.count is not None %} of {{ t.count }}{% endif %} rows; every row is in the CSV.</p>{% endif %}
+      {% else %}<div class="empty sv-empty">{{ t.empty }}</div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</details>

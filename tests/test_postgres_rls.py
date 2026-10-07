@@ -16,6 +16,7 @@ from pg_helpers import as_app_role, needs_postgres
 from apps.accounts import invitations, services
 from apps.accounts.models import Role, User
 from apps.equipment.models import Asset, Department, DeviceModel
+from apps.reports import survey
 from apps.reports.services import REPORTS
 from apps.tenants.context import tenant_context
 from apps.tenants.models import Tenant
@@ -178,6 +179,29 @@ def test_the_api_under_the_policies(client, seeded):
         r = client.get(url)
         assert r.status_code == 200, (url, r.status_code)
     assert client.get("/api/v1/assets/").json()["count"] == 196
+
+
+def test_the_survey_binder_under_the_policies(client, seeded):
+    """Slice 25: the binder reads every area's rows and their histories (historical tables have no policy: the sections filter them by
+    this facility). As the runtime role the page, the print, the gaps CSV, every section's table CSVs (streamed after the view
+    returns, inside the request's tenant), and both API endpoints answer, and the seeded binder has something in it."""
+    client.force_login(User.objects.get(username="kim@riverside.example"))
+    as_app_role()
+    for url in ["/reports/survey/", "/print/survey/", "/reports/survey/?from=2026-01-01&to=2026-06-30"]:
+        r = client.get(url)
+        assert r.status_code == 200, (url, r.status_code)
+    r = client.get("/reports/survey/gaps.csv")
+    assert r.status_code == 200 and b"".join(r.streaming_content).startswith("﻿Section,Kind".encode())
+    binder = client.get("/api/v1/survey/").json()
+    assert [s["key"] for s in binder["sections"]] == survey.section_keys() and binder["complete"] is True
+    tables = 0
+    for s in binder["sections"]:
+        assert client.get(f"/api/v1/survey/{s['key']}/").status_code == 200, s["key"]
+        for t in s["tables"]:
+            r = client.get(f"/reports/survey/{s['key']}/{t['key']}.csv")
+            assert r.status_code == 200 and b"".join(r.streaming_content), (s["key"], t["key"])
+            tables += 1
+    assert tables >= len(binder["sections"])  # every section lists something in a seeded facility
 
 
 def test_changing_things_under_the_policies(client, seeded):

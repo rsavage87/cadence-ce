@@ -8,7 +8,8 @@
     <p class="sub">Built from the same work order and inventory data as the Overview · as of today, {{ today|date:"M j, Y" }} · every report downloads as CSV</p>
   </div>
   {# The mock's "Custom report" button (slice 18): the builder takes the panel's place, for Reports Edit (checked again on the server). #}
-  {% if can_build %}<div class="actions rep-actions"><a class="btn" href="{% url 'web:custom_report_new' %}" hx-get="{% url 'web:custom_report_new' %}" hx-target="#rep-body" hx-swap="outerHTML" hx-push-url="true">{% icon "plus" %} Custom report</a></div>{% endif %}
+  {# Slice 25: the survey binder, for anyone on this page (Reports View); each of its sections asks for its own areas' View. #}
+  <div class="actions rep-actions"><a class="btn" href="{% url 'web:survey' %}" title="The evidence a surveyor asks for over a period, with what is missing listed and linked">{% icon "contract" %} Survey binder</a>{% if can_build %}<a class="btn" href="{% url 'web:custom_report_new' %}" hx-get="{% url 'web:custom_report_new' %}" hx-target="#rep-body" hx-swap="outerHTML" hx-push-url="true">{% icon "plus" %} Custom report</a>{% endif %}</div>
 </div>
 {% include "web/_reports_body.html" %}
 {% endblock %}

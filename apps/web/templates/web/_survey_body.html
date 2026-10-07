@@ -1,0 +1,59 @@
+{% load web %}
+{% comment %}The survey binder (slice 25, views_survey): the page head with the period form, the summary, the gaps, and a panel per section.
+   The form and the presets swap this whole element and push the address, so a reload and Back keep the period; the Print and CSV
+   links carry it (and name the facility, as every print and download link does). A refused period shows the form's words alone.{% endcomment %}
+{% if partial %}<title>Survey binder · Reports · {{ request.tenant.name }}</title>{% endif %}{# only in the swapped fragment, at its root: htmx retitles the document from it #}
+<div id="survey-body" class="sv">
+  <div class="page-head">
+    <div>
+      <h1>Survey binder</h1>
+      <p class="sub">The evidence a surveyor asks Clinical Engineering for, read from Cadence's records, with what is missing listed and linked{% if period %} · {{ period.label }}{% endif %}</p>
+    </div>
+    <div class="actions">
+      <a class="btn" href="{% url 'web:reports' %}">{% icon "rep" %} Reports</a>
+      {% if period %}<a class="btn" href="{{ gaps_csv_url }}" download title="Every gap, finding, and check of the sections below, with a link to each record">{% icon "dl" %} All gaps (CSV)</a>
+      <a class="btn primary" href="{{ print_url }}" target="_blank" rel="noopener" title="The whole binder for paper, or save it as a PDF">{% icon "print" %} Print binder</a>{% endif %}
+    </div>
+  </div>
+
+  <form class="toolbar sv-period" method="get" action="{% url 'web:survey' %}" hx-get="{% url 'web:survey' %}" hx-target="#survey-body" hx-swap="outerHTML" hx-push-url="true" aria-label="Period">
+    <label class="field"><span>From</span><input type="date" name="from" value="{{ from_value }}" max="{{ today|date:'Y-m-d' }}" aria-label="From"{% if errors %} aria-invalid="true" aria-describedby="sv-period-error"{% endif %}></label>
+    <label class="field"><span>To</span><input type="date" name="to" value="{{ to_value }}" max="{{ today|date:'Y-m-d' }}" aria-label="To"{% if errors %} aria-invalid="true" aria-describedby="sv-period-error"{% endif %}></label>
+    <button class="btn" type="submit">Show</button>
+    <div class="pills sv-presets" role="group" aria-label="Periods">
+      {% for p in presets %}<a class="pill{% if p.active %} active{% endif %}" href="{% url 'web:survey' %}?{{ p.query }}" hx-get="{% url 'web:survey' %}?{{ p.query }}" hx-target="#survey-body" hx-swap="outerHTML" hx-push-url="true"{% if p.active %} aria-current="true"{% endif %}>{{ p.label }}</a>{% endfor %}
+    </div>
+  </form>
+
+  {% if errors %}
+  <div class="note warn sv-error" id="sv-period-error" role="alert">{% for m in errors %}<p>{{ m }}</p>{% endfor %}</div>
+  {% else %}
+  <section class="sv-summary" aria-labelledby="sv-summary-h">
+    <h2 id="sv-summary-h">Summary <span class="sv-total">{{ counts_words }} in the {{ binder.sections|length }} section{{ binder.sections|length|pluralize }} your role can see</span></h2>
+    {% if incomplete %}<div class="note warn sv-incomplete" role="status">{{ incomplete }}</div>{% endif %}
+    <ul class="sv-cards">
+      {% for c in cards %}
+      <li>{% if c.left_out %}<div class="sv-card out"><span class="t">{{ c.title }}</span><span class="s">Left out: {{ c.left_out }}</span></div>
+      {% else %}<a class="sv-card" href="#sv-{{ c.key }}"><span class="t">{{ c.title }}</span><span class="sv-chips">{% for css, words in c.chips %}<span class="chip {{ css }}">{{ words }}</span>{% empty %}<span class="chip ok">No gaps</span>{% endfor %}</span></a>{% endif %}</li>
+      {% endfor %}
+    </ul>
+    <p class="hint sv-kinds">{% for label, css, help in kind_help %}<span><span class="chip {{ css }}">{{ label }}</span> {{ help }}</span>{% endfor %}</p>
+  </section>
+
+  <section class="panel sv-gaps" aria-labelledby="sv-gaps-h">
+    <div class="panel-h"><h2 id="sv-gaps-h">What is missing</h2><span class="sub">Each opens the record that fixes it, or the one it is about</span></div>
+    <div class="panel-b">
+      {% for s in sections %}{% if s.gaps %}
+      <h3 class="sv-gaps-sec">{{ s.title }}</h3>
+      <ul class="sv-gap-list">
+        {% for g in s.gaps %}<li class="sv-gap"><span class="chip {{ g.css }}" title="{{ g.help }}">{{ g.label }}</span><span class="sv-gap-t">{{ g.text }}</span>{% if g.url %}<a class="link sv-gap-r" href="{{ g.url }}"{% if g.drawer %} hx-get="{{ g.url }}" hx-target="#drawer"{% endif %}>{{ g.record|default:"Open" }}</a>{% endif %}</li>{% endfor %}
+      </ul>
+      {% if s.more_gaps %}<p class="hint sv-more">{{ s.more_gaps }} more in the <a class="link" href="{{ gaps_csv_url }}" download>gaps CSV</a>.</p>{% endif %}
+      {% endif %}{% endfor %}
+      {% if not any_gaps %}<div class="empty">Nothing missing in the sections your role can see.</div>{% endif %}
+    </div>
+  </section>
+
+  {% for s in sections %}{% include "web/_survey_section.html" %}{% endfor %}
+  {% endif %}
+</div>

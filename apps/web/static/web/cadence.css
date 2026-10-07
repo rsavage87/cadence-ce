@@ -852,6 +852,64 @@ form.facility{margin:0}
   .scan-form.from-my-work .scan-cam-actions .btn{flex:1}
 }
 
+/* Slice 25, part E: the survey binder (Reports: web/survey.html, _survey_body.html, _survey_section.html) */
+/* The period form under the page head; a card per section (its counts, or why it was left out) in a grid that is one column on a
+   phone; the gaps as a list (kind chip, words that wrap, the record's link); a collapsible panel per section with its figures, notes,
+   and the first rows of each table, whose cells wrap rather than push the page sideways. Theme tokens only. */
+.sv{display:grid;gap:14px;min-width:0}
+.sv>.page-head,.sv>.toolbar{margin-bottom:0}
+.sv-period .field input{width:150px}
+.sv-presets{margin-left:4px}
+.sv-error p+p{margin-top:4px}
+.sv-summary{display:grid;gap:10px;min-width:0}
+.sv-summary h2{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px}
+.sv-total{font-size:13px;font-weight:400;color:var(--ink-3)}
+.sv-cards{list-style:none;margin:0;padding:0;display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(min(100%,230px),1fr))}
+.sv-card{display:flex;flex-direction:column;gap:6px;height:100%;padding:11px 13px;background:var(--surface);border:1px solid var(--line);border-radius:10px;color:inherit;text-decoration:none;min-width:0}
+a.sv-card:hover{border-color:var(--line-2);background:var(--surface-2)}
+.sv-card .t{font-weight:600;overflow-wrap:anywhere}
+.sv-card .s{font-size:12.5px;color:var(--ink-3);overflow-wrap:anywhere}
+.sv-card.out{background:var(--surface-2);border-style:dashed}
+.sv-chips{display:flex;flex-wrap:wrap;gap:5px}
+.sv-kinds{display:flex;flex-wrap:wrap;gap:4px 18px}
+.sv-kinds>span{display:inline-flex;align-items:center;gap:6px}
+.sv-gaps-sec{margin:12px 0 4px}
+.sv-gaps-sec:first-child{margin-top:0}
+.sv-gap-list{list-style:none;margin:0;padding:0}
+.sv-gap{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;padding:7px 0;border-top:1px solid var(--line);font-size:13px}
+.sv-gap:first-child{border-top:0}
+.sv-gap .chip{flex:none}
+.sv-gap-t{flex:1 1 260px;min-width:0;overflow-wrap:anywhere}
+.sv-gap-r{flex:none;font-weight:500}
+.sv-more{margin-top:6px}
+.sv-sec{scroll-margin-top:12px}
+.sv-sec-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;padding:12px 14px;cursor:pointer;list-style:none}
+.sv-sec-h::-webkit-details-marker{display:none}
+.sv-sec-h::before{content:"";flex:none;align-self:center;width:7px;height:7px;margin-right:2px;border-right:2px solid var(--ink-3);border-bottom:2px solid var(--ink-3);transform:rotate(-45deg);transition:transform .15s}
+.sv-sec[open]>.sv-sec-h::before{transform:rotate(45deg)}
+.sv-sec-h .sub{font-size:12.5px;color:var(--ink-3)}
+.sv-sec[open]>.sv-sec-h{padding-bottom:0}
+.sv-topic{color:var(--ink-2);font-size:13px;margin-bottom:10px}
+.sv-figs{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(min(100%,170px),1fr));margin:0 0 10px}
+.sv-figs .stat{margin:0}
+.sv-figs dd{margin:0}
+.sv-figs .v{overflow-wrap:anywhere}
+.sv-notes{margin:0 0 12px;padding-left:18px;font-size:12.5px;color:var(--ink-2)}
+.sv-notes li{margin:2px 0}
+.sv-tbl{margin-top:14px;min-width:0}
+.sv-tbl-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;margin-bottom:6px}
+.sv-tbl-h h3{min-width:0}
+.sv-tbl-h .btn{margin-left:auto;text-decoration:none}
+.sv-tbl td{white-space:normal;overflow-wrap:break-word}
+.sv-tbl td.num,.sv-tbl td.nw{white-space:nowrap}
+.sv-empty{padding:14px;border:1px dashed var(--line);border-radius:8px}
+.sv .page-head .actions a.btn{text-decoration:none}
+@media (max-width:760px){
+  .sv-period .field{flex:1 1 140px}
+  .sv-period .field input{width:100%}
+  .sv-presets{margin-left:0;width:100%}
+}
+
 /* Slice 11: printing app pages */
 /* What the browser prints of an app page (the Overview's Export button calls window.print(); any other screen prints from the
    browser's menu): the page's content on white, in the light theme whatever the screen shows, with chart and chip colours kept.
