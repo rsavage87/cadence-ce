@@ -68,6 +68,47 @@ def test_seed_demo_gives_kim_a_second_facility(db, client):
         assert Asset.objects.count() == 16
 
 
+def test_seed_demo_gives_the_survey_binder_a_few_deliberate_items(db):
+    """Slice 25: work done by technicians credentialed for the device, one credential that lapsed and was renewed with a repair done
+    in the lapse, a reason on every late life-support and high-risk PM but the latest, three new devices (one gap), one model past its
+    yearly risk review, and recall matches dated by when their notice was published."""
+    from django.utils import timezone
+
+    from apps.core.days import local_day
+    from apps.credentials.models import Credential
+    from apps.credentials.services import qualification
+    from apps.equipment.models import AddedAs, RiskClass
+    from apps.pm.services import missed_pms
+    from apps.reports.survey import CHECK, FINDING, GAP, default_period, inspections, inventory
+
+    call_command("seed_demo", stdout=StringIO())
+    with tenant_context(Tenant.objects.get(slug="riverside")):
+        today = timezone.localdate()
+        lapse = Credential.objects.select_related("technician").get(technician__name=seed_demo.LAPSE[0], scope=seed_demo.LAPSE[1],
+                                                                    value=seed_demo.LAPSE[2])
+        expired = today - timedelta(days=seed_demo.LAPSE_EXPIRED_DAYS_AGO)
+        renewed = today - timedelta(days=seed_demo.LAPSE_RENEWED_DAYS_AGO)
+        assert [(r.history_type, local_day(r.history_date), r.expires_on) for r in lapse.history.order_by("history_date")] == [
+            ("+", lapse.issued_on, expired), ("~", renewed, lapse.expires_on)]
+        in_lapse = WorkOrder.objects.filter(assigned_to=lapse.technician, asset__device_model__category=seed_demo.LAPSE[2],
+                                            completed_on__gt=expired, completed_on__lt=renewed)
+        assert in_lapse.filter(problem=seed_demo.LAPSE_PROBLEM, status="closed").count() == 1
+        work = WorkOrder.objects.filter(assigned_to__isnull=False, vendor_service=False).select_related("asset__device_model", "assigned_to")
+        work = work.prefetch_related("assigned_to__credentials")
+        assert all(qualification(w.assigned_to, w.asset, w.opened_on).ok for w in work)  # with the lapse renewed: everyone's credentialed
+        late = missed_pms(today).filter(asset__device_model__risk_class__in=(RiskClass.LIFE_SUPPORT, RiskClass.HIGH)).order_by("due_on", "number")
+        assert len(late) >= 2 and all(w.late_reason for w in late[: len(late) - 1]) and late[len(late) - 1].late_reason == ""
+        p = default_period(today)
+        new = inspections.build(p, None)
+        assert [(g.kind, g.record) for g in new.gaps] == [(GAP, "CE-11003")]
+        figures = {f.label: f.value for f in new.figures}
+        assert figures["New devices added"] == 3 and figures["Inspected before first use"] == 1 and figures["Waiting: never in service yet"] == 1
+        assert Asset.objects.filter(added_as=AddedAs.NEW).count() == 3
+        assert [(g.kind, g.record) for g in inventory.build(p, None).gaps] == [(CHECK, "Zoll R Series Plus")]
+        assert not [g for g in new.gaps + inventory.build(p, None).gaps if g.kind == FINDING]
+        assert all(local_day(m.created_at) == m.alert.published_on for m in AlertMatch.objects.select_related("alert"))
+
+
 def test_a_database_seeded_before_slice_22_gets_the_north_campus(db, monkeypatch):
     monkeypatch.setattr(seed_demo.Command, "_north_campus", lambda self, tenant, opts: None)
     call_command("seed_demo", stdout=StringIO())
