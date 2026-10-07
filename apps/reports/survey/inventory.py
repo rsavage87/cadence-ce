@@ -55,9 +55,11 @@ def _status(status: str, awaiting: bool) -> str:
     return AWAITING_LABEL if awaiting and status == AssetStatus.OUT_OF_SERVICE else _STATUS_LABELS.get(status, status)
 
 
-# A device with no next PM that is on no PM schedule by mistake: not one waiting for its incoming inspection (slice 26), whose PM
-# schedule starts when it passes.
-NO_NEXT_PM = Q(next_pm_on__isnull=True, awaiting_inspection=False)
+# A device with no next PM, so on no PM schedule: a gap, except a new device waiting out of service for its incoming inspection (slice
+# 26), whose PM schedule starts when it passes. One in use before its inspection (use_before_inspection) is listed, whatever day it was
+# added (review fix: it is on a patient with no PM schedule, and the incoming inspection section only covers devices added in the period).
+WAITING_OUT_OF_USE = Q(awaiting_inspection=True, status__in=(AssetStatus.OUT_OF_SERVICE, AssetStatus.MISSING))
+NO_NEXT_PM = Q(next_pm_on__isnull=True) & ~WAITING_OUT_OF_USE
 
 
 def strategy(dm: DeviceModel) -> str:
@@ -132,10 +134,14 @@ def build(period: Period, user) -> Section:
 
     gaps = []
     if no_pm_count:
-        for tag, mfr, model in (_active().filter(NO_NEXT_PM).order_by("tag")
-                                .values_list("tag", "device_model__manufacturer", "device_model__model")):
-            gaps.append(Gap(GAP, f"{tag} ({mfr} {model}) is in use with no next PM date, so it is on no PM schedule. Set its next PM.",
-                            reverse("web:asset", args=[tag]), tag))
+        for tag, mfr, model, awaiting in (_active().filter(NO_NEXT_PM).order_by("tag")
+                                          .values_list("tag", "device_model__manufacturer", "device_model__model", "awaiting_inspection")):
+            if awaiting:  # in use before its incoming inspection: its PM schedule starts when the inspection passes
+                text = (f"{tag} ({mfr} {model}) is in use before its incoming inspection, so it is on no PM schedule until that inspection "
+                        "passes. Complete its inspection.")
+            else:
+                text = f"{tag} ({mfr} {model}) is in use with no next PM date, so it is on no PM schedule. Set its next PM."
+            gaps.append(Gap(GAP, text, reverse("web:asset", args=[tag]), tag))
 
     missing = []
     if missing_count:
@@ -182,8 +188,9 @@ def build(period: Period, user) -> Section:
         "equipment CMS keeps on the manufacturer's schedule never use one, whatever interval is on file.",
         "Added as: new to the facility, already in use here when entered, or imported from the previous system; \"Not recorded\" for "
         "devices added before Cadence recorded how.",
-        "A new device waiting for its incoming inspection has no next PM date until the inspection passes (its PM schedule starts "
-        "then), so it is not listed for one; the incoming inspection section lists it. Its status reads \"Awaiting inspection\" while it "
+        "A new device waiting for its incoming inspection, out of service, has no next PM date until the inspection passes (its PM "
+        "schedule starts then), so it is not listed for one; the incoming inspection section lists it. One put in use before its "
+        "inspection is listed, whatever day it was added: it is in use on no PM schedule. Its status reads \"Awaiting inspection\" while it "
         "waits out of service.",
         "Missing since is the day the device was last marked missing, from its history.",
         "The full device list is in its CSV.",

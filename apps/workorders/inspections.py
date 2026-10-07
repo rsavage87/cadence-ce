@@ -98,6 +98,23 @@ def state(asset) -> InspectionState:
     return s
 
 
+def passed_reason(wo) -> str:
+    """The device history's reason when `wo`'s pass ends its wait (equipment.services.pass_incoming_inspection writes it)."""
+    return f"Passed incoming inspection {wo.number}"
+
+
+def pass_cleared_flag(wo) -> bool:
+    """Whether `wo` is the incoming inspection whose pass ended its device's wait (review fix): only that one stays passed when it is
+    reopened and completed again (completion's kept pass). A passed inspection of a device that never waited, or one that passed
+    after another had already ended the wait, records a result that changed nothing, and may be corrected. One query on the
+    device's history (matched by its id: this facility's row)."""
+    from apps.equipment.models import Asset
+
+    if wo.type != WoType.INSPECTION or wo.inspection_result != InspectionResult.PASSED or wo.asset.awaiting_inspection:
+        return False
+    return Asset.history.filter(id=wo.asset_id, history_change_reason=passed_reason(wo)).exists()
+
+
 def lock_open(asset_id) -> list:
     """Lock the device's open incoming inspections, in number order, until the transaction ends; returns their ids. The first lock
     the writers of a waiting device's inspections take (completion.complete_work_order on an inspection, equipment.services

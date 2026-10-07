@@ -255,6 +255,9 @@ def _answered(raw) -> bool:
 def _steps(steps, results, errors: dict, optional: bool = False) -> list[dict]:
     """The checklist as recorded: each step with its result and reading. Errors under step_<n> and reading_<n> (from 1). `optional`
     (an incoming inspection, slice 26): no step answered records no checklist ([]); one step answered asks for them all."""
+    if results is not None and not isinstance(results, (list, tuple)):  # the API passes what it was sent (review fix: a 400, not a 500)
+        errors["checklist"] = "Send the checklist as a list: one {result, reading} per step."
+        return []
     results = list(results or [])
     if optional and not any(_answered(r) for r in results):
         return []
@@ -312,6 +315,8 @@ def _failed_lines(snapshot: list[dict]) -> list[str]:
 
 def _check_inspection(result: str, snapshot: list[dict], resolution: str, errors: dict, *, required: bool) -> None:
     """An incoming inspection's result against its steps and resolution (slice 26). `required`: the device waits for it."""
+    if "inspection_result" in errors:
+        return  # already answered (a kept pass): one answer, never two that send the user to each other
     if result and result not in InspectionResult.values:
         errors["inspection_result"] = "Choose passed or failed."
         return
@@ -324,6 +329,8 @@ def _check_inspection(result: str, snapshot: list[dict], resolution: str, errors
     if result == InspectionResult.PASSED and failed:
         errors["inspection_result"] = (f"{_numbers(failed).capitalize()} failed. A device that fails a check fails its incoming inspection: "
                                        "choose Failed.")
+    elif not result and failed:  # review fix: a failed step with no result would read as a passed inspection
+        errors["inspection_result"] = f"{_numbers(failed).capitalize()} failed: record the result, Failed."
     elif "resolution" in errors or resolution:
         return
     elif result == InspectionResult.PASSED and not snapshot:
@@ -652,9 +659,11 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
         errors["checklist"] = "The procedure's checklist was revised while this was open. Check the steps again."
     else:
         snapshot = _steps(steps, results, errors, optional=is_inspection)
-    # Slice 26: an inspection whose pass let the device stop waiting stays passed when it is completed again (reopened).
-    kept_pass = is_inspection and locked.inspection_result == InspectionResult.PASSED and not asset.awaiting_inspection
-    if kept_pass and inspection_result == InspectionResult.FAILED:
+    # Slice 26: the inspection whose pass ended the device's wait stays passed when it is completed again (reopened); only that one
+    # (inspections.pass_cleared_flag; review fix: a pass that changed nothing may be corrected). A failed step or Failed then gets the
+    # one answer: the device is in use, so a failure now is a repair's.
+    kept_pass = is_inspection and inspections.pass_cleared_flag(locked)
+    if kept_pass and (inspection_result == InspectionResult.FAILED or _failed(snapshot)):
         errors["inspection_result"] = (f"{locked.number} passed and {asset.tag} no longer waits for its incoming inspection, so it stays "
                                        "passed. If the device has failed since, tag the device out and open a repair.")
     elif kept_pass and not inspection_result:

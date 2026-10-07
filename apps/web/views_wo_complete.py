@@ -103,8 +103,8 @@ def results_context(request, wo) -> dict:
         "kind": "inspection" if is_inspection else "pm" if is_pm else "",
         "show": recorded and done,
         "reopened": recorded and wo.status in OPEN_STATUSES,
-        # An inspection that passed, of a device that no longer waits: completing it again keeps it passed (completion's rule)
-        "kept_pass": is_inspection and result == InspectionResult.PASSED and not wo.asset.awaiting_inspection,
+        # The inspection whose pass ended the device's wait: completing it again keeps it passed (completion's rule)
+        "kept_pass": is_inspection and recorded and inspections.pass_cleared_flag(wo),
         "label": label if recorded else "", "css": RESULT_CSS.get(result, "neutral"),
         "inspector": inspector(wo) if is_inspection and recorded else "",
         "steps": steps,
@@ -152,7 +152,7 @@ def _inspection_offers(wo, user) -> dict:
     vendor, tech = completion.reinspection_assignee(wo) if waiting and existing is None else ("", None)
     return {"own_repair": None, "other_repair": None, "offer_open_repair": False,
             "offer_tag_out": waiting and asset.status in completion.IN_USE, "result_required": waiting,
-            "kept_pass": wo.inspection_result == InspectionResult.PASSED and not waiting,
+            "kept_pass": inspections.pass_cleared_flag(wo),
             "reinspection": existing, "reinspection_number": _number(user, existing), "reinspection_vendor": vendor, "reinspection_tech": tech,
             "reinspection_days": inspections.REINSPECTION_DUE_DAYS, "inspection_hints": _inspection_hints(wo, existing)}
 

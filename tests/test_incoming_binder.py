@@ -280,10 +280,13 @@ def awaiting(ctx, today, vent_model, techs):
     return {"out": out, "lost": lost, "used": used}
 
 
-def test_the_inventory_never_asks_a_waiting_device_for_a_next_pm(ctx, today, dept, vent_model, awaiting):
+def test_the_inventory_never_asks_a_waiting_device_out_of_use_for_a_next_pm(ctx, today, dept, vent_model, awaiting):
     Asset.objects.create(tag="V-1", device_model=vent_model, department=dept, next_pm_on=None)  # on no PM schedule by mistake
     s = inventory.build(period(ago(today, 30), today), None)
-    assert [(g.kind, g.record) for g in gaps_of(s, GAP)] == [(GAP, "V-1")]
+    # W-1 and W-2 wait out of use, so they are not asked for one; W-3, in use before its inspection, is on a patient with no PM
+    # schedule, so it is listed (review fix), in words that send the reader to its inspection
+    assert [(g.kind, g.record) for g in gaps_of(s, GAP)] == [(GAP, "V-1"), (GAP, "W-3")]
+    assert "in use before its incoming inspection" in gaps_of(s, GAP)[1].text
     assert [g.record for g in gaps_of(s, FINDING)] == ["W-2"]  # a missing life-support device is still a missing one
     rows = {r[0]: r for r in rows_of(s, "devices")}
     assert [(rows[t][8], rows[t][12]) for t in ("W-1", "W-2", "W-3")] == [("Awaiting inspection", None), ("Missing", None), ("In service", None)]

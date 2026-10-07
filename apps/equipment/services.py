@@ -663,17 +663,30 @@ def status_label(asset) -> str:
 EDITABLE_FIELDS = ("serial", "device_model", "department", "room", "installed_on", "acquisition_cost", "warranty_end", "condition", "next_pm_on", "notes")
 
 
+def _locked_row(asset: Asset) -> Asset:
+    """The device's row as it is now, locked until the transaction ends (slice 26 review fix): update_asset and set_status work on it,
+    never on the caller's copy, which may predate a passed incoming inspection (the pass clears awaiting_inspection and starts the PM
+    clock; a full save of an older copy, read by a page, the API, or an import chunk before the pass, would put them back). Its open
+    inspections first, then its row: the order completing an inspection takes (apps.workorders.inspections.lock_open)."""
+    from apps.workorders import inspections
+
+    inspections.lock_open(asset.pk)
+    return Asset.objects.select_for_update().get(pk=asset.pk)
+
+
 @transaction.atomic
 def update_asset(asset: Asset, *, by=None, today: date | None = None, imported_last_pm=_UNSET, **fields) -> Asset:
     """Change a device's details. Not its tag (on the sticker and in URLs), status (set_status), or contract (the contracts screen).
     A new model does not move the next PM by itself; change next_pm_on alongside it when the interval differs. A device waiting for
     its incoming inspection (slice 26) keeps no next PM: a blank one is accepted, a date refused (pm_clock_message), keyed next_pm_on.
     The last PM is not an editable detail (completed PM work orders set it): `imported_last_pm` is the importer's alone, the last PM
-    the previous system recorded (apps.imports.kinds.devices, on a re-import), with create_asset's rules for it."""
+    the previous system recorded (apps.imports.kinds.devices, on a re-import), with create_asset's rules for it. Works on the device's
+    row as it is now, locked (_locked_row); the caller's `asset` is read again and returned."""
     today = today or timezone.localdate()
     unknown = set(fields) - set(EDITABLE_FIELDS)
     if unknown:
         raise ValidationError(f"These cannot be changed here: {', '.join(sorted(unknown))}.")
+    caller, asset = asset, _locked_row(asset)
     # The install and warranty dates only when one of them changes: a stored pair that breaks the rule (imported data) must not
     # block an edit of the room or the notes. Before the imported last PM, which is measured from the install date: a refused
     # install date is named first, so the importer leaves it out and keeps the last PM, as it does for a new device.
@@ -712,7 +725,8 @@ def update_asset(asset: Asset, *, by=None, today: date | None = None, imported_l
         asset.save()
     if "next_pm_on" in changed and asset.next_pm_on:
         _move_open_pm(asset, by=by)
-    return asset
+    caller.refresh_from_db()
+    return caller
 
 
 def _move_open_pm(asset: Asset, by=None) -> None:
@@ -745,6 +759,7 @@ def set_status(asset: Asset, to_status: str, *, by=None, note: str = "", today: 
     today = today or timezone.localdate()
     if to_status not in AssetStatus.values:
         raise ValidationError("Choose a device status.")
+    caller, asset = asset, _locked_row(asset)  # the row as it is now (review fix: never a copy from before a pass)
     if to_status not in STATUS_CHANGES.get(asset.status, set()):
         raise ValidationError(f"{asset.tag} cannot go from {asset.get_status_display().lower()} to {AssetStatus(to_status).label.lower()}.")
     if asset.awaiting_inspection and to_status in HOLD:
@@ -777,7 +792,8 @@ def set_status(asset: Asset, to_status: str, *, by=None, note: str = "", today: 
 
         if inspections.open_inspection(asset) is None:
             inspections.open_for(asset, by=by, today=today)
-    return asset
+    caller.refresh_from_db()
+    return caller
 
 
 def hold_message(asset: Asset) -> str:
@@ -918,7 +934,7 @@ def pass_incoming_inspection(asset: Asset, wo, *, by=None, on: date) -> Asset:
         fresh.next_pm_on = add_months(on, fresh.pm_interval_months)
     if fresh.status == AssetStatus.OUT_OF_SERVICE and not holding_repairs(fresh).exists():
         fresh.status = AssetStatus.IN_SERVICE
-    fresh._change_reason = f"Passed incoming inspection {wo.number}"
+    fresh._change_reason = inspections.passed_reason(wo)
     if by is not None:
         fresh._history_user = by
     _save_on(fresh, on if on < timezone.localdate() else None)
