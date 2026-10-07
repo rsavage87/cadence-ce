@@ -744,15 +744,20 @@ def test_the_daily_send_includes_custom_reports_and_skips_who_cannot_see_them(wo
 
 def test_pm_on_time_counts_a_cancelled_pm_as_the_kpi_does(world):
     """A PM cancelled on a device still in use was missed: the PM completion KPI counts it, and so does the custom report's share.
-    One cancelled on a device since retired is left out of both (RETIRED_AND_CANCELLED)."""
+    One cancelled on a device retired on or before its due date is left out of both (RETIRED_AND_CANCELLED, slice 25: the device's
+    history dates its retirement)."""
+    from datetime import datetime, time
+
+    from apps.equipment.services import set_status
     from apps.pm.services import pm_on_time_rate
 
     missed = create_work_order(asset=world["vent"], type="pm", priority="normal", problem="PM", opened_on=d(9, 2), due_on=d(9, 10))
     change_status(missed, WoStatus.CANCELLED)
     later = Asset.objects.create(tag="CE-10004", device_model=world["vent"].device_model, department=world["icu"])
+    Asset.history.filter(id=later.pk).update(history_date=timezone.make_aware(datetime.combine(d(9, 1), time(9))))  # added Sep 1
     gone = create_work_order(asset=later, type="pm", priority="normal", problem="PM", opened_on=d(9, 2), due_on=d(9, 12))
     change_status(gone, WoStatus.CANCELLED)
-    Asset.objects.filter(pk=later.pk).update(status=AssetStatus.RETIRED)
+    set_status(later, AssetStatus.RETIRED, changed_on=d(9, 11), today=TODAY)  # retired the day before the PM was due
     on_time = {row["Number"]: row["PM on time"] for row in table(run("work_orders", ["number", "pm_on_time"]))}
     assert on_time[missed.number] is False and on_time[gone.number] is None
     kpi = pm_on_time_rate(d(9, 1), d(9, 30), TODAY)

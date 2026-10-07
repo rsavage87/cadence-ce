@@ -9,7 +9,7 @@ from typing import NamedTuple
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.db.models import F, Q
+from django.db.models import Exists, F, OuterRef, Q
 from django.utils import timezone
 
 from apps.equipment.models import Asset, AssetStatus, RiskClass
@@ -261,15 +261,33 @@ def _first_open_pms(asset_ids: list) -> dict:
     return out
 
 
-# A PM cancelled on a device that is now retired (retiring cancels them, equipment.services.set_status) is not a missed PM: the
-# device left the fleet before the PM was due. A cancelled PM on a device still in use is missed, and stays counted.
-RETIRED_AND_CANCELLED = Q(status=WoStatus.CANCELLED, asset__status=AssetStatus.RETIRED)
+def _retired_by_due_date() -> Exists:
+    """The PM's device went into its current retirement on or before the PM's due date: a history row with status retired whose day
+    (the facility's: `__date` reads the active time zone when the query runs) is on or before due_on, after which the device never
+    left retirement (no later row with another status). One correlated EXISTS over the device's own history, matched by its id, so
+    it reads only this facility's rows and works inside .exclude() and a When() alike. A device retired with no history row (written
+    around the services) shows no retirement day, so its cancelled PM stays a miss."""
+    history = Asset.history.model
+    left_later = (history.objects.filter(id=OuterRef("id")).exclude(status=AssetStatus.RETIRED)
+                  .filter(Q(history_date__gt=OuterRef("history_date")) | Q(history_date=OuterRef("history_date"), history_id__gt=OuterRef("history_id"))))
+    return Exists(history.objects.filter(id=OuterRef("asset_id"), status=AssetStatus.RETIRED, history_date__date__lte=OuterRef("due_on"))
+                  .exclude(Exists(left_later)))
+
+
+# A PM cancelled on a device that is retired now (retiring cancels its open PMs, equipment.services.set_status) is not a missed PM
+# only when the device went into that retirement on or before the PM's due date: it left the fleet before the PM fell due. A
+# ventilator two months overdue and then retired keeps its miss (slice 25), as does one retired, reinstated, missed, and retired
+# again. A cancelled PM on a device still in use is missed, and stays counted. A Q, for .exclude() and for apps.reports.custom's
+# When(): pm_due_queryset, pm_on_time_series, missed_pms, and the custom report's PM on time column all use this one rule.
+RETIRED_AND_CANCELLED = Q(status=WoStatus.CANCELLED, asset__status=AssetStatus.RETIRED) & Q(_retired_by_due_date())  # the cheap test first
 
 
 def pm_due_queryset(start: date, end: date, as_of: date | None = None, life_support_only: bool = False):
     """
     PM work orders that count toward on-time completion for a period:
-    due inside [start, end] and, for the current period, already due or already completed.
+    due inside [start, end] and, for the current period, already due or already completed. One counts as on time when it was
+    completed on or before its due date (the Overview's rule, the mock's KPI; the survey binder says so in words), with no grace
+    period. A PM cancelled on a device that went into retirement on or before its due date is left out (RETIRED_AND_CANCELLED).
     """
     as_of = min(end, as_of or timezone.localdate())
     qs = (WorkOrder.objects.filter(type=WoType.PM, due_on__gte=start, due_on__lte=as_of).filter(Q(due_on__lt=as_of) | Q(completed_on__isnull=False))

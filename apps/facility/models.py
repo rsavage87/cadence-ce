@@ -5,10 +5,12 @@ from simple_history.models import HistoricalRecords
 
 from apps.core.models import TenantModel
 
-# The mock's maintenance policy (POLICY_DEF): field, label, default text. Shown on work orders and in the PM planner.
+# The mock's maintenance policy (POLICY_DEF): field, label, default text. Shown on work orders and in the PM planner. The two PM texts
+# say what Cadence measures (slice 25): a PM is on time when completed on or before its due date (apps.pm.services.pm_due_queryset),
+# with no grace period, so the defaults never contradict the Overview or the survey binder.
 POLICY = [
-    ("policy_life_support", "Life support and high risk", "OEM interval, complete within due month, no grace"),
-    ("policy_medium_low", "Medium and low risk", "AEM allowed, 30-day grace after due month"),
+    ("policy_life_support", "Life support and high risk", "OEM interval, complete by the due date, no grace"),
+    ("policy_medium_low", "Medium and low risk", "AEM allowed, complete by the due date"),
     ("policy_aem", "AEM approval", "Equipment Management Committee, 3-year failure history required"),
     ("policy_missing", "Missing devices", "Escalate after 2 search attempts; report monthly"),
     ("policy_incoming", "Incoming inspection", "Required before first clinical use, electrical safety per IEC 62353"),

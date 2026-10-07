@@ -756,10 +756,12 @@ def test_the_next_pm_must_be_a_real_date_within_ten_years(ctx, dept, pump_model,
 def test_a_pm_cancelled_by_retirement_is_not_a_missed_pm(ctx, dept, vent_model):
     from apps.pm.services import pm_on_time_rate
 
-    a = svc.create_asset(tag="CE-80004", device_model=vent_model, department=dept, today=TODAY)
+    # Its history dates both rows on TODAY (added_on, changed_on), whatever the calendar says: the rule reads the day the device went
+    # into retirement from its history (slice 25), and it retired before the PM fell due.
+    a = svc.create_asset(tag="CE-80004", device_model=vent_model, department=dept, today=TODAY, added_on=TODAY)
     due = TODAY + timedelta(days=5)
     create_work_order(asset=a, type=WoType.PM, priority="normal", problem="PM", opened_on=TODAY, due_on=due)
-    svc.set_status(a, S.RETIRED, today=TODAY)
+    svc.set_status(a, S.RETIRED, today=TODAY, changed_on=TODAY)
     period = (due - timedelta(days=1), due + timedelta(days=1), due + timedelta(days=10))  # the PM fell due inside it, uncompleted
     assert pm_on_time_rate(*period)["due"] == 0
     kept = svc.create_asset(tag="CE-80005", device_model=vent_model, department=dept, today=TODAY)
