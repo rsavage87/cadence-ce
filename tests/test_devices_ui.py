@@ -554,8 +554,10 @@ def test_forms_cover_what_the_services_take(ctx):
     assert not {"tag", "status", "contract", "last_pm_on"} & set(EditDeviceForm.base_fields)
     params = set(inspect.signature(eq.create_device_model).parameters) - {"by"}
     assert set(MODEL_FIELDS) == params
-    # added_on: the importer's; added_as (slice 25): Add device's "Already in use here" box sets it (new or existing)
-    create = set(inspect.signature(eq.create_asset).parameters) - {"by", "today", "device_model", "department", "added_on", "added_as"}
+    # added_on: the importer's; added_as (slice 25): Add device's "Already in use here" box sets it (new or existing); incoming_inspection
+    # and inspection_due (slice 26): Add device's choice of how the device arrives sets them
+    create = set(inspect.signature(eq.create_asset).parameters) - {"by", "today", "device_model", "department", "added_on", "added_as",
+                                                                     "incoming_inspection", "inspection_due"}
     assert create <= set(NewDeviceForm.base_fields)
 
 

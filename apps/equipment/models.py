@@ -37,6 +37,14 @@ class AddedAs(models.TextChoices):
     IMPORTED = "imported", "Imported from the previous system"
 
 
+class UseBeforeInspection(models.TextChoices):
+    """Why a new device went into use before its incoming inspection (slice 26): a choice, never free text. Recorded by
+    equipment.services.use_before_inspection (Equipment Approve), in the device's history; the survey binder lists the device."""
+    EMERGENCY = "emergency", "Emergency clinical need"
+    LOANER_RENTAL = "loaner_rental", "Loaner or rental needed now"
+    ARRIVED_IN_USE = "arrived_in_use", "Arrived on the unit already in use"
+
+
 # Tags appear in URLs (/equipment/<tag>/), so no whitespace or slashes; forms, the API, and the importer all check this.
 TAG_VALIDATOR = RegexValidator(r"^[^\s/]+$", "Asset tags cannot contain spaces or slashes.")
 
@@ -129,6 +137,11 @@ class Asset(TenantModel):
     notes = models.TextField(blank=True)
     added_as = models.CharField(max_length=20, choices=AddedAs.choices, blank=True, editable=False,
                                 help_text="How the device came to be in Cadence (create_asset): new, already in use, or imported")
+    # Slice 26: new and not yet through its incoming inspection. Set by create_asset(incoming_inspection="waiting"), cleared only by
+    # equipment.services.pass_incoming_inspection. While it is set the device has no next PM (its PM clock starts at the pass) and
+    # nothing puts it in service but a passed inspection or use_before_inspection (Approve, with a reason).
+    awaiting_inspection = models.BooleanField(default=False, editable=False,
+                                              help_text="New, and waiting for its incoming inspection before first use")
     history = HistoricalRecords()
 
     class Meta:

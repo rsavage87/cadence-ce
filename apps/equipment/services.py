@@ -176,6 +176,8 @@ def asset_service_summary(asset, today: date | None = None, work_orders=None) ->
 # on Asset, DeviceModel, or Department themselves. Rules raise ValidationError, keyed by field where a form can show it there.
 # Who may do what is in apps/equipment/permissions.py.
 
+INCOMING_WAITING = "waiting"  # create_asset's incoming_inspection (slice 26)
+AWAITING_LABEL = "Awaiting inspection"
 NEW_DEVICE_STATUSES = (AssetStatus.IN_SERVICE, AssetStatus.OUT_OF_SERVICE)  # a new device is in use, or waiting for incoming inspection
 # /equipment/new/ adds a device, so no device can be tagged "new"; "." and ".." are path segments browsers rewrite, so a device
 # tagged that way could never be opened.
@@ -578,16 +580,32 @@ def rename_department(department: Department, name: str) -> Department:
 @transaction.atomic
 def create_asset(*, tag, device_model, department, serial="", room="", installed_on=None, acquisition_cost=None, warranty_end=None, condition=3,
                  last_pm_on=None, next_pm_on=None, notes="", status=AssetStatus.IN_SERVICE, by=None, today: date | None = None,
-                 added_on: date | None = None, added_as: str = AddedAs.NEW) -> Asset:
+                 added_on: date | None = None, added_as: str = AddedAs.NEW, incoming_inspection: str = "",
+                 inspection_due: date | None = None) -> Asset:
     """Add a device. Its first PM is `next_pm_on` when given, else first_pm_due(); its acquisition cost defaults to the model's list
     cost. Tags are unique in the facility in any letter case and can never change afterwards (they are on the sticker and in URLs).
     `added_on` dates the history's "added" row on an earlier day: the importer (apps.imports.kinds.devices) adds a device retired
     years ago in the previous system with both its rows on the day it was retired (set_status's `changed_on`), so its history reads
     in order. `added_as` (slice 25): new to the facility (the survey binder then looks for its incoming inspection), already in use
-    here (entered after the fact), or imported (the importer's)."""
+    here (entered after the fact), or imported (the importer's). `incoming_inspection` (slice 26): "" adds the device in the status
+    given (the API's and the importer's way); "waiting" adds a new device out of service, awaiting its incoming inspection, with no
+    next PM (its PM clock starts when it passes) and an Incoming inspection work order opened with it (on the added day, due
+    `inspection_due` or INSPECTION_DUE_DAYS later), unassigned: the caller assigns it (Add device: take or assign)."""
     today = today or timezone.localdate()
     if added_as not in AddedAs.values:
         raise ValidationError({"added_as": "Say whether the device is new, already in use here, or imported."})
+    if incoming_inspection not in ("", INCOMING_WAITING):
+        raise ValidationError({"incoming_inspection": "Choose whether the new device waits for its incoming inspection."})
+    waiting = incoming_inspection == INCOMING_WAITING
+    if waiting:
+        if added_as != AddedAs.NEW:
+            raise ValidationError({"incoming_inspection": "Only a device new to the facility waits for an incoming inspection."})
+        if last_pm_on or next_pm_on:
+            raise ValidationError({"next_pm_on" if next_pm_on else "last_pm_on":
+                                   "A new device's PM schedule starts when it passes its incoming inspection."})
+        if inspection_due is not None and inspection_due < (added_on or today):
+            raise ValidationError({"inspection_due": "The inspection cannot be due before the device was added."})
+        status = AssetStatus.OUT_OF_SERVICE
     if added_on is not None and added_on > today:
         raise ValidationError({"added_on": "A device cannot be added on a day after today."})
     tag = (tag or "").strip()
@@ -614,11 +632,24 @@ def create_asset(*, tag, device_model, department, serial="", room="", installed
         raise ValidationError({"tag": f"{tag} is already on another device."})
     asset = Asset(tag=tag, device_model=device_model, department=department, serial=_clean_text(serial, 80), room=_clean_text(room, 40),
                   installed_on=installed_on, acquisition_cost=acquisition_cost, warranty_end=warranty_end, condition=condition,
-                  last_pm_on=last_pm_on, status=status, notes=(notes or "").strip(), added_as=added_as,
-                  next_pm_on=next_pm_on or first_pm_due(device_model, installed_on=installed_on, last_pm_on=last_pm_on, today=today))
-    asset._change_reason = "Added"
+                  last_pm_on=last_pm_on, status=status, notes=(notes or "").strip(), added_as=added_as, awaiting_inspection=waiting,
+                  next_pm_on=None if waiting else (next_pm_on or first_pm_due(device_model, installed_on=installed_on, last_pm_on=last_pm_on,
+                                                                              today=today)))
+    asset._change_reason = "Added, waiting for its incoming inspection" if waiting else "Added"
     _save_on(asset, added_on)
+    if waiting:
+        from apps.workorders import inspections
+
+        inspections.open_for(asset, by=by, today=today, opened_on=added_on or today, due_on=inspection_due)
     return asset
+
+
+def status_label(asset) -> str:
+    """The device's status as every screen, CSV, and the API words it (slice 26): "Awaiting inspection" for a device out of service
+    waiting for its incoming inspection, else its status."""
+    if asset.awaiting_inspection and asset.status == AssetStatus.OUT_OF_SERVICE:
+        return AWAITING_LABEL
+    return asset.get_status_display()
 
 
 EDITABLE_FIELDS = ("serial", "device_model", "department", "room", "installed_on", "acquisition_cost", "warranty_end", "condition", "next_pm_on", "notes")

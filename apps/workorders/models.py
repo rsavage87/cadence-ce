@@ -52,6 +52,14 @@ class Source(models.TextChoices):
     IMPORTED = "imported", "Imported"  # slice 23: history and open work from the previous system (apps.workorders.legacy)
 
 
+class InspectionResult(models.TextChoices):
+    """An incoming inspection's outcome (slice 26; never PmResult: that is a PM's). Required when the inspection is of a device
+    awaiting it (Asset.awaiting_inspection); a pass puts the device in service and starts its PMs, a fail keeps it out with a
+    re-inspection open."""
+    PASSED = "passed", "Passed"
+    FAILED = "failed", "Failed"
+
+
 class LateReason(models.TextChoices):
     """Why a PM missed its due date (slice 25, the survey binder): a choice, never free text (a note about it goes in the work order's
     notes, which the binder never prints). Recorded through workorders.services.set_late_reason, on a PM that missed its due date only
@@ -115,6 +123,8 @@ class WorkOrder(TenantModel):
                                      help_text="The work order's number in the previous system, when it was imported")
     # Slice 25: why a PM missed its due date, for the survey binder. Only set_late_reason writes it (the API keeps it read-only).
     late_reason = models.CharField("why late", max_length=30, choices=LateReason.choices, blank=True, editable=False)
+    # Slice 26: an incoming inspection's result, written only by completion.complete_work_order (the API keeps it read-only).
+    inspection_result = models.CharField(max_length=10, choices=InspectionResult.choices, blank=True, editable=False)
     history = HistoricalRecords()
 
     class Meta:

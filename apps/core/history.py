@@ -217,7 +217,7 @@ HIDE = {
 # Labels that read better than the verbose names, per model; `_label` falls back to the verbose name.
 LABELS = {
     "equipment.asset": {"serial": "Serial number", "installed_on": "Installed", "warranty_end": "Warranty ends", "last_pm_on": "Last PM",
-                        "next_pm_on": "Next PM"},
+                        "next_pm_on": "Next PM", "awaiting_inspection": "Waiting for incoming inspection"},
     "equipment.devicemodel": {"oem_pm_interval_months": "OEM PM interval", "aem_interval_months": "AEM interval", "expected_life_years": "Expected life",
                               "list_cost": "List price", "pm_procedure": "PM procedure", "risk_function": "Risk: clinical function",
                               "risk_physical": "Risk: physical risk of failure", "risk_maintenance": "Risk: maintenance requirement",
@@ -225,7 +225,8 @@ LABELS = {
                               "oem_schedule_required": "Manufacturer's schedule required (CMS)"},
     "workorders.workorder": {"asset": "Device", "requester": "Requested by", "callback": "Callback", "vendor_name": "Vendor", "opened_on": "Opened",
                              "due_on": "Due", "started_on": "Started", "completed_on": "Completed", "estimated_hours": "Estimated time",
-                             "alert": "Recall notice", "pm_result": "PM result", "checklist_results": "Checklist", "follow_up_of": "Repair of PM"},
+                             "alert": "Recall notice", "pm_result": "PM result", "checklist_results": "Checklist", "follow_up_of": "Follow-up of",
+                             "inspection_result": "Inspection result"},
     "workorders.laborline": {"worked_on": "Date", "hours": "Time"},
     "workorders.partline": {"description": "Part", "part_number": "Part number", "unit_cost": "Unit cost", "po_number": "PO number"},
     "contracts.contract": {"start_on": "Starts", "end_on": "Ends"},
