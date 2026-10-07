@@ -1,12 +1,12 @@
 # Build plan
 
 The mock (`cadence-ce-cmms-mock.html`) is the spec. Each slice below is shippable on its own and ends with green tests.
-Slices 0 to 24 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
+Slices 0 to 25 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
 export and print, devices are added and changed in the product, reports and request confirmations go out by email, each
 device model's PM program (risk score, procedure, AEM interval) is kept in the product, and the work itself (time, parts,
 what was done, a PM's results) is recorded on the work order; vendors and clinical requesters see only their own share; facilities
 build their own reports, and a label opens its device with Scan tag; the API covers what the screens do, by session or token; every record's changes and every access change can be read back;
-staff get the emails they choose about their own work; each facility works on its own clock; one person signs in once to every facility they work at; a facility brings its records over from the CMMS it is leaving; and technicians work from their phones on My work. What each slice deferred is noted in its row and below.
+staff get the emails they choose about their own work; each facility works on its own clock; one person signs in once to every facility they work at; a facility brings its records over from the CMMS it is leaving; technicians work from their phones on My work; and a survey binder gathers the evidence surveyors ask for. What each slice deferred is noted in its row and below.
 
 | # | Slice | Mock screen(s) | Code | Status |
 |---|-------|----------------|------|--------|
@@ -35,6 +35,7 @@ staff get the emails they choose about their own work; each facility works on it
 | 22 | Several facilities | The top bar's facility menu (each facility, "All facilities"), the account menu, an invitation's join page | `accounts` + `reports` + `notifications` + `web` + `api` | done (one account per facility, linked per person; existing separate accounts are not linked, only invitations link) |
 | 23 | Onboarding imports | (none: Settings, Import data) | `imports` + `equipment` + `workorders` + `contracts` + `credentials` + `web` | done (credentials and the imports API deferred; no free text imported) |
 | 24 | My work | (none: the technician's phone page) | `workorders` + `facility` + `portal` + `notifications` + `web` + `api` | done (its own API endpoint and a route sheet per technician deferred) |
+| 25 | Survey readiness | (none: Reports, Survey binder; the work order's Why late; Add device's new or existing) | `reports` + `pm` + `workorders` + `equipment` + `credentials` + `web` + `api` | done (the incoming inspection workflow and a PM completion window deferred) |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.
@@ -334,3 +335,26 @@ The mock's export and print buttons work since slice 11, Add device since slice 
   the app's address (/login/?next=/) and accepting an invitation land a technician on My work; the number pad only for readings that
   never go below zero (not °C, %, mmHg, mV); a refused move from a card re-fetches the list; card moves answer on <body>; cards and
   their moves are named for screen readers, and focus returns to the card after the list re-fetches.
+- Survey readiness (slice 25, beyond the mock): Reports' Survey binder (`apps/reports/survey`, `/reports/survey/`, `/print/survey/`,
+  `/api/v1/survey/`) gathers, for a period, the evidence a Joint Commission, CMS, or DNV surveyor asks Clinical Engineering for, from
+  records Cadence already keeps: program and policies (what Cadence is set to measure, the policy lines marked when still Cadence's
+  default text, and what the binder does not cover), the inventory by risk class (CSV of every active device; risk class changes; devices
+  missing since), PM completion by risk class (pm_due_queryset's counts, every PM not on time with why it was late and when it was done
+  after all, due dates moved after they had passed, failed PMs and their repairs, life-support and high-risk devices past their PM date
+  today), AEM (intervals in force with the committee's approval and evidence, and repairs since; decisions in the period; life support
+  excluded by the facility's policy, imaging/radiologic/laser by CMS), incoming inspection of new devices before first use (from the
+  devices' history), recalls and alerts (received when the notice reached the facility; every open match; a review waiting more than 14
+  days), and technician qualifications (credentials as they stood each day, from their history; work done without one). Missing evidence
+  is a gap (one record fixes it), a finding (a surveyor will ask; nothing can change it now), or a check (housekeeping); imported records
+  and devices added before the slice are counted, never gaps. Each section needs Reports View plus View on what it lists. New data, so the
+  evidence exists: why a PM missed its due date (`WorkOrder.late_reason`, choices only; the drawer, Mark completed, the API; Approve once
+  closed) and how a device was added (`Asset.added_as`: new, already in use here, imported). On time stays "completed on or before the due
+  date"; the default PM policy texts now say so, and a PM cancelled because its device was retired is excused only when the device was
+  retired on its due date (it changes the Overview's PM figures in that case). Deferred: the incoming inspection workflow (Add device
+  opening the inspection work order, pass or fail, going into service when it passes, the PM clock starting then), a completion window
+  setting (within the due month, a grace period) used by every on-time figure, and report emails of the binder. Rules settled in
+  review: a gap links only to what its reader may open (a technician's Program check names Settings without a link); a PM cancelled
+  while its device was retired on its due date stays excused whatever happened to the device later, and one that fell due between a
+  reinstatement and a second retirement is missed; PM figures are read on today, so a period that has ended counts the PM due on its last
+  day (the Overview's past months and the monthly series too); a failed PM recorded on a repair already open names that repair; a
+  recall match reviewed or acted on before and open again is a check, never a late first review.

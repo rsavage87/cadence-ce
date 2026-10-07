@@ -6,7 +6,7 @@ service contracts, recall matching, technician credentials, a public service req
 This is the starter codebase generated from the interactive mock in `spec/`. It contains the data model, tenancy,
 permissions, lifecycle services, importer, PM engine, KPI math, REST API, admin, portal, and tests, plus the HTMX
 web UI for Overview, Equipment, Work orders, Contracts, Recalls and alerts, Reports (eight survey-ready reports with CSV
-download, and the facility's own custom reports), Users and access (Users, Roles, Technician credentials), and Settings
+download, the facility's own custom reports, and the survey binder), Users and access (Users, Roles, Technician credentials), and Settings
 (portal options, maintenance policy, KPI targets, integrations, risk scoring), and the PM schedule (calendar, a day's
 devices, create that day's PM work orders).
 Every screen in the mock is built; `spec/BUILD_PLAN.md` lists what each slice deferred.
@@ -166,6 +166,24 @@ device, or the device; on an iPhone the Camera app pointed at the label's QR cod
 work they are credentialed for is offered under "You could take" (Take it), and a work order a technician creates can be assigned to
 themselves; a facility can turn taking work off in Settings. Vendor technicians see their company's open work there. The daily
 digest links to My work.
+
+## Survey binder
+Reports' "Survey binder" (`/reports/survey/`, Reports View) gathers what a Joint Commission, CMS, or DNV surveyor asks Clinical
+Engineering for, for a period (the twelve months ending today by default, up to three years), from the records Cadence already keeps:
+the maintenance policy and targets set in Cadence, the inventory by risk class, PM completion by risk class (every PM not done by its
+due date, why it was late, when it was done after all, due dates moved after they had passed, failed PMs and their repairs, and
+life-support or high-risk devices past their PM date today), the AEM intervals in force with their committee approvals and how those
+devices have done since, incoming inspections of new devices before first use, recall and alert responses, and technician credentials
+with any work done without a credential that day (credentials read as they stood each day). What is missing is listed with a link to
+the record that fixes it: a gap (one record fixes it), a finding (a surveyor will ask; be ready to explain), or a check (housekeeping).
+Each section also needs View on the areas it lists, so a role may see part of the binder, and the page says what was left out. Every
+table downloads as CSV, the gaps too, and "Print binder" makes one printable document with a cover page and what the binder does not
+cover. The binder never shows what a requester typed. `/api/v1/survey/` serves the same.
+
+To give the binder its evidence, a PM that missed its due date can record why (a choice, never free text): in the work order's "Why
+late" row, when completing it late, or through the API; once a work order is closed, recording it needs Approve. Add device asks whether
+the device is new or already in use here, since only new equipment needs an incoming inspection before first use; imported devices are
+marked as imported. On time stays "completed on or before the due date", as on the Overview, and the default PM policy texts now say so.
 
 ## Custom reports
 Reports' "+ Custom report" (Reports Edit: the director and Finance and quality by default) builds a report from work orders, devices,

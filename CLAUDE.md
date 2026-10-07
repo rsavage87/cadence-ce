@@ -84,8 +84,9 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
 - `apps/tenants` tenant model (with its time zone), context var, middleware, `enable_rls`; `tenant_context()` sets the facility's time
   zone (`zone_of`, `zone_override`), the ORM scope, and the Postgres
   `app.tenant_id` that RLS reads, so the public portal and management commands see the same rows under RLS
-- `apps/core` TenantModel, TenantManager, Sequence, TenantModelAdmin; `history.py` a record's changes in words from django-simple-history
-  (`record_history`, `entries_for_rows`) and the facility's change log (`change_log`) across the areas a role can view (`can_read`,
+- `apps/core` TenantModel, TenantManager, Sequence, TenantModelAdmin; `days.local_day` (a timestamp's facility day: read audit
+  timestamps and history dates inside the facility, never with .date()); `history.py` a record's changes in words from django-simple-history
+  (`record_history`, `entries_for_rows`; `who(rec)` names whoever made a historical row's change as this facility may read it) and the facility's change log (`change_log`) across the areas a role can view (`can_read`,
   `readable_areas`: none for scoped users). The historical tables' managers are not tenant-scoped, so every query there filters on the
   current tenant (`_rows`)
 - `apps/accounts` User, Role, RolePermission, default roles, `require_level`; `DataScope`, `Role.scope` (blank: the default by slug, vendor
@@ -105,7 +106,8 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   email with the join page's link; a reset sends a person one link; lockouts also count per person; names show the full name, else the
   email (`str(user)`), never a username
 - `apps/equipment` Department, DeviceModel, Asset (tags carry no spaces or slashes: they are URL segments, and never change once a device is
-  added), CSV importer; `services.py` fleet queries plus adding devices, models, and departments, editing (`update_asset`,
+  added; slice 25: `added_as`, how it came to be in Cadence: new, already in use here, or imported, blank before slice 25; only
+  `create_asset(added_as=)` sets it), CSV importer; `services.py` fleet queries plus adding devices, models, and departments, editing (`update_asset`,
   `update_device_model`, `rename_department`: names unique in any letter case), and status changes
   (`STATUS_CHANGES`; retiring cancels open PMs), risk scoring (`set_risk_score`, `clear_risk_score`, `RISK_SCORE_BANDS`; every model
   change goes through `_save_model`, which locks the row and tells `apps.pm.aem.model_changed`), `permissions.py` (Edit to add, edit,
@@ -126,11 +128,15 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   unassigned work, `can_take`); `my_work.py` the technician's own work (slice 24: whose work, scope first, a vendor's company, never a
   requester's, else the user's active technician profile, `credentials.services.technician_of`; the groups; `due`, the one "due" of the
   page, the nav badge, and the digest; `takeable`; `scan_target`, what a scanned label opens); `services.take` (a technician assigns
-  themselves unassigned in-house work they are credentialed for, while the facility allows it); `legacy.py` work
+  themselves unassigned in-house work they are credentialed for, while the facility allows it); slice 25: `WorkOrder.late_reason`
+  (`LateReason`, choices only) why a PM missed its due date, written only by `services.set_late_reason` on `pm.services.missed_pms`
+  (Edit; Approve once closed: `permissions.can_set_late_reason`), from the drawer's Why late row, Mark completed, and the API; `legacy.py` work
   orders imported from another system (slice 23: `legacy_number`, the previous number, unique per facility; `Source.IMPORTED`; created in
   their final state with backdated status rows, never emailing or changing the device; their lines through costs.py's import-only writers,
   in-house hours that name no technician here as an in-house cost line, never vendor time; imported labor never fills a technician's live day)
-- `apps/pm` PmProcedure, PM generation, on-time math, month helpers; `schedule.py` the PM schedule's read models (month calendar,
+- `apps/pm` PmProcedure, PM generation, on-time math (`pm_due_queryset`; `RETIRED_AND_CANCELLED` excuses a cancelled PM only when its
+  device was retired on the PM's due date, from the device's history; `missed_pms`, the PMs not on time as of a
+  day), month helpers; `schedule.py` the PM schedule's read models (month calendar,
   a day's devices, suggested technicians, `planned_technicians` (who does each device due on a day: the day panel, route sheets, and
   the device drawer's PM tab share it), 30-day outlook, 7-day workload, PM library); `services.create_pm_work_orders_for_day` and
   `assign_week` / `week_assignment_preview` (Auto-assign week; both take `lock_planner()` first); `aem.py` the AEM program
@@ -145,7 +151,9 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
 - `apps/credentials` Technician, Credential, qualification and coverage services, credential add/renew/sign-off/remove,
   `create_technician` / `update_technician` (the technicians import's), `technician_name` / `name_key` (one rule for matching a name
   written "Last, First" or with a suffix or credential), `add_account_technician` (Invite user's profile: links the imported technician of
-  that name rather than adding a second)
+  that name rather than adding a second); the one match-and-expiry rule (`credential_names`, `credential_standing`) that
+  `qualification` and the survey binder share, and a credential's state as of a past day from its history (`credential_versions`,
+  `version_on`, `standings_on`: a renewal after a lapse leaves the days between uncovered)
 - `apps/portal` public request form (`/r/<tenant-slug>/`); `notifications.py` the requester's confirmation and done emails (only at the
   facility's work email domains, never the problem text); a label's link opened by a signed-in member who can see that device shows
   "Open <tag> in Cadence" (the user's role is read only for a member, inside the facility's tenant_context), which follows
@@ -161,12 +169,18 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   (nothing else can be asked for), checks a definition (`clean_definition`), runs it in the database, and creates, changes, and deletes
   one; `permissions.py` (Reports View runs, Reports Edit builds; a source also needs Work orders or Equipment View). `services.find_report`,
   `run_any`, and `csv_filename` are the one lookup by key for the screen, CSV, print page, Schedule, and report emails; `all_facilities.py`
-  All facilities (each joined facility's Overview figures read inside it with the person's account there, totals from summed parts)
+  All facilities (each joined facility's Overview figures read inside it with the person's account there, totals from summed parts);
+  slice 25, `survey/` the survey binder (the contract in `__init__.py`: Period, Section, Table with lazy rows, Gap kinds gap / finding /
+  check, `binder()`; one module per section: program, inventory, maintenance, aem, inspections, recalls, staff; read only, a fixed number
+  of queries, history through `core.history._rows`, never requester text; each section needs Reports View plus its areas' View,
+  `permissions.SURVEY_NEEDS` / `survey_refusal`; never in REPORTS, so never emailed)
 - `apps/web` HTMX UI: one views/urls/forms module per screen (`views.py` Overview, Equipment, Work orders; `views_contracts.py`;
   `views_users.py` Users and Roles tabs; `views_account.py` sign-in, password reset and change; `views_invite.py` accepting an invitation; `views_credentials.py`; `views_recalls.py`; `views_reports.py` with the CSV download and `views_custom_reports.py` the custom report builder (with `reports_custom.py`); `views_settings.py`; `views_pm.py` with `pm_panels.py` for its lower panels; `views_pm_week.py` Auto-assign week; `views_wo_costs.py` and `views_wo_complete.py` the work order drawer's labor and parts and its Mark completed; `views_models.py` the device model drawer (PM program tab, Add model, Edit details, risk score) with `views_procedures.py` and `views_aem.py` for its Procedure and AEM tabs; `views_exports.py` the list CSVs; `views_scan.py` Scan tag (with `static/web/scan.js`, the camera where the browser reads codes); `history_tabs.py` the
   History tab or section of the device, work order, contract, and model drawers; `views_change_log.py` Users and access's Change log
   (with its CSV and print); `views_notifications.py` the account menu's Notifications page; `views_facilities.py` the facility switch and
-  an invitation's join page, `views_my_work.py` My work (slice 24: the cards, `wo_waiting`, `from=my_work` answers without the drawer), `views_imports.py` Settings' Import data (slice 23: upload, columns, the check and the import a chunk at a
+  an invitation's join page, `views_my_work.py` My work (slice 24: the cards, `wo_waiting`, `from=my_work` answers without the drawer), `views_survey.py` the survey
+  binder (slice 25: the page for a period, a CSV per section table and one of every gap, the printable binder), `views_wo_late.py` the work
+  order drawer's Why late row, `views_imports.py` Settings' Import data (slice 23: upload, columns, the check and the import a chunk at a
   time by HTMX, the problems CSV), `views_all_facilities.py` All facilities (slice 22; the top bar's facility menu and the account menu's list
   come from the shell context processor; `htmx.FacilityTabMiddleware` reloads a tab left in another facility; `web_view` answers a link
   whose `?facility=` names another facility with a page that offers the switch); `views_print.py` asset labels and the
@@ -181,7 +195,7 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   parts, notes; `views_contracts.py`; `views_pm.py` PM schedule, Auto-assign week, procedures, risk score, AEM; `views_reports.py` the
   Overview, reports, custom reports, report emails; `views_recalls.py` with Check FDA feed; `views_scan.py`; `views_users.py` users,
   roles, technicians, credentials; `views_facilities.py` and `views_all_facilities.py` the signed-in person's facilities and All
-  facilities (session only: `permissions.PersonPermission`); serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
+  facilities (session only: `permissions.PersonPermission`); `views_survey.py` the survey binder; a work order's late-reason action; serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
   same thing and calls the same service; the API never imports apps.web. `tenancy.py` (`TenantAPIMixin`: the tenant from the session or
   token user, set after authentication and restored once the response is rendered), `authentication.py` (DRF's token check plus the
   deactivated-facility refusal sign-in has)
@@ -202,4 +216,6 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   screen's level), `kinds/` (devices, contracts, technicians, work_orders). No free text comes over from another system. A pass acts as
   whoever started it (`ImportRun.pass_by`), whoever's browser moves it on; the check rolls each chunk back, so an importer whose rows depend
   on earlier rows reads them (`ctx.rows`) to check a later chunk as the import will; the daily job `expire_imports` ends unfinished runs
-- `apps/demo` seed data (Riverside Regional, and Riverside North Campus with Kim linked: the demo shows the facility menu)
+- `apps/demo` seed data (Riverside Regional, and Riverside North Campus with Kim linked: the demo shows the facility menu; slice 25: a few
+  deliberate survey binder items, such as a late life-support PM with no reason, a new device in service with no incoming inspection, and
+  work done during a credential's lapse)
