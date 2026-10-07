@@ -32,6 +32,17 @@ Slice 25, why a PM was late (the survey binder): completing a PM after its due d
 "Why was it late?" select (late_offer): before the result for a life-support or high-risk PM, prominent, since the binder lists such a
 PM until a reason is recorded; after the hours for the others. Blank keeps a reason already recorded. The drawer's "Why late" row
 (views_wo_late, on a PM that missed its due date) comes in through results_context, which the drawer already calls.
+
+Slice 26, incoming inspections (apps.workorders.inspections): an inspection is completed like a PM, in one step from open, with its
+checklist (completion.procedure_for: the model's PM procedure when it has steps, else the incoming checklist; every step or none) and
+its result, Passed or Failed, each saying what it does to the device (_inspection_hints): required while the device waits for its
+inspection, optional otherwise (it then moves nothing). Shown once Failed is chosen, a waiting device's "If it fails": the
+re-inspection it opens (due REINSPECTION_DUE_DAYS later, to completion.reinspection_assignee) or the one already open it is recorded
+on, and, for a device put in use before its inspection, the tag-out. An inspection that passed and whose device no longer waits
+keeps Passed (chosen to begin with; the service refuses Failed in words). The toast says what moved: in service and the first PM's
+date, or the re-inspection (its number only when the user may see it, as a repair's). From My work, a failed inspection answers with
+its drawer, as a failed PM does. results_context words the drawer's section by type: an inspection's result, who inspected it and
+when, its steps, its re-inspection, and "Opened from failed incoming inspection".
 """
 
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -41,19 +52,23 @@ from django.utils import timezone
 from django_htmx.http import reswap, retarget, trigger_client_event
 
 from apps.equipment.models import AssetStatus
-from apps.workorders import completion, costs, scoping
+from apps.workorders import completion, costs, inspections, scoping
 from apps.workorders import permissions as wo_perms
-from apps.workorders.models import OPEN_STATUSES, PmResult, ServiceRequest, Source, WoStatus, WoType
+from apps.workorders import services as wo_services
+from apps.workorders.models import OPEN_STATUSES, InspectionResult, PmResult, ServiceRequest, Source, WoStatus, WoType
 
 from . import views_wo_late
 from .decorators import web_view
 from .forms_wo_complete import STEP_CHOICES, CompleteForm
 from .htmx import toast
 from .views import _render_wo_drawer, get_wo
+from .views_print import inspector
 
 MODAL = "web/_wo_complete.html"
-RESULT_CSS = {PmResult.PASS: "ok", PmResult.PASS_MINOR_REPAIR: "warn", PmResult.FAIL: "crit"}
+RESULT_CSS = {PmResult.PASS: "ok", PmResult.PASS_MINOR_REPAIR: "warn", PmResult.FAIL: "crit",
+              InspectionResult.PASSED: "ok", InspectionResult.FAILED: "crit"}  # slice 26: the two sets of values never overlap
 STEP_CSS = {completion.PASS: "ok", completion.FAIL: "crit", completion.NA: "neutral"}
+NO_RESULT = "No result recorded"  # an inspection of a device that was not waiting, completed with its checklist and no result
 FROM_MY_WORK = "my_work"  # the modal opened from a My work card: ?from=my_work, then a hidden field the form posts
 
 
@@ -72,21 +87,30 @@ def drawer_actions(user, wo, actions: list[dict]) -> list[dict]:
 
 def results_context(request, wo) -> dict:
     """Under "pm_record", so nothing collides with the drawer's own keys. One query for a PM's follow-ups, one for a repair's PM.
-    Only the ones in the user's share (apps.workorders.scoping): a link out of it would be a 404, and its number is not theirs."""
-    is_pm = wo.type == WoType.PM
+    Only the ones in the user's share (apps.workorders.scoping): a link out of it would be a 404, and its number is not theirs.
+    Slice 26: an incoming inspection's result (or, on one of a device that was not waiting, its checklist without one), who inspected
+    it and when, and its re-inspection; a work order opened from another names it by that one's type (a failed PM or inspection)."""
+    is_pm, is_inspection = wo.type == WoType.PM, wo.type == WoType.INSPECTION
     follow_up_of = wo.follow_up_of if wo.follow_up_of_id else None
-    recorded = is_pm and bool(wo.pm_result)
+    result = wo.inspection_result if is_inspection else wo.pm_result if is_pm else ""
+    recorded = bool(result) or (is_inspection and bool(wo.checklist_results))
     done = wo.status in completion.DONE_STATUSES
     steps = completion.recorded_steps(wo) if recorded and done else []
     for s in steps:
         s["css"] = STEP_CSS.get(s["result"], "neutral")
+    label = (wo.get_inspection_result_display() or NO_RESULT) if is_inspection else wo.get_pm_result_display() if is_pm else ""
     return {"pm_record": {
+        "kind": "inspection" if is_inspection else "pm" if is_pm else "",
         "show": recorded and done,
         "reopened": recorded and wo.status in OPEN_STATUSES,
-        "label": wo.get_pm_result_display() if recorded else "", "css": RESULT_CSS.get(wo.pm_result, "neutral"),
+        # An inspection that passed, of a device that no longer waits: completing it again keeps it passed (completion's rule)
+        "kept_pass": is_inspection and result == InspectionResult.PASSED and not wo.asset.awaiting_inspection,
+        "label": label if recorded else "", "css": RESULT_CSS.get(result, "neutral"),
+        "inspector": inspector(wo) if is_inspection and recorded else "",
         "steps": steps,
-        "follow_ups": list(scoping.work_orders(request.user, wo.follow_ups.order_by("opened_on", "number"))) if is_pm else [],
+        "follow_ups": list(scoping.work_orders(request.user, wo.follow_ups.order_by("opened_on", "number"))) if is_pm or is_inspection else [],
         "follow_up_of": follow_up_of if follow_up_of is not None and scoping.can_see_work_order(request.user, follow_up_of) else None,
+        "follow_up_of_kind": "incoming inspection" if follow_up_of is not None and follow_up_of.type == WoType.INSPECTION else "PM",
     }, **views_wo_late.late_context(request, wo)}  # slice 25: the "Why late" row (web/_wo_late.html), under "why_late"
 
 
@@ -103,7 +127,10 @@ def _number(user, wo) -> str:
 
 
 def _offers(wo, user) -> dict:
-    """A failed PM's options, as the modal offers them: the repair a failure goes to, and whether tagging out applies."""
+    """A failed PM's options, as the modal offers them: the repair a failure goes to, and whether tagging out applies. Slice 26, an
+    incoming inspection's (_inspection_offers)."""
+    if wo.type == WoType.INSPECTION:
+        return _inspection_offers(wo, user)
     if wo.type != WoType.PM:
         return {"own_repair": None, "other_repair": None, "offer_open_repair": False, "offer_tag_out": False}
     own = completion.own_open_repair(wo)  # the PM's own repair whoever completes it (its number only if in their share: _number)
@@ -111,6 +138,46 @@ def _offers(wo, user) -> dict:
     return {"own_repair": own, "other_repair": other, "offer_open_repair": other is not None,
             "own_repair_number": _number(user, own), "other_repair_number": _number(user, other),
             "offer_tag_out": wo.asset.status in completion.HOLDABLE, "already_out": wo.asset.status != AssetStatus.IN_SERVICE}
+
+
+def _inspection_offers(wo, user) -> dict:
+    """An incoming inspection's options (slice 26), from the rules the completion uses. Its result is required while the device waits
+    for its inspection (result_required), and only then does a fail open (or record on) a re-inspection: the one already open
+    (completion.open_reinspection, its number only when the user may see it), else a new one for completion.reinspection_assignee.
+    The tag-out is offered for a waiting device in use (use_before_inspection): a fail takes it out unless unticked. `kept_pass`: it
+    passed and the device no longer waits, so it stays passed (Failed is refused)."""
+    asset = wo.asset
+    waiting = asset.awaiting_inspection
+    existing = completion.open_reinspection(wo) if waiting else None
+    vendor, tech = completion.reinspection_assignee(wo) if waiting and existing is None else ("", None)
+    return {"own_repair": None, "other_repair": None, "offer_open_repair": False,
+            "offer_tag_out": waiting and asset.status in completion.IN_USE, "result_required": waiting,
+            "kept_pass": wo.inspection_result == InspectionResult.PASSED and not waiting,
+            "reinspection": existing, "reinspection_number": _number(user, existing), "reinspection_vendor": vendor, "reinspection_tech": tech,
+            "reinspection_days": inspections.REINSPECTION_DUE_DAYS, "inspection_hints": _inspection_hints(wo, existing)}
+
+
+def _inspection_hints(wo, existing) -> dict:
+    """What Passed and Failed each do to this device, under each choice (slice 26). Nothing, on a device that is not waiting."""
+    asset = wo.asset
+    if not asset.awaiting_inspection:
+        return {InspectionResult.PASSED: "Every check passed", InspectionResult.FAILED: "A check failed: say which in the resolution"}
+    if asset.status in completion.IN_USE:
+        passed = "Stays in use and its PMs start"
+    elif asset.status == AssetStatus.OUT_OF_SERVICE and wo_services.holding_repairs(asset).exists():
+        passed = "Its PMs start; it stays out of service until its open repair is done"
+    elif asset.status == AssetStatus.OUT_OF_SERVICE:
+        passed = "Goes into service and its PMs start"
+    elif asset.status == AssetStatus.RETIRED:  # the service starts no PM clock on a retired device
+        passed = "Stops waiting for its inspection; it stays retired"
+    else:
+        passed = f"Its PMs start; it stays {asset.get_status_display().lower()}"
+    failed = "a re-inspection opens" if existing is None else "recorded on the re-inspection open"
+    if asset.status in completion.IN_USE:  # taken out of use unless the tag-out is unticked (the modal's "If it fails")
+        failed = failed[0].upper() + failed[1:]
+    else:
+        failed = f"Stays {asset.get_status_display().lower()}; {failed}"
+    return {InspectionResult.PASSED: passed, InspectionResult.FAILED: failed}
 
 
 def _revised(form, kwargs) -> CompleteForm:
@@ -130,7 +197,8 @@ def _form_kwargs(wo, steps, offers, hours, late) -> dict:
     offer = late["late_offer"]
     return {"steps": steps, "is_pm": wo.type == WoType.PM, "offer_open_repair": offers["offer_open_repair"], "offer_tag_out": offers["offer_tag_out"],
             "offer_hours": hours["offer_hours"], "offer_late_reason": offer is not None, "late_first": bool(offer and offer["prominent"]),
-            "late_recorded": offer["recorded"] if offer else ""}
+            "late_recorded": offer["recorded"] if offer else "",
+            "is_inspection": wo.type == WoType.INSPECTION, "kept_pass": offers.get("kept_pass", False)}  # slice 26
 
 
 def _late(request, wo, today) -> dict:
@@ -162,9 +230,13 @@ def _modal(request, wo, form=None, *, steps=(), offers=None, hours=None, late=No
     if form is not None and form.is_bound:
         form.focus_first_error()
     procedure = completion.procedure_for(wo)
+    is_inspection = wo.type == WoType.INSPECTION
     response = render(request, MODAL, {
         "wo": wo, "asset": wo.asset, "dm": wo.asset.device_model, "is_pm": wo.type == WoType.PM, "blocker": reason, "form": form,
         "procedure": procedure, "rows": form.rows() if form is not None else [], "results": form.result_options() if form is not None else [],
+        # Slice 26: an incoming inspection's checklist (the incoming checklist when the model's procedure has no steps) and result
+        "is_inspection": is_inspection, "incoming_checklist": inspections.is_incoming_checklist(procedure),
+        "inspection_results": form.inspection_options((offers or {}).get("inspection_hints")) if form is not None and is_inspection else [],
         "has_checklist": bool(steps), "step_choices": STEP_CHOICES, "reading_max": completion.READING_MAX, **(offers or {}),
         **_follow_up(wo),
         "requester_emailed": _requester_email(wo),
@@ -194,8 +266,38 @@ def _requester_email(wo) -> bool:
     return bool(sr and sr.requester_email)
 
 
+def _day(d) -> str:
+    return f"{d:%b} {d.day}, {d.year}"
+
+
+def _inspection_message(request, wo, done) -> str:
+    """An incoming inspection's toast (slice 26): its result, what that did to the device, and the re-inspection (its number only
+    when the user may see it)."""
+    result = wo.inspection_result
+    if not result:
+        return f"{wo.number} completed"
+    note = completion.result_note(result, done)
+    if done.reinspection is not None and not _number(request.user, done.reinspection):
+        where = "a re-inspection opened" if done.reinspection_opened else "a re-inspection was already open"
+        note = f"{completion.RESULT_NOTES[result]}; {where}"
+    message = f"{wo.number} completed: {note}"
+    asset = wo.asset  # read again: complete_work_order refreshed the work order, which drops the device it had
+    if done.passed:
+        if asset.status == AssetStatus.IN_SERVICE:
+            message += f"; {asset.tag} in service"
+        elif asset.status == AssetStatus.OUT_OF_SERVICE:
+            message += f"; {asset.tag} stays out of service until its open repair is done"
+        if asset.next_pm_on:
+            message += f"{',' if asset.status == AssetStatus.IN_SERVICE else ';'} first PM due {_day(asset.next_pm_on)}"
+    if done.tagged_out:
+        message += f"; {asset.tag} tagged out of service"
+    return message
+
+
 def _message(request, wo, done, late_given: bool = False) -> str:
     logged = f"; {costs.plain(done.labor.hours)} h logged" if done.labor is not None else ""
+    if wo.type == WoType.INSPECTION:
+        return _inspection_message(request, wo, done) + logged
     if wo.type != WoType.PM:
         return f"{wo.number} completed{logged}"
     note = completion.result_note(wo.pm_result, done)
@@ -213,9 +315,9 @@ def _message(request, wo, done, late_given: bool = False) -> str:
 
 def _saved(request, wo, done, late_given: bool = False):
     """The drawer, as the work order is now; from My work (slice 24) nothing is swapped, so the technician stays on the list, which
-    re-fetches itself on wo-changed. A failed PM shows its drawer either way: it names the repair it opened. `late_given`: a reason
-    for lateness came with it (slice 25), which the toast names."""
-    if from_my_work(request) and wo.pm_result != PmResult.FAIL:
+    re-fetches itself on wo-changed. A failed PM shows its drawer either way: it names the repair it opened; so does a failed incoming
+    inspection (slice 26), its re-inspection. `late_given`: a reason for lateness came with it (slice 25), which the toast names."""
+    if from_my_work(request) and wo.pm_result != PmResult.FAIL and wo.inspection_result != InspectionResult.FAILED:
         response = reswap(HttpResponse(), "none")
     else:
         response = retarget(_render_wo_drawer(request, wo), "#drawer")

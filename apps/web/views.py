@@ -35,8 +35,8 @@ from apps.equipment.services import FleetBucket, asset_service_summary, filter_a
 from apps.facility.services import asset_request_url, get_settings
 from apps.recalls.models import AlertMatch
 from apps.reports.services import overview_page
+from apps.workorders import inspections, scoping
 from apps.workorders import permissions as wo_perms
-from apps.workorders import scoping
 from apps.workorders import services as wo_services
 from apps.workorders.models import ALLOWED_TRANSITIONS, OPEN_STATUSES, Source, WorkOrder, WoStatus, WoType
 
@@ -210,9 +210,12 @@ def _workorders_context(request) -> dict:
     open_wos = scoping.work_orders(user, wo_services.open_work_orders())
     # The portal requests waiting are a CE manager's to assign, and a scoped user cannot assign: the note is not for them.
     unassigned_portal = 0 if scoped else wo_services.unassigned_portal_requests().count()
+    # Slice 26: incoming inspections nobody has, on devices still waiting for them (out of service until inspected), are a CE
+    # manager's to assign (Work orders Approve): an inspection no technician could take sits on their list instead of nobody's.
+    waiting_inspections = inspections.waiting_for_inspector().count() if not scoped and wo_perms.can_assign(user) else 0
     ctx = {"nav_active": "workorders", "list_url": reverse("web:workorders"), "f": f, "mode": mode, "technicians": techs,
            "types": WoType.choices, "statuses": WoStatus.choices,
-           "unassigned_portal": unassigned_portal, "open_count": open_wos.count(),
+           "unassigned_portal": unassigned_portal, "open_count": open_wos.count(), "waiting_inspections": waiting_inspections,
            # Quoted as written: "(policy: Triage 7 a.m. to 7 p.m.)." keeps the policy's own punctuation intact.
            "portal_policy": get_settings().policy_portal if unassigned_portal else "",
            "past_due": open_wos.filter(due_on__lt=today).count(),
@@ -375,12 +378,26 @@ def wo_note(request, number):
     return toast(_render_wo_drawer(request, wo), message)
 
 
+def _service_errors(form, error: ValidationError) -> None:
+    """A service's refusal on the form: on the field it is keyed by (create_work_order's "type": slice 26), else at the top."""
+    if not hasattr(error, "error_dict"):
+        form.add_error(None, error.messages)
+        return
+    for key, messages in error.message_dict.items():
+        form.add_error(key if key in form.fields else None, messages)
+
+
 @web_view(wo_perms.MODULE, wo_perms.CREATE_LEVEL)  # not for scoped users: a vendor did not ask for the work, and a requester uses the portal
 def wo_new(request):
     """The New work order modal. A manager (Approve) may assign it as it is opened. Slice 24: anyone else who may take work
     (wo_services.may_take_as: the facility's setting, a technician profile) is offered "Assign it to me", ticked, for a device they
     are credentialed for; the new work order is then theirs through wo_services.take. Should take refuse, it stays unassigned and
-    the toast says why."""
+    the toast says why.
+
+    Slice 26: ?asset=<tag>&type=inspection (the device drawer's "Open incoming inspection") opens it with the device and the type
+    chosen (any base field in the address is taken as typed so far), and, for a device waiting for its incoming inspection, the
+    problem worded as Add device words it (inspections.INCOMING_PROBLEM) until something else is typed. create_work_order's refusals
+    (a PM, or a second open inspection, on a device waiting for its inspection) come back on the form, on the field they name."""
     can_assign = wo_perms.can_assign(request.user)
     taker = None if can_assign else wo_services.may_take_as(request.user)
     if request.method != "POST":
@@ -389,13 +406,21 @@ def wo_new(request):
         if request.GET.get("take_offered") and "take" not in request.GET:
             initial["take"] = False  # unticked before another device was picked: it stays unticked
         form = NewWorkOrderForm(initial=initial, can_assign=can_assign, taker=taker)
+        if (initial.get("type") == WoType.INSPECTION and not initial.get("problem", "").strip() and form.asset_obj is not None
+                and form.asset_obj.awaiting_inspection):
+            form.initial["problem"] = inspections.INCOMING_PROBLEM
         return render(request, "web/_wo_new.html", {"form": form, "asset": form.asset_obj})
     form = NewWorkOrderForm(request.POST, can_assign=can_assign, taker=taker)
     if not form.is_valid():
         return render(request, "web/_wo_new.html", {"form": form, "asset": form.asset_obj})
     d = form.cleaned_data
-    wo = wo_services.create_work_order(asset=d["asset"], type=d["type"], priority=d["priority"], problem=d["problem"],
-                                       requester=(d["requester"] or request.user.get_full_name())[:120], created_by=request.user, tag_out=d["tag_out"])
+    try:
+        wo = wo_services.create_work_order(asset=d["asset"], type=d["type"], priority=d["priority"], problem=d["problem"],
+                                           requester=(d["requester"] or request.user.get_full_name())[:120], created_by=request.user,
+                                           tag_out=d["tag_out"])
+    except ValidationError as e:
+        _service_errors(form, e)
+        return render(request, "web/_wo_new.html", {"form": form, "asset": form.asset_obj})
     assignee = d.get("assignee")
     if assignee == VENDOR:
         wo_services.assign(wo, vendor_name=vendor_name_for(wo.asset), by=request.user)

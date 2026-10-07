@@ -637,6 +637,19 @@ button.link{background:none;border:0;padding:0;font:inherit;font-size:12px;font-
 @media (max-width:760px){
   .wc-results{grid-template-columns:1fr}
 }
+/* Slice 26, B2: incoming inspections on the work order screens. The completion modal: the result's two choices side by side (one
+   column on a phone), "If it fails" shown once Failed is chosen (always shown without :has support), the checklist's note; the drawer's
+   "Inspected by" line; the Work orders page's note for managers. */
+.wc-results.wc-results-2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.wc-insp-note{margin:0 0 8px}
+@supports selector(:has(*)){
+  .wc-form:has(input[name="inspection_result"][value="failed"]:checked) .wc-fail{display:grid}
+}
+.wr-by{margin:0 0 8px;font-size:12.5px;color:var(--ink-2)}
+.note.wo-insp-note{margin-bottom:12px}
+@media (max-width:760px){
+  .wc-results.wc-results-2{grid-template-columns:1fr}
+}
 /* Slice 18, part C: a model that keeps the manufacturer's schedule by regulation (CMS: imaging, radiologic, medical laser) */
 /* The model form's checkbox reads as the field's label, its hint below it */
 .form .dm-mark .check-row{color:var(--ink);font-weight:500}
