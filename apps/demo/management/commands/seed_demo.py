@@ -7,9 +7,16 @@ Slice 22: Kim also directs a second, small facility, Riverside North Campus (slu
 technicians, and a few work orders), as the same person: her account there is linked to her Riverside account the way an
 invitation links one (apps.accounts.services.add_account) and joined with her password (apps.accounts.people.join), so the demo
 shows the facility menu. A database seeded before slice 22 gets the North Campus on the next run.
+
+Slice 25: the survey binder (apps.reports.survey) shows a few deliberate items, not nothing and not a flood. Work orders go to a
+technician credentialed for the device on the day (apps.credentials.services), and one credential lapsed and was renewed with a repair
+done during the lapse; most late life-support and high-risk PMs have a reason recorded, the latest one not; three devices were added as
+new to the facility (one waiting for its incoming inspection, one inspected before it went into service, one in service with no
+inspection); two models are risk-scored, one of them past its yearly review; and each recall match reached the facility the day its
+notice was published.
 """
 import random
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
 from django.core.management.base import BaseCommand
@@ -20,21 +27,22 @@ from apps.accounts import people, services
 from apps.accounts.models import Role, User, create_default_roles
 from apps.contracts.models import Contract, ContractType, Coverage
 from apps.credentials.models import Credential, Scope, Technician
-from apps.credentials.services import qualified_technicians
-from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, RiskClass
+from apps.credentials.services import qualified_technicians, renew_credential
+from apps.equipment import services as equipment
+from apps.equipment.models import AddedAs, Asset, AssetStatus, Department, DeviceModel, RiskClass
 from apps.facility.services import labor_rates, update_settings
 from apps.notifications import assignments
 from apps.pm import aem
 from apps.pm.dates import add_months
 from apps.pm.models import PmProcedure
-from apps.pm.services import assign_week
+from apps.pm.services import assign_week, missed_pms
 from apps.recalls.models import Alert, AlertMatch
 from apps.recalls.services import create_recall_work_orders, set_status
 from apps.tenants.context import tenant_context, zone_of
 from apps.tenants.models import Tenant
 from apps.workorders.completion import complete_work_order
-from apps.workorders.models import LaborLine, PartLine, PmResult, Priority, Source, WorkOrder, WoType
-from apps.workorders.services import assign, change_status, create_work_order
+from apps.workorders.models import LaborLine, LateReason, PartLine, PmResult, Priority, Source, WorkOrder, WoType
+from apps.workorders.services import assign, change_status, create_work_order, set_late_reason
 
 MODELS = [
     # manufacturer, model, description, category, risk, pm months, life yrs, cost, n, support
@@ -143,6 +151,34 @@ NORTH_WORK = [  # model, opened days ago, type, where it stands, problem
     ("R Series Plus", 1, WoType.PM, "open", "Scheduled preventive maintenance"),
 ]
 
+# Slice 25, the survey binder's deliberate items.
+CREW_SEED = 20261008  # who does a work order when the technician drawn is not credentialed for the device (its own generator)
+# Why the late life-support and high-risk PMs were late, in turn; the latest is left without a reason (the binder's one gap there).
+LATE_REASONS = [LateReason.DEVICE_IN_USE, LateReason.STAFFING, LateReason.NOT_LOCATED, LateReason.WAITING_PARTS_VENDOR]
+# Devices added as new to the facility: tag (past the fleet's range), model, department, added days ago, and where it stands.
+NEW_DEVICES = [
+    ("CE-11001", "R Series Plus", "ED", 2, "waiting"),  # out of service, its incoming inspection open
+    ("CE-11002", "Connex Spot", "Med/Surg 3E", 12, "inspected"),  # inspected, then in service the same day
+    ("CE-11003", "Centrella", "Med/Surg 4E", 6, "in_use"),  # in service from the day it came, never inspected
+]
+INSPECTED_AFTER_DAYS = 2
+INSPECTION_PROBLEM = "Incoming inspection before first use"
+INSPECTION_RESULT = "Incoming inspection: electrical safety and functional tests passed, labeled, and added to the PM schedule."
+# A credential that lapsed and was renewed: (technician, scope, value). It expired, the technician did a repair it covers, then it was
+# renewed (days ago for each).
+LAPSE = ("Tom Okafor", Scope.CATEGORY, "Beds & stretchers")
+LAPSE_EXPIRED_DAYS_AGO, LAPSE_WORK_DAYS_AGO, LAPSE_RENEWED_DAYS_AGO = 75, 66, 45
+LAPSE_PROBLEM = "Bed exit alarm does not sound"
+LAPSE_RESOLUTION = "Replaced the bed exit sensor; alarm verified in every position."
+# Two models risk-scored with the Settings rubric (each score in its class's band): model, (function, physical, maintenance, incidents),
+# reviewed days ago. The second's yearly review is overdue (the binder's inventory lists it as the facility's own check).
+RISK_SCORES = [("Hamilton-G5", (10, 5, 3, 0), 90), ("R Series Plus", (10, 4, 3, 0), 425)]
+
+
+def _noon(day: date) -> datetime:
+    """Noon of `day` in the current time zone (the facility's, inside tenant_context): a backdated timestamp's moment."""
+    return timezone.make_aware(datetime.combine(day, time(12)))
+
 
 class Command(BaseCommand):
     help = "Create a small demo tenant with devices, contracts, technicians, credentials, and work orders."
@@ -182,9 +218,12 @@ class Command(BaseCommand):
             for name, title, cert, creds in TECHS:
                 t = Technician.objects.create(name=name, title=title, certification=cert)
                 for scope, value in creds:
+                    issued_on = today - timedelta(days=rnd.randint(200, 1500))
+                    expires_on = today + timedelta(days=rnd.randint(20, 900)) if rnd.random() < 0.4 else None
+                    if (name, scope, value) == LAPSE:  # lapsed: renewed later (_credential_lapse)
+                        expires_on = today - timedelta(days=LAPSE_EXPIRED_DAYS_AGO)
                     Credential.objects.create(technician=t, scope=scope, value=value, source="OEM training" if scope != Scope.CATEGORY else "In-house sign-off",
-                                              issued_on=today - timedelta(days=rnd.randint(200, 1500)),
-                                              expires_on=today + timedelta(days=rnd.randint(20, 900)) if rnd.random() < 0.4 else None)
+                                              issued_on=issued_on, expires_on=expires_on)
                 techs.append(t)
             # the rest of the staff: demo accounts without a password (an administrator sets one in Admin), technicians linked by name
             tech_by_name = {t.name: t for t in techs}
@@ -226,6 +265,7 @@ class Command(BaseCommand):
             # six months of closed work orders, plus a small open backlog. What each one found comes from its own generator, so
             # the devices, dates, and technicians stay as they were before results were recorded.
             outcomes = random.Random(20261002)
+            crew = random.Random(CREW_SEED)
             failed_pm = None
             for day in range(-180, 0):
                 d = today + timedelta(days=day)
@@ -236,9 +276,13 @@ class Command(BaseCommand):
                     is_pm = rnd.random() < 0.65
                     wtype = WoType.PM if is_pm else WoType.REPAIR
                     prio = Priority.HIGH if a.device_model.risk_class == RiskClass.LIFE_SUPPORT else Priority.NORMAL
-                    wo = create_work_order(asset=a, type=wtype, priority=prio, problem="Scheduled preventive maintenance" if is_pm else rnd.choice(PROBLEMS),
-                                           requester="PM planner" if is_pm else "Unit staff", source=Source.PM_PLANNER if is_pm else Source.MANUAL,
-                                           opened_on=d, due_on=d + timedelta(days=rnd.randint(5, 21) if is_pm else 5), assigned_to=rnd.choice(techs))
+                    # Drawn in the order the demo always drew them, so every later draw is as before.
+                    problem = "Scheduled preventive maintenance" if is_pm else rnd.choice(PROBLEMS)
+                    due = d + timedelta(days=rnd.randint(5, 21) if is_pm else 5)
+                    drawn = rnd.choice(techs)
+                    wo = create_work_order(asset=a, type=wtype, priority=prio, problem=problem, requester="PM planner" if is_pm else "Unit staff",
+                                           source=Source.PM_PLANNER if is_pm else Source.MANUAL, opened_on=d, due_on=due,
+                                           assigned_to=self._credentialed(a, d, drawn, crew))
                     hours = 0.75 if is_pm else rnd.uniform(1, 4)
                     LaborLine.objects.create(work_order=wo, technician=wo.assigned_to, worked_on=d, hours=round(hours, 2), rate=82)
                     if not is_pm and rnd.random() < 0.6:
@@ -275,12 +319,20 @@ class Command(BaseCommand):
                 elif status_ == AlertMatch.Status.CLOSED:
                     set_status(match, AlertMatch.Status.IN_PROGRESS, today=today - timedelta(days=closed_days_ago + 7))
                     set_status(match, AlertMatch.Status.CLOSED, note=note, today=today - timedelta(days=closed_days_ago))
+                # Slice 25: it reached the facility the day the notice was published (the binder dates a match by its arrival). After
+                # the status changes, which save the whole row.
+                AlertMatch.objects.filter(pk=match.pk).update(created_at=_noon(alert.published_on))
             self._approved_aem(domain, today)
             self._vendor_work(today)
+            self._credential_lapse(today)
+            self._risk_scores(today)
+            self._new_devices(today, depts)
             # Slice 24: this week's PMs on the technicians' plates, as a CE manager's Auto-assign week puts them, so a technician signing
             # in (dwhitfield@... and the others, once they have a password) finds their own work on My work
             assign_week(today=today)
-        self.stdout.write(self.style.SUCCESS(f"Seeded {tenant.name}: {len(assets)} devices, {len(techs)} technicians. Sign in as {kim} / DemoPass-2026"))
+            self._late_reasons(today)
+        devices = len(assets) + len(NEW_DEVICES)
+        self.stdout.write(self.style.SUCCESS(f"Seeded {tenant.name}: {devices} devices, {len(techs)} technicians. Sign in as {kim} / DemoPass-2026"))
         self._north_campus(tenant, opts)
 
     def _north_campus(self, tenant, opts) -> None:
@@ -357,6 +409,79 @@ class Command(BaseCommand):
         devices = sum(n for _model, n in NORTH_FLEET)
         self.stdout.write(self.style.SUCCESS(f"Seeded {north.name}: {devices} devices, {len(techs)} technicians. {kim.email} directs it too: "
                                              "the facility menu at the top switches between the two."))
+
+    @staticmethod
+    def _credentialed(asset, day: date, drawn, crew: random.Random):
+        """Who does a work order on `asset` opened on `day`: `drawn` when credentialed for the device that day
+        (credentials.services.qualified_technicians), else one of those who are (drawn by `crew`), else `drawn` when nobody is."""
+        qualified = [t for t, _q in qualified_technicians(asset, day)]
+        if not qualified or drawn in qualified:
+            return drawn
+        return crew.choice(qualified)
+
+    @staticmethod
+    def _risk_scores(today: date) -> None:
+        """RISK_SCORES through equipment.services.set_risk_score, each on the day it was reviewed (the class stays: the score is in
+        its band)."""
+        for model, (function, physical, maintenance, incidents), days_ago in RISK_SCORES:
+            equipment.set_risk_score(DeviceModel.objects.get(model=model), function=function, physical=physical, maintenance=maintenance,
+                                     incidents=incidents, today=today - timedelta(days=days_ago))
+
+    @staticmethod
+    def _late_reasons(today: date) -> None:
+        """Why the late life-support and high-risk PMs were late (workorders.services.set_late_reason), in turn, but for the latest,
+        left without one: the survey binder lists it until a reason is recorded."""
+        late = list(missed_pms(today).filter(asset__device_model__risk_class__in=(RiskClass.LIFE_SUPPORT, RiskClass.HIGH)).order_by("due_on", "number"))
+        for i, wo in enumerate(late[:-1]):
+            set_late_reason(wo, LATE_REASONS[i % len(LATE_REASONS)], today=today)
+
+    @staticmethod
+    def _credential_lapse(today: date) -> None:
+        """One credential that lapsed and was renewed, with a repair done during the lapse (the binder's staff section reads
+        credentials as they stood each day, from their history). The credential was entered expired (the technicians above); its
+        history is dated as it happened: entered when issued, renewed LAPSE_RENEWED_DAYS_AGO."""
+        name, scope, value = LAPSE
+        technician = Technician.objects.get(name=name)
+        credential = Credential.objects.get(technician=technician, scope=scope, value=value)
+        bed = Asset.objects.filter(device_model__category=value, status=AssetStatus.IN_SERVICE).order_by("tag").first()
+        opened = today - timedelta(days=LAPSE_WORK_DAYS_AGO)
+        done = opened + timedelta(days=1)
+        wo = create_work_order(asset=bed, type=WoType.REPAIR, priority=Priority.NORMAL, problem=LAPSE_PROBLEM, requester="Unit staff",
+                               opened_on=opened, assigned_to=technician)
+        change_status(wo, "in_progress", as_of=opened)
+        LaborLine.objects.create(work_order=wo, technician=technician, worked_on=done, hours=Decimal("1.25"), rate=82)
+        complete_work_order(wo, resolution=LAPSE_RESOLUTION, today=done)
+        change_status(wo, "closed", as_of=done)
+        renewed = today - timedelta(days=LAPSE_RENEWED_DAYS_AGO)
+        renew_credential(credential, today=renewed)
+        Credential.history.filter(id=credential.pk, history_type="+").update(history_date=_noon(credential.issued_on))
+        Credential.history.filter(id=credential.pk, history_type="~").update(history_date=_noon(renewed))
+
+    @staticmethod
+    def _new_devices(today: date, depts: dict) -> None:
+        """Devices added as new to the facility (equipment.services.create_asset, added_as NEW), dated the day they came: one waiting
+        out of service with its incoming inspection open, one inspected and then put in service, one in service with no inspection."""
+        for tag, model, dept, days_ago, stage in NEW_DEVICES:
+            dm = DeviceModel.objects.get(model=model)
+            added = today - timedelta(days=days_ago)
+            inspected = added + timedelta(days=INSPECTED_AFTER_DAYS)
+            in_use = stage == "in_use"
+            installed = added if in_use else inspected if stage == "inspected" else None
+            asset = equipment.create_asset(tag=tag, device_model=dm, department=depts[dept], serial=f"{dm.manufacturer[:2].upper()}{tag[3:]}0042",
+                                           room="1", installed_on=installed, condition=5,
+                                           status=AssetStatus.IN_SERVICE if in_use else AssetStatus.OUT_OF_SERVICE, added_as=AddedAs.NEW,
+                                           added_on=added, today=today)
+            if not in_use:
+                credentialed = qualified_technicians(asset, added)
+                wo = create_work_order(asset=asset, type=WoType.INSPECTION, priority=Priority.NORMAL, problem=INSPECTION_PROBLEM,
+                                       requester="Clinical Engineering", opened_on=added, assigned_to=credentialed[0][0] if credentialed else None)
+                if stage == "inspected":
+                    change_status(wo, "in_progress", as_of=added)
+                    complete_work_order(wo, resolution=INSPECTION_RESULT, today=inspected)
+                    change_status(wo, "closed", as_of=inspected)
+                    equipment.set_status(asset, AssetStatus.IN_SERVICE, note="Incoming inspection passed", changed_on=inspected, today=today)
+            # The day it came, after the row's last save (a save writes back the created_at it holds).
+            Asset.objects.filter(pk=asset.pk).update(created_at=_noon(added))
 
     @staticmethod
     def _can_fail(asset) -> bool:
