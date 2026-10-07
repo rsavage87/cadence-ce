@@ -24,17 +24,84 @@ class Qualification:
     expired_only: bool = False  # had matching credentials, all expired
 
 
-def _matches(cred: Credential, asset) -> bool:
-    dm = asset.device_model
-    return ((cred.scope == Scope.MANUFACTURER and cred.value == dm.manufacturer)
-            or (cred.scope == Scope.MODEL and cred.value == dm.model)
-            or (cred.scope == Scope.CATEGORY and cred.value == dm.category))
+# --- the one rule: does a credential qualify a technician for a device on a day ----------------------------------------------
+# qualification() asks it of a technician's credentials as they are now; the survey binder's staff section (slice 25) asks it of each
+# credential as it stood at the end of the day the work was done (credential_versions, standings_on). Both go through
+# credential_standing, so the binder can never hold a technician to a different rule than the assignment screens do.
+COVERS, EXPIRED, IN_TRAINING = "covers", "expired", "in_training"
+
+
+def credential_names(cred, device_model) -> bool:
+    """Whether `cred` (a Credential, or a historical version of one: anything with scope and value) names devices of `device_model`
+    (anything with category, manufacturer, and model): its category, its manufacturer, or its model, exactly as written."""
+    return ((cred.scope == Scope.MANUFACTURER and cred.value == device_model.manufacturer)
+            or (cred.scope == Scope.MODEL and cred.value == device_model.model)
+            or (cred.scope == Scope.CATEGORY and cred.value == device_model.category))
+
+
+def credential_standing(cred, device_model, day: date) -> str:
+    """What `cred` says about a device of `device_model` on `day`: COVERS (active, names it, and not expired that day: no expiry, or
+    one on or after `day`), EXPIRED (active and names it, but expired before `day`), IN_TRAINING (names it, still in training), or ""
+    (it names other devices)."""
+    if not credential_names(cred, device_model):
+        return ""
+    if cred.status == Credential.Status.IN_TRAINING:
+        return IN_TRAINING
+    if cred.status != Credential.Status.ACTIVE:
+        return ""
+    return EXPIRED if cred.expires_on and cred.expires_on < day else COVERS
+
+
+def credential_versions(technician_ids) -> dict:
+    """Every credential the technicians ever had, as it stood over time, from Credential history: {technician id: [timeline, ...]},
+    one timeline per credential, a list of (the facility's day the version was saved, the historical version, or None from the day
+    it was removed), oldest first. One query, through apps.core.history._rows (this facility's rows only: the historical table's
+    manager is not tenant-scoped); days through apps.core.days.local_day, so call it inside the facility."""
+    from apps.core.days import local_day
+    from apps.core.history import _rows
+
+    rows = (_rows(Credential.history.model).filter(technician_id__in=list(technician_ids))
+            .order_by("id", "history_date", "history_id"))
+    timelines: dict = {}
+    for rec in rows:
+        timelines.setdefault(rec.technician_id, {}).setdefault(rec.id, []).append(
+            (local_day(rec.history_date), None if rec.history_type == "-" else rec))
+    return {tech_id: list(by_credential.values()) for tech_id, by_credential in timelines.items()}
+
+
+def version_on(timeline: list, day: date):
+    """The version of one credential (a timeline from credential_versions) in force at the end of `day`: the last one saved on or
+    before it (None when that was its removal). Before its first save, its first version counts from its issued_on when that is on
+    or before `day`: a credential typed in later than it was issued still covered the days since it was issued."""
+    current, found = None, False
+    for saved_on, version in timeline:
+        if saved_on > day:
+            break
+        current, found = version, True
+    if found:
+        return current
+    first = timeline[0][1] if timeline else None
+    return first if first is not None and first.issued_on and first.issued_on <= day else None
+
+
+def standings_on(timelines: list, device_model, day: date) -> list[tuple]:
+    """(version, credential_standing) for each of a technician's credentials (their credential_versions list) that names a device of
+    `device_model` at the end of `day`."""
+    out = []
+    for timeline in timelines:
+        version = version_on(timeline, day)
+        if version is not None:
+            standing = credential_standing(version, device_model, day)
+            if standing:
+                out.append((version, standing))
+    return out
 
 
 def qualification(technician: Technician, asset, as_of: date | None = None) -> Qualification:
     as_of = as_of or timezone.localdate()
-    creds = [c for c in technician.credentials.all() if c.status == Credential.Status.ACTIVE and _matches(c, asset)]
-    active = [c for c in creds if not c.expires_on or c.expires_on >= as_of]
+    standing = [(c, credential_standing(c, asset.device_model, as_of)) for c in technician.credentials.all()]
+    creds = [c for c, s in standing if s in (COVERS, EXPIRED)]
+    active = [c for c, s in standing if s == COVERS]
     if not active:
         return Qualification(ok=False, expired_only=bool(creds))
     warn = settings.CREDENTIAL_EXPIRY_WARNING_DAYS
