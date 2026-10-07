@@ -1,0 +1,22 @@
+{% load web %}
+{% comment %}The device drawer's "Put in use before inspection" (slice 26, views_equipment.asset_use_before; Equipment Approve): why, from
+   UseBeforeInspection's list (no free text). A device that no longer applies (its inspection passed meanwhile, it is not out of service
+   or missing) gets the modal saying why instead.{% endcomment %}
+<div class="modal-h"><h2>Put {{ asset.tag }} in use</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="ub-form" class="ub-form" hx-post="{% url 'web:asset_use_before' asset.tag %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    <p class="full hint">{{ asset.tag }} is waiting for its incoming inspection{% if inspection %} ({{ inspection.number }}){% endif %}. It goes into service now and keeps waiting: {% if inspection %}the inspection becomes{% else %}an incoming inspection opens,{% endif %} high priority and due tomorrow at the latest, so CE inspects it where it is. Its PM schedule still starts when the inspection passes, and the survey binder lists the device as in use before its incoming inspection.</p>
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    <fieldset class="full dv-sub"{% if form.reason.errors %} aria-describedby="ub-reason_error"{% endif %}>
+      <legend>{{ form.reason.label }}</legend>
+      <div class="radio">{% for radio in form.reason %}<label for="{{ radio.id_for_label }}">{{ radio.tag }}<span>{{ radio.choice_label }}</span></label>{% endfor %}</div>
+      {% if form.reason.errors %}<span class="err" id="ub-reason_error">{{ form.reason.errors|striptags }}</span>{% endif %}
+    </fieldset>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Put in use</button></div>
+</form>
+{% endif %}

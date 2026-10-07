@@ -37,12 +37,25 @@ it the moment the select changes; browsers without :has show them always, and th
   {% include "web/_asset_field.html" with field=form.acquisition_cost %}
   {% include "web/_asset_field.html" with field=form.condition %}
   {% if new %}
-  {% include "web/_asset_field.html" with field=form.last_pm_on %}
-  {% include "web/_asset_field.html" with field=form.next_pm_on %}
-  {% include "web/_asset_field.html" with field=form.status cls="full" %}
-  {% with f=form.already_in_use %}{# slice 25: how the device came to be in Cadence (create_asset's added_as) #}
-  <div class="fld full dv-existing"><label class="check-row" for="{{ f.id_for_label }}">{{ f }} {{ f.label }}</label><span class="hint" id="{{ f.auto_id }}_helptext">{{ f.help_text }}</span>{% if f.errors %}<span class="err" id="{{ f.auto_id }}_error">{{ f.errors|striptags }}</span>{% endif %}</div>
-  {% endwith %}
+  {% comment %}Slice 26: how the device arrives (forms_equipment.NewDeviceForm's intake), each choice's own fields under it, shown while it
+     is chosen (CSS :has, as the new model's; without :has they all show, and the server ignores the ones not chosen).{% endcomment %}
+  <fieldset class="full dv-sub dv-intake"{% if form.intake.errors %} aria-describedby="dv-intake_error"{% endif %}>
+    <legend>{{ form.intake.label }}</legend>
+    <div class="dv-intake-list">
+    {% for radio, hint, fields in form.intake_options %}
+      <div class="radio"><label for="{{ radio.id_for_label }}">{{ radio.tag }}<span>{{ radio.choice_label }}<small>{{ hint }}</small></span></label></div>
+      {% if fields %}<div class="dv-grid dv-if dv-if-{{ radio.data.value }}">
+        {% for f in fields %}{% if f.name == "take_inspection" %}
+        <div class="fld full"><label class="check-row" for="{{ f.id_for_label }}">{{ f }} {{ f.label }}</label><span class="hint" id="{{ f.auto_id }}_helptext">{{ f.help_text }}</span>{% if f.errors %}<span class="err" id="{{ f.auto_id }}_error">{{ f.errors|striptags }}</span>{% endif %}</div>
+        {% else %}{% include "web/_asset_field.html" with field=f %}{% endif %}{% endfor %}
+      </div>{% endif %}
+    {% endfor %}
+    </div>
+    {% if form.intake.errors %}<span class="err" id="dv-intake_error">{{ form.intake.errors|striptags }}</span>{% endif %}
+  </fieldset>
+  {% elif form.awaiting %}
+  {# Slice 26: no next PM while the device waits for its incoming inspection; the pass starts its PM schedule #}
+  <div class="fld full"><label for="dv-next_pm_ro">Next PM</label><input id="dv-next_pm_ro" type="text" value="After its incoming inspection" readonly aria-describedby="dv-next_pm_ro-hint"><span class="hint" id="dv-next_pm_ro-hint">Its PM schedule starts on the day its incoming inspection passes.</span></div>
   {% else %}
   {% include "web/_asset_field.html" with field=form.next_pm_on cls="full" %}
   {% endif %}

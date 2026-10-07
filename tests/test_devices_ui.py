@@ -55,11 +55,17 @@ def triggers(r, header="HX-Trigger") -> dict:
     return json.loads(r[header]) if header in r else {}
 
 
+INSTALLED = TODAY - timedelta(days=1000)
+
+
 def new_post(dm, dept, **over) -> dict:
+    """Add device's post. Slice 26: "Already in use here" (existing equipment, its install date required), so these tests keep adding a
+    device in the status and with the PM dates they give; tests/test_incoming_equipment_ui.py adds new devices waiting for inspection."""
     data = {"tag": "CE-20001", "serial": "SN-77", "device_model": str(dm.pk) if dm else "new", "department": str(dept.pk) if dept else "new",
-            "room": "412", "installed_on": "", "acquisition_cost": "", "warranty_end": "", "condition": "4", "last_pm_on": "", "next_pm_on": "",
-            "status": AssetStatus.IN_SERVICE, "notes": "Wall mount, bay 3", "risk_class": RiskClass.MEDIUM, "oem_pm_interval_months": "12",
-            "expected_life_years": "8", "list_cost": "", "manufacturer": "", "model": "", "description": "", "category": "", "new_department": ""}
+            "room": "412", "installed_on": INSTALLED.isoformat(), "acquisition_cost": "", "warranty_end": "", "condition": "4", "intake": "existing",
+            "last_pm_on": "", "next_pm_on": "", "status": AssetStatus.IN_SERVICE, "notes": "Wall mount, bay 3", "risk_class": RiskClass.MEDIUM,
+            "oem_pm_interval_months": "12", "expected_life_years": "8", "list_cost": "", "manufacturer": "", "model": "", "description": "",
+            "category": "", "new_department": ""}
     data.update(over)
     return data
 
@@ -100,7 +106,8 @@ def test_add_device_modal_renders_for_equipment_edit(client, signed_in, vent_mod
     assert "Hamilton Medical Hamilton-G5 · ICU ventilator" in body and "BD Alaris 8015 PCU · Infusion pump" in body
     assert '<option value="new">Add a new model</option>' in body and '<option value="new">Add a new department</option>' in body
     assert '<option value="Ventilators">' in body and '<option value="Infusion pumps">' in body  # category suggestions
-    assert "Out of service: waiting for incoming inspection" in body and "No patient information." in body
+    assert "New: waiting for its incoming inspection" in body and "Already in use here (existing equipment)" in body  # slice 26
+    assert "No patient information." in body
     assert "Blank uses the model&#x27;s list cost." in body and "Blank lets the schedule work it out" in body
     assert '<option value="3" selected>3 · Good</option>' in body  # condition defaults to 3
     # the hint and the error are tied to their input for screen readers
@@ -544,6 +551,9 @@ def test_status_toasts_cover_every_change_the_services_allow():
             assert status_toast("CE-1", from_status, to).startswith("CE-1 ")
     assert {to for to, _from in STATUS_TOASTS} == {to for targets in eq.STATUS_CHANGES.values() for to in targets}
     assert status_toast("CE-1", AssetStatus.IN_SERVICE, AssetStatus.RETIRED, 1) == "CE-1 retired; 1 PM work order cancelled"
+    # slice 26: retiring a device waiting for its incoming inspection (back to the vendor) cancels its inspection
+    assert status_toast("CE-1", AssetStatus.OUT_OF_SERVICE, AssetStatus.RETIRED, 0, 1) == "CE-1 retired; 1 incoming inspection cancelled"
+    assert status_toast("CE-1", AssetStatus.OUT_OF_SERVICE, AssetStatus.RETIRED, 2, 2) == "CE-1 retired; 2 PM work orders and 2 incoming inspections cancelled"
 
 
 # --- forms and queries -----------------------------------------------------------------------------------------------------
@@ -554,24 +564,32 @@ def test_forms_cover_what_the_services_take(ctx):
     assert not {"tag", "status", "contract", "last_pm_on"} & set(EditDeviceForm.base_fields)
     params = set(inspect.signature(eq.create_device_model).parameters) - {"by"}
     assert set(MODEL_FIELDS) == params
-    # added_on: the importer's; added_as (slice 25): Add device's "Already in use here" box sets it (new or existing); incoming_inspection
-    # and inspection_due (slice 26): Add device's choice of how the device arrives sets them
+    # added_on: the importer's. added_as (slice 25) and incoming_inspection (slice 26): Add device's choice of how the device arrives (intake)
+    # sets them; inspection_due is that choice's field of the same name
     create = set(inspect.signature(eq.create_asset).parameters) - {"by", "today", "device_model", "department", "added_on", "added_as",
                                                                      "incoming_inspection", "inspection_due"}
-    assert create <= set(NewDeviceForm.base_fields)
+    assert create <= set(NewDeviceForm.base_fields) and "inspection_due" in NewDeviceForm.base_fields
+
+
+def field_names(body: str) -> list[str]:
+    """The form's field names in the order they appear, each once (a radio's options share one name)."""
+    return list(dict.fromkeys(re.findall(r'name="(\w+)"', body)))
 
 
 def test_layout_is_the_order_the_fields_are_on_screen(client, signed_in, vent, dept):
     """focus_first_error walks LAYOUT; it must list every field in the order the template shows them."""
+    assert set(NewDeviceForm.base_fields) == set(LAYOUT)
     signed_in("technician")
-    names = re.findall(r'name="(\w+)"', client.get(NEW_URL, **HX).content.decode())
-    # The CMS mark is only on an Equipment Approve holder's form (test_add_device_offers_the_cms_mark_to_equipment_approve_only)
-    assert names == [n for n in LAYOUT if n in NewDeviceForm.base_fields and n != "oem_schedule_required"] and set(NewDeviceForm.base_fields) == set(LAYOUT)
-    names = re.findall(r'name="(\w+)"', client.get(f"/equipment/{vent.tag}/edit/", **HX).content.decode())
+    # The CMS mark is only on an Equipment Approve holder's form (test_add_device_offers_the_cms_mark_to_equipment_approve_only); slice 26:
+    # the inspector select only on a Work orders Approve holder's, "Assign the inspection to me" only for whom may take work (no technician
+    # profile here: neither)
+    names = field_names(client.get(NEW_URL, **HX).content.decode())
+    assert names == [n for n in LAYOUT if n not in ("oem_schedule_required", "take_inspection", "inspector")]
+    names = field_names(client.get(f"/equipment/{vent.tag}/edit/", **HX).content.decode())
     assert names == [n for n in LAYOUT if n in EditDeviceForm.base_fields]
     signed_in("director")
-    names = re.findall(r'name="(\w+)"', client.get(NEW_URL, **HX).content.decode())
-    assert names == [n for n in LAYOUT if n in NewDeviceForm.base_fields]
+    names = field_names(client.get(NEW_URL, **HX).content.decode())
+    assert names == [n for n in LAYOUT if n != "take_inspection"]
 
 
 def test_add_device_offers_the_cms_mark_to_equipment_approve_only(client, signed_in, dept):

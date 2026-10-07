@@ -933,6 +933,31 @@ a.sv-card:hover{border-color:var(--line-2);background:var(--surface-2)}
   .sv-presets{margin-left:0;width:100%}
 }
 
+/* Slice 26, B1: incoming inspections on the equipment screens */
+/* Add device's "How it arrives" (web/_asset_fields.html): a radio card per choice, its own fields under it while it is chosen (CSS
+   :has, as the new model's; without :has they all show, and the server ignores the ones not chosen). The drawer's banner for a device
+   waiting for its inspection (blue; amber after a fail or while in use before it), the PM sticker's "After inspection", and the
+   PM tab's marker for an incoming inspection. Theme tokens only. */
+.dv-intake-list{display:grid;gap:8px}
+.dv-intake .radio input,.ub-form .radio input{padding:0;border:0}
+.dv-intake .radio label span{display:block;min-width:0}
+.dv-intake .dv-if{padding:2px 0 6px 28px}
+@supports selector(:has(*)){
+  .dv-intake .dv-if{display:none}
+  .dv-form:has(input[name="intake"][value="waiting"]:checked) .dv-if-waiting,
+  .dv-form:has(input[name="intake"][value="existing"]:checked) .dv-if-existing{display:grid}
+}
+.note.ib-note{background:var(--info-soft);border-color:transparent;color:var(--info)}
+.note.ib-note.warn{background:var(--warn-soft);color:var(--warn)}
+.ib-note p{margin:0}
+.ib-note p+p{margin-top:4px}
+.ib-note .link{color:inherit;font-weight:600;text-decoration:underline}
+.stk.insp{border-color:var(--info);color:var(--info);background:var(--info-soft)}
+.mini-tbl .pm-insp{display:block;font-size:11.5px}
+@media (max-width:760px){
+  .dv-intake .dv-if{padding-left:0}
+}
+
 /* Slice 11: printing app pages */
 /* What the browser prints of an app page (the Overview's Export button calls window.print(); any other screen prints from the
    browser's menu): the page's content on white, in the light theme whatever the screen shows, with chart and chip colours kept.

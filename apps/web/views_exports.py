@@ -27,7 +27,7 @@ from apps.contracts.models import Contract
 from apps.contracts.services import contract_status, filter_contracts
 from apps.credentials.models import Technician
 from apps.equipment.models import Asset, AssetStatus
-from apps.equipment.services import FleetBucket, filter_assets
+from apps.equipment.services import FleetBucket, filter_assets, status_label
 from apps.recalls.services import alert_label
 from apps.workorders import scoping
 from apps.workorders.models import LABOR_AMOUNT, OPEN_STATUSES, PART_AMOUNT, LaborLine, PartLine, WorkOrder
@@ -88,8 +88,9 @@ def equipment_csv(request):
         for a in assets.iterator(chunk_size=CHUNK):
             dm = a.device_model
             yield [a.tag, a.serial, dm.manufacturer, dm.model, dm.description, dm.category, dm.get_risk_class_display(), a.department.name, a.room,
-                   # The screen marks an ended contract "expired"; the file says so too, or the Support column reads as covered.
-                   a.get_status_display(), a.get_support_type_display(), a.contract.reference if a.contract_id else "",
+                   # The screen marks an ended contract "expired"; the file says so too, or the Support column reads as covered. The status
+                   # as the screen words it (slice 26: "Awaiting inspection" for a device out of service waiting for its incoming inspection).
+                   status_label(a), a.get_support_type_display(), a.contract.reference if a.contract_id else "",
                    a.contract.end_on if a.contract_id else None, (a.contract.end_on < today) if a.contract_id else None, a.installed_on,
                    a.acquisition_cost, a.warranty_end, a.last_pm_on, a.next_pm_on, FleetBucket(a.bucket).label, a.open_wos or 0]
 

@@ -44,6 +44,8 @@ urlpatterns = [
     path("equipment/<str:tag>/", views.asset_detail, name="asset"),
     path("equipment/<str:tag>/edit/", views_equipment.asset_edit, name="asset_edit"),
     path("equipment/<str:tag>/status/", views_equipment.asset_status, name="asset_status"),
+    # slice 26: put a device waiting for its incoming inspection in use before it (Equipment Approve, a reason from a list)
+    path("equipment/<str:tag>/use-before-inspection/", views_equipment.asset_use_before, name="asset_use_before"),
     path("work-orders/", views.workorders, name="workorders"),
     path("work-orders/new/", views.wo_new, name="wo_new"),
     path("work-orders/<str:number>/", views.wo_detail, name="wo"),

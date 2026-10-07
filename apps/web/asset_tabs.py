@@ -10,7 +10,12 @@ on file or say plainly that there is none; the AEM note names the committee's da
 The read models below (pm_upcoming, pm_history, cost_by_year, replacement_outlook) are plain ORM reads with no web concerns. They
 belong in apps/pm/schedule.py (the first two), apps/reports/cost.py, and apps/reports/fleet.py, and sit here only because this
 slice's files are split by owner. Each runs a fixed number of queries however long the device's history is.
+
+Slice 26, incoming inspections: the PM tab's history lists the device's incoming inspections with its PMs (the inspection is its first
+maintenance record, with its result), and a device waiting for its inspection has no upcoming PMs ("After its incoming inspection":
+the pass starts its PM schedule). incoming_banner is what the Overview says about a device still waiting, for one user.
 """
+import re
 from datetime import date
 from decimal import Decimal
 
@@ -18,19 +23,25 @@ from django.db.models import DecimalField, Sum
 from django.db.models.functions import Coalesce, ExtractYear
 from django.utils import timezone
 
+from apps.equipment import permissions as eq_perms
 from apps.equipment.models import AssetStatus, RiskClass
+from apps.equipment.services import USE_BEFORE_FROM
 from apps.pm.dates import add_months
 from apps.pm.models import AemDecision, AemStatus
 from apps.pm.schedule import DEFAULT_PM_HOURS, planned_technicians
 from apps.reports.fleet import REPLACEMENT_MARKUP, _repairs_in_window, replacement_score
-from apps.workorders.models import LABOR_AMOUNT, OPEN_STATUSES, PART_AMOUNT, LaborLine, PartLine, PmResult, WorkOrder, WoStatus, WoType
+from apps.workorders import inspections, scoping
+from apps.workorders import permissions as wo_perms
+from apps.workorders.models import LABOR_AMOUNT, OPEN_STATUSES, PART_AMOUNT, InspectionResult, LaborLine, PartLine, PmResult, WorkOrder, WoStatus, WoType
 
 from . import charts
 from .templatetags.web import money, money_k
 from .views_print import checklist_steps
 
 PROJECTED = 2  # PM dates shown after the next one, as the mock does
-HISTORY_LIMIT = 20  # PM work orders listed; the Work orders tab and screen have the rest
+HISTORY_LIMIT = 20  # PM work orders (and incoming inspections) listed; the Work orders tab and screen have the rest
+MAINTENANCE_TYPES = (WoType.PM, WoType.INSPECTION)  # what the PM tab's history lists (slice 26: the incoming inspection with the PMs)
+AFTER_INSPECTION = "After its incoming inspection"  # slice 26: a waiting device's next PM, where a date would be
 COST_YEARS = 5  # this year and the four before it, or from the install year when that is later
 SOON_YEARS = 1.5  # the mock's "within 1.5 years of expected end of life"
 REVIEW_SCORE = 50  # a device younger than that scoring this high (repairs, condition) is worth a look; the report ranks by the same score
@@ -70,12 +81,13 @@ def strategy_note(device_model, procedure=None, approved=None) -> str:
 
 
 def pm_history(asset) -> list[WorkOrder]:
-    """Every PM work order on this device, newest first by its completed date (its opened date until it completes), each with
-    `labor_hours` (None when no labor is logged). Two queries; the hours come from the labor lines' own tenant-scoped manager."""
-    wos = list(WorkOrder.objects.filter(asset=asset, type=WoType.PM).select_related("assigned_to")
+    """Every PM work order on this device, and (slice 26) every incoming inspection, newest first by its completed date (its opened date
+    until it completes), each with `labor_hours` (None when no labor is logged). Two queries; the hours come from the labor lines' own
+    tenant-scoped manager."""
+    wos = list(WorkOrder.objects.filter(asset=asset, type__in=MAINTENANCE_TYPES).select_related("assigned_to")
                .annotate(on=Coalesce("completed_on", "opened_on")).order_by("-on", "-created_at"))
-    hours = {row["work_order"]: row["h"] for row in
-             LaborLine.objects.filter(work_order__asset=asset, work_order__type=WoType.PM).order_by().values("work_order").annotate(h=Sum("hours"))}
+    hours = {row["work_order"]: row["h"] for row in LaborLine.objects.filter(work_order__asset=asset, work_order__type__in=MAINTENANCE_TYPES)
+             .order_by().values("work_order").annotate(h=Sum("hours"))}
     for w in wos:
         w.labor_hours = hours.get(w.pk)
     return wos
@@ -105,6 +117,8 @@ def pm_upcoming(asset, open_pm, today: date) -> dict:
     as the day panel and the route sheets), or the open PM work order's vendor or active technician."""
     if asset.status == AssetStatus.RETIRED:
         return {"rows": [], "unscheduled": "Retired devices are not scheduled."}
+    if asset.awaiting_inspection:  # slice 26: no next PM until its incoming inspection passes
+        return {"rows": [], "unscheduled": f"{AFTER_INSPECTION}: its PM schedule starts on the day the inspection passes."}
     if not asset.next_pm_on:
         return {"rows": [], "unscheduled": "No next PM date on file for this device."}
     interval = asset.pm_interval_months
@@ -128,27 +142,40 @@ def _done_by(wo) -> str:
     return wo.assigned_to.name if wo.assigned_to_id else ""
 
 
-RESULT_CSS = {PmResult.PASS: "", PmResult.PASS_MINOR_REPAIR: "warnc", PmResult.FAIL: "down"}
+RESULT_CSS = {PmResult.PASS: "", PmResult.PASS_MINOR_REPAIR: "warnc", PmResult.FAIL: "down", InspectionResult.PASSED: "", InspectionResult.FAILED: "down"}
+FAILED = (PmResult.FAIL, InspectionResult.FAILED)
+
+
+def _result(w) -> str:
+    """The result recorded on a PM (PmResult) or, slice 26, an incoming inspection (InspectionResult)."""
+    return w.inspection_result if w.type == WoType.INSPECTION else w.pm_result
 
 
 def history_rows(history: list[WorkOrder]) -> list[dict]:
     """The History table's rows. A PM completed with a recorded result (slice 15) shows it as the mock words it ("Pass", "Pass with
     minor repair", "Fail, repair work order opened", with a link to that repair); older ones, and a reopened PM, show the resolution
-    or the status as before. The repairs come in one query, and only when a listed PM failed."""
-    recorded = {w.pk for w in history if w.pm_result and w.status in (WoStatus.COMPLETED, WoStatus.CLOSED)}
-    failed = [w.pk for w in history if w.pk in recorded and w.pm_result == PmResult.FAIL]
-    repairs = {}
+    or the status as before. Slice 26: an incoming inspection (`inspection`) completed with a result reads "Passed", or "Failed"
+    (", re-inspection opened" with a link to it, when the fail opened one), under `repair` as a failed PM's repair. The follow-ups come
+    in one query, and only when a listed PM or inspection failed."""
+    recorded = {w.pk for w in history if _result(w) and w.status in (WoStatus.COMPLETED, WoStatus.CLOSED)}
+    failed = [w.pk for w in history if w.pk in recorded and _result(w) in FAILED]
+    follow_ups = {}
     if failed:
         for r in WorkOrder.objects.filter(follow_up_of_id__in=failed).order_by("opened_on", "number"):
-            repairs.setdefault(r.follow_up_of_id, r)  # the first opened, should a PM ever have two
+            follow_ups.setdefault(r.follow_up_of_id, r)  # the first opened, should a PM ever have two
     rows = []
     for w in history:
-        if w.pk in recorded:
-            rows.append({"wo": w, "who": _done_by(w), "result": w.get_pm_result_display(), "has_resolution": True, "css": RESULT_CSS.get(w.pm_result, ""),
-                         "repair": repairs.get(w.pk), "hours": w.labor_hours})
+        row = {"wo": w, "who": _done_by(w), "hours": w.labor_hours, "inspection": w.type == WoType.INSPECTION}
+        if w.pk in recorded and row["inspection"]:
+            follow_up = follow_ups.get(w.pk)
+            words = w.get_inspection_result_display() + (", re-inspection opened" if follow_up else "")
+            rows.append({**row, "result": words, "has_resolution": True, "css": RESULT_CSS.get(w.inspection_result, ""), "repair": follow_up})
+        elif w.pk in recorded:
+            rows.append({**row, "result": w.get_pm_result_display(), "has_resolution": True, "css": RESULT_CSS.get(w.pm_result, ""),
+                         "repair": follow_ups.get(w.pk)})
         else:
-            rows.append({"wo": w, "who": _done_by(w), "result": w.resolution.strip() or w.get_status_display(), "has_resolution": bool(w.resolution.strip()),
-                         "css": "", "repair": None, "hours": w.labor_hours})
+            rows.append({**row, "result": w.resolution.strip() or w.get_status_display(), "has_resolution": bool(w.resolution.strip()), "css": "",
+                         "repair": None})
     return rows
 
 
@@ -157,8 +184,9 @@ def pm_tab(asset, today: date | None = None) -> dict:
     dm = asset.device_model
     procedure = dm.pm_procedure
     history = pm_history(asset)
-    open_pm = min((w for w in history if w.status in OPEN_STATUSES), key=lambda w: (w.opened_on, w.number), default=None)
+    open_pm = min((w for w in history if w.type == WoType.PM and w.status in OPEN_STATUSES), key=lambda w: (w.opened_on, w.number), default=None)
     rows = history_rows(history[:HISTORY_LIMIT])
+    incoming = sum(1 for w in history if w.type == WoType.INSPECTION)
     # The committee's date only for a model on AEM (one query then; none for the OEM schedule)
     approved = AemDecision.objects.filter(device_model=dm, status=AemStatus.APPROVED).first() if dm.pm_interval_months != dm.oem_pm_interval_months else None
     return {"pm": {
@@ -167,7 +195,51 @@ def pm_tab(asset, today: date | None = None) -> dict:
         "default_hours": DEFAULT_PM_HOURS,
         "upcoming": pm_upcoming(asset, open_pm, today),
         "history": rows, "history_total": len(history), "history_more": len(history) > HISTORY_LIMIT,
+        "history_pms": len(history) - incoming, "history_inspections": incoming,
     }}
+
+
+# --- Overview: the incoming inspection banner (slice 26) -------------------------------------------------------------------------
+
+RETIRED_WAITING = ("Retired while still waiting for its incoming inspection (a new device returned to the vendor). Reinstated, it comes "
+                   "back out of service with a new incoming inspection.")
+
+
+def _parts(line: str, numbers: list[str]) -> list[dict]:
+    """`line` split around the work order numbers in it, so the template links them: [{"text", "number"}], number "" for plain text."""
+    if not numbers:
+        return [{"text": line, "number": ""}]
+    parts, at = [], 0
+    for m in re.finditer("|".join(re.escape(n) for n in numbers), line):
+        if m.start() > at:
+            parts.append({"text": line[at:m.start()], "number": ""})
+        parts.append({"text": m.group(0), "number": m.group(0)})
+        at = m.end()
+    if at < len(line):
+        parts.append({"text": line[at:], "number": ""})
+    return parts
+
+
+def incoming_banner(asset, user) -> dict | None:
+    """What the device drawer's Overview says about a device waiting for its incoming inspection, for `user`; None (and no query) for
+    any other device. The sentences are apps.workorders.inspections.banner's ("Waiting for its incoming inspection: WO-..., due ...";
+    after a fail, "Failed its incoming inspection on ... (WO-...); re-inspection WO-... open"; in use before it, "In use before its
+    incoming inspection: <reason>"), each split into parts so the template links the numbers for a user with Work orders View. A number
+    outside a scoped user's share is never in them. A retired device (returned to the vendor) says so instead.
+    - tone: "warn" after a fail or while in use before the inspection, else "" (waiting, the usual course).
+    - offer_open: none is open: the drawer links New work order with the device and type filled in, for Work orders Edit (not scoped;
+      services.create_work_order keeps it to one open inspection).
+    - use_before: "Put in use before inspection" (Equipment Approve, not scoped), for a device out of service or missing."""
+    if not asset.awaiting_inspection:
+        return None
+    if asset.status == AssetStatus.RETIRED:
+        return {"lines": [_parts(RETIRED_WAITING, [])], "tone": "", "offer_open": False, "use_before": False}
+    b = inspections.banner(asset, user)
+    numbers = sorted({n for n in (b.open_number, b.failed_number) if n}, key=len, reverse=True)
+    scoped = scoping.is_scoped(user)
+    return {"lines": [_parts(line, numbers) for line in b.lines], "tone": "warn" if b.failed_on or b.in_use else "",
+            "offer_open": b.offer_open and not scoped and user.has_level(wo_perms.MODULE, wo_perms.CREATE_LEVEL),
+            "use_before": asset.status in USE_BEFORE_FROM and not scoped and eq_perms.can_use_before_inspection(user)}
 
 
 # --- Costs tab ------------------------------------------------------------------------------------------------------------

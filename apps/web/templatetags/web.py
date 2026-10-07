@@ -9,6 +9,7 @@ from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 
 from apps.equipment.models import AssetStatus, RiskClass
+from apps.equipment.services import AWAITING_LABEL, status_label
 from apps.workorders.models import Priority, WoStatus, WoType
 
 register = template.Library()
@@ -68,9 +69,18 @@ def risk_chip(risk):
     return _chip(RISK_CSS.get(risk, "neutral"), RiskClass(risk).label)
 
 
+AWAITING_CSS = "info"  # slice 26: a device out of service waiting for its incoming inspection is on hold, not broken
+
+
 @register.simple_tag
-def asset_status_chip(status):
-    return _chip(ASSET_STATUS_CSS.get(status, "neutral"), AssetStatus(status).label)
+def asset_status_chip(device_or_status):
+    """A device's status chip. Given the device (slice 26), it reads as every screen, CSV, and the API word it
+    (equipment.services.status_label: "Awaiting inspection" for one out of service waiting for its incoming inspection); given a
+    status alone, that status."""
+    if isinstance(device_or_status, str):
+        return _chip(ASSET_STATUS_CSS.get(device_or_status, "neutral"), AssetStatus(device_or_status).label)
+    label = status_label(device_or_status)
+    return _chip(AWAITING_CSS if label == AWAITING_LABEL else ASSET_STATUS_CSS.get(device_or_status.status, "neutral"), label)
 
 
 @register.simple_tag
@@ -92,6 +102,8 @@ def wo_type_short(t):
 def pm_sticker(asset):
     if asset.status == AssetStatus.RETIRED:
         return format_html('<span class="stk na">{}</span>', "Retired")
+    if asset.awaiting_inspection:  # slice 26: its PM schedule starts when its incoming inspection passes
+        return format_html('<span class="stk insp" title="{}">{}</span>', "Its PMs start when its incoming inspection passes", "After inspection")
     if not asset.next_pm_on:
         return format_html('<span class="stk na">{}</span>', "Not scheduled")
     d = (asset.next_pm_on - timezone.localdate()).days
@@ -102,6 +114,16 @@ def pm_sticker(asset):
     if d <= 30:
         return format_html('<span class="stk due">Due in {} d</span>', d)
     return format_html('<span class="stk ok">Due {}</span>', asset.next_pm_on.strftime("%b %Y"))
+
+
+@register.simple_tag
+def incoming_banner(asset, user):
+    """The device drawer's incoming-inspection banner for `user` (slice 26; apps.web.asset_tabs.incoming_banner), or None for a device
+    not waiting for its incoming inspection: `{% incoming_banner asset request.user as inc %}`. A tag, so every view that draws the
+    drawer gets it."""
+    from ..asset_tabs import incoming_banner as banner  # asset_tabs imports this module
+
+    return banner(asset, user)
 
 
 @register.simple_tag

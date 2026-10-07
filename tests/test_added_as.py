@@ -1,8 +1,8 @@
 """
 Slice 25, part D: how a device was added (Asset.added_as, which the survey binder's incoming-inspection section reads), the doors. Add
-device's "Already in use here" box (existing when ticked, else new), the API's device create ("new" by default, "existing"; "imported"
-refused in words; never changed afterwards), the devices import (imported; a device already here keeps how it was added), and the
-History tab's words.
+device's choice of how the device arrives (slice 26, replacing slice 25's "Already in use here" box: new, waiting for its incoming
+inspection, or already in use here), the API's device create ("new" by default, "existing"; "imported" refused in words; never changed
+afterwards), the devices import (imported; a device already here keeps how it was added), and the History tab's words.
 """
 import json
 import re
@@ -18,6 +18,7 @@ from apps.equipment.models import AddedAs, Asset, AssetStatus, RiskClass
 from apps.imports import services as imports
 from apps.imports.models import ImportRun
 from apps.tenants.context import tenant_context
+from apps.workorders.models import WoType
 
 HX = {"HTTP_HX_REQUEST": "true"}
 NEW_URL = "/equipment/new/"
@@ -35,41 +36,67 @@ def signed_in(client, make_user):
 
 
 def new_post(dm, dept, **over) -> dict:
+    """Add device's post: a new device, waiting for its incoming inspection (slice 26's default choice), unless `intake` says otherwise."""
     data = {"tag": "CE-20001", "serial": "SN-77", "device_model": str(dm.pk), "department": str(dept.pk), "room": "412", "installed_on": "",
-            "acquisition_cost": "", "warranty_end": "", "condition": "4", "last_pm_on": "", "next_pm_on": "", "status": AssetStatus.IN_SERVICE,
-            "notes": "", "risk_class": RiskClass.MEDIUM, "oem_pm_interval_months": "12", "expected_life_years": "8", "list_cost": "",
-            "manufacturer": "", "model": "", "description": "", "category": "", "new_department": ""}
+            "acquisition_cost": "", "warranty_end": "", "condition": "4", "intake": "waiting", "inspection_due": "", "last_pm_on": "",
+            "next_pm_on": "", "status": AssetStatus.IN_SERVICE, "notes": "", "risk_class": RiskClass.MEDIUM, "oem_pm_interval_months": "12",
+            "expected_life_years": "8", "list_cost": "", "manufacturer": "", "model": "", "description": "", "category": "", "new_department": ""}
     data.update(over)
     return data
+
+
+def existing(**over) -> dict:
+    """Add device's "Already in use here (existing equipment)": its install date is required."""
+    return {"intake": "existing", "installed_on": "2020-03-01", **over}
+
+
+def intake_radio(body: str, value: str) -> str:
+    return re.search(rf'<input type="radio" name="intake" value="{value}"[^>]*>', body).group(0)
 
 
 # --- Add device ----------------------------------------------------------------------------------------------------------------
 
 
-def test_add_device_offers_the_already_in_use_box_and_edit_details_does_not(client, signed_in, vent):
+def test_add_device_asks_how_the_device_arrives_and_edit_details_does_not(client, signed_in, vent):
+    """Slice 26: one choice replaces slice 25's box. New and waiting for its incoming inspection is the default; existing equipment is
+    said so, and the survey binder asks about one installed recently."""
     signed_in("technician")
     body = client.get(NEW_URL, **HX).content.decode()
-    box = re.search(r'<input type="checkbox" name="already_in_use"[^>]*>', body)
-    assert box is not None and "checked" not in box.group(0)
-    assert "Already in use here (existing equipment being entered)" in body
-    assert "the survey binder looks for its incoming inspection before first use" in body
-    assert 'name="already_in_use"' not in client.get(f"/equipment/{vent.tag}/edit/", **HX).content.decode()
+    assert "checked" in intake_radio(body, "waiting") and "checked" not in intake_radio(body, "existing")
+    assert "New: waiting for its incoming inspection" in body and "Already in use here (existing equipment)" in body
+    assert "One installed in the last 30 days is probably new, and the survey binder asks about it." in body
+    assert 'name="already_in_use"' not in body
+    assert 'name="intake"' not in client.get(f"/equipment/{vent.tag}/edit/", **HX).content.decode()
 
 
-def test_a_device_added_on_screen_is_new_unless_the_box_is_ticked(client, signed_in, vent_model, dept):
+def test_a_device_added_on_screen_is_new_unless_already_in_use_here_is_chosen(client, signed_in, vent_model, dept):
     signed_in("technician")
     r = client.post(NEW_URL, new_post(vent_model, dept), **HX)
-    assert r.status_code == 200 and json.loads(r["HX-Trigger"])["toast"]["value"] == "CE-20001 added"
-    r = client.post(NEW_URL, new_post(vent_model, dept, tag="CE-20002", already_in_use="on"), **HX)
-    assert r.status_code == 200
+    assert r.status_code == 200 and json.loads(r["HX-Trigger"])["toast"]["value"].startswith("CE-20001 added; WO-")
+    r = client.post(NEW_URL, new_post(vent_model, dept, tag="CE-20002", **existing()), **HX)
+    assert r.status_code == 200 and json.loads(r["HX-Trigger"])["toast"]["value"] == "CE-20002 added"
     assert dict(Asset.objects.values_list("tag", "added_as")) == {"CE-20001": AddedAs.NEW, "CE-20002": AddedAs.EXISTING}
+    assert dict(Asset.objects.values_list("tag", "awaiting_inspection")) == {"CE-20001": True, "CE-20002": False}
+    assert list(Asset.objects.get(tag="CE-20001").work_orders.values_list("type", flat=True)) == [WoType.INSPECTION]
+    assert not Asset.objects.get(tag="CE-20002").work_orders.exists()
 
 
-def test_a_refused_device_keeps_the_box_as_it_was(client, signed_in, vent_model, dept, vent):
+def test_existing_equipment_needs_its_install_date(client, signed_in, vent_model, dept):
     signed_in("technician")
-    r = client.post(NEW_URL, new_post(vent_model, dept, tag=vent.tag, already_in_use="on"), **HX)  # the tag is taken
-    box = re.search(r'<input type="checkbox" name="already_in_use"[^>]*>', r.content.decode()).group(0)
-    assert "checked" in box and Asset.objects.count() == 1
+    r = client.post(NEW_URL, new_post(vent_model, dept, **existing(installed_on="")), **HX)
+    body = r.content.decode()
+    assert "Enter the install date of equipment already in use here." in body.split('id="dv-installed_on_error">', 1)[1].split("</span>", 1)[0]
+    assert not Asset.objects.exists()
+    # a new device's install date stays optional
+    assert client.post(NEW_URL, new_post(vent_model, dept), **HX)["HX-Retarget"] == "#drawer"
+    assert Asset.objects.get(tag="CE-20001").installed_on is None
+
+
+def test_a_refused_device_keeps_the_choice_as_it_was(client, signed_in, vent_model, dept, vent):
+    signed_in("technician")
+    r = client.post(NEW_URL, new_post(vent_model, dept, tag=vent.tag, **existing()), **HX)  # the tag is taken
+    body = r.content.decode()
+    assert "checked" in intake_radio(body, "existing") and "checked" not in intake_radio(body, "waiting") and Asset.objects.count() == 1
 
 
 def test_the_history_tab_reads_how_a_device_was_added(ctx, vent_model, dept, make_user):
@@ -82,9 +109,12 @@ def test_the_history_tab_reads_how_a_device_was_added(ctx, vent_model, dept, mak
 
 def test_the_device_drawers_history_tab_shows_it(client, signed_in, vent_model, dept):
     signed_in("director")
-    client.post(NEW_URL, new_post(vent_model, dept, already_in_use="on"), **HX)
+    client.post(NEW_URL, new_post(vent_model, dept, **existing()), **HX)
     body = client.get("/equipment/CE-20001/?tab=history", HTTP_HX_REQUEST="true", HTTP_HX_TARGET="drawer").content.decode()
     assert "Added as" in body and "Already in use here" in body
+    client.post(NEW_URL, new_post(vent_model, dept, tag="CE-20002"), **HX)
+    body = client.get("/equipment/CE-20002/?tab=history", HTTP_HX_REQUEST="true", HTTP_HX_TARGET="drawer").content.decode()
+    assert "Added as" in body and "New to the facility" in body
 
 
 # --- the API -------------------------------------------------------------------------------------------------------------------
@@ -180,7 +210,7 @@ def test_adding_devices_under_the_policies(client, signed_in, vent_model, dept, 
     """As the runtime role: Add device and the API's create record how each device was added in the facility the request set."""
     signed_in("technician")
     as_app_role()
-    assert client.post(NEW_URL, new_post(vent_model, dept, already_in_use="on"), **HX).status_code == 200
+    assert client.post(NEW_URL, new_post(vent_model, dept, **existing()), **HX).status_code == 200
     assert post(client, ASSETS, body_for(vent_model, dept)).json()["added_as"] == "new"
     with tenant_context(tenant):  # the requests restored the connection's facility setting when they finished
         assert dict(Asset.objects.values_list("tag", "added_as")) == {"CE-20001": "existing", "CE-40001": "new"}

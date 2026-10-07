@@ -1,5 +1,5 @@
 {% load web %}
-{# Device drawer, PM schedule tab (slice 12; the mock's drawerAsset). Context: pm, from apps/web/asset_tabs.pm_tab; the drawer's can_view_wo links work orders. #}
+{# Device drawer, PM schedule tab (slice 12; the mock's drawerAsset). Context: pm, from apps/web/asset_tabs.pm_tab; the drawer's can_view_wo links work orders. Slice 26: a device waiting for its incoming inspection has no upcoming PMs, and the history lists its incoming inspections. #}
 {% with p=pm.procedure up=pm.upcoming %}
   <div class="sec"><h3>Maintenance strategy</h3><div class="note">{{ pm.strategy }}{% if asset.device_model.oem_schedule_required %} CMS requires the manufacturer's maintenance schedule for imaging, radiologic, and medical laser equipment, so this model never goes on AEM.{% endif %}</div></div>
 
@@ -38,13 +38,14 @@
   <div class="sec"><h3>History</h3>
     <div class="note">Last PM {{ asset.last_pm_on|date:"M j, Y"|default:"not on record" }}. PM work order details need access to work orders.</div>
   {% else %}
-  <div class="sec"><h3>History <span>{{ pm.history_total }} PM work order{{ pm.history_total|pluralize }}</span></h3>
+  {# Slice 26: the device's incoming inspections are listed with its PMs (the first maintenance record), each marked as such #}
+  <div class="sec"><h3>History <span>{{ pm.history_pms }} PM work order{{ pm.history_pms|pluralize }}{% if pm.history_inspections %} · {{ pm.history_inspections }} incoming inspection{{ pm.history_inspections|pluralize }}{% endif %}</span></h3>
   {% if pm.history %}
     <div class="tbl-wrap"><table class="mini-tbl">
       <thead><tr><th>Completed</th><th>Work order</th><th>Technician</th><th>Result</th><th class="num">Hours</th></tr></thead>
       <tbody>{% for h in pm.history %}
         <tr><td>{% if h.wo.completed_on %}{{ h.wo.completed_on|date:"M j, Y" }}{% else %}{% wo_status_chip h.wo.status %}{% endif %}</td>
-          <td>{% if can_view_wo %}<a class="link" href="{% url 'web:wo' h.wo.number %}" hx-get="{% url 'web:wo' h.wo.number %}" hx-target="#drawer">{{ h.wo.number }}</a>{% else %}{{ h.wo.number }}{% endif %}</td>
+          <td>{% if can_view_wo %}<a class="link" href="{% url 'web:wo' h.wo.number %}" hx-get="{% url 'web:wo' h.wo.number %}" hx-target="#drawer">{{ h.wo.number }}</a>{% else %}{{ h.wo.number }}{% endif %}{% if h.inspection %}<small class="muted pm-insp">Incoming inspection</small>{% endif %}</td>
           <td>{% if h.who %}{{ h.who }}{% if h.wo.vendor_service %} <span class="muted">· vendor</span>{% endif %}{% else %}<span class="muted">Unassigned</span>{% endif %}</td>
           <td{% if not h.has_resolution %} class="muted"{% elif h.css %} class="{{ h.css }}"{% endif %} style="white-space:normal;min-width:140px">{{ h.result|truncatechars:140 }}{% if h.repair %} · <a class="link" href="{% url 'web:wo' h.repair.number %}" hx-get="{% url 'web:wo' h.repair.number %}" hx-target="#drawer" style="white-space:nowrap">{{ h.repair.number }}</a>{% endif %}</td>
           <td class="num">{% if h.hours is not None %}{{ h.hours|floatformat:2 }}{% else %}<span class="muted">—</span>{% endif %}</td></tr>
