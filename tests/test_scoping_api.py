@@ -354,6 +354,9 @@ def closed_endpoints(world, pump_recall, techs):
         ("post", f"{API}device-models/", {"manufacturer": "A", "model": "B", "description": "C", "category": "D", "risk_class": "low"}),
         ("patch", f"{API}device-models/{world['monitor'].id}/", {"description": "x"}),
         ("post", ASSETS, {"tag": "CE-30001", "device_model": str(world["monitor"].id), "department": str(world["icu"].id)}),
+        ("post", ASSETS, {"tag": "CE-30002", "device_model": str(world["monitor"].id), "department": str(world["icu"].id),
+                          "incoming_inspection": "waiting"}),  # slice 26
+        ("post", asset_url(a, "use-before-inspection/"), {"reason": "emergency"}),  # slice 26: never a scoped user's, whatever the device
         ("delete", asset_url(a), None), ("get", asset_url(a, "qualified_technicians/"), None),
         ("delete", wo_url(w), None),
         ("get", f"{API}contracts/", None), ("get", f"{API}contracts/{c.id}/", None), ("patch", f"{API}contracts/{c.id}/", {"notes": "x"}),
