@@ -1,0 +1,97 @@
+{% extends "web/print_base.html" %}
+{% load web %}
+{% comment %}The survey binder on paper (slice 25, views_survey.survey_print): a cover (the facility, the period, when and by whom it was
+   made, the sections in it and the ones left out with why, the counts, and what the binder does not cover), then each section on a
+   page of its own with every gap and its tables (up to print_rows rows each; the rest, and the tables too long for paper, are in the
+   CSVs). Links name the facility (people.with_facility): a saved PDF opens the record in the facility it is about.{% endcomment %}
+{% block title %}Survey binder{% endblock %}
+{% block page_style %}<style>
+@page{size:letter;margin:.5in}
+.svp-cover h1{font-size:24px;margin-bottom:4px}
+.svp-cover .svp-sub{color:var(--ink-2);margin-bottom:14px}
+.svp-cover dl.kv{margin:10px 0 4px}
+.svp-head{padding-bottom:6px;margin-bottom:10px;border-bottom:1.5px solid var(--ink)}
+.svp-head h1{margin:0 0 2px}
+.svp-head p{margin:0}
+.svp-topic{color:var(--ink-2)}
+.svp-counts{font-size:14px;font-weight:600;margin:4px 0 8px}
+.svp-figs{margin:8px 0}
+.svp-figs dd{font-size:15px;font-weight:600}
+.svp-figs dd.hint{font-size:11px;font-weight:400;color:var(--muted)}
+.svp-notes{margin:6px 0 10px;padding-left:18px;color:var(--ink-2)}
+.svp-notes li{margin:2px 0}
+table.svp td{overflow-wrap:anywhere}
+table.svp td.k{width:.9in;white-space:nowrap}
+table.svp td.r{width:1.3in}
+table.svp td.out{color:var(--muted)}
+table.svp td.nw{white-space:nowrap}
+.svp-more{color:var(--muted);margin:4px 0 10px}
+.svp-empty{color:var(--muted);margin:2px 0 10px}
+.chip.crit{color:var(--bad);border-color:var(--bad)}
+.chip.neutral{color:var(--ink-2)}
+.svp-kinds{margin:4px 0;padding-left:18px}
+.svp-kinds li{margin:2px 0}
+.svp-not{padding-left:18px}
+.svp-not li{margin:2px 0}
+</style>{% endblock %}
+{% block bar_title %}Survey binder · {{ period.label }}{% endblock %}
+{% block sheets %}
+<main>
+<section class="sheet svp-cover">
+  <h1>Survey binder</h1>
+  <p class="svp-sub">Clinical Engineering: medical equipment evidence read from the records kept in Cadence CE</p>
+  <dl class="kv">
+    <div><dt>Facility</dt><dd>{{ request.tenant.name }}</dd></div>
+    <div><dt>Period</dt><dd>{{ period.label }}</dd></div>
+    <div><dt>Generated</dt><dd>{% local_now as made_at %}{{ made_at|date:"M j, Y g:i A T" }}</dd></div>
+    <div><dt>By</dt><dd>{{ request.user }}</dd></div>
+  </dl>
+  <h2>Readiness</h2>
+  <p class="svp-counts">{{ counts_words }}</p>
+  {% if incomplete %}<p class="note">{{ incomplete }}</p>{% endif %}
+  <table class="svp">
+    <thead><tr><th>Section</th><th>Covers</th><th>Gaps, findings, checks</th></tr></thead>
+    <tbody>
+      {% for s in sections %}<tr><td>{{ s.title }}</td><td>{{ s.covers }}</td><td>{{ s.counts }}</td></tr>{% endfor %}
+      {% for lo in binder.left_out %}<tr><td>{{ lo.title }}</td><td class="out" colspan="2">Left out: {{ lo.reason }}</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  <h2>What the kinds mean</h2>
+  <ul class="svp-kinds">{% for label, css, help in kind_help %}<li><span class="chip {{ css }}">{{ label }}</span> {{ help }}</li>{% endfor %}</ul>
+  <h2>Not covered by this binder</h2>
+  <ul class="svp-not">{% for item in not_covered %}<li>{{ item }}</li>{% endfor %}</ul>
+</section>
+
+{% for s in sections %}
+<section class="sheet svp-sec" id="sv-{{ s.key }}">
+  <header class="svp-head">
+    <h1>{{ s.title }}</h1>
+    {% if s.topic %}<p class="svp-topic">{{ s.topic }}</p>{% endif %}
+    <p class="muted">{{ request.tenant.name }} · {{ s.covers }}</p>
+  </header>
+  {% if s.figures %}<dl class="kv svp-figs">{% for f in s.figures %}<div><dt>{{ f.label }}</dt><dd>{{ f.value }}</dd>{% if f.hint %}<dd class="hint">{{ f.hint }}</dd>{% endif %}</div>{% endfor %}</dl>{% endif %}
+  {% if s.notes %}<ul class="svp-notes">{% for n in s.notes %}<li>{{ n }}</li>{% endfor %}</ul>{% endif %}
+
+  <h2>What is missing <span class="muted">· {{ s.counts }}</span></h2>
+  {% if s.gaps %}
+  <table class="svp">
+    <tbody>{% for g in s.gaps %}<tr><td class="k"><span class="chip {{ g.css }}">{{ g.label }}</span></td><td>{{ g.text }}</td><td class="r">{% if g.url %}<a href="{{ g.url }}">{{ g.record|default:"Open" }}</a>{% else %}{{ g.record }}{% endif %}</td></tr>{% endfor %}</tbody>
+  </table>
+  {% else %}<p class="svp-empty">Nothing missing.</p>{% endif %}
+
+  {% for t in s.tables %}
+  <h2>{{ t.title }}{% if t.count is not None %} <span class="muted">· {{ t.count }} row{{ t.count|pluralize }}</span>{% endif %}</h2>
+  {% if not t.printed %}
+  <p class="svp-more">{{ t.count }} row{{ t.count|pluralize }}, listed in the CSV rather than printed. See the CSV: <a href="{{ t.csv }}">{{ t.title }}</a>.</p>
+  {% elif t.rows %}
+  <table class="svp">
+    <thead><tr>{% for c in t.columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+    <tbody>{% for row in t.rows %}<tr>{% for c in row %}<td{% if c.num %} class="num"{% elif c.nowrap %} class="nw"{% endif %}>{% if c.url %}<a href="{{ c.url }}">{{ c.text }}</a>{% else %}{{ c.text }}{% endif %}</td>{% endfor %}</tr>{% endfor %}</tbody>
+  </table>
+  {% if t.more %}<p class="svp-more">{{ t.more }} more row{{ t.more|pluralize }} in the CSV: <a href="{{ t.csv }}">{{ t.title }}</a>.</p>{% endif %}
+  {% else %}<p class="svp-empty">{{ t.empty }}</p>{% endif %}
+  {% endfor %}
+</section>
+{% endfor %}
+</main>
+{% endblock %}
