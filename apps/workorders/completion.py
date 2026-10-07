@@ -42,11 +42,36 @@ The rules (complete_work_order checks them all and reports every problem at once
 - One transaction: a refusal anywhere (the start, the hours, the repair, the tag-out, the completion, the late reason) leaves nothing
   behind.
 - The status history says the result: "PM passed", "PM passed with minor repair", "PM failed; WO-26-0057 opened for the repair".
+
+Slice 26, incoming inspections (apps.workorders.inspections; the device's side is equipment.services):
+- An inspection is done to a checklist like a PM (procedure_for): its model's PM procedure when that has steps, else the incoming
+  checklist (inspections.INCOMING: received complete, electrical safety with the leakage reading, functional check, recalls and
+  software, tagged). The checklist is optional on an inspection: every step recorded (pass, fail, or N/A, readings as for a PM, the
+  signature checked), or none. A still-open inspection is completed in one step, as a PM is (starts_on_completion).
+- inspection_result (InspectionResult) is required when the device is waiting for its incoming inspection (Asset.awaiting_inspection),
+  optional on any other inspection (where it moves nothing), and refused on any other type, keyed inspection_result. Only a PM
+  records a PM result. Passed with a failed step is refused (as Pass is on a PM). A pass's resolution defaults to "Incoming inspection
+  passed per <procedure code, or the incoming checklist>, all checks passed" when every step was recorded, and is required otherwise
+  (what was checked); a fail needs the resolution (what failed); an inspection with no result needs it as any work order does.
+- Passed on a waiting device: the device passes (equipment.services.pass_incoming_inspection, through services._on_completed): it
+  stops waiting, its PM clock starts, it goes in service unless a tagged-out repair holds it, and its other open incoming inspections
+  are cancelled.
+- Failed on a waiting device: never a repair (a repair would count a never-used device against its model in the AEM evidence and
+  MTBF). A re-inspection: the device's open incoming inspection when it has one (a reopened inspection failing again: never a second
+  one open), else a new one (follow_up_of the failed inspection, due REINSPECTION_DUE_DAYS later, assigned through services.assign
+  to the same vendor for vendor service, else the same technician while active: reinspection_assignee; else unassigned). tag_out
+  (default on) takes a device in use before its inspection (use_before_inspection) out of service.
+- Reopened: an inspection that passed, of a device no longer waiting (its pass cleared the flag), stays passed when completed again
+  (blank keeps Passed; Failed is refused: tag the device out and open a repair). A failed one completed Failed again records on the
+  re-inspection still open. The status history says "Incoming inspection passed", "Incoming inspection failed; WO-26-0431 opened to
+  re-inspect" (result_note).
+- Locks: the device's open inspections first, in number order (inspections.lock_open), then the work order, then the device's row
+  in the pass: two completions (or use_before_inspection) on one device at once take turns.
 """
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -57,11 +82,12 @@ from apps.equipment.models import AssetStatus, RiskClass
 from apps.pm.procedures import step_parts
 from apps.tenants.context import get_current_tenant
 
-from . import costs, services
+from . import costs, inspections, services
 from . import permissions as wo_perms
 from .models import (
     ALLOWED_TRANSITIONS,
     OPEN_STATUSES,
+    InspectionResult,
     LaborLine,
     LateReason,
     PmResult,
@@ -77,8 +103,10 @@ READING_MAX = 60
 PASS, FAIL, NA = "pass", "fail", "na"
 STEP_RESULTS = {PASS: "Pass", FAIL: "Fail", NA: "N/A"}
 DONE_STATUSES = (WoStatus.COMPLETED, WoStatus.CLOSED)
-# The status history's note (and the toast's wording) for each result
-RESULT_NOTES = {PmResult.PASS: "PM passed", PmResult.PASS_MINOR_REPAIR: "PM passed with minor repair", PmResult.FAIL: "PM failed"}
+# The status history's note (and the toast's wording) for each result: a PM's (PmResult) and, slice 26, an incoming inspection's
+# (InspectionResult; the two sets of values never overlap)
+RESULT_NOTES = {PmResult.PASS: "PM passed", PmResult.PASS_MINOR_REPAIR: "PM passed with minor repair", PmResult.FAIL: "PM failed",
+                InspectionResult.PASSED: "Incoming inspection passed", InspectionResult.FAILED: "Incoming inspection failed"}
 # A failure recorded on a repair already open: the PM's completion note ends with the repair's number. The repair's follow_up_of names
 # only the first PM it follows, so the survey binder (apps.reports.survey.maintenance) reads a later PM's repair from this note.
 RECORDED_ON = "; recorded on open repair "
@@ -96,13 +124,24 @@ class Completion:
     device_changed: bool = False  # its status or its last or next PM moved (the Equipment list shows them)
     started: bool = False  # an open PM, started as it was completed (slice 24)
     labor: LaborLine | None = None  # the hours logged with it (slice 24)
+    reinspection: WorkOrder | None = None  # slice 26: the re-inspection a failed incoming inspection opened, or the open one it reused
+    reinspection_opened: bool = False  # ...opened by this completion (else it was already open)
+    passed: bool = False  # slice 26: the device stopped waiting for its incoming inspection with this completion (its pass)
 
 
 # --- reading -------------------------------------------------------------------------------------------------------------------
 
 def procedure_for(wo: WorkOrder):
-    """The PM procedure a PM work order is done to: its device's model's, as it is now. None for other types."""
-    return wo.asset.device_model.pm_procedure if wo.type == WoType.PM else None
+    """The procedure a PM work order is done to: its device's model's PM procedure, as it is now (or None). Slice 26: an incoming
+    inspection is done to the same procedure when it has steps, else to the incoming checklist (inspections.INCOMING, a stand-in in
+    the procedure's shape with a blank code), so checklist_of(procedure_for(wo)) is an inspection's checklist as it is a PM's. None
+    for other types."""
+    if wo.type == WoType.PM:
+        return wo.asset.device_model.pm_procedure
+    if wo.type == WoType.INSPECTION:
+        procedure = wo.asset.device_model.pm_procedure
+        return procedure if checklist_of(procedure) else inspections.INCOMING
+    return None
 
 
 def checklist_of(procedure) -> list[tuple[str, str | bool | None]]:
@@ -126,8 +165,9 @@ def checklist_signature(steps) -> str:
 
 def starts_on_completion(wo: WorkOrder, by=None) -> bool:
     """Whether completing `wo` starts it first (slice 24): a PM still open, done in one visit, by someone who may both start and
-    complete it (no user: services and commands). A repair is started on its own: its start date matters for downtime and turnaround."""
-    if wo.type != WoType.PM or wo.status != WoStatus.OPEN:
+    complete it (no user: services and commands); slice 26, an incoming inspection likewise. A repair is started on its own: its start
+    date matters for downtime and turnaround."""
+    if wo.type not in (WoType.PM, WoType.INSPECTION) or wo.status != WoStatus.OPEN:
         return False
     return by is None or (wo_perms.can_transition(by, WoStatus.OPEN, WoStatus.IN_PROGRESS)
                           and wo_perms.can_transition(by, WoStatus.IN_PROGRESS, WoStatus.COMPLETED))
@@ -204,9 +244,20 @@ def _resolution(value, errors: dict) -> str:
     return text
 
 
-def _steps(steps, results, errors: dict) -> list[dict]:
-    """The checklist as recorded: each step with its result and reading. Errors under step_<n> and reading_<n> (from 1)."""
+def _answered(raw) -> bool:
+    """Whether a step's posted result says anything: a result chosen, or a reading typed (a reading of 0 is a reading)."""
+    if isinstance(raw, dict):
+        reading = raw.get("reading")
+        return bool(str(raw.get("result") or "").strip()) or bool(("" if reading is None else str(reading)).strip())
+    return isinstance(raw, str) and bool(raw.strip())
+
+
+def _steps(steps, results, errors: dict, optional: bool = False) -> list[dict]:
+    """The checklist as recorded: each step with its result and reading. Errors under step_<n> and reading_<n> (from 1). `optional`
+    (an incoming inspection, slice 26): no step answered records no checklist ([]); one step answered asks for them all."""
     results = list(results or [])
+    if optional and not any(_answered(r) for r in results):
+        return []
     if not steps:
         if any(results):
             errors["checklist"] = "This PM has no checklist on file. Say in the resolution what was checked."
@@ -259,11 +310,40 @@ def _failed_lines(snapshot: list[dict]) -> list[str]:
     return lines
 
 
-def _check_result(wo, pm_result: str, snapshot: list[dict], has_checklist: bool, resolution: str, errors: dict) -> None:
+def _check_inspection(result: str, snapshot: list[dict], resolution: str, errors: dict, *, required: bool) -> None:
+    """An incoming inspection's result against its steps and resolution (slice 26). `required`: the device waits for it."""
+    if result and result not in InspectionResult.values:
+        errors["inspection_result"] = "Choose passed or failed."
+        return
+    if not result and required:
+        errors["inspection_result"] = "Choose the inspection's result: passed or failed."
+        return
+    if any(k.startswith(("step_", "reading_")) or k == "checklist" for k in errors):
+        return  # the steps come first; their errors say what to fix
+    failed = _failed(snapshot)
+    if result == InspectionResult.PASSED and failed:
+        errors["inspection_result"] = (f"{_numbers(failed).capitalize()} failed. A device that fails a check fails its incoming inspection: "
+                                       "choose Failed.")
+    elif "resolution" in errors or resolution:
+        return
+    elif result == InspectionResult.PASSED and not snapshot:
+        errors["resolution"] = "Record the checklist, or say what was checked."
+    elif result == InspectionResult.FAILED:
+        errors["resolution"] = "Say what failed."
+    elif not result:
+        errors["resolution"] = "Say what was found and done."
+
+
+def _check_result(wo, pm_result: str, snapshot: list[dict], has_checklist: bool, resolution: str, errors: dict, *,
+                  inspection_result: str = "", result_required: bool = False) -> None:
+    if inspection_result and wo.type != WoType.INSPECTION:
+        errors["inspection_result"] = "Only an incoming inspection records an inspection result."
     if wo.type != WoType.PM:
         if pm_result:
             errors["pm_result"] = "Only a PM records a PM result."
-        if not resolution and "resolution" not in errors:
+        if wo.type == WoType.INSPECTION:
+            _check_inspection(inspection_result, snapshot, resolution, errors, required=result_required)
+        elif not resolution and "resolution" not in errors:
             errors["resolution"] = "Say what was found and done."
         return
     if not pm_result:
@@ -435,6 +515,72 @@ def _record_failure(pm: WorkOrder, asset, snapshot, resolution: str, *, open_rep
     return Completion(work_order=pm, follow_up=repair, repair=repair, tagged_out=newly_out)
 
 
+# --- a failed incoming inspection's re-inspection (slice 26) ---------------------------------------------------------------------
+
+def open_reinspection(wo: WorkOrder) -> WorkOrder | None:
+    """The device's open incoming inspection other than `wo`, which a failure of `wo` is recorded on instead of opening another: the
+    re-inspection `wo` opened at an earlier failure first, else the earliest open. Whoever completes it: a device waiting for its
+    inspection never has two open (a scoped user is told about it without its number, by the screens)."""
+    others = inspections.incoming(wo.asset).filter(status__in=OPEN_STATUSES).exclude(pk=wo.pk)
+    return others.filter(follow_up_of=wo).order_by("opened_on", "number").first() or others.order_by("opened_on", "number").first()
+
+
+def reinspection_assignee(failed: WorkOrder) -> tuple[str, object]:
+    """Who a failed incoming inspection's re-inspection goes to, as (vendor name or "", technician or None): the same vendor for
+    vendor service (the vendor's acceptance test is redone by them), else the same technician while active, else nobody (a CE
+    manager assigns it). Assigned through services.assign, which notes a credential override as for any assignment. The completion
+    and the modal's hint both read this."""
+    if failed.vendor_service and failed.vendor_name:
+        return failed.vendor_name, None
+    tech = failed.assigned_to if failed.assigned_to_id else None
+    return "", tech if tech is not None and tech.is_active else None
+
+
+def _reinspection_problem(failed: WorkOrder, snapshot: list[dict], resolution: str) -> str:
+    lines = _failed_lines(snapshot)
+    text = f"Re-inspection: incoming inspection {failed.number} failed."
+    if lines:
+        text += f" Failed {'step' if len(lines) == 1 else 'steps'}:\n" + "\n".join(lines)
+    return text + (f"\n{resolution}" if resolution else "")
+
+
+# Where a device waiting for its incoming inspection may be in use (use_before_inspection puts it in service): a failed inspection
+# takes it out (tag_out, default on).
+IN_USE = (AssetStatus.IN_SERVICE, AssetStatus.ON_LOAN)
+
+
+def _reinspect(failed: WorkOrder, asset, snapshot, resolution: str, *, tag_out: bool, by, today: date) -> Completion:
+    """A failed incoming inspection of a device that waits for it: record the failure on the device's open incoming inspection
+    (open_reinspection) or open the re-inspection (inspections.open_for: follow_up_of the failed one, due REINSPECTION_DUE_DAYS later,
+    reinspection_assignee); then take the device out of use when it was put in use before its inspection (and `tag_out`). In that
+    order: a new work order's number before the device's row, as a tagged-out request takes them, so the two never wait in a circle."""
+    from apps.equipment.services import set_status  # equipment.services imports this app inside its functions; keep it one way
+
+    existing = open_reinspection(failed)
+    if existing is not None:
+        what = "; ".join(_failed_lines(snapshot)) or resolution
+        services.add_note(existing, f"Incoming inspection {failed.number} failed on {today:%b} {today.day}, {today.year}: {what}"[:services.NOTE_MAX_LENGTH],
+                          by=by)
+        if existing.follow_up_of_id is None:  # the failed inspection and the one re-inspecting name each other (drawer, print)
+            existing.follow_up_of = failed
+            existing.save(update_fields=["follow_up_of", "updated_at"])
+        done = Completion(work_order=failed, reinspection=existing)
+    else:
+        reinspection = inspections.open_for(asset, by=by, today=today, due_on=today + timedelta(days=inspections.REINSPECTION_DUE_DAYS),
+                                            problem=_reinspection_problem(failed, snapshot, resolution), follow_up_of=failed)
+        vendor, tech = reinspection_assignee(failed)
+        if vendor:
+            services.assign(reinspection, vendor_name=vendor, by=by)
+        elif tech is not None:
+            services.assign(reinspection, technician=tech, by=by)
+        done = Completion(work_order=failed, reinspection=reinspection, reinspection_opened=True)
+    if tag_out and asset.status in IN_USE:
+        set_status(asset, AssetStatus.OUT_OF_SERVICE, by=by, note=f"Tagged out: incoming inspection {failed.number} failed")
+        asset.__dict__.pop("_change_reason", None)
+        done.tagged_out = True
+    return done
+
+
 def _default_resolution(pm_result: str, procedure, snapshot: list[dict], done: Completion) -> str:
     if pm_result == PmResult.PASS:
         return f"PM completed per {procedure.code}, all checks passed" if procedure is not None else "PM completed, all checks passed"
@@ -444,53 +590,81 @@ def _default_resolution(pm_result: str, procedure, snapshot: list[dict], done: C
     return ""
 
 
-def result_note(pm_result: str, done: Completion) -> str:
-    """The status history's note, and the toast's wording: "PM passed", "PM failed; WO-26-0057 opened for the repair"."""
-    note = RESULT_NOTES.get(pm_result, "")
-    if pm_result == PmResult.FAIL and done.repair is not None:
+def _default_inspection_resolution(result: str, procedure, snapshot: list[dict]) -> str:
+    """A pass with every step recorded (slice 26); anything else says its own (_check_inspection asks for it)."""
+    if result != InspectionResult.PASSED or not snapshot:
+        return ""
+    per = "the incoming checklist" if procedure is None or inspections.is_incoming_checklist(procedure) or not procedure.code else procedure.code
+    return f"Incoming inspection passed per {per}, all checks passed"
+
+
+def result_note(result: str, done: Completion) -> str:
+    """The status history's note, and the toast's wording: "PM passed", "PM failed; WO-26-0057 opened for the repair". Slice 26, an
+    incoming inspection's (`result` is its InspectionResult): "Incoming inspection passed", "Incoming inspection failed; WO-26-0431
+    opened to re-inspect" (or "; re-inspection WO-26-0431 already open")."""
+    note = RESULT_NOTES.get(result, "")
+    if result == PmResult.FAIL and done.repair is not None:
         note += f"; {done.repair.number} opened for the repair" if done.follow_up else f"{RECORDED_ON}{done.repair.number}"
+    elif result == InspectionResult.FAILED and done.reinspection is not None:
+        number = done.reinspection.number
+        note += f"; {number} opened to re-inspect" if done.reinspection_opened else f"; re-inspection {number} already open"
     return note
 
 
 # --- completing ----------------------------------------------------------------------------------------------------------------
 
 @transaction.atomic
-def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str = "", results=None, open_repair: bool = True,
-                        tag_out: bool | None = None, signature: str | None = None, hours=None, late_reason=None, by=None,
-                        today: date | None = None) -> Completion:
+def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str = "", inspection_result: str = "", results=None,
+                        open_repair: bool = True, tag_out: bool | None = None, signature: str | None = None, hours=None, late_reason=None,
+                        by=None, today: date | None = None) -> Completion:
     """Complete `wo` with its resolution and, for a PM, its result and checklist results (the module's rules); a PM still open is
     started first (starts_on_completion). `results` is one {"result": "pass" | "fail" | "na", "reading": "..."} per checklist step, in
     order. `hours` (None or blank: none) are logged with it, and `late_reason` (None or blank: none; slice 25) is recorded on a PM
-    completed after its due date. Raises ValidationError: a plain message when the work order cannot be completed now, else a dict
-    keyed by resolution, pm_result, checklist, step_<n>, reading_<n>, open_repair, hours, and late_reason. `wo` is refreshed from the
-    database afterwards."""
+    completed after its due date. Slice 26: an incoming inspection takes `inspection_result` (InspectionResult) and, optionally, its
+    checklist's `results`; `tag_out` also applies to its fail. Raises ValidationError: a plain message when the work order cannot be
+    completed now, else a dict keyed by resolution, pm_result, inspection_result, checklist, step_<n>, reading_<n>, open_repair, hours,
+    and late_reason. `wo` is refreshed from the database afterwards (and its device with it)."""
     today = today or timezone.localdate()
     _check_tenant(wo)
+    if wo.type == WoType.INSPECTION:
+        # Slice 26: the device's open inspections first, in number order, then this one, then the device's row in the pass: two of its
+        # inspections completed at once take turns; the second finds itself cancelled by the first's pass (or the device passed).
+        inspections.lock_open(wo.asset_id)
     locked = WorkOrder.objects.select_for_update().get(pk=wo.pk)  # two clicks, or two people, complete it once
     reason = blocker(locked, today, by)
     if reason:
         raise ValidationError(reason)
     asset = locked.asset
-    before = (asset.status, asset.last_pm_on, asset.next_pm_on)
-    is_pm = locked.type == WoType.PM
+    before = (asset.status, asset.last_pm_on, asset.next_pm_on, asset.awaiting_inspection)
+    is_pm, is_inspection = locked.type == WoType.PM, locked.type == WoType.INSPECTION
     procedure = procedure_for(locked)
     steps = checklist_of(procedure)
     pm_result = str(pm_result or "").strip()
+    inspection_result = str(inspection_result or "").strip()
 
     errors: dict[str, str] = {}
     text = _resolution(resolution, errors)
     snapshot: list[dict] = []
-    if not is_pm:
+    if not (is_pm or is_inspection):
         if results:
-            errors["pm_result"] = "Only a PM records checklist results."
+            errors["pm_result"] = "Only a PM or an incoming inspection records checklist results."
     elif signature is not None and signature != checklist_signature(steps):
         errors["checklist"] = "The procedure's checklist was revised while this was open. Check the steps again."
     else:
-        snapshot = _steps(steps, results, errors)
-    _check_result(locked, pm_result, snapshot, bool(steps), text, errors)
+        snapshot = _steps(steps, results, errors, optional=is_inspection)
+    # Slice 26: an inspection whose pass let the device stop waiting stays passed when it is completed again (reopened).
+    kept_pass = is_inspection and locked.inspection_result == InspectionResult.PASSED and not asset.awaiting_inspection
+    if kept_pass and inspection_result == InspectionResult.FAILED:
+        errors["inspection_result"] = (f"{locked.number} passed and {asset.tag} no longer waits for its incoming inspection, so it stays "
+                                       "passed. If the device has failed since, tag the device out and open a repair.")
+    elif kept_pass and not inspection_result:
+        inspection_result = InspectionResult.PASSED
+    _check_result(locked, pm_result, snapshot, bool(steps), text, errors, inspection_result=inspection_result,
+                  result_required=asset.awaiting_inspection)
     fail = is_pm and pm_result == PmResult.FAIL
     if fail and not open_repair and own_open_repair(locked) is None and other_open_repair(locked, by) is None:
         errors["open_repair"] = f"{asset.tag} has no open repair work order to record the failure on, so a failed PM opens one."
+    reinspect = is_inspection and inspection_result == InspectionResult.FAILED and asset.awaiting_inspection
     late = _late_reason(locked, late_reason, by, today, errors)
     if errors:
         _log_hours(locked, hours, by, today, errors)  # its refusal too, so every problem is reported at once (a line goes back with the rest)
@@ -505,16 +679,27 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
     done = Completion(work_order=locked)
     if fail:
         done = _record_failure(locked, asset, snapshot, text, open_repair=open_repair, tag_out=tag_out is None or bool(tag_out), by=by, today=today)
+    elif reinspect:
+        done = _reinspect(locked, asset, snapshot, text, tag_out=tag_out is None or bool(tag_out), by=by, today=today)
     done.started, done.labor = started, labor
+    note = ""
     if is_pm:
         locked.pm_result = pm_result
         locked.checklist_results = snapshot
         text = text or _default_resolution(pm_result, procedure, snapshot, done)
+        note = result_note(pm_result, done)
+    elif is_inspection:
+        locked.inspection_result = inspection_result
+        locked.checklist_results = snapshot
+        text = text or _default_inspection_resolution(inspection_result, procedure, snapshot)
+        note = result_note(inspection_result, done)
     locked.resolution = text
-    services.change_status(locked, WoStatus.COMPLETED, by=by, note=result_note(pm_result, done) if is_pm else "", as_of=today)
+    # A passed inspection of a waiting device passes it here (services._on_completed: equipment.services.pass_incoming_inspection).
+    services.change_status(locked, WoStatus.COMPLETED, by=by, note=note, as_of=today)
     if late:
         _record_late_reason(locked, late, by, today)  # once completed late, it is a PM that missed its due date (missed_pms)
-    asset.refresh_from_db(fields=["status", "last_pm_on", "next_pm_on"])
-    done.device_changed = (asset.status, asset.last_pm_on, asset.next_pm_on) != before
+    asset.refresh_from_db(fields=["status", "last_pm_on", "next_pm_on", "awaiting_inspection"])
+    done.device_changed = (asset.status, asset.last_pm_on, asset.next_pm_on, asset.awaiting_inspection) != before
+    done.passed = before[3] and not asset.awaiting_inspection
     wo.refresh_from_db()
     return done

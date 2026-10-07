@@ -15,7 +15,9 @@ Nothing it cannot read becomes a default without a note. A date that breaks the 
 warranty that ends before it, an install date in the future, a next PM more than ten years out) or that means "none" is left out,
 and the device still comes in. A status change the rules refuse (retiring a device with open work) is noted and the row's other
 changes stay. Retiring, reinstating, and the CMS mark need Equipment Approve, as on the screen. A device retired without a day it
-can use is retired as of today, and the row says so: the AEM evidence counts it in use until then.
+can use is retired as of today, and the row says so: the AEM evidence counts it in use until then. Slice 26: a device here that is
+waiting for its incoming inspection keeps no next PM (the row's is left out with update_asset's words, naming the inspection) and
+does not go in service or on loan from the file (the note gives set_status's words): its inspection's pass puts it in use.
 
 The check rolls each chunk back (apps.imports.services), so a model or department a row of an earlier chunk adds is not there when
 a later chunk is checked, though the import, which committed that chunk, finds it and never reads the later row's model cells. The
@@ -281,9 +283,12 @@ class DevicesImporter(Importer):
         was = asset.get_status_display().lower()
         try:
             eq.set_status(asset, status, by=ctx.user, note="Imported", today=ctx.today)
-        except ValidationError:
+        except ValidationError as e:
             asset.refresh_from_db()
-            if status in eq.STATUS_CHANGES.get(asset.status, ()):
+            if asset.awaiting_inspection and status in eq.HOLD:
+                # Slice 26: a new device waiting for its incoming inspection goes in use when it passes; set_status says which one.
+                result.warn(f"Status kept: {e.messages[0]}")
+            elif status in eq.STATUS_CHANGES.get(asset.status, ()):
                 result.warn("Status kept: the device has open work orders; complete or cancel them, then retire it")
             else:
                 result.warn(f"Status kept: Cadence does not move a device from {was} to {AssetStatus(status).label.lower()}")

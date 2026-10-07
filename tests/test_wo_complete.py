@@ -137,10 +137,19 @@ def test_other_types_need_a_resolution_and_record_no_pm_result(ctx, vent, techs)
         with pytest.raises(ValidationError) as e:
             complete_work_order(wo, resolution="", pm_result=PmResult.PASS)
         assert errors_of(e) == {"resolution": "Say what was found and done.", "pm_result": "Only a PM records a PM result."}
-        with pytest.raises(ValidationError, match="Only a PM records checklist results"):
-            complete_work_order(wo, resolution="Done", results=[{"result": "pass"}])
+        if wtype == WoType.INSPECTION:
+            # Slice 26: an inspection records its checklist (the incoming checklist here: the model has no procedure), all of it or none
+            with pytest.raises(ValidationError) as e:
+                complete_work_order(wo, resolution="Done", results=[{"result": "pass"}])
+            assert errors_of(e) == {"checklist": f"Record a result for each of the {len(completion.inspections.INCOMING_CHECKLIST)} steps."}
+        else:
+            with pytest.raises(ValidationError, match="Only a PM or an incoming inspection records checklist results"):
+                complete_work_order(wo, resolution="Done", results=[{"result": "pass"}])
+            with pytest.raises(ValidationError) as e:
+                complete_work_order(wo, resolution="Done", inspection_result="passed")
+            assert errors_of(e) == {"inspection_result": "Only an incoming inspection records an inspection result."}
         complete_work_order(wo, resolution="Inspected and entered into inventory")
-        assert wo.status == WoStatus.COMPLETED and wo.pm_result == ""
+        assert wo.status == WoStatus.COMPLETED and wo.pm_result == "" and wo.inspection_result == ""
 
 
 def test_a_completed_repair_still_returns_a_tagged_out_device(ctx, vent, techs):

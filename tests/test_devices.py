@@ -474,8 +474,10 @@ EXPECTED_CHANGES = {
     S.ON_LOAN: {S.IN_SERVICE, S.OUT_OF_SERVICE, S.MISSING, S.RETIRED},
     S.OUT_OF_SERVICE: {S.IN_SERVICE, S.MISSING, S.RETIRED},
     S.IN_REPAIR: {S.IN_SERVICE, S.OUT_OF_SERVICE, S.MISSING, S.RETIRED},
-    S.MISSING: {S.IN_SERVICE, S.RETIRED},
-    S.RETIRED: {S.IN_SERVICE},
+    # Slice 26: Found and Reinstate back out of service, for a device waiting for its incoming inspection (the drawer offers them for
+    # no other: tests/test_incoming_services.py); set_status takes them for any device.
+    S.MISSING: {S.IN_SERVICE, S.OUT_OF_SERVICE, S.RETIRED},
+    S.RETIRED: {S.IN_SERVICE, S.OUT_OF_SERVICE},
 }
 ALLOWED = [(f, t) for f, tos in EXPECTED_CHANGES.items() for t in sorted(tos)]
 REFUSED = [(f, t) for f in S.values for t in S.values if t not in EXPECTED_CHANGES[f]]
@@ -493,6 +495,8 @@ def test_every_allowed_status_change(ctx, dept, vent_model, from_, to):
     svc.set_status(a, to, today=TODAY)
     a.refresh_from_db()
     assert a.status == to and history(a)[-1].history_change_reason == f"Status: {S(to).label}"
+    if from_ == S.RETIRED:  # reinstated, in service or (slice 26) out of service: back with a PM due today
+        assert a.next_pm_on == TODAY
 
 
 @pytest.mark.parametrize("from_, to", REFUSED)
@@ -652,10 +656,16 @@ def test_status_actions_per_status_and_role(ctx, dept, vent_model, make_user, st
 
 
 def test_status_actions_only_offer_allowed_changes(ctx, dept, vent_model, make_user):
+    """Every allowed change, but (slice 26) Found and Reinstate back out of service only for a device waiting for its incoming
+    inspection, and never in service or on loan for one."""
     director = make_user("director")
     for status in S.values:
         a = Asset(tag="X", device_model=vent_model, department=dept, status=status)
-        assert {x["to"] for x in svc.status_actions(a, director)} == svc.STATUS_CHANGES[status]
+        offered = {x["to"] for x in svc.status_actions(a, director)}
+        assert offered == {to for to in svc.STATUS_CHANGES[status] if (status, to) not in svc.AWAITING_ONLY}
+        a.awaiting_inspection = True
+        offered = {x["to"] for x in svc.status_actions(a, director)}
+        assert offered == svc.STATUS_CHANGES[status] - set(svc.HOLD)
 
 
 def test_status_action_confirms(ctx, vent, make_user):

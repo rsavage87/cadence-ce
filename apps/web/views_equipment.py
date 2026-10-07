@@ -31,6 +31,9 @@ DRAWER = "web/_asset_drawer.html"
 # The toast after each status change, by (to, from); None matches any other from. The mock's two are "tagged out of service" and
 # "returned to service"; the others say what happened the same way.
 STATUS_TOASTS = {
+    # Slice 26: Found and Reinstate on a device waiting for its incoming inspection (the drawer offers these two moves for no other)
+    (AssetStatus.OUT_OF_SERVICE, AssetStatus.MISSING): "{tag} found; it stays out of service until its incoming inspection passes",
+    (AssetStatus.OUT_OF_SERVICE, AssetStatus.RETIRED): "{tag} reinstated; it stays out of service until its incoming inspection passes",
     (AssetStatus.OUT_OF_SERVICE, None): "{tag} tagged out of service",
     (AssetStatus.IN_SERVICE, AssetStatus.ON_LOAN): "{tag} back from loan and in service",
     (AssetStatus.IN_SERVICE, AssetStatus.MISSING): "{tag} found and back in service",

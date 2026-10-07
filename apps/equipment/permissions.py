@@ -12,6 +12,10 @@ on the screen and in the API.
 Marking a model as equipment CMS keeps on the manufacturer's schedule (imaging, radiologic, medical laser; slice 18), or clearing
 the mark, decides compliance the same way (a marked model never goes on AEM, and marking it ends an AEM in force), so it needs
 Approve too: on Add model and Edit details, and in the API. apps.equipment.services checks it again for any change made by a user.
+
+Putting a new device in use before its incoming inspection (slice 26, equipment.services.use_before_inspection: an emergency, a
+loaner needed now, a device that arrived on the unit already in use) is an exception to the hold every other door keeps, so it needs
+Approve, the level retiring needs; the service checks it again for any user it is given.
 """
 from apps.accounts.models import Level, Module
 
@@ -25,6 +29,7 @@ RETIRE_LEVEL = Level.APPROVE
 MODEL_EDIT_LEVEL = Level.EDIT
 RISK_LEVEL = Level.APPROVE
 OEM_SCHEDULE_LEVEL = Level.APPROVE
+USE_BEFORE_INSPECTION_LEVEL = RETIRE_LEVEL  # slice 26
 
 
 def can_add(user) -> bool:
@@ -56,3 +61,8 @@ def can_set_risk(user) -> bool:
 def can_set_oem_schedule(user) -> bool:
     """Mark a model as keeping the manufacturer's schedule (CMS), or clear the mark."""
     return user.has_level(MODULE, OEM_SCHEDULE_LEVEL)
+
+
+def can_use_before_inspection(user) -> bool:
+    """Put a device waiting for its incoming inspection in use before it (slice 26, with a reason)."""
+    return user.has_level(MODULE, USE_BEFORE_INSPECTION_LEVEL)

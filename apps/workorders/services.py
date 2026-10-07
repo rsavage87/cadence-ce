@@ -8,6 +8,11 @@ email listing them all.
 
 Slice 24: a technician may take open, unassigned, in-house work on a device they are credentialed for (take), while the facility's
 setting lets them; it is an assignment like any other (assign), made by the technician for themselves.
+
+Slice 26, incoming inspections (apps.workorders.inspections): a device waiting for its incoming inspection (Asset.awaiting_inspection)
+has one inspection open at a time and no PM work order (its PMs start when it passes): create_work_order refuses either, keyed "type".
+Completing its passed inspection clears the flag, starts its PM clock, and puts it in service (equipment.services
+.pass_incoming_inspection, from _on_completed); completing a tagged-out repair never puts it in service while it still waits.
 """
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -25,6 +30,7 @@ from .models import (
     ALLOWED_TRANSITIONS,
     DUE_DAYS,
     OPEN_STATUSES,
+    InspectionResult,
     LateReason,
     Priority,
     ServiceRequest,
@@ -43,9 +49,31 @@ NAME_MAX = WorkOrder._meta.get_field("requester").max_length  # the 120-characte
 URGENCY_TO_PRIORITY = {Urgency.CRITICAL: Priority.CRITICAL, Urgency.HIGH: Priority.HIGH, Urgency.NORMAL: Priority.NORMAL}
 
 
+def _check_waiting_device(asset, type, follow_up_of=None) -> None:
+    """Slice 26: a device waiting for its incoming inspection gets no PM work order (its PMs start when it passes) and never a second
+    open incoming inspection; a re-inspection opened while the failed inspection it follows is being completed (`follow_up_of`) is
+    the one exception. Keyed "type", the field New work order and the API name it in."""
+    if not asset.awaiting_inspection:
+        return
+    if type == WoType.PM:
+        raise ValidationError({"type": f"{asset.tag} is waiting for its incoming inspection: its PMs start when it passes its incoming inspection."})
+    if type == WoType.INSPECTION:
+        from . import inspections
+
+        others = inspections.incoming(asset).filter(status__in=OPEN_STATUSES)
+        if follow_up_of is not None:
+            others = others.exclude(pk=follow_up_of.pk)
+        first = others.order_by("opened_on", "number").first()
+        if first is not None:
+            raise ValidationError({"type": f"{asset.tag} already has its incoming inspection open: {first.number}."})
+
+
 @transaction.atomic
 def create_work_order(*, asset, type, priority, problem, requester="", source=Source.MANUAL, assigned_to=None, vendor_service=False,
                       vendor_name="", opened_on=None, due_on=None, created_by=None, tag_out=False, **extra) -> WorkOrder:
+    """Open a work order. Slice 26: refused, keyed "type", for a PM on a device waiting for its incoming inspection, and for a second
+    open incoming inspection on one (_check_waiting_device)."""
+    _check_waiting_device(asset, type, extra.get("follow_up_of"))
     opened_on = opened_on or timezone.localdate()
     due_on = due_on or opened_on + timedelta(days=DUE_DAYS[priority])
     wo = WorkOrder(asset=asset, type=type, priority=priority, problem=problem, requester=requester, source=source, assigned_to=assigned_to,
@@ -80,7 +108,7 @@ def change_status(wo: WorkOrder, to_status: str, by=None, note: str = "", as_of=
     if to_status == WoStatus.COMPLETED:
         wo.completed_on = as_of
         wo.started_on = wo.started_on or as_of
-        _on_completed(wo, as_of)
+        _on_completed(wo, as_of, by=by)
     wo.save()
     WorkOrderStatusHistory.objects.create(tenant=wo.tenant, work_order=wo, from_status=from_status, to_status=to_status, changed_by=by, note=note)
     if to_status == WoStatus.COMPLETED and wo.source == Source.PORTAL:
@@ -90,19 +118,43 @@ def change_status(wo: WorkOrder, to_status: str, by=None, note: str = "", as_of=
     return wo
 
 
-def _on_completed(wo: WorkOrder, as_of):
+def holding_repairs(asset, exclude=None):
+    """The device's open repairs that hold it out of service (tagged out with the request, or by a failed PM): while one is open,
+    neither another repair's completion nor a passed incoming inspection puts it back in service; the last of them does."""
+    held = WorkOrder.objects.filter(asset=asset, type=WoType.REPAIR, status__in=OPEN_STATUSES, tagged_out=True)
+    return held.exclude(pk=exclude.pk) if exclude is not None else held
+
+
+def _still_waiting(asset) -> bool:
+    """Whether the device still waits for its incoming inspection (slice 26), read from the database: the copy a work order holds may
+    predate the pass (equipment.services.pass_incoming_inspection, the flag's one writer, works on the row as it is)."""
+    from apps.equipment.models import Asset
+
+    return Asset.objects.filter(pk=asset.pk, awaiting_inspection=True).exists()
+
+
+def _on_completed(wo: WorkOrder, as_of, by=None):
     asset = wo.asset
     if wo.type == WoType.PM:
         asset.last_pm_on = as_of
-        asset.next_pm_on = add_months(as_of, asset.pm_interval_months)
-        asset.save(update_fields=["last_pm_on", "next_pm_on", "updated_at"])
+        fields = ["last_pm_on", "updated_at"]
+        if not asset.awaiting_inspection:  # slice 26: a waiting device's PM clock starts at its pass (and no door opens a PM on one)
+            asset.next_pm_on = add_months(as_of, asset.pm_interval_months)
+            fields.append("next_pm_on")
+        asset.save(update_fields=fields)
+    elif wo.type == WoType.INSPECTION and wo.inspection_result == InspectionResult.PASSED:
+        # Slice 26: the pass clears the waiting flag, starts the PM clock, and puts the device in service unless a repair holds it out
+        # (nothing moves when the device no longer waits). Imported here: equipment.services imports this module in its functions.
+        from apps.equipment.services import pass_incoming_inspection
+
+        pass_incoming_inspection(asset, wo, by=by, on=as_of)
     elif wo.type == WoType.REPAIR and (asset.status == AssetStatus.IN_REPAIR or (asset.status == AssetStatus.OUT_OF_SERVICE and wo.tagged_out)):
         # Back in service only when this repair is why it was out: tagged out with the request (the portal's checkbox), or marked in
-        # repair. A device out of service for another reason (awaiting incoming inspection, quarantined by hand) stays out until
-        # someone returns it from its drawer. And only when no other open repair holds it out too (a second tagged-out request, or
-        # the repair a failed PM opened: apps.workorders.completion): the last of them returns it.
-        held = WorkOrder.objects.filter(asset=asset, type=WoType.REPAIR, status__in=OPEN_STATUSES, tagged_out=True).exclude(pk=wo.pk)
-        if not held.exists():
+        # repair. A device out of service for another reason (quarantined by hand) stays out until someone returns it from its
+        # drawer, and one waiting for its incoming inspection (slice 26) until the inspection passes. And only when no other open
+        # repair holds it out too (a second tagged-out request, or the repair a failed PM opened: apps.workorders.completion): the
+        # last of them returns it.
+        if not holding_repairs(asset, exclude=wo).exists() and not _still_waiting(asset):
             asset.status = AssetStatus.IN_SERVICE
             asset.save(update_fields=["status", "updated_at"])
 

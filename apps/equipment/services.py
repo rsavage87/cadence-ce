@@ -17,7 +17,7 @@ from django.utils import timezone
 from apps.recalls.models import AlertMatch
 
 from . import permissions
-from .models import TAG_VALIDATOR, AddedAs, Asset, AssetStatus, Department, DeviceModel, RiskClass, SupportType
+from .models import TAG_VALIDATOR, AddedAs, Asset, AssetStatus, Department, DeviceModel, RiskClass, SupportType, UseBeforeInspection
 
 PM_DUE_SOON_DAYS = 30
 
@@ -185,17 +185,25 @@ RESERVED_TAGS = {"new", ".", ".."}
 
 # Status changes the drawer and API allow, from -> to. "In repair" is reached through work orders, never set by hand; retiring
 # and reinstating need more (permissions.RETIRE_LEVEL) because retiring cancels the device's open PM work orders.
+# Slice 26: a device waiting for its incoming inspection (Asset.awaiting_inspection) never goes in service or on loan by hand (HOLD:
+# only its passed inspection or use_before_inspection puts it in use), so Found and Reinstate bring it back out of service instead
+# (AWAITING_ONLY: the drawer offers those two moves only for such a device; set_status takes them for any).
 STATUS_CHANGES = {
     AssetStatus.IN_SERVICE: {AssetStatus.OUT_OF_SERVICE, AssetStatus.ON_LOAN, AssetStatus.MISSING, AssetStatus.RETIRED},
     AssetStatus.ON_LOAN: {AssetStatus.IN_SERVICE, AssetStatus.OUT_OF_SERVICE, AssetStatus.MISSING, AssetStatus.RETIRED},
     AssetStatus.OUT_OF_SERVICE: {AssetStatus.IN_SERVICE, AssetStatus.MISSING, AssetStatus.RETIRED},
     AssetStatus.IN_REPAIR: {AssetStatus.IN_SERVICE, AssetStatus.OUT_OF_SERVICE, AssetStatus.MISSING, AssetStatus.RETIRED},
-    AssetStatus.MISSING: {AssetStatus.IN_SERVICE, AssetStatus.RETIRED},
-    AssetStatus.RETIRED: {AssetStatus.IN_SERVICE},
+    AssetStatus.MISSING: {AssetStatus.IN_SERVICE, AssetStatus.OUT_OF_SERVICE, AssetStatus.RETIRED},
+    AssetStatus.RETIRED: {AssetStatus.IN_SERVICE, AssetStatus.OUT_OF_SERVICE},
 }
+HOLD = (AssetStatus.IN_SERVICE, AssetStatus.ON_LOAN)  # what a device waiting for its incoming inspection is never moved to by hand
+AWAITING_ONLY = {(AssetStatus.MISSING, AssetStatus.OUT_OF_SERVICE), (AssetStatus.RETIRED, AssetStatus.OUT_OF_SERVICE)}
+USE_BEFORE_FROM = (AssetStatus.OUT_OF_SERVICE, AssetStatus.MISSING)  # where use_before_inspection takes a waiting device from
 
 # The drawer's button for each change: (label, style). "Return to service" is the mock's; the others say what happened.
 STATUS_ACTION_LABELS = {
+    (AssetStatus.OUT_OF_SERVICE, AssetStatus.MISSING): ("Found", ""),  # slice 26: a device waiting for its incoming inspection
+    (AssetStatus.OUT_OF_SERVICE, AssetStatus.RETIRED): ("Reinstate", ""),  # slice 26: likewise
     (AssetStatus.OUT_OF_SERVICE, None): ("Tag out of service", "danger"),
     (AssetStatus.IN_SERVICE, AssetStatus.ON_LOAN): ("Back from loan", ""),
     (AssetStatus.IN_SERVICE, AssetStatus.MISSING): ("Found", ""),
@@ -658,7 +666,8 @@ EDITABLE_FIELDS = ("serial", "device_model", "department", "room", "installed_on
 @transaction.atomic
 def update_asset(asset: Asset, *, by=None, today: date | None = None, imported_last_pm=_UNSET, **fields) -> Asset:
     """Change a device's details. Not its tag (on the sticker and in URLs), status (set_status), or contract (the contracts screen).
-    A new model does not move the next PM by itself; change next_pm_on alongside it when the interval differs.
+    A new model does not move the next PM by itself; change next_pm_on alongside it when the interval differs. A device waiting for
+    its incoming inspection (slice 26) keeps no next PM: a blank one is accepted, a date refused (pm_clock_message), keyed next_pm_on.
     The last PM is not an editable detail (completed PM work orders set it): `imported_last_pm` is the importer's alone, the last PM
     the previous system recorded (apps.imports.kinds.devices, on a re-import), with create_asset's rules for it."""
     today = today or timezone.localdate()
@@ -677,7 +686,11 @@ def update_asset(asset: Asset, *, by=None, today: date | None = None, imported_l
         _check_tenant(fields["device_model"], "device_model")
     if "department" in fields:
         _check_tenant(fields["department"], "department")
-    if "next_pm_on" in fields and fields["next_pm_on"] is None and asset.status != AssetStatus.RETIRED:
+    if "next_pm_on" in fields and asset.awaiting_inspection:
+        # Slice 26: no next PM while it waits (its PM clock starts at the pass): a blank one is what it has, a date is refused.
+        if fields["next_pm_on"] is not None:
+            raise ValidationError({"next_pm_on": pm_clock_message(asset)})
+    elif "next_pm_on" in fields and fields["next_pm_on"] is None and asset.status != AssetStatus.RETIRED:
         raise ValidationError({"next_pm_on": "A device in use needs a next PM date."})
     _check_next_pm(fields.get("next_pm_on"), today)
     # The last PM against the install date only when the install date changes, and on the field the form has: a device added
@@ -719,7 +732,13 @@ def set_status(asset: Asset, to_status: str, *, by=None, note: str = "", today: 
     """Move a device along STATUS_CHANGES. Retiring cancels its open PM work orders that can be cancelled and refuses while any
     other work is open (finish or cancel it first); the device leaves the PM schedule. Reinstating puts it back with a PM due today.
     `note` is kept in the device's history. `changed_on` dates the history row on an earlier day (not before the install date): the
-    importer's retirement from the previous system, so the AEM evidence (apps.pm.aem) counts the device in use until then."""
+    importer's retirement from the previous system, so the AEM evidence (apps.pm.aem) counts the device in use until then.
+    Slice 26, a device waiting for its incoming inspection (Asset.awaiting_inspection; the flag never changes here):
+    - it never goes in service or on loan here (HOLD): refused in words naming its open inspection (hold_message). Only its passed
+      inspection (pass_incoming_inspection) or use_before_inspection puts it in use.
+    - Found (missing to out of service) and Reinstate (retired to out of service) bring it back still waiting, with no next PM;
+      reinstating opens an incoming inspection when none is open.
+    - Retiring it (a new device going back to the vendor) cancels its open incoming inspections as it cancels open PMs."""
     from apps.workorders.models import OPEN_STATUSES, WoStatus, WoType
     from apps.workorders.services import change_status
 
@@ -728,13 +747,17 @@ def set_status(asset: Asset, to_status: str, *, by=None, note: str = "", today: 
         raise ValidationError("Choose a device status.")
     if to_status not in STATUS_CHANGES.get(asset.status, set()):
         raise ValidationError(f"{asset.tag} cannot go from {asset.get_status_display().lower()} to {AssetStatus(to_status).label.lower()}.")
+    if asset.awaiting_inspection and to_status in HOLD:
+        raise ValidationError(hold_message(asset))
     if changed_on is not None and changed_on > today:
         raise ValidationError({"changed_on": "The status cannot change on a day after today."})
     if changed_on is not None and asset.installed_on and changed_on < asset.installed_on:
         raise ValidationError({"changed_on": "The status cannot change before the device was installed."})
+    reinstated_waiting = False
     if to_status == AssetStatus.RETIRED:
+        cancellable = (WoType.PM, WoType.INSPECTION) if asset.awaiting_inspection else (WoType.PM,)
         open_wos = list(asset.work_orders.filter(status__in=OPEN_STATUSES).order_by("number"))
-        blocking = [w for w in open_wos if not (w.type == WoType.PM and w.status in (WoStatus.OPEN, WoStatus.AWAITING_PARTS))]
+        blocking = [w for w in open_wos if not (w.type in cancellable and w.status in (WoStatus.OPEN, WoStatus.AWAITING_PARTS))]
         if blocking:
             numbers = ", ".join(w.number for w in blocking)
             raise ValidationError(f"{asset.tag} has open work: {numbers}. Complete it, or cancel it (an in-progress work order goes "
@@ -742,19 +765,50 @@ def set_status(asset: Asset, to_status: str, *, by=None, note: str = "", today: 
         for w in open_wos:
             change_status(w, WoStatus.CANCELLED, by=by, note="Device retired", as_of=today)
         asset.next_pm_on = None
+    elif asset.status == AssetStatus.RETIRED and asset.awaiting_inspection:
+        reinstated_waiting = True  # still waiting: no next PM until its inspection passes
     elif asset.status == AssetStatus.RETIRED:
         asset.next_pm_on = today  # back in use: inspect it before anyone relies on it
     asset.status = to_status
     asset._change_reason = (note or "").strip()[:100] or f"Status: {AssetStatus(to_status).label}"
     _save_on(asset, changed_on)
+    if reinstated_waiting:
+        from apps.workorders import inspections
+
+        if inspections.open_inspection(asset) is None:
+            inspections.open_for(asset, by=by, today=today)
     return asset
 
 
+def hold_message(asset: Asset) -> str:
+    """Why a device waiting for its incoming inspection does not go in service or on loan by hand (slice 26), naming its open
+    inspection: set_status's refusal, and the devices importer's note."""
+    from apps.workorders import inspections
+
+    wo = inspections.open_inspection(asset)
+    if wo is None:
+        return (f"{asset.tag} is waiting for its incoming inspection, and none is open. Open one: the device goes into service when "
+                "its incoming inspection passes.")
+    return f"{asset.tag} is waiting for its incoming inspection ({wo.number}): it goes into service when that inspection passes."
+
+
+def pm_clock_message(asset: Asset) -> str:
+    """Why a device waiting for its incoming inspection takes no next PM date (slice 26): update_asset's refusal, keyed next_pm_on."""
+    from apps.workorders import inspections
+
+    wo = inspections.open_inspection(asset)
+    return f"Its PM schedule starts when it passes its incoming inspection{f' {wo.number}' if wo else ''}."
+
+
 def status_actions(asset: Asset, user) -> list[dict]:
-    """The status buttons the drawer shows this user for this device: [{to, label, style, confirm}], most likely first."""
+    """The status buttons the drawer shows this user for this device: [{to, label, style, confirm}], most likely first. Slice 26: for
+    a device waiting for its incoming inspection never In service or On loan (HOLD), and Found / Reinstate bring it back out of
+    service (AWAITING_ONLY, offered for no other device). Putting it in use before its inspection is not a status button: the drawer
+    offers it on its own (permissions.can_use_before_inspection, use_before_inspection)."""
     from . import permissions as perms
 
     level = user.level_for(perms.MODULE)  # once, not once per button
+    awaiting = asset.awaiting_inspection
     # A device in use is most likely being tagged out; one that is not is most likely coming back (the mock's single button).
     in_use = asset.status in (AssetStatus.IN_SERVICE, AssetStatus.ON_LOAN)
     order = ([AssetStatus.OUT_OF_SERVICE, AssetStatus.IN_SERVICE] if in_use else [AssetStatus.IN_SERVICE, AssetStatus.OUT_OF_SERVICE]) + [
@@ -763,11 +817,120 @@ def status_actions(asset: Asset, user) -> list[dict]:
     for to in order:
         if to not in STATUS_CHANGES.get(asset.status, set()) or level < perms.status_level(asset.status, to):
             continue
+        if (awaiting and to in HOLD) or (not awaiting and (asset.status, to) in AWAITING_ONLY):
+            continue
         label, style = status_action_label(asset.status, to)
         confirm = ""
-        if to == AssetStatus.RETIRED:
+        if to == AssetStatus.RETIRED and awaiting:
+            confirm = f"Retire {asset.tag}? Its open incoming inspection is cancelled: retire a new device when it goes back to the vendor."
+        elif to == AssetStatus.RETIRED:
             confirm = f"Retire {asset.tag}? Its open PM work orders are cancelled and it leaves the PM schedule."
+        elif to == AssetStatus.MISSING and awaiting:
+            confirm = f"Mark {asset.tag} missing? Its incoming inspection stays open until it is found."
         elif to == AssetStatus.MISSING:
             confirm = f"Mark {asset.tag} missing? It counts as overdue for PM until it is found."
         out.append({"to": to, "label": label, "style": style, "confirm": confirm})
     return out
+
+
+# --- incoming inspections (slice 26) ---------------------------------------------------------------------------------------------
+#
+# A device added new and waiting for its incoming inspection (create_asset's "waiting" path, Asset.awaiting_inspection) has no next
+# PM and is held out of use (set_status). Two writers move it on: the pass (pass_incoming_inspection, from completing its inspection
+# with result passed: apps.workorders.services._on_completed) and the documented exception (use_before_inspection). The read side is
+# apps.workorders.inspections.
+
+USE_BEFORE_PERMISSION = "Putting a device in use before its incoming inspection needs Equipment Approve."
+
+
+@transaction.atomic
+def use_before_inspection(asset: Asset, reason: str, *, by=None, today: date | None = None) -> Asset:
+    """Put a device waiting for its incoming inspection in use before it (an emergency, a loaner or rental needed now, a device that
+    arrived on the unit already in use): from out of service (or missing) to in service, with `reason` from UseBeforeInspection (no
+    free text). The device keeps waiting (the flag stays set and it has no next PM: its PM clock still starts only at the pass). Its
+    history reads "In use before its incoming inspection: <reason's label>" (dated `today` when that is an earlier day), which the
+    drawer's banner and the survey binder read back (inspections.uses_before). Its open incoming inspection (one is opened if none is)
+    goes to high priority, due the next day (an earlier due date is kept), with a status-history note naming the reason, so CE
+    inspects it where it is. Equipment Approve (permissions.can_use_before_inspection) for a user given as `by` (PermissionDenied).
+    Refused in words: a device not waiting, or not out of service or missing; a reason not listed is keyed "reason". Returns the
+    device, read again; inspections.open_inspection(asset) is the inspection."""
+    from apps.workorders import inspections
+    from apps.workorders.models import Priority, WorkOrderStatusHistory
+
+    today = today or timezone.localdate()
+    if by is not None and not permissions.can_use_before_inspection(by):
+        raise PermissionDenied(USE_BEFORE_PERMISSION)
+    reason = str(reason or "").strip()
+    if reason not in UseBeforeInspection.values:
+        raise ValidationError({"reason": "Choose why the device goes into use before its incoming inspection."})
+    inspections.lock_open(asset.pk)  # its inspections, then its row (the order completing one takes): a pass at that moment goes first or after
+    fresh = Asset.objects.select_for_update().get(pk=asset.pk)
+    if not fresh.awaiting_inspection:
+        raise ValidationError(f"{fresh.tag} is not waiting for an incoming inspection.")
+    if fresh.status not in USE_BEFORE_FROM:
+        if fresh.status == AssetStatus.IN_SERVICE:
+            raise ValidationError(f"{fresh.tag} is already in use before its incoming inspection.")
+        if fresh.status == AssetStatus.RETIRED:
+            raise ValidationError(f"{fresh.tag} is retired. Reinstate it first.")
+        raise ValidationError(f"{fresh.tag} is {fresh.get_status_display().lower()}; only a device out of service or missing goes into use "
+                              "before its incoming inspection.")
+    label = UseBeforeInspection(reason).label
+    fresh.status = AssetStatus.IN_SERVICE
+    fresh._change_reason = inspections.use_before_reason(label)
+    if by is not None:
+        fresh._history_user = by
+    _save_on(fresh, today if today < timezone.localdate() else None)
+    due = today + timedelta(days=1)
+    wo = inspections.open_inspection(fresh)
+    if wo is None:
+        wo = inspections.open_for(fresh, by=by, today=today, due_on=due, priority=Priority.HIGH)
+    else:
+        wo.priority, wo.due_on = Priority.HIGH, min(wo.due_on, due)
+        wo.save(update_fields=["priority", "due_on", "updated_at"])
+    WorkOrderStatusHistory.objects.create(tenant=wo.tenant, work_order=wo, from_status=wo.status, to_status=wo.status, changed_by=by,
+                                          note=f"Device put in use before its incoming inspection: {label}. High priority, due "
+                                               f"{wo.due_on:%b} {wo.due_on.day}, {wo.due_on.year}: inspect it where it is.")
+    asset.refresh_from_db()
+    return asset
+
+
+@transaction.atomic
+def pass_incoming_inspection(asset: Asset, wo, *, by=None, on: date) -> Asset:
+    """The device passed its incoming inspection `wo` on `on` (completing it with result passed: apps.workorders.services
+    ._on_completed calls this; nothing else does). The one writer that clears Asset.awaiting_inspection. On the device row as it is,
+    locked: a device no longer waiting (another inspection passed first, or it never waited) is left as it is, and nothing moves.
+    Otherwise, in one save with one history row ("Passed incoming inspection WO-..."; dated `on` when that is an earlier day): the flag
+    clears, the PM clock starts (next PM one interval after `on`; a retired device keeps none), and a device out of service goes in
+    service unless an open tagged-out repair still holds it (services.holding_repairs: the last of them returns it). A device already
+    in service (use_before_inspection) only stops waiting. Then the device's other open incoming inspections are cancelled with a note
+    naming `wo` (one in progress goes back to open first; one another transaction holds at that moment is left open). The caller's
+    `asset` is read again."""
+    from apps.pm.dates import add_months
+    from apps.workorders import inspections
+    from apps.workorders.models import OPEN_STATUSES, WoStatus
+    from apps.workorders.services import change_status, holding_repairs
+
+    fresh = Asset.objects.select_for_update().get(pk=asset.pk)  # the device's row only (a join would lock its model's row too)
+    if not fresh.awaiting_inspection:
+        return fresh
+    fresh.awaiting_inspection = False
+    if fresh.status != AssetStatus.RETIRED:
+        fresh.next_pm_on = add_months(on, fresh.pm_interval_months)
+    if fresh.status == AssetStatus.OUT_OF_SERVICE and not holding_repairs(fresh).exists():
+        fresh.status = AssetStatus.IN_SERVICE
+    fresh._change_reason = f"Passed incoming inspection {wo.number}"
+    if by is not None:
+        fresh._history_user = by
+    _save_on(fresh, on if on < timezone.localdate() else None)
+    note = f"Cancelled: incoming inspection {wo.number} passed"
+    # A completion holds them already (inspections.lock_open). One another writer has locked at this very moment (Start work, an
+    # assignment) is left open rather than waited for while this device's row is held: a later pass of it finds the device passed
+    # and moves nothing.
+    others = (inspections.incoming(fresh).filter(status__in=OPEN_STATUSES).exclude(pk=wo.pk).order_by("opened_on", "number")
+              .select_for_update(skip_locked=True))
+    for other in others:
+        if other.status == WoStatus.IN_PROGRESS:
+            change_status(other, WoStatus.OPEN, by=by, note=note, as_of=on)  # in progress cannot be cancelled: back to open first
+        change_status(other, WoStatus.CANCELLED, by=by, note=note, as_of=on)
+    asset.refresh_from_db(fields=["status", "awaiting_inspection", "next_pm_on", "last_pm_on", "updated_at"])
+    return fresh
