@@ -2,12 +2,13 @@
 {% comment %}Auto-assign week (slice 14, views_pm_week): what the button does over the next 7 days, from the week plan the day list and
    the workload show. Per technician, the PMs they get (new work orders, and open ones on nobody's plate) and the hours; the devices
    nobody is credentialed for; what is already held; and the overdue devices it leaves alone. With nothing to do there is no button.
-   Slice 28: the devices held as evidence for an incident investigation (w.on_hold): named, and why they get no PM this week.{% endcomment %}
+   Slice 28: the devices held as evidence for an incident investigation (w.on_hold): named, and why they get no PM this week; with
+   nothing to do, never "every PM is already with someone" while one is held (its PM is with nobody).{% endcomment %}
 <div class="modal-h"><h2>Auto-assign week</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
 <div class="form pm-week">
   <p class="full hint">{{ w.start|date:"M j" }} to {{ w.end|date:"M j, Y" }}. Each PM due goes to the least-loaded credentialed technician, day by day: the technician the day list names.</p>
   {% if w.nothing_to_do %}
-  <div class="full note">{% if w.unassigned %}Nothing to assign: the PMs this week that are on nobody's plate need a credentialed technician.{% elif w.on_hold and not w.held %}Nothing to assign: the PMs due this week are on devices held for an incident investigation.{% elif w.held %}Nothing to assign: every PM due this week is already with a technician or the vendor.{% else %}Nothing to assign: no PMs are due this week.{% endif %}</div>
+  <div class="full note">{% if w.unassigned %}Nothing to assign: the PMs this week that are on nobody's plate need a credentialed technician{% if w.on_hold %}, or are on devices held for an incident investigation{% endif %}.{% elif w.on_hold and w.held %}Nothing to assign: the PMs due this week are already with a technician or the vendor, or on devices held for an incident investigation.{% elif w.on_hold %}Nothing to assign: the PMs due this week are on devices held for an incident investigation.{% elif w.held %}Nothing to assign: every PM due this week is already with a technician or the vendor.{% else %}Nothing to assign: no PMs are due this week.{% endif %}</div>
   {% else %}
   <div class="full stats">
     <div class="stat"><div class="v">{{ w.assigned }}</div><div class="l">PM{{ w.assigned|pluralize }} to assign</div></div>

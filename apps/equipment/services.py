@@ -676,9 +676,9 @@ def _locked_row(asset: Asset) -> Asset:
     Slice 28 merge fix: every writer takes a device's work orders before its row (workorders.services._lock_for_hold, a start or
     completion, reads the hold that way), so retiring (which cancels open PMs) and a new next PM (which moves the open PM) never hold
     the device's row while waiting for a work order a start holds."""
-    from apps.workorders.models import OPEN_STATUSES, WorkOrder
+    from apps.workorders.services import lock_work
 
-    list(WorkOrder.objects.select_for_update().filter(asset_id=asset.pk, status__in=OPEN_STATUSES).order_by("number").values_list("pk", flat=True))
+    lock_work(asset.pk)
     return Asset.objects.select_for_update().get(pk=asset.pk)
 
 

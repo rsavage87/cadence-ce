@@ -33,21 +33,29 @@ def _plural(n: int, word: str) -> str:
 
 def assigned_message(done: WeekAssignment) -> str:
     """The toast after the POST, in the mock's words ("Auto-assign balanced N PMs across M technicians by credential, zone, and
-    workload"; there are no zones), plus what nobody is credentialed for."""
+    workload"; there are no zones), plus what nobody is credentialed for, and (slice 28) the devices held as evidence for an incident
+    investigation whenever any is due: their PMs are with nobody and wait for the incident's release, so "every PM due this week is
+    already with a technician or the vendor" is never said while one is (review fix)."""
     u = done.unassigned
+    on_hold = len(getattr(done, "on_hold", ()))  # slice 28: devices held as evidence (a summary from before slice 28 has none)
+    held_part = f"{held_devices(on_hold)} due this week {'is' if on_hold == 1 else 'are'} held for an incident investigation" if on_hold else ""
     if done.assigned:
         message = f"Auto-assign balanced {_plural(done.assigned, 'PM')} across {_plural(done.technicians, 'technician')} by credential and workload"
         if u:
             message += f"; {u} left unassigned: nobody is credentialed for {'it' if u == 1 else 'them'}"
-        return message
+        return f"{message}; {held_part}" if held_part else message
     if done.created:
         c = done.created
-        return f"{_plural(c, 'PM work order')} created, none assigned: nobody is credentialed for {'this device' if c == 1 else 'these devices'}"
+        message = f"{_plural(c, 'PM work order')} created, none assigned: nobody is credentialed for {'this device' if c == 1 else 'these devices'}"
+        return f"{message}; {held_part}" if held_part else message
     if u:
-        return f"Nothing to assign: {_plural(u, 'PM')} this week still {'needs' if u == 1 else 'need'} a credentialed technician"
-    on_hold = len(getattr(done, "on_hold", ()))  # slice 28: devices held as evidence (a summary from before slice 28 has none)
-    if on_hold and not done.held:  # only devices held as evidence are due
-        return f"Nothing to assign: {held_devices(on_hold)} due this week {'is' if on_hold == 1 else 'are'} held for an incident investigation"
+        message = f"Nothing to assign: {_plural(u, 'PM')} this week still {'needs' if u == 1 else 'need'} a credentialed technician"
+        return f"{message}; {held_part}" if held_part else message
+    if on_hold and done.held:  # some with someone, the rest held as evidence
+        return (f"Nothing to assign: {_plural(done.held, 'PM')} due this week {'is' if done.held == 1 else 'are'} already with a technician "
+                f"or the vendor, and {held_part}")
+    if on_hold:  # only devices held as evidence are due
+        return f"Nothing to assign: {held_part}"
     if done.held:
         return "Nothing to assign: every PM due this week is already with a technician or the vendor"
     return "Nothing to assign: no PMs are due this week"

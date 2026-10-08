@@ -1,7 +1,8 @@
 {% extends "web/print_base.html" %}
 {% load web %}
 {% comment %}PM route sheets (slice 11, views_print_sheets.route_sheets): one sheet per technician, then the vendor's, then devices nobody
-   is credentialed for. Initials and Time are blank for the technician to fill in on the round.{% endcomment %}
+   is credentialed for, then (slice 28) devices held as evidence for an incident investigation, whose PMs wait for its release.
+   Initials and Time are blank for the technician to fill in on the round.{% endcomment %}
 {% block title %}Route sheets · {% if week %}{{ start|date:"M j" }} to {{ end|date:"M j, Y" }}{% else %}{{ day|date:"M j, Y" }}{% endif %}{% endblock %}
 {% block page_style %}<style>
 .rs-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:6px 16px;padding-bottom:8px;margin-bottom:10px;border-bottom:1.5px solid var(--ink)}
@@ -34,7 +35,8 @@ table.route .tag{font-weight:600}
   </header>
   {% if overdue %}<p class="note">{% if s.count == 1 %}This device is{% else %}These devices are{% endif %} overdue: the PM fell due on {{ day|date:"M j" }}.</p>{% endif %}
   {% if s.kind == "vendor" %}<p class="note">These PM work orders are with the vendor.</p>
-  {% elif s.kind == "nobody" %}<p class="note">No active technician is credentialed for these devices.</p>{% endif %}
+  {% elif s.kind == "nobody" %}<p class="note">No active technician is credentialed for these devices.</p>
+  {% elif s.kind == "held" %}<p class="note">{% if s.count == 1 %}This device is{% else %}These devices are{% endif %} held as evidence for an incident investigation: nobody uses, repairs, or tests {% if s.count == 1 %}it{% else %}them{% endif %} until the incident releases {% if s.count == 1 %}it{% else %}them{% endif %}. {% if s.count == 1 %}Its PM waits{% else %}Their PMs wait{% endif %}: not on this round.</p>{% endif %}
   <div class="rs-wrap"><table class="route">
     <thead><tr><th aria-label="Done"></th>{% if week %}<th>Date</th>{% endif %}<th>Tag</th><th>Device</th><th>Risk</th><th>Department</th><th>Room</th><th>Procedure</th><th class="num">Est. h</th><th>Work order</th><th>Initials</th><th>Time</th></tr></thead>
     <tbody>{% for r in s.rows %}{% with a=r.asset %}

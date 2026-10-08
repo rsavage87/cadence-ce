@@ -1,7 +1,7 @@
 {% load web %}
 {% comment %}The reportability decision (slice 28, views_incidents.incident_decide; services.decide, Incidents Approve). It asks 21 CFR
    803.3's question; the deliberations themselves are in the facility's event report, whose number the decision points to (asked here
-   when none is on file).{% endcomment %}
+   when none is on file). Who was affected comes with the final outcome: new information about either is decided again here.{% endcomment %}
 <div class="modal-h"><h2>{{ i.number }}: was it reportable?</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
 {% if blocker %}
 <div class="form"><div class="full note">{{ blocker }}</div></div>
@@ -11,7 +11,8 @@
   <div class="form">
     <p class="full inc-question">Does the information reasonably suggest that {{ i.asset.tag }} has or may have caused or contributed to a death or a serious injury of a patient of the facility, or of a staff member on duty? Use error counts. If the device cannot be ruled out, it is reportable.</p>
     {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
-    <label class="full">{{ form.outcome.label }}{{ form.outcome }}<span class="hint">Recorded as: {{ i.get_outcome_display }}. Who was affected: {{ i.get_affected_display|lower }}.</span>{% if form.outcome.errors %}<span class="err">{{ form.outcome.errors|striptags }}</span>{% endif %}</label>
+    <label class="full">{{ form.outcome.label }}{{ form.outcome }}<span class="hint">Recorded as: {{ i.get_outcome_display }}.</span>{% if form.outcome.errors %}<span class="err">{{ form.outcome.errors|striptags }}</span>{% endif %}</label>
+    <label class="full">{{ form.affected.label }}{{ form.affected }}<span class="hint">Recorded as: {{ i.get_affected_display|lower }}. {{ form.affected.help_text }}</span>{% if form.affected.errors %}<span class="err">{{ form.affected.errors|striptags }}</span>{% endif %}</label>
     <fieldset class="full inc-basis"{% if form.basis.errors %} aria-describedby="incd-basis_error"{% endif %}>
       <legend>{{ form.basis.label }}</legend>
       <div class="radio">{% for radio in form.basis %}<label for="{{ radio.id_for_label }}">{{ radio.tag }}<span>{% if radio.data.value == "may_have" %}Reportable: {% else %}Not reportable: {% endif %}{{ radio.choice_label }}</span></label>{% endfor %}</div>

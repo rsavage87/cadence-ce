@@ -98,9 +98,13 @@ def _held(open_pm) -> bool:
     return open_pm is not None and (open_pm.vendor_service or bool(open_pm.assigned_to_id and open_pm.assigned_to.is_active))
 
 
-def _who(open_pm, suggested) -> dict:
+def _who(open_pm, suggested, *, on_hold: bool = False) -> dict:
     """Who does the next PM: the open PM work order's vendor or (active) technician, else the schedule's pick. An open PM with a
-    deactivated technician is on nobody's plate, as the PM schedule treats it, so the pick is shown."""
+    deactivated technician is on nobody's plate, as the PM schedule treats it, so the pick is shown. Slice 28 (review fix): a device
+    held as evidence (`on_hold`) is "held", whoever has its open PM: nobody may start it, and the schedule suggests nobody for it
+    (pm.schedule._assign), which is not a credentialing gap."""
+    if on_hold:
+        return {"kind": "held", "name": ""}
     if _held(open_pm) and open_pm.vendor_service:
         return {"kind": "vendor", "name": open_pm.vendor_name or "Vendor"}
     if _held(open_pm):
@@ -114,7 +118,8 @@ def pm_upcoming(asset, open_pm, today: date) -> dict:
     """The next PM and the PROJECTED ones after it, and who does them. The projections chain add_months from the next date, as
     completing a PM on its due date would (workorders.services._on_completed); an overdue PM counts as done today, so no projected
     date is already past. The technician is the one the PM schedule plans for that day (pm.schedule.planned_technicians, the same
-    as the day panel and the route sheets), or the open PM work order's vendor or active technician."""
+    as the day panel and the route sheets), or the open PM work order's vendor or active technician. A device held as evidence for an
+    incident investigation waits for the incident's release (who "held"; the schedule is not asked)."""
     if asset.status == AssetStatus.RETIRED:
         return {"rows": [], "unscheduled": "Retired devices are not scheduled."}
     if asset.awaiting_inspection:  # slice 26: no next PM until its incoming inspection passes
@@ -124,10 +129,10 @@ def pm_upcoming(asset, open_pm, today: date) -> dict:
     interval = asset.pm_interval_months
     nxt = asset.next_pm_on
     suggested = None
-    if not _held(open_pm):
+    if not _held(open_pm) and not asset.incident_hold:
         # The PM screen's own pick for that day (its day panel, create action, and route sheets), whatever the date
         suggested = planned_technicians(nxt, today)[0].get(asset.id)
-    who = _who(open_pm, suggested)
+    who = _who(open_pm, suggested, on_hold=asset.incident_hold)
     rows = [{"on": nxt, "next": True, "overdue": nxt < today}]
     d = max(nxt, today)
     from_due = False

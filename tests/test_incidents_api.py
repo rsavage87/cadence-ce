@@ -139,7 +139,7 @@ def test_a_technician_records_an_incident_by_the_devices_tag_and_holds_it(client
     assert data["clock"] == {"due": due.isoformat(), "left": 10, "overdue": False, "soon": False, "pending": True, "recipients": ["manufacturer"]}
     assert data["needs_decision"] and data["reportable"] is None and data["required_recipients"] == [] and data["reports_missing"] == []
     assert data["opened_work_order"] and data["work_order_number"] == incident.work_order.number and data["work_order_status"] == WoStatus.OPEN
-    assert data["created_by_name"] == str(tech) and data["url"] == f"/incidents/{incident.number}/"
+    assert data["created_by_name"] == str(tech) and data["url"] == f"/incidents/{incident.number}/?facility=riverside"
     [hold] = data["holds"]
     assert (hold["asset_tag"], hold["active"], hold["status_before"], hold["held_on"], hold["release_note"]) == (
         "CE-10001", True, AssetStatus.IN_SERVICE, today.isoformat(), "")

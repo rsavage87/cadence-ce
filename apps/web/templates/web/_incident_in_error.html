@@ -1,5 +1,7 @@
 {% load web %}
-{# Recorded in error (slice 28, views_incidents.incident_in_error; services.recorded_in_error, Incidents Approve): what it does, then do it. #}
+{% comment %}Recorded in error (slice 28, views_incidents.incident_in_error; services.recorded_in_error, Incidents Approve): what it does,
+   then do it. Never a side door (review fix): a device going back in service or on loan also needs Equipment Edit, cancelling the
+   work order it opened Work orders Edit; the service's refusal shows here in its own words.{% endcomment %}
 <div class="modal-h"><h2>{{ i.number }} recorded in error</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
 {% if blocker %}
 <div class="form"><div class="full note">{{ blocker }}</div></div>
@@ -7,7 +9,8 @@
 {% else %}
 <form id="ince-form" hx-post="{% url 'web:incident_in_error' i.number %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]">
   <div class="form">
-    <p class="full">For an incident recorded on the wrong device, or by mistake. Every device it holds is released and goes back to its status before the hold (out of service while a repair or its incoming inspection holds it); {% if i.opened_work_order %}the investigation work order it opened is cancelled if still open{% else %}the request it took over as its investigation goes on as it was{% endif %}. The incident is kept, marked recorded in error, and counted nowhere. This cannot be undone.</p>
+    <p class="full">For an incident recorded on the wrong device, or by mistake. Every device it holds is released and goes back to its status before the hold (out of service while a repair or its incoming inspection holds it); {% if i.opened_work_order %}the investigation work order it opened is cancelled if still open{% else %}the request it took over as its investigation goes on as it was{% endif %}. The incident is kept, marked recorded in error, and counted nowhere; any report number and report days recorded on it are cleared (its History keeps them). This cannot be undone.</p>
+    <p class="full hint">Putting a device back in service or on loan this way also needs Equipment Edit, and cancelling the work order the incident opened needs Work orders Edit.</p>
     {% if error %}<div class="full"><span class="err" role="alert">{{ error }}</span></div>{% endif %}
   </div>
   <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn danger" type="submit">Mark recorded in error</button></div>

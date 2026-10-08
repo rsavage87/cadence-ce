@@ -1,5 +1,5 @@
 {% load web %}
-{# Device drawer, PM schedule tab (slice 12; the mock's drawerAsset). Context: pm, from apps/web/asset_tabs.pm_tab; the drawer's can_view_wo links work orders. Slice 26: a device waiting for its incoming inspection has no upcoming PMs, and the history lists its incoming inspections. #}
+{# Device drawer, PM schedule tab (slice 12; the mock's drawerAsset). Context: pm, from apps/web/asset_tabs.pm_tab; the drawer's can_view_wo links work orders. Slice 26: a device waiting for its incoming inspection has no upcoming PMs, and the history lists its incoming inspections. Slice 28: a device held as evidence (who "held") says its next PM waits for the incident's release, never that nobody is credentialed. #}
 {% with p=pm.procedure up=pm.upcoming %}
   <div class="sec"><h3>Maintenance strategy</h3><div class="note">{{ pm.strategy }}{% if asset.device_model.oem_schedule_required %} CMS requires the manufacturer's maintenance schedule for imaging, radiologic, and medical laser equipment, so this model never goes on AEM.{% endif %}</div></div>
 
@@ -22,14 +22,14 @@
     {% for u in up.rows %}
       <div class="li static"><span class="rail{% if u.overdue %} crit{% elif u.next %} ok{% endif %}"></span>
         <div class="bd"><div class="t{% if u.overdue %} down{% endif %}">{{ u.on|date:"M j, Y" }}</div>
-          <div class="s">{% if u.next %}Next due{% else %}Projected{% endif %} · {% if up.who.kind == "vendor" %}Vendor: {{ up.who.name }}{% elif up.who.kind == "suggested" %}{{ up.who.name }}, suggested{% elif up.who.kind == "assigned" %}{{ up.who.name }}{% else %}No credentialed technician{% endif %}</div></div>
+          <div class="s">{% if u.next %}Next due{% else %}Projected{% endif %}{% if up.who.kind == "held" %}{% if u.next %} · Held: waits for the incident's release{% endif %}{% else %} · {% if up.who.kind == "vendor" %}Vendor: {{ up.who.name }}{% elif up.who.kind == "suggested" %}{{ up.who.name }}, suggested{% elif up.who.kind == "assigned" %}{{ up.who.name }}{% else %}No credentialed technician{% endif %}{% endif %}</div></div>
         <div class="r">{% if u.next %}{% pm_sticker asset %}{% if up.open_pm and can_view_wo %}<br><a class="link" href="{% url 'web:wo' up.open_pm.number %}" hx-get="{% url 'web:wo' up.open_pm.number %}" hx-target="#drawer">{{ up.open_pm.number }}</a>{% endif %}{% endif %}</div>
       </div>
     {% empty %}
       <div class="empty">{{ up.unscheduled }}</div>
     {% endfor %}
     </div>
-    {% if up.rows %}<div class="hint" style="margin-top:8px">Projected dates assume each PM is done when due{% if up.rows.0.overdue %}, the overdue one today{% if up.from_due %}, still inside its PM window, so the next ones keep counting from its due date{% endif %}{% endif %}. {% if up.who.kind == "suggested" %}The technician is the one the PM schedule suggests: credentialed for this device and least loaded.{% elif up.who.kind == "none" %}No active technician is credentialed for this device{% if asset.under_contract %}; {{ asset.contract.vendor }} covers it under {{ asset.contract.reference }}{% endif %}.{% elif can_view_wo %}The next PM is on {{ up.open_pm.number }}.{% endif %}</div>{% endif %}
+    {% if up.rows %}<div class="hint" style="margin-top:8px">Projected dates assume each PM is done when due{% if up.rows.0.overdue %}, the overdue one today{% if up.from_due %}, still inside its PM window, so the next ones keep counting from its due date{% endif %}{% endif %}. {% if up.who.kind == "held" %}Held as evidence for an incident investigation: nobody may start its PM until the incident releases it, so the PM schedule suggests nobody for it{% if up.open_pm and can_view_wo %}; the next PM is on {{ up.open_pm.number }}{% endif %}.{% elif up.who.kind == "suggested" %}The technician is the one the PM schedule suggests: credentialed for this device and least loaded.{% elif up.who.kind == "none" %}No active technician is credentialed for this device{% if asset.under_contract %}; {{ asset.contract.vendor }} covers it under {{ asset.contract.reference }}{% endif %}.{% elif can_view_wo %}The next PM is on {{ up.open_pm.number }}.{% endif %}</div>{% endif %}
   </div>
 
   {% comment %}Work-order details (numbers, technicians, results, hours) only for roles with Work orders View, the same rule as the

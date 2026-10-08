@@ -14,7 +14,7 @@
   {% if refusal %}<div class="sec"><div class="note warn" role="alert">{{ refusal }}</div></div>{% endif %}
   <div class="sec"><div class="note inc-clock{% if clock.tone %} {{ clock.tone }}{% endif %}" role="status">{{ clock.text }}</div></div>
 
-  <div class="sec"><h3>What happened {% if can_record %}<button class="link" type="button" hx-get="{% url 'web:incident_facts' i.number %}" hx-target="#modal-card">Edit facts</button>{% endif %}</h3>
+  <div class="sec"><h3>What happened {% if can_edit_facts %}<button class="link" type="button" hx-get="{% url 'web:incident_facts' i.number %}" hx-target="#modal-card">Edit facts</button>{% endif %}</h3>
     <dl class="dl">
       <div><dt>Happened on</dt><dd>{{ i.occurred_on|date:"D M j, Y" }}</dd></div>
       <div><dt>Clinical staff first knew on</dt><dd>{{ i.aware_on|date:"D M j, Y" }}</dd></div>

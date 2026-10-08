@@ -23,13 +23,15 @@ evaluation's finding, the holds (each device: sent to / back from the manufactur
 investigation), Close / Reopen / Recorded in error, and the History section (the incident's changes with its holds'). Each change
 is its own view; a modal's refusals render in the modal, a drawer button's in the drawer and its toast. Each fires
 `incidents-changed` (the list), `devices-changed` when a device's hold changed, `wo-changed` when a work order was opened or
-cancelled.
+cancelled or a hold changed (a held device's work orders offer no Start, Resume, or Mark completed: My work and the Work orders list
+re-fetch on it).
 
 Privacy (non-negotiable 6): nothing on an incident is typed text; the outcome and who was affected show only here (Incidents View).
 """
 from dataclasses import dataclass
 from datetime import date
 
+from django import forms
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.paginator import Paginator
 from django.db import transaction
@@ -337,7 +339,9 @@ def _drawer_context(request, i: Incident, refusal: str = "") -> dict:
     user = request.user
     today = timezone.localdate()
     is_open = i.status == Status.OPEN
-    can_record, can_decide = perms.can_record(user) and is_open, perms.can_decide(user) and is_open
+    # can_edit_facts, never can_record: the full page merges this over the list's context, whose can_record is the page head's
+    # Record incident button (review fix: a closed incident's address kept it)
+    can_edit_facts, can_decide = perms.can_record(user) and is_open, perms.can_decide(user) and is_open
     holds = list(i.holds.select_related("asset", "asset__device_model", "asset__department", "released_by").order_by("held_on", "created_at"))
     wo = i.work_order
     can_history = history_tabs.allowed(user, "incidents")
@@ -351,8 +355,8 @@ def _drawer_context(request, i: Incident, refusal: str = "") -> dict:
         "wo": wo, "investigation_live": wo is not None and wo.status != WoStatus.CANCELLED,
         "required": _and([inc.RECIPIENT_WORDS[r] for r in required]) if required else "",
         "missing": _and([inc.RECIPIENT_WORDS[r] for r in inc.reports_missing(i)]) if required else "",
-        "needs_decision": inc.needs_decision(i), "finding_form": FindingForm(initial={"finding": i.finding}, auto_id="incg-%s") if can_record else None,
-        "can_record": can_record, "can_decide": can_decide, "can_hold": perms.can_hold(user) and is_open,
+        "needs_decision": inc.needs_decision(i), "finding_form": FindingForm(initial={"finding": i.finding}, auto_id="incg-%s") if can_edit_facts else None,
+        "can_edit_facts": can_edit_facts, "can_decide": can_decide, "can_hold": perms.can_hold(user) and is_open,
         "can_open_wo": perms.can_open_work_order(user) and is_open, "can_reopen": perms.can_decide(user) and i.status == Status.CLOSED,
         "can_view_asset": user.has_level(Module.EQUIPMENT, Level.VIEW), "can_view_wo": user.has_level(Module.WORKORDERS, Level.VIEW),
     }
@@ -403,12 +407,34 @@ def incident(request, number):
 
 # --- Record incident -----------------------------------------------------------------------------------------------------------
 
+def _typed(params, choices, *, can_open: bool) -> dict:
+    """What was typed so far, as the form reads it (review fix: the unbound modal's due date was handed text where a date belongs):
+    a date that does not read as one (cleared, or typed half way) and a choice not among the field's are left out, so the default
+    takes their place; the investigation only when it is still offered (a device picked has its own open repairs)."""
+    typed = {}
+    for name, value in params.items():
+        field = RecordForm.base_fields.get(name)
+        if field is None or name in ("hold", "investigation"):
+            continue
+        if isinstance(field, forms.DateField):
+            value = _parse_day(value)
+            if value is None:
+                continue
+        elif isinstance(field, forms.ChoiceField) and value not in {str(v) for v, _ in field.choices}:
+            continue
+        typed[name] = value
+    offered = {NONE, *(wo.number for wo in choices), *([NEW] if can_open else [])}
+    if params.get("investigation") in offered:
+        typed["investigation"] = params["investigation"]
+    return typed
+
+
 def _record_initial(params, asset, fixed, choices, *, can_hold: bool, can_open: bool, today: date) -> dict:
-    """The modal's values: what was typed so far (a device picked re-renders it), else the defaults: today (or the adopted request's
-    day), the outcome not known yet, the hold on (for a user who may hold, with an investigation to go with it: the request taken
-    over, or one they may open), and the investigation the request it was reported as (the work order drawer's, or the device's one
-    open repair), else a new one."""
-    typed = {k: v for k, v in params.items() if k in RecordForm.base_fields and k != "hold"}
+    """The modal's values: what was typed so far (a device picked re-renders it; _typed), else the defaults: today (or the adopted
+    request's day), the outcome not known yet, the hold on (for a user who may hold, with an investigation to go with it: the request
+    taken over, or one they may open), and the investigation the request it was reported as (the work order drawer's, or the device's
+    one open repair), else a new one. Its dates are dates, never text."""
+    typed = _typed(params, choices, can_open=can_open)
     if params.get("shown"):  # the form was on screen: an unticked hold stays unticked
         typed["hold"] = bool(params.get("hold")) and can_hold
     adopt = fixed or (choices[0] if len(choices) == 1 else None)
@@ -422,8 +448,11 @@ def _record_initial(params, asset, fixed, choices, *, can_hold: bool, can_open: 
 
 def _record_modal(request, form, *, asset, fixed, choices, today):
     data = form.data if form.is_bound else form.initial
-    preview = due_preview(occurred=_parse_day(data.get("occurred_on")) if form.is_bound else form.initial.get("occurred_on"),
-                          aware=_parse_day(data.get("aware_on")), outcome=data.get("outcome", ""), affected=data.get("affected", ""), today=today)
+    if form.is_bound:
+        occurred, aware = _parse_day(data.get("occurred_on")), _parse_day(data.get("aware_on"))
+    else:  # _record_initial's dates are dates (or absent)
+        occurred, aware = data.get("occurred_on"), data.get("aware_on")
+    preview = due_preview(occurred=occurred, aware=aware, outcome=data.get("outcome", ""), affected=data.get("affected", ""), today=today)
     chosen = str(data.get("investigation") or "")
     return render(request, RECORD, {"form": form, "asset": asset, "fixed": fixed, "choices": choices, "chosen": chosen, "due": preview,
                                     "can_hold": perms.can_hold(request.user), "can_open": perms.can_open_work_order(request.user),
@@ -529,14 +558,15 @@ def incident_facts(request, number):
 
 
 def _decide_initial(i, today) -> dict:
-    return {"outcome": "" if i.outcome == Outcome.UNKNOWN else i.outcome, "basis": i.basis, "decided_on": i.decided_on or today,
-            "decided_by": i.decided_by}
+    return {"outcome": "" if i.outcome == Outcome.UNKNOWN else i.outcome, "affected": i.affected, "basis": i.basis,
+            "decided_on": i.decided_on or today, "decided_by": i.decided_by}
 
 
 @web_view(perms.MODULE, perms.DECIDE_LEVEL)
 def incident_decide(request, number):
     """Decide: GET the modal (the 803.3 question), POST decide. With no event report number on file, the modal asks for it and saves
-    it first (update_facts), both or neither."""
+    it first (update_facts), both or neither. Who was affected comes with the outcome (review fix): once decided, new information
+    about either (a visitor who was staff on duty, a near miss that was a death) is decided again here, and the clock follows."""
     i = _get(number)
     today = timezone.localdate()
     if request.method != "POST":
@@ -548,8 +578,8 @@ def incident_decide(request, number):
             with transaction.atomic():
                 if d.get("event_reference"):
                     inc.update_facts(i, by=request.user, today=today, event_reference=d["event_reference"])
-                inc.decide(i, outcome=d["outcome"], basis=d["basis"], decided_on=d["decided_on"], decided_by=d["decided_by"], by=request.user,
-                           today=today)
+                inc.decide(i, outcome=d["outcome"], affected=d.get("affected") or None, basis=d["basis"], decided_on=d["decided_on"],
+                           decided_by=d["decided_by"], by=request.user, today=today)
         except (ValidationError, PermissionDenied) as e:
             form.add_service_errors(e)
     if not form.is_valid():
@@ -669,7 +699,8 @@ def incident_hold_back(request, number, pk):
 @web_view(perms.MODULE, perms.DECIDE_LEVEL)
 def incident_hold_release(request, number, pk):
     """Release a hold (release): returned to use, kept out of service, or kept by the manufacturer. Saved, the toast says what
-    still keeps the device out (services.release_note)."""
+    still keeps the device out (services.release_note), and wo-changed tells My work and the Work orders list (review fix): the
+    device's work orders lose the hold's Held chip and get Start, Resume, and Mark completed back, and its late PMs their reason."""
     i = _get(number)
     hold = _get_hold(i, pk)
     blocker = _blocker(i) or (f"{i.number} released {hold.asset.tag} on {_full(hold.released_on)}." if not hold.active else "")
@@ -689,7 +720,7 @@ def incident_hold_release(request, number, pk):
     hold.refresh_from_db()
     message = f"{hold.asset.tag} released: {Release(hold.release).label.lower()}"
     note = inc.release_note(hold)
-    return _saved(request, i, f"{message}. {note}" if note else message, "devices-changed")
+    return _saved(request, i, f"{message}. {note}" if note else message, "devices-changed", "wo-changed")
 
 
 @web_view(perms.MODULE, perms.DECIDE_LEVEL)
@@ -720,7 +751,9 @@ def incident_reopen(request, number):
 @web_view(perms.MODULE, perms.DECIDE_LEVEL)
 def incident_in_error(request, number):
     """Recorded in error: GET the modal saying what it does, POST recorded_in_error (every hold released, each device back to its
-    status before; the work order the incident opened cancelled). Kept, counted nowhere."""
+    status before; the work order the incident opened cancelled). Kept, counted nowhere. Never a side door (review fix): a device
+    going back in service or on loan needs Equipment Edit too, and cancelling the work order Work orders Edit; the service's words
+    come back in the modal."""
     i = _get(number)
     if request.method != "POST":
         return render(request, IN_ERROR, {"i": i, "blocker": _blocker(i), "error": ""})

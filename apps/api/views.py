@@ -352,12 +352,33 @@ class WorkOrderViewSet(TenantViewSet):
             raise DRFValidationError({"inspection_result": ["An incoming inspection's result is recorded when it is completed: POST "
                                                             "/api/v1/work-orders/{id}/transition/ with status completed and inspection_result."]})
         changed = [f for f, v in d.items() if v != getattr(wo, f)]
+        self._check_investigation_change(wo, changed)
         if changed and wo.status not in OPEN_STATUSES:
             raise DRFValidationError({"detail": f"{wo.number} is {wo.get_status_display().lower()}: what it records stays as it is. Reopen it first."})
         self._check_inspection_change(wo, d)
         if "asset" in changed and (wo.labor_lines.exists() or wo.part_lines.exists()):
             raise DRFValidationError({"asset": [f"{wo.number} has labor or parts on file for {wo.asset.tag}; it stays with that device."]})
         serializer.save()
+
+    def _check_investigation_change(self, wo, changed):
+        """Slice 28 review fix: an incident's investigation (any incident's Incident.work_order, whatever its status: the file keeps
+        it) stays the repair on the device it was opened or adopted on. Moved to another device, or made a PM, it would start and
+        complete on a device nobody holds, and the suspect device would go back to use on its completion with no investigation
+        recorded on it. Refused keyed asset or type, before anything else is checked; the incident's number only for Incidents View
+        (an edit needs Work orders Edit, not that)."""
+        fields = [f for f in ("asset", "type") if f in changed]
+        if not fields:
+            return
+        numbers = sorted(Incident.objects.filter(work_order=wo).values_list("number", flat=True))
+        if not numbers:
+            return
+        which = "an incident"
+        if inc_perms.can_view(self.request.user):
+            which = f"incident {numbers[0]}" if len(numbers) == 1 else f"incidents {', '.join(numbers)}"
+        stays = {"asset": f"it stays with {wo.asset.tag}, the device the incident was recorded on",
+                 "type": f"it stays a {wo.get_type_display().lower()}"}
+        raise DRFValidationError({f: [f"{wo.number} is the investigation of {which}: {stays[f]}. Open the work order you need with POST "
+                                      "/api/v1/work-orders/."] for f in fields})
 
     @staticmethod
     def _check_inspection_change(wo, d):
@@ -411,8 +432,11 @@ class WorkOrderViewSet(TenantViewSet):
             except ValidationError as e:
                 return Response(e.message_dict if hasattr(e, "error_dict") else {"detail": " ".join(e.messages)}, status=status.HTTP_400_BAD_REQUEST)
             return Response(self.get_serializer(wo).data)
+        note = request.data.get("note")
+        if note is not None and not isinstance(note, str):  # slice 28 review fix: a list, number, or object reached the service's strip (a 500)
+            raise DRFValidationError({"note": ["Send this as text."]})
         try:
-            wo_services.change_status(wo, to_status, by=request.user, note=request.data.get("note", ""))
+            wo_services.change_status(wo, to_status, by=request.user, note=note or "")
         except ValidationError as e:
             # Slice 28: the service's words (a held device's refusal among them), keyed by field when it names one; never str(e),
             # which shows the list's brackets and quotes.

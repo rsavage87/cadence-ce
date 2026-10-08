@@ -678,10 +678,10 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
     and late_reason. `wo` is refreshed from the database afterwards (and its device with it)."""
     today = today or timezone.localdate()
     _check_tenant(wo)
-    if wo.type == WoType.INSPECTION:
-        # Slice 26: the device's open inspections first, in number order, then this one, then the device's row in the pass: two of its
-        # inspections completed at once take turns; the second finds itself cancelled by the first's pass (or the device passed).
-        inspections.lock_open(wo.asset_id)
+    # The device's open work orders and this one first, in number order (its open inspections among them: two of its inspections
+    # completed at once take turns, and the second finds itself cancelled by the first's pass), then the device's row (slice 28 review
+    # fix: locking this one alone first waited on a lower number a start held while it waited for this one: services.lock_work).
+    services.lock_work(wo.asset_id, wo.pk)
     locked = WorkOrder.objects.select_for_update().get(pk=wo.pk)  # two clicks, or two people, complete it once
     reason = blocker(locked, today, by)
     if reason:

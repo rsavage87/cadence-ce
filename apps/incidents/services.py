@@ -218,6 +218,7 @@ def release_note(hold) -> str:
 # --- writing ---------------------------------------------------------------------------------------------------------------------
 
 CHANGE_REASON_MAX = 100  # simple_history's history_change_reason column
+EARLIEST = date(2000, 1, 1)  # review fix: a year typed with a slip (1926, 0026) is refused, never numbered
 FACT_FIELDS = ("occurred_on", "aware_on", "outcome", "affected", "event_reference", "accessories", "event_log")
 EVENT_REFERENCE_MAX = Incident._meta.get_field("event_reference").max_length
 # An opened work order's problem when the device is not held (an incident recorded without a hold, with an investigation): the
@@ -323,6 +324,8 @@ def _facts_errors(v: dict, today: date) -> dict:
         errors["occurred_on"] = "Enter the day it happened."
     elif occurred > today:
         errors["occurred_on"] = "Enter the day it happened, not a day to come."
+    elif occurred < EARLIEST:
+        errors["occurred_on"] = f"Enter the day it happened (from {EARLIEST.year} on)."
     if not _is_day(aware):
         errors["aware_on"] = "Enter the day the facility's clinical staff first knew."
     elif aware > today:
@@ -427,6 +430,26 @@ def _late_reasons(hold, *, by, today: date) -> None:
             continue
 
 
+def _missed_while_held(hold, today: date) -> list:
+    """The pks of the device's PMs that missed their due date while it was held, with no late reason yet (_late_reasons' list),
+    read without a lock so the release can lock them in number order with the device's other work first."""
+    from apps.pm.services import missed_pms
+    from apps.pm.windows import windows
+
+    return list(missed_pms(today, w=windows()).filter(asset_id=hold.asset_id, due_on__gte=hold.held_on, due_on__lte=today, late_reason="")
+                .values_list("pk", flat=True))
+
+
+def _lock_device_work(holds, today: date, *also) -> None:
+    """Every work order the release of `holds` may write, before any of them is written (review fix: lock order): the held devices'
+    open work orders, the PMs they missed while held, and `also`, all in one number order (workorders.services.lock_work's order, which
+    every writer of one device's work keeps: a sweep per device would lock `also` ahead of another device's lower numbers)."""
+    missed = [pk for hold in holds for pk in _missed_while_held(hold, today)]
+    rows = WorkOrder.objects.select_for_update().filter(Q(asset_id__in=[h.asset_id for h in holds], status__in=OPEN_STATUSES)
+                                                        | Q(pk__in=[*missed, *also])).order_by("number")
+    list(rows.values_list("pk", flat=True))
+
+
 def _end_hold(hold, kind: str, *, by, today: date) -> None:
     """The hold row's end (its incident locked): released today, how, by whom; then the late PMs' reason. Work orders first: the
     device's row comes after (_release_device)."""
@@ -477,12 +500,14 @@ def record_incident(*, asset, occurred_on=None, aware_on=None, outcome, affected
     as the investigation (the request it was reported as). Holding always means an investigation: hold=True with no work_order opens
     one (REPAIR, priority high, INVESTIGATION_PROBLEM, tag_out=True, unassigned; opened_work_order=True); hold=False opens one only when
     open_work_order is True. Holding refuses a missing or retired device (record it without a hold). Numbered IN-<yy>-<nnnn>
-    (Sequence "incident-<yyyy>"). Sets report_due_on (due_date). After commit, notify.recorded(incident) when it has a clock.
+    (Sequence "incident-<yy>"; a day before EARLIEST is refused). Sets report_due_on (due_date). After commit, notify.recorded(incident) when it has a clock.
 
     An adopted work order keeps everything (assignee, time, tag-out, priority) and the incident never opens a second. The number is
     taken first, then the work order is opened (or the adopted one locked), then the device's inspections and row (the hold): every
     record_incident takes the numbering first, so two never wait on each other's device. Refusals of the facts come together, keyed by
     field; holding a missing or retired device is keyed "hold", a work order that cannot be adopted "work_order"."""
+    from apps.workorders.services import lock_work
+
     today = today or timezone.localdate()
     adopting = work_order is not None
     opening = not adopting and (bool(hold) or bool(open_work_order))
@@ -502,15 +527,17 @@ def record_incident(*, asset, occurred_on=None, aware_on=None, outcome, affected
             errors["hold"] = f"{asset.tag} is {AssetStatus(status).label.lower()}: record the incident without holding it."
     if errors:
         raise ValidationError(errors)
-    year = facts["occurred_on"].year
-    number = f"IN-{year % 100:02d}-{Sequence.next(f'incident-{year}', asset.tenant):04d}"
+    yy = facts["occurred_on"].year % 100
+    number = f"IN-{yy:02d}-{Sequence.next(f'incident-{yy:02d}', asset.tenant):04d}"  # one counter per printed year (review fix)
     wo = None
     if adopting:
+        lock_work(asset.pk, work_order.pk)  # the device's work in number order before any one of it (review fix: lock order)
         wo = WorkOrder.objects.select_for_update().get(pk=work_order.pk)
         refusal = _adopt_refusal(wo, asset)
         if refusal:
             raise ValidationError({"work_order": refusal})
     elif opening:
+        lock_work(asset.pk)  # the device's work before the work order numbering, as a failed PM's completion takes them (review fix)
         wo = _open_work_order(asset, by=by, today=today, held=bool(hold))
     incident = Incident(tenant=asset.tenant, number=number, asset=asset, work_order=wo, opened_work_order=opening, created_by=by, **facts)
     incident.report_due_on = due_date(outcome=incident.outcome, affected=incident.affected, aware_on=incident.aware_on, reportable=None)
@@ -534,7 +561,10 @@ def hold_device(incident, asset, *, by=None, today=None) -> IncidentHold:
     current = _locked(incident)
     _check_open(current)
     if _live_investigation(current) is None:
+        from apps.workorders.services import lock_work
+
         _check(by, perms.can_open_work_order, OPEN_WORK_ORDER_PERMISSION)
+        lock_work(current.asset_id)  # the suspect device's work before the numbering (review fix: lock order)
         suspect_held = asset.pk == current.asset_id or current.holds.filter(asset_id=current.asset_id, released_on__isnull=True).exists()
         _set_investigation(current, _open_work_order(current.asset, by=by, today=today, held=suspect_held), by)
     hold = _hold(current, asset, by=by, today=today)
@@ -571,7 +601,7 @@ def update_facts(incident, *, by=None, today=None, aware_reason="", **fields) ->
         if "outcome" in changed:
             errors["outcome"] = f"{decided}: change the outcome by deciding again."
         if "affected" in changed:
-            errors["affected"] = f"{decided}: change who was affected by deciding again."
+            errors["affected"] = f"{decided}: change who was affected by deciding again (Decide again takes both)."
         if "event_reference" in changed and not after["event_reference"]:
             errors["event_reference"] = "The decision points to this event report: correct its number, never clear it."
     if "occurred_on" in changed and "occurred_on" not in errors:
@@ -605,25 +635,33 @@ def update_facts(incident, *, by=None, today=None, aware_reason="", **fields) ->
 
 
 @transaction.atomic
-def decide(incident, *, outcome, basis, decided_on, decided_by, by=None, today=None) -> Incident:
-    """Record whether it was reportable (Incidents Approve). `outcome` is the final one (never unknown). may_have needs death or
-    serious injury of a patient of the facility; not_serious needs injury or no harm; no_suggestion is refused while the finding is a
-    failure (FAILURE_FINDINGS); not_patient needs affected "visitor or another person". event_reference is required on a harm
-    incident. occurred_on <= decided_on <= today. Sets reportable (basis == may_have), recorded_by, report_due_on. An open incident
-    only.
+def decide(incident, *, outcome, basis, decided_on, decided_by, affected=None, by=None, today=None) -> Incident:
+    """Record whether it was reportable (Incidents Approve). `outcome` is the final one (never unknown), and `affected` who was
+    affected as it is now known (None: as recorded). may_have needs death or serious injury of a patient of the facility; not_serious
+    needs injury or no harm; no_suggestion is refused while the finding is a failure (FAILURE_FINDINGS); not_patient needs affected
+    "visitor or another person"; a harm outcome needs someone affected. event_reference is required on a harm incident.
+    occurred_on <= decided_on <= today. Sets reportable (basis == may_have), recorded_by, report_due_on. An open incident only.
 
     A harm incident here is one whose recorded or final outcome harmed someone (HARM_OUTCOMES) with someone affected: the
-    deliberations are in that event report. Deciding again replaces the decision (the history keeps the one before)."""
+    deliberations are in that event report. Deciding again replaces the decision (the history keeps the one before). Review fix:
+    once decided, the outcome and who was affected change only here (update_facts says so), so new information about either (a
+    visitor who was staff on duty, a near miss that turned out to be a death) is decided again with both; a decision that starts
+    the clock tells the managers, as recording one does."""
     today = today or timezone.localdate()
     _check(by, perms.can_decide, DECIDE_PERMISSION)
     current = _locked(incident)
     _check_open(current)
     outcome, basis, decided_by = (str(v or "").strip() for v in (outcome, basis, decided_by))
+    affected = current.affected if affected is None else str(affected or "").strip()
     errors = {}
     if outcome not in Outcome.values:
         errors["outcome"] = "Choose the outcome as it is now known."
     elif outcome == Outcome.UNKNOWN:
         errors["outcome"] = "Choose the outcome as it is now known: a decision never leaves it not known."
+    if affected not in Affected.values:
+        errors["affected"] = "Choose who was affected."
+    elif outcome in HARM_OUTCOMES and affected == Affected.NONE:
+        errors["affected"] = "Someone was harmed, or may have been: choose who (a patient, a staff member on duty, or another person)."
     if basis not in Basis.values:
         errors["basis"] = "Choose the basis for the decision."
     if decided_by not in DecidedBy.values:
@@ -634,10 +672,10 @@ def decide(incident, *, outcome, basis, decided_on, decided_by, by=None, today=N
         errors["decided_on"] = "Enter the day it was decided, not a day to come."
     elif decided_on < current.occurred_on:
         errors["decided_on"] = f"It cannot have been decided before it happened ({_fmt(current.occurred_on)})."
-    if "outcome" not in errors and "basis" not in errors:
+    if "outcome" not in errors and "basis" not in errors and "affected" not in errors:
         if basis == Basis.MAY_HAVE and outcome not in (Outcome.DEATH, Outcome.SERIOUS_INJURY):
             errors["basis"] = "A report is required only for a death or a serious injury: choose that outcome, or another basis."
-        elif basis == Basis.MAY_HAVE and current.affected not in FACILITY_PATIENTS:
+        elif basis == Basis.MAY_HAVE and affected not in FACILITY_PATIENTS:
             errors["basis"] = ("A report is required only for a patient of the facility or a staff member on duty: the person affected "
                                "was not one.")
         elif basis == Basis.NOT_SERIOUS and outcome not in (Outcome.INJURY, Outcome.NO_HARM):
@@ -645,18 +683,23 @@ def decide(incident, *, outcome, basis, decided_on, decided_by, by=None, today=N
         elif basis == Basis.NO_SUGGESTION and current.finding in FAILURE_FINDINGS:
             errors["basis"] = (f"The device evaluation found a failure ({Finding(current.finding).label.lower()}): that suggests the "
                                "device may have caused or contributed. Choose another basis.")
-        elif basis == Basis.NOT_PATIENT and current.affected != Affected.OTHER:
-            errors["basis"] = f"The person affected was recorded as {Affected(current.affected).label.lower()}, not a visitor or another person."
-    harm = (outcome in HARM_OUTCOMES or current.outcome in HARM_OUTCOMES) and current.affected != Affected.NONE
+        elif basis == Basis.NOT_PATIENT and affected != Affected.OTHER:
+            errors["basis"] = f"The person affected is {Affected(affected).label.lower()}, not a visitor or another person."
+    # The recorded facts or the final ones harmed someone: either way the deliberations are in the event report (a decision that stops
+    # a running clock points to it too).
+    harm = (outcome in HARM_OUTCOMES and affected != Affected.NONE) or (current.outcome in HARM_OUTCOMES and current.affected != Affected.NONE)
     if harm and not current.event_reference:
         errors["event_reference"] = "Enter the facility's event report number first: the deliberations on this decision are there."
     if errors:
         raise ValidationError(errors)
-    current.outcome, current.basis, current.decided_on, current.decided_by = outcome, basis, decided_on, decided_by
+    had_clock = current.report_due_on is not None
+    current.outcome, current.affected, current.basis, current.decided_on, current.decided_by = outcome, affected, basis, decided_on, decided_by
     current.reportable = basis == Basis.MAY_HAVE
     current.recorded_by = by
-    current.report_due_on = due_date(outcome=outcome, affected=current.affected, aware_on=current.aware_on, reportable=current.reportable)
+    current.report_due_on = due_date(outcome=outcome, affected=affected, aware_on=current.aware_on, reportable=current.reportable)
     _save(current, by, "Decided: reportable" if current.reportable else "Decided: not reportable")
+    if not had_clock and current.report_due_on is not None:
+        _notify_after_commit(current)
     return _returned(incident, current)
 
 
@@ -850,7 +893,7 @@ def release(hold, release, *, by=None, today=None) -> IncidentHold:
 
     The release succeeds when the device stays out: release_note(hold) has the words. keep_out is refused while the device is with
     the manufacturer, and kept_by_manufacturer unless it is there (803.32 asks for the day it was sent). Refusals keyed "release".
-    Locks: the incident, the hold, the late PMs, then the device's inspections and row."""
+    Locks: the incident, the hold, the device's open work orders and late PMs in number order, then its row."""
     today = today or timezone.localdate()
     kind = str(release or "").strip()
     _check(by, perms.can_decide, RELEASE_PERMISSION)
@@ -862,6 +905,7 @@ def release(hold, release, *, by=None, today=None) -> IncidentHold:
     refusal = _release_refusal(incident, current, kind, today)
     if refusal:
         raise ValidationError({"release": refusal})
+    _lock_device_work([current], today)
     _end_hold(current, kind, by=by, today=today)
     _release_device(current, incident, kind=kind, by=by)
     return _returned(hold, current)
@@ -922,7 +966,14 @@ def recorded_in_error(incident, *, by=None, today=None) -> Incident:
     A device waiting for its incoming inspection, or held out by a repair, never goes back in service or on loan this way (out of
     service then). An adopted work order is left as it is (the request it was goes on). The held days' late PMs get their reason, as
     any release gives it (the device was held all the same). Locks: the incident, the holds and the late PMs, the work order it
-    opened, then each device's inspections and row, in the devices' order (every work order before any device)."""
+    opened, then each device's inspections and row, in the devices' order (every work order before any device).
+
+    Review fixes: never a side door around Equipment or Work orders. A hold whose device would go back in service or on loan needs
+    Equipment Edit too (as a return to use does: perms.can_return_to_use), and cancelling the work order it opened needs Work orders
+    Edit (wo_perms.can_transition); refused in words before anything changes. The report number and the report days are cleared
+    (the history keeps them): a report sent about the wrong device belongs to the incident recorded on the right one, which records
+    it under the same number."""
+    from apps.workorders import permissions as wo_perms
     from apps.workorders.services import change_status
 
     today = today or timezone.localdate()
@@ -930,10 +981,20 @@ def recorded_in_error(incident, *, by=None, today=None) -> Incident:
     current = _locked(incident)
     _check_open(current)
     holds = list(IncidentHold.objects.select_for_update().filter(incident=current, released_on__isnull=True).order_by("asset_id"))
+    opened = (WorkOrder.objects.filter(pk=current.work_order_id, status__in=OPEN_STATUSES).first()
+              if current.opened_work_order and current.work_order_id is not None else None)
+    if by is not None:
+        back_in_use = [h.asset.tag for h in holds if h.status_before in (AssetStatus.IN_SERVICE, AssetStatus.ON_LOAN)]
+        if back_in_use and not perms.can_return_to_use(by):
+            raise PermissionDenied(f"Marking {current.number} recorded in error puts {_and(back_in_use)} back in use: that needs "
+                                   "Incidents Approve and Equipment Edit.")
+        if opened is not None and not wo_perms.can_transition(by, opened.status, WoStatus.CANCELLED):
+            raise PermissionDenied(f"Marking {current.number} recorded in error cancels {opened.number}: that needs Work orders Edit.")
+    _lock_device_work(holds, today, *([opened.pk] if opened is not None else []))
     for hold in holds:
         _end_hold(hold, Release.IN_ERROR, by=by, today=today)
-    if current.opened_work_order and current.work_order_id is not None:
-        wo = WorkOrder.objects.select_for_update().get(pk=current.work_order_id)
+    if opened is not None:
+        wo = WorkOrder.objects.select_for_update().get(pk=opened.pk)
         if wo.status in OPEN_STATUSES:
             if wo.status == WoStatus.IN_PROGRESS:  # in progress cannot be cancelled: back to open first
                 change_status(wo, WoStatus.OPEN, by=by, note=IN_ERROR_NOTE, as_of=today)
@@ -941,5 +1002,6 @@ def recorded_in_error(incident, *, by=None, today=None) -> Incident:
     for hold in holds:
         _release_device(hold, current, kind=Release.IN_ERROR, by=by)
     current.status = Status.IN_ERROR
+    current.report_number, current.fda_reported_on, current.manufacturer_reported_on = "", None, None
     _save(current, by, "Recorded in error")
     return _returned(incident, current)

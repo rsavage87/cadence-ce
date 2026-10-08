@@ -180,9 +180,18 @@ def _lock_for_hold(wo: WorkOrder):
     start)."""
     from apps.equipment.models import Asset
 
-    rows = WorkOrder.objects.select_for_update().filter(Q(asset_id=wo.asset_id, status__in=OPEN_STATUSES) | Q(pk=wo.pk)).order_by("number")
-    list(rows.values_list("pk", flat=True))
+    lock_work(wo.asset_id, wo.pk)
     return Asset.objects.select_for_update().only("pk", "tag", "incident_hold").get(pk=wo.asset_id)
+
+
+def lock_work(asset_id, *also) -> None:
+    """The first locks every writer of a device's work takes (slice 28): the device's open work orders and the work orders `also`
+    names (one being completed or reopened, PMs a release gives a late reason), all in number order, until the transaction ends. Its
+    row comes after (equipment.services._locked_row, _lock_for_hold). A writer that locked one work order before this would wait here
+    for a lower number another writer holds while that writer waits for its row: so this comes first, before any other work order's
+    row (complete_work_order, the incident services)."""
+    rows = WorkOrder.objects.select_for_update().filter(Q(asset_id=asset_id, status__in=OPEN_STATUSES) | Q(pk__in=also)).order_by("number")
+    list(rows.values_list("pk", flat=True))
 
 
 def hold_blocker(wo: WorkOrder) -> str:

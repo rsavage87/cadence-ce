@@ -177,11 +177,18 @@ class FactsForm(ServiceForm):
 FINAL_OUTCOMES = [(v, label) for v, label in Outcome.choices if v != Outcome.UNKNOWN]
 
 
+# Review fix: once decided, the outcome and who was affected change only by deciding again (services.update_facts says so).
+DECIDE_AFFECTED_HELP = ("As it is now known. New information about who was affected, or about the outcome, is decided again here: the "
+                        "report clock follows the decision.")
+
+
 class DecideForm(ServiceForm):
-    """The reportability decision (decide). The event report number is asked here only when the incident has none: the decision
-    points to the deliberations there."""
+    """The reportability decision (decide). Who was affected comes with the outcome, prefilled with the incident's (services.decide
+    checks the pair: a harm outcome needs someone affected, a report a patient of the facility or a staff member on duty). The event
+    report number is asked here only when the incident has none: the decision points to the deliberations there."""
     outcome = _choice("The outcome as it is now known", FINAL_OUTCOMES, message="Choose the outcome as it is now known.",
                       blank=("", "Choose…"))
+    affected = _choice("Who was affected", Affected.choices, required=False)  # not sent: as recorded (services.decide's None)
     basis = _choice("The decision", Basis.choices, message="Choose the basis for the decision.", radio=True)
     decided_on = _date("Decided on", message="Enter the day it was decided.")
     decided_by = _choice("Decided by", DecidedBy.choices, message="Choose who decided.", blank=("", "Choose…"))
@@ -190,6 +197,7 @@ class DecideForm(ServiceForm):
     def __init__(self, *args, incident, **kwargs):
         kwargs.setdefault("auto_id", "incd-%s")
         super().__init__(*args, **kwargs)
+        self.fields["affected"].help_text = DECIDE_AFFECTED_HELP
         if incident.event_reference:
             del self.fields["event_reference"]
         else:

@@ -25,9 +25,12 @@ PATCH                                      event_reference, accessories, event_l
                                            aware_on moves later; only what is sent changes. Lowering the outcome, moving aware_on
                                            later, or stopping the clock needs Incidents Approve (403).
 POST   incidents/<id>/decide/              Incidents Approve (decide). {"outcome" (the final one), "basis", "decided_on",
-                                           "decided_by"}, all required.
+                                           "decided_by"}, all required, and "affected", who was affected as it is now known (left out
+                                           or null: as recorded). Once decided, new information about the outcome or who was affected
+                                           is decided again here (facts refuses both).
 POST   incidents/<id>/reports/             Incidents Approve (record_reports). {"fda_reported_on", "manufacturer_reported_on",
-                                           "report_number"}: what is left out keeps what is recorded; null clears a date.
+                                           "report_number"}: what is left out keeps what is recorded (read on the locked row); null
+                                           clears a date.
 POST   incidents/<id>/finding/             Incidents Edit (record_finding). {"finding"}. The answer carries decision_cleared (true when
                                            a failure found cleared a decision that the device was not suggested) and message (the
                                            words to show then, else "").
@@ -45,7 +48,9 @@ POST   incidents/<id>/holds/<hold>/release/
                                            still keeps the device out of service, "" when nothing does.
 POST   incidents/<id>/close/               Incidents Approve (close). No body. Everything missing is refused at once, keyed by field.
 POST   incidents/<id>/reopen/              Incidents Approve (reopen). No body.
-POST   incidents/<id>/in-error/            Incidents Approve (recorded_in_error). No body.
+POST   incidents/<id>/in-error/            Incidents Approve (recorded_in_error). No body. Putting a held device back in service or
+                                           on loan also needs Equipment Edit, and cancelling the work order the incident opened Work
+                                           orders Edit (403 in the service's words, before anything changes).
 
 Every write answers with the incident as GET shows it. A service's refusal is a 400 keyed by field in its words (a refusal about
 the whole incident, such as "closed: reopen it first", as detail), a field an endpoint does not take a 400 ("Unknown field."), a
@@ -54,6 +59,7 @@ incident or a hold of another incident a 404, a level missing a 403 in the servi
 """
 import uuid
 
+from django.db import transaction
 from django.db.models import Prefetch
 from django.utils import timezone
 from rest_framework import status, viewsets
@@ -301,22 +307,33 @@ class IncidentViewSet(TenantAPIMixin, viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=["post"])
     def decide(self, request, pk=None):
+        """affected (review fix): who was affected as it is now known; left out or null keeps what is recorded (the service checks it
+        with the outcome and the basis, as it checks the recorded one)."""
         incident = self.get_object()
-        data = _body(request, ("outcome", "basis", "decided_on", "decided_by"))
+        data = _body(request, ("outcome", "basis", "decided_on", "decided_by", "affected"))
+        affected = None if data.get("affected") is None else _text(data, "affected")
         _via_service(inc.decide, incident, outcome=_text(data, "outcome"), basis=_text(data, "basis"), decided_on=_date(data, "decided_on"),
-                     decided_by=_text(data, "decided_by"), by=request.user, today=self.today)
+                     decided_by=_text(data, "decided_by"), affected=affected, by=request.user, today=self.today)
         return self._shown(incident)
 
     REPORT_DATES = ("fda_reported_on", "manufacturer_reported_on")
 
     @action(detail=True, methods=["post"])
     def reports(self, request, pk=None):
-        """What is left out keeps what is recorded (the service sets both dates as given); null or "" clears a date."""
+        """What is left out keeps what is recorded (the service sets both dates as given); null or "" clears a date.
+
+        Review fix: what is left out is read from the incident's row locked in this request's transaction, the lock the service then
+        holds, never from get_object's copy: two requests at once (the FDA date in one, the manufacturer's in the other) take turns,
+        and the second keeps the first's date rather than writing back the empty one it read before the first committed."""
         incident = self.get_object()
         data = _body(request, (*self.REPORT_DATES, "report_number"))
-        kwargs = {f: (_date(data, f) if f in data else getattr(incident, f)) for f in self.REPORT_DATES}
-        number = _text(data, "report_number") if "report_number" in data else incident.report_number
-        _via_service(inc.record_reports, incident, report_number=number, by=request.user, today=self.today, **kwargs)
+        given = {f: _date(data, f) for f in self.REPORT_DATES if f in data}
+        number = _text(data, "report_number") if "report_number" in data else None
+        with transaction.atomic():
+            current = Incident.objects.select_for_update().get(pk=incident.pk)  # its own row only, as the service locks it
+            kwargs = {f: given[f] if f in given else getattr(current, f) for f in self.REPORT_DATES}
+            _via_service(inc.record_reports, current, report_number=current.report_number if number is None else number, by=request.user,
+                         today=self.today, **kwargs)
         return self._shown(incident)
 
     # --- the holds ---------------------------------------------------------------------------------------------------------------

@@ -22,7 +22,7 @@ from apps.equipment.models import AssetStatus
 EVENT_REFERENCE_VALIDATOR = RegexValidator(r"^[A-Za-z0-9][A-Za-z0-9._/#-]*$",
                                            "Enter the event report's number as your event reporting system shows it, without spaces.")
 # 803.3(x): the facility's 10-digit CMS (or FDA-assigned) number, the 4-digit year the report was sent, a 4-digit sequence.
-REPORT_NUMBER_VALIDATOR = RegexValidator(r"^\d{10}-\d{4}-\d{4}$",
+REPORT_NUMBER_VALIDATOR = RegexValidator(r"^[0-9]{10}-[0-9]{4}-[0-9]{4}$",  # ASCII digits only (review fix: \d takes any script's)
                                          "Enter the report number as 21 CFR 803 forms it: the facility's 10-digit number, the year, and a "
                                          "4-digit sequence (0123456789-2026-0001).")
 

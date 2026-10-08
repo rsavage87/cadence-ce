@@ -14,7 +14,7 @@
     <label>{{ form.aware_on.label }}{{ form.aware_on }}<span class="hint">{{ form.aware_on.help_text }}</span>{% if form.aware_on.errors %}<span class="err">{{ form.aware_on.errors|striptags }}</span>{% endif %}</label>
     {% if form.aware_reason %}<label class="full">{{ form.aware_reason.label }}{{ form.aware_reason }}{% if form.aware_reason.errors %}<span class="err">{{ form.aware_reason.errors|striptags }}</span>{% endif %}</label>{% endif %}
     <label class="full">{{ form.outcome.label }}{{ form.outcome }}{% if form.decided %}<span class="hint">Decided: change the outcome by deciding again.</span>{% endif %}{% if form.outcome.errors %}<span class="err">{{ form.outcome.errors|striptags }}</span>{% endif %}</label>
-    <label>{{ form.affected.label }}{{ form.affected }}{% if form.affected.errors %}<span class="err">{{ form.affected.errors|striptags }}</span>{% endif %}</label>
+    <label>{{ form.affected.label }}{{ form.affected }}{% if form.decided %}<span class="hint">Decided: change who was affected by deciding again.</span>{% endif %}{% if form.affected.errors %}<span class="err">{{ form.affected.errors|striptags }}</span>{% endif %}</label>
     <label>{{ form.event_reference.label }}{{ form.event_reference }}{% if form.event_reference.errors %}<span class="err">{{ form.event_reference.errors|striptags }}</span>{% endif %}</label>
     <label>{{ form.accessories.label }}{{ form.accessories }}{% if form.accessories.errors %}<span class="err">{{ form.accessories.errors|striptags }}</span>{% endif %}</label>
     <label>{{ form.event_log.label }}{{ form.event_log }}{% if form.event_log.errors %}<span class="err">{{ form.event_log.errors|striptags }}</span>{% endif %}</label>

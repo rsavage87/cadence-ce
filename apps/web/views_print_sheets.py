@@ -12,6 +12,9 @@ and the sheets print the devices that panel shows
   4. otherwise "No credentialed technician".
 An open PM work order that is unassigned, or held by a deactivated technician, is on nobody's plate yet (the week plan and the
 workload panel read it the same way), so its device goes to the suggested technician and the sheet shows who holds the work order.
+Slice 28 (review fix): a device held as evidence for an incident investigation (Asset.incident_hold) goes, before any of those, to
+its own sheet, "Held for an incident investigation": nobody may start its PM until the incident releases it, the schedule suggests
+nobody for it, and that is not a credentialing gap. Its row says who has its open PM work order, if anyone.
 
 Report PDFs (Reports View) lay out one report of the Reports screen for paper: the same numbers, presentation, and partial, with the
 app's stylesheet for the charts' colours. "Save as PDF" in the browser's print dialog makes the PDF. A custom report (slice 18) prints
@@ -36,16 +39,20 @@ from .decorators import web_view
 from .reports import present
 from .reports_custom import present_custom
 
-# Sheet keys sort technicians by name, then the vendor's sheet, then the devices nobody can take.
-TECH, VENDOR, NOBODY = 0, 1, 2
+# Sheet keys sort technicians by name, then the vendor's sheet, then the devices nobody can take, then the devices held as evidence.
+TECH, VENDOR, NOBODY, HELD = 0, 1, 2, 3
 VENDOR_KEY = (VENDOR, "Vendor service", 0)
 NOBODY_KEY = (NOBODY, "No credentialed technician", 0)
+HELD_KEY = (HELD, "Held for an incident investigation", 0)
+SHEET_KINDS = {TECH: "tech", VENDOR: "vendor", NOBODY: "nobody", HELD: "held"}
 RISK_CSS = {RiskClass.LIFE_SUPPORT: "bad", RiskClass.HIGH: "warn"}
 
 
 # --- route sheets ----------------------------------------------------------------------------------------------------
 
-def _sheet_key(w: dict | None, suggested) -> tuple:
+def _sheet_key(asset, w: dict | None, suggested) -> tuple:
+    if asset.incident_hold:  # nobody may start its PM, whoever has the work order (slice 28)
+        return HELD_KEY
     if sch.pm_held(w):
         return VENDOR_KEY if w["vendor_service"] else (TECH, w["assigned_to__name"], w["assigned_to_id"])
     if suggested is not None:
@@ -53,9 +60,14 @@ def _sheet_key(w: dict | None, suggested) -> tuple:
     return NOBODY_KEY
 
 
-def _wo_note(w: dict | None) -> str:
-    """Under the work order number, when the work order is not with the sheet's technician or the vendor."""
-    if not w or sch.pm_held(w):
+def _wo_note(w: dict | None, *, on_hold: bool = False) -> str:
+    """Under the work order number, when the work order is not with the sheet's technician or the vendor. On the held sheet, whoever
+    has it (it waits there for the incident's release)."""
+    if not w:
+        return ""
+    if on_hold and sch.pm_held(w):
+        return f"with {w['vendor_name'] or 'the vendor'}" if w["vendor_service"] else f"with {w['assigned_to__name']}"
+    if sch.pm_held(w):
         return ""
     return f"with {w['assigned_to__name']}, inactive" if w["assigned_to_id"] else "unassigned"
 
@@ -65,7 +77,7 @@ def _row(asset, w: dict | None) -> dict:
     hours = sch.pm_hours(dm)  # the procedure's estimate, as the day panel shows it
     return {"asset": asset, "day": asset.next_pm_on, "department": asset.department.name, "room": asset.room,
             "risk": RiskClass(dm.risk_class).label, "risk_css": RISK_CSS.get(dm.risk_class, ""), "procedure": dm.pm_procedure,
-            "hours": hours, "hours_label": views_pm._hours(hours), "wo": w["number"] if w else "", "wo_note": _wo_note(w)}
+            "hours": hours, "hours_label": views_pm._hours(hours), "wo": w["number"] if w else "", "wo_note": _wo_note(w, on_hold=asset.incident_hold)}
 
 
 def _sheets(items: list[tuple[tuple, dict]], with_day: bool) -> list[dict]:
@@ -82,7 +94,7 @@ def _sheets(items: list[tuple[tuple, dict]], with_day: bool) -> list[dict]:
     for key in sorted(groups, key=lambda k: (k[0], k[1].casefold(), k[2])):
         rows = sorted(groups[key], key=row_order)
         hours = sum((r["hours"] for r in rows), Decimal("0"))
-        sheets.append({"name": key[1], "kind": {TECH: "tech", VENDOR: "vendor", NOBODY: "nobody"}[key[0]], "rows": rows,
+        sheets.append({"name": key[1], "kind": SHEET_KINDS[key[0]], "rows": rows,
                        "count": len(rows), "hours": views_pm._hours(hours)})
     return sheets
 
@@ -96,7 +108,7 @@ def day_sheets(day: date, today: date) -> list[dict]:
     for r in plan["rows"]:
         a = r["asset"]
         w = open_pm.get(a.id)
-        items.append((_sheet_key(w, r["technician"] or more.get(a.id)), _row(a, w)))
+        items.append((_sheet_key(a, w, r["technician"] or more.get(a.id)), _row(a, w)))
     return _sheets(items, with_day=False)
 
 
@@ -106,7 +118,7 @@ def week_sheets(today: date) -> list[dict]:
     devices = plan["devices"]
     prefetch_related_objects(devices, "department")  # the plan's query does not join departments: one query, not one per device
     open_pm = sch.open_pm_orders([a.id for a in devices])
-    items = [(_sheet_key(open_pm.get(a.id), plan["suggested"].get(a.id)), _row(a, open_pm.get(a.id))) for a in devices]
+    items = [(_sheet_key(a, open_pm.get(a.id), plan["suggested"].get(a.id)), _row(a, open_pm.get(a.id))) for a in devices]
     return _sheets(items, with_day=True)
 
 

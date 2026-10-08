@@ -10,8 +10,10 @@ from django.urls import reverse
 from django.utils import timezone
 from rest_framework import serializers
 
+from apps.accounts import people
 from apps.incidents import services as inc
 from apps.incidents.models import Incident, IncidentHold
+from apps.tenants.context import get_current_tenant
 
 
 def _name(user):
@@ -60,7 +62,8 @@ class IncidentSerializer(serializers.ModelSerializer):
     decided reportable (a serious injury's report to the FDA counts for the manufacturer's); needs_decision while someone was harmed,
     or may have been, and nobody has decided. The investigation (work_order, its number and status; opened_work_order: the incident
     opened it rather than adopting the request it was reported as), and the holds (IncidentHoldSerializer). `url` is the incident's
-    page on the web."""
+    page on the web, naming its facility (?facility=<slug>, people.with_facility): numbers repeat across facilities, and a browser
+    signed in to another one is offered the switch rather than that facility's incident of the same number."""
 
     asset_tag = serializers.CharField(source="asset.tag", read_only=True)
     device_model_name = serializers.SerializerMethodField()
@@ -128,4 +131,7 @@ class IncidentSerializer(serializers.ModelSerializer):
         return _name(incident.created_by)
 
     def get_url(self, incident) -> str:
-        return reverse("web:incident", args=[incident.number])
+        tenant = get_current_tenant()  # the request's facility (TenantAPIMixin): no query per incident
+        if tenant is None or tenant.pk != incident.tenant_id:
+            tenant = incident.tenant
+        return people.with_facility(reverse("web:incident", args=[incident.number]), tenant)

@@ -27,8 +27,8 @@ def make_incident(asset, *, outcome=Outcome.UNKNOWN, affected=Affected.PATIENT, 
         work_order = create_work_order(asset=asset, type=WoType.REPAIR, priority=Priority.HIGH, problem="Investigation of a reported incident",
                                        opened_on=occurred_on, tag_out=True)
         opened = True
-    year = occurred_on.year
-    number = f"IN-{year % 100:02d}-{Sequence.next(f'incident-{year}'):04d}"
+    yy = occurred_on.year % 100
+    number = f"IN-{yy:02d}-{Sequence.next(f'incident-{yy:02d}'):04d}"
     incident = Incident.objects.create(number=number, asset=asset, work_order=work_order, opened_work_order=opened, occurred_on=occurred_on,
                                        aware_on=aware_on, outcome=outcome, affected=affected, event_reference=event_reference, status=status,
                                        report_due_on=due_date(outcome=outcome, affected=affected, aware_on=aware_on,
