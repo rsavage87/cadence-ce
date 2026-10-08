@@ -172,18 +172,16 @@ def _held_from(wo: WorkOrder, asset) -> bool:
 
 
 def _lock_for_hold(wo: WorkOrder):
-    """The device of `wo` as it is now, locked until the transaction ends, for change_status's hold check. In the established order:
-    the work order's row (an incoming inspection's after the device's open inspections, as completing one takes them:
-    inspections.lock_open), then the device's row. A work order of another type takes no inspection: nothing after this in its
-    transaction waits on one, and taking them here would put them after the device's row where a failed PM's repair or tag-out has
-    already locked it (completion.complete_work_order opens that repair, its number first, before the start)."""
+    """The device of `wo` as it is now, locked until the transaction ends, for change_status's hold check. In the established order
+    (equipment.services._locked_row's): the device's open work orders and `wo` itself, in number order (its open incoming
+    inspections among them, inspections.lock_open's order), then the device's row. Slice 28 merge fix: all of them, not only `wo`, so
+    a later step of the same transaction that takes the device's rows again (a failed PM's tag-out through set_status) never waits on
+    a work order after holding the device's row (completion.complete_work_order opens that repair, its number first, before the
+    start)."""
     from apps.equipment.models import Asset
 
-    from . import inspections
-
-    if wo.type == WoType.INSPECTION:
-        inspections.lock_open(wo.asset_id)
-    list(WorkOrder.objects.select_for_update().filter(pk=wo.pk).values_list("pk", flat=True))
+    rows = WorkOrder.objects.select_for_update().filter(Q(asset_id=wo.asset_id, status__in=OPEN_STATUSES) | Q(pk=wo.pk)).order_by("number")
+    list(rows.values_list("pk", flat=True))
     return Asset.objects.select_for_update().only("pk", "tag", "incident_hold").get(pk=wo.asset_id)
 
 

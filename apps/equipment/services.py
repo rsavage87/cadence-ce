@@ -672,10 +672,13 @@ def _locked_row(asset: Asset) -> Asset:
     """The device's row as it is now, locked until the transaction ends (slice 26 review fix): update_asset and set_status work on it,
     never on the caller's copy, which may predate a passed incoming inspection (the pass clears awaiting_inspection and starts the PM
     clock; a full save of an older copy, read by a page, the API, or an import chunk before the pass, would put them back). Its open
-    inspections first, then its row: the order completing an inspection takes (apps.workorders.inspections.lock_open)."""
-    from apps.workorders import inspections
+    work orders first, in number order (its open incoming inspections among them: inspections.lock_open's order), then its row.
+    Slice 28 merge fix: every writer takes a device's work orders before its row (workorders.services._lock_for_hold, a start or
+    completion, reads the hold that way), so retiring (which cancels open PMs) and a new next PM (which moves the open PM) never hold
+    the device's row while waiting for a work order a start holds."""
+    from apps.workorders.models import OPEN_STATUSES, WorkOrder
 
-    inspections.lock_open(asset.pk)
+    list(WorkOrder.objects.select_for_update().filter(asset_id=asset.pk, status__in=OPEN_STATUSES).order_by("number").values_list("pk", flat=True))
     return Asset.objects.select_for_update().get(pk=asset.pk)
 
 

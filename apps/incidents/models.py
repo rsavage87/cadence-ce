@@ -145,7 +145,7 @@ class Incident(TenantModel):
     # The reports sent (one report number, one or two copies).
     fda_reported_on = models.DateField(null=True, blank=True)
     manufacturer_reported_on = models.DateField(null=True, blank=True)
-    report_number = models.CharField(max_length=14, blank=True, validators=[REPORT_NUMBER_VALIDATOR])
+    report_number = models.CharField(max_length=20, blank=True, validators=[REPORT_NUMBER_VALIDATOR])
     finding = models.CharField(max_length=20, choices=Finding.choices, blank=True)
     accessories = models.CharField(max_length=20, choices=Accessories.choices, blank=True,
                                    help_text="The disposables and accessories in use, kept with the device as evidence")
