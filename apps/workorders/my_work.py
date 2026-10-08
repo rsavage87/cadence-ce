@@ -9,6 +9,11 @@ orders assigned to their own active technician profile (credentials.services.tec
 The groups follow what a technician does next: repairs and requests (by priority, then due date; a recall alert's batch is one row),
 today's PMs (due today or before, by location: department, room, tag), work waiting on parts, PMs coming up in the next SOON_DAYS, and
 how many later. "Due" means one thing here, on the badge, and in the digest: open work (not waiting on parts) due today or before.
+
+Slice 28: every work order the groups give (takeable included) carries `held` (services.with_held): True when its device is held as
+evidence for an incident investigation and it is not that investigation, so nobody may start or complete it (the card offers no
+Start, Resume, or Complete and shows the hold; services.change_status refuses them anyway). The investigation keeps its moves. Held
+work stays in its group and in "due": it is still the technician's, waiting for the incident's release.
 """
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -22,7 +27,7 @@ from apps.credentials.services import technician_of
 
 from . import scoping
 from .models import LaborLine, WorkOrderStatusHistory, WoStatus, WoType
-from .services import PRIORITY_RANK, open_work_orders
+from .services import PRIORITY_RANK, open_work_orders, with_held
 
 SOON_DAYS = 7
 COMPANY, TECHNICIAN = "company", "technician"
@@ -94,7 +99,7 @@ def groups(user, today: date) -> Groups:
     result = Groups(w)
     if w.kind is None:
         return result
-    qs = mine(user).select_related(*RELATED)
+    qs = with_held(mine(user)).select_related(*RELATED)  # slice 28: each work order's `held`
     active = qs.filter(status__in=(WoStatus.OPEN, WoStatus.IN_PROGRESS))
     other = active.exclude(type=WoType.PM)
     batches = {}
@@ -143,7 +148,8 @@ def takeable(user, today: date) -> list:
         if values:
             named |= Q(**{f"asset__device_model__{column}__in": values})
     nobodys = WorkOrder.objects.filter(status=WoStatus.OPEN, assigned_to__isnull=True, vendor_service=False)
-    candidates = scoping.work_orders(user, nobodys).filter(named).select_related(*RELATED).order_by(PRIORITY_RANK, "due_on", "number")
+    candidates = (with_held(scoping.work_orders(user, nobodys)).filter(named).select_related(*RELATED)  # taking held work is allowed
+                  .order_by(PRIORITY_RANK, "due_on", "number"))
     return [wo for wo in candidates[:TAKE_LIMIT] if qualification(technician, wo.asset, today).ok]
 
 

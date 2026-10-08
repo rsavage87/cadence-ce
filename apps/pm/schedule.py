@@ -7,6 +7,11 @@ pmByDay does. Read-only; the one state change (creating a day's work orders) is 
 credentialed for a device, the one with the fewest hours already on their plate, counting what this batch has just
 given them. The mock hashed devices across credentialed technicians; balancing by workload is the same idea, made
 deterministic and fair.
+
+Slice 28: a device held as evidence for an incident investigation (Asset.incident_hold) is suggested to nobody and adds to nobody's
+hours: nobody may start its PM until the incident releases it. So Auto-assign week leaves its PM open and unassigned, Create opens
+it unassigned (PM generation itself is unchanged), and the workload and route sheets never count it on a technician's plate. A PM
+already assigned before the hold stays where it is.
 """
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -110,9 +115,13 @@ def _pools(today: date):
 
 def _assign(assets, load: dict, pool, hours_of=None) -> dict:
     """The least-loaded credentialed technician for each device in order (ties by name), adding the device's hours to `load`
-    as it goes, so later devices see what earlier ones were given. Mutates `load`."""
+    as it goes, so later devices see what earlier ones were given. Mutates `load`. Slice 28: None for a device held as evidence
+    (Asset.incident_hold), which adds nothing to anyone's load."""
     out = {}
     for asset in assets:
+        if asset.incident_hold:  # nobody may start its PM while the incident holds it
+            out[asset.id] = None
+            continue
         candidates = pool(asset)
         if not candidates:
             out[asset.id] = None
@@ -143,7 +152,8 @@ def week_plan(today: date) -> dict:
     """The one plan the day panel, the create action, and the workload share for the next 7 days (today through today + 6):
     day by day in date order, each day's devices most critical first, every device whose PM is not yet on someone's plate goes
     to the least-loaded credentialed technician, carrying the load forward. Creating a day's work orders assigns what this plan
-    suggests, so creating the days in any order ends where the plan says."""
+    suggests, so creating the days in any order ends where the plan says. Slice 28: a device held as evidence is suggested to
+    nobody (_assign); `on_hold` is the set of their ids, for Auto-assign week to tell them from devices nobody is credentialed for."""
     techs, pool = _pools(today)
     active_ids = {t.id for t in techs}
     devices = list(_active().filter(next_pm_on__gte=today, next_pm_on__lt=today + timedelta(days=WEEK_DAYS))
@@ -161,7 +171,9 @@ def week_plan(today: date) -> dict:
     load = open_hours_by_technician()
     unplanned = [a for a in devices if not _planned(open_pm.get(a.id), active_ids)]
     suggested = _assign(unplanned, load, pool, hours_of)  # already in date, then risk, then tag order
-    return {"techs": techs, "active_ids": active_ids, "devices": devices, "open_pm": open_pm, "suggested": suggested, "hours_of": hours_of}
+    on_hold = {a.id for a in devices if a.incident_hold}
+    return {"techs": techs, "active_ids": active_ids, "devices": devices, "open_pm": open_pm, "suggested": suggested, "hours_of": hours_of,
+            "on_hold": on_hold}
 
 
 def suggestions_for_day(day: date, assets, today: date) -> dict:

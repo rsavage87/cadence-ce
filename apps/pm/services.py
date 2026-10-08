@@ -136,11 +136,15 @@ class WeekAssignment:
     active devices whose next PM is before `start`: they are not in the week plan, so Auto-assign week does not touch them. Of
     those, `overdue_to_create` have no open PM work order (Create on their day makes one) and `overdue_waiting` have one on
     nobody's plate (unassigned, as the nightly generate_pm leaves them, or with a deactivated technician: assign it from Work
-    orders); the rest are with a technician or the vendor."""
+    orders); the rest are with a technician or the vendor. Slice 28: `on_hold` are the devices held as evidence for an incident
+    investigation whose PM is on nobody's plate, each {"asset", "has_open_pm"}: nobody may start their PM, so Auto-assign week
+    neither creates nor assigns one for them (an open one stays open and unassigned; the nightly generate_pm or Create opens a missing
+    one), and they count in no other figure here."""
     start: date
     end: date
     shares: list = field(default_factory=list)
     uncovered: list = field(default_factory=list)
+    on_hold: list = field(default_factory=list)
     held: int = 0
     overdue: int = 0
     overdue_to_create: int = 0
@@ -190,7 +194,8 @@ class WeekAssignment:
 def _week_steps(today: date) -> tuple[WeekAssignment, list]:
     """(the summary, the steps): for each device in the week plan whose PM is on nobody's plate, in the plan's order,
     (asset, its open PM work order as week_plan read it or None, the technician the plan suggests or None). Devices whose open PM is
-    with the vendor or an active technician have no step. Read-only."""
+    with the vendor or an active technician have no step, nor (slice 28) devices held as evidence (WeekAssignment.on_hold).
+    Read-only."""
     from .schedule import open_pm_orders, pm_held
 
     plan = week_plan(today)
@@ -205,6 +210,9 @@ def _week_steps(today: date) -> tuple[WeekAssignment, list]:
         w = plan["open_pm"].get(asset.id)
         if _planned(w, plan["active_ids"]):
             out.held += 1
+            continue
+        if asset.id in plan["on_hold"]:  # slice 28: its PM waits for the incident's release, on nobody's plate
+            out.on_hold.append({"asset": asset, "has_open_pm": w is not None})
             continue
         tech = plan["suggested"].get(asset.id)
         steps.append((asset, w, tech))
@@ -235,7 +243,8 @@ def assign_week(*, by=None, today: date | None = None) -> WeekAssignment:
     technician is left alone. Nobody credentialed: the work order is created if missing and left unassigned. Assignments are recorded
     like any other (workorders.services.assign). The planner lock is taken first (lock_planner), so a second request (a double click)
     waits, then finds everything on someone's plate and does nothing. Slice 20: each technician given work is emailed once, listing
-    all of it (apps.notifications.assignments.batch). Returns what was done."""
+    all of it (apps.notifications.assignments.batch). Slice 28: a device held as evidence is left as it is (WeekAssignment.on_hold).
+    Returns what was done."""
     from apps.workorders.services import assign
 
     today = today or timezone.localdate()

@@ -69,6 +69,12 @@ Slice 26, incoming inspections (apps.workorders.inspections; the device's side i
   re-inspect" (result_note).
 - Locks: the device's open inspections first, in number order (inspections.lock_open), then the work order, then the device's row
   in the pass: two completions (or use_before_inspection) on one device at once take turns.
+
+Slice 28, a device held as evidence for an incident investigation (Asset.incident_hold): only the investigation of an open incident
+holding it is completed (or started). blocker says so first for any other work order still open on it (services.hold_blocker), and
+services.change_status refuses the start and the completion on the device's locked row. A failed PM's repair (or a failed
+inspection's re-inspection) is opened before the start, so its number is taken before the device's row. Completing the investigation
+leaves the device held and out of service: the incident's release returns it.
 """
 import hashlib
 import json
@@ -204,8 +210,14 @@ def inside_window(wo: WorkOrder, today: date, w=None):
 
 
 def blocker(wo: WorkOrder, today: date | None = None, by=None) -> str:
-    """Why `wo` cannot be completed now by `by` (None: anyone allowed), or "" when it can."""
+    """Why `wo` cannot be completed now by `by` (None: anyone allowed), or "" when it can. Slice 28: a work order still open on a
+    device held as evidence, other than the incident's investigation, says so first (services.hold_blocker): starting it is refused
+    too, so "start it first" would send the user to another refusal."""
     today = today or timezone.localdate()
+    if wo.status in OPEN_STATUSES:
+        held = services.hold_blocker(wo)
+        if held:
+            return held
     if WoStatus.COMPLETED not in ALLOWED_TRANSITIONS[wo.status] and not starts_on_completion(wo, by):
         return {
             WoStatus.OPEN: f"{wo.number} has not been started. Start work on it first.",
@@ -713,16 +725,20 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
         raise ValidationError(errors)
 
     started = locked.status == WoStatus.OPEN  # blocker let it through: a PM done in one visit, started as it is completed
-    if started:
-        services.change_status(locked, WoStatus.IN_PROGRESS, by=by, as_of=today)
-    labor = _log_hours(locked, hours, by, today, errors)  # after the start: the timeline reads in the order the work was done
-    if errors:
-        raise ValidationError(errors)  # the start goes back with it
     done = Completion(work_order=locked)
+    # Slice 28: a failed PM's repair, or a failed inspection's re-inspection, first: its number (the facility's numbering) before the
+    # device's row, which the start and the completion lock to read the device's hold (services.change_status) and a tag-out takes,
+    # the order a tagged-out request takes them in, so the two never wait in a circle. Only another work order is written here: the
+    # PM's own timeline still reads start, hours, completion.
     if fail:
         done = _record_failure(locked, asset, snapshot, text, open_repair=open_repair, tag_out=tag_out is None or bool(tag_out), by=by, today=today)
     elif reinspect:
         done = _reinspect(locked, asset, snapshot, text, tag_out=tag_out is None or bool(tag_out), by=by, today=today)
+    if started:
+        services.change_status(locked, WoStatus.IN_PROGRESS, by=by, as_of=today)
+    labor = _log_hours(locked, hours, by, today, errors)  # after the start: the timeline reads in the order the work was done
+    if errors:
+        raise ValidationError(errors)  # the start, and a repair or re-inspection opened, go back with it
     done.started, done.labor = started, labor
     note = ""
     if is_pm:

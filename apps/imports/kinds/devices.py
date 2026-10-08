@@ -17,7 +17,9 @@ and the device still comes in. A status change the rules refuse (retiring a devi
 changes stay. Retiring, reinstating, and the CMS mark need Equipment Approve, as on the screen. A device retired without a day it
 can use is retired as of today, and the row says so: the AEM evidence counts it in use until then. Slice 26: a device here that is
 waiting for its incoming inspection keeps no next PM (the row's is left out with update_asset's words, naming the inspection) and
-does not go in service or on loan from the file (the note gives set_status's words): its inspection's pass puts it in use.
+does not go in service or on loan from the file (the note gives set_status's words): its inspection's pass puts it in use. Slice 28:
+a device held as evidence for an incident investigation keeps its status whatever the file says, with a note in its own words
+(HELD_NOTE); the row's other changes still go in.
 
 The check rolls each chunk back (apps.imports.services), so a model or department a row of an earlier chunk adds is not there when
 a later chunk is checked, though the import, which committed that chunk, finds it and never reads the later row's model cells. The
@@ -52,6 +54,9 @@ STATUS_WORDS = {
     **dict.fromkeys(("retired", "disposed", "inactive", "surplus", "salvaged"), AssetStatus.RETIRED),
 }
 STATUSES_SAID = "in service, out of service, on loan, missing, or retired"
+# Slice 28: a device held as evidence keeps its status (equipment.services.set_status refuses every move while it is held). No incident
+# number: whoever imports may not see incidents.
+HELD_NOTE = "Status kept: the device is held as evidence for an incident investigation, and only the incident releases it"
 # Words only: a number ("3", an EM score) means something different in every system, so it is not read.
 RISK_WORDS = {
     **dict.fromkeys(("life support", "life-support", "critical"), RiskClass.LIFE_SUPPORT),
@@ -274,9 +279,14 @@ class DevicesImporter(Importer):
 
     def _set_status(self, ctx, asset, status, result) -> bool:
         """Move a device already here to the file's status through the drawer's rules; a change they refuse is noted and the row's
-        other changes stay (set_status is atomic: a refusal rolls back only its own savepoint)."""
+        other changes stay (set_status is atomic: a refusal rolls back only its own savepoint). Slice 28: a device held as evidence for
+        an incident investigation keeps its status, whatever the file says (HELD_NOTE): only its incident releases it. The row is
+        never refused for it."""
         if status == AssetStatus.OUT_OF_SERVICE and asset.status == AssetStatus.IN_REPAIR:
             return False  # already out of use, in repair through a work order here
+        if Asset.objects.filter(pk=asset.pk, incident_hold=True).exists():  # read now: the chunk's copy may predate the hold
+            result.warn(HELD_NOTE)
+            return False
         if not self._may(ctx, eq_perms.status_level(asset.status, status)):
             result.warn("Status kept: retiring or reinstating a device needs Equipment Approve")
             return False
@@ -285,7 +295,9 @@ class DevicesImporter(Importer):
             eq.set_status(asset, status, by=ctx.user, note="Imported", today=ctx.today)
         except ValidationError as e:
             asset.refresh_from_db()
-            if asset.awaiting_inspection and status in eq.HOLD:
+            if asset.incident_hold:  # held a moment ago, after the check above
+                result.warn(HELD_NOTE)
+            elif asset.awaiting_inspection and status in eq.HOLD:
                 # Slice 26: a new device waiting for its incoming inspection goes in use when it passes; set_status says which one.
                 result.warn(f"Status kept: {e.messages[0]}")
             elif status in eq.STATUS_CHANGES.get(asset.status, ()):
