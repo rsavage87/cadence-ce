@@ -224,6 +224,7 @@ def nav_counts(user=None) -> dict:
     recalls = AlertMatch.objects.filter(status=AlertMatch.Status.NEEDS_ACTION).count()
     pm_overdue = overdue_assets().count()
     return {
+        **_incidents_badge(user),
         "equipment": Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES).count(),
         "workorders": WorkOrder.objects.filter(status__in=OPEN_STATUSES).count(),
         "workorders_hot": unassigned_portal_requests().exists(),
@@ -235,6 +236,18 @@ def nav_counts(user=None) -> dict:
         "recalls_hot": bool(recalls),
         **mine,
     }
+
+
+def _incidents_badge(user) -> dict:
+    """Slice 28: open incidents whose clock is running (undecided, or a required report missing), hot when one is due within
+    SOON_WORK_DAYS work days or overdue; only for a reader with Incidents View (no badge at all while none needs action)."""
+    from apps.incidents import permissions as incident_perms
+    from apps.incidents.services import badge
+
+    if user is None or not incident_perms.can_view(user):
+        return {}
+    n, hot = badge(timezone.localdate())
+    return {"incidents": n or None, "incidents_hot": hot}
 
 
 def _my_work_badge(user) -> dict:

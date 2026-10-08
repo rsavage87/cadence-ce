@@ -347,7 +347,7 @@ def test_matrix_shows_every_role_and_disables_director(client, signed_in, make_u
     assert r.status_code == 200 and 'aria-current="page">Roles and permissions' in body and "Add role" in body
     assert [m["role"].slug for m in r.context["matrix"]] == ["director", "manager", "technician", "requester", "analyst", "vendor"]  # the mock's order
     assert 'aria-label="Director, equipment" disabled' in body and f'hx-post="/users/roles/{role("manager").id}/level/"' in body
-    assert body.count('class="perm"') == 6 * 8
+    assert body.count('class="perm"') == 6 * 9  # nine modules (slice 28: Incidents)
     director_row = next(m for m in r.context["matrix"] if m["role"].slug == "director")
     assert director_row["users"] == 1 and all(level == Level.FULL for _, level in director_row["cells"])
     partial = client.get("/users/roles/", **hx("roles-matrix"))

@@ -18,6 +18,9 @@ class NotificationPreference(TenantModel):
     assignments = models.BooleanField(default=True, help_text="Email me when a work order is assigned to me")
     daily_digest = models.BooleanField(default=False, help_text="Email me each morning: my work orders due or overdue, and my PMs this week")
     contract_reminders = models.BooleanField(default=True, help_text="Email me when a service contract is about to end (Contracts Edit)")
+    # Slice 28 (Incidents Approve): an incident recorded that may need a report, and its due date nearing (apps.incidents.notify)
+    incidents = models.BooleanField(default=True, help_text="Email me when an incident may need a report to the FDA or the manufacturer, "
+                                                            "and as its due date nears (Incidents Approve)")
     history = HistoricalRecords()  # every choice is audited, as report subscriptions are
 
     class Meta:
@@ -35,6 +38,7 @@ class NotificationSent(TenantModel):
         ASSIGNMENT = "assignment", "Work order assigned"
         DIGEST = "digest", "Daily digest"
         CONTRACT = "contract", "Contract ending"
+        INCIDENT = "incident", "Incident report due"  # slice 28: key "<number>:<stage>" (apps.incidents.notify)
 
     kind = models.CharField(max_length=20, choices=Kind.choices)
     key = models.CharField(max_length=120, help_text="What it was about: a work order and its assignment, a day, a contract and its threshold")

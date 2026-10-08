@@ -155,6 +155,11 @@ AREAS = {a.key: a for a in (
     Area("facility", "Facility", "tenants.Tenant", "settings", _safe(lambda r: r.name), _safe(lambda r: reverse("web:settings"))),
     Area("custom_reports", "Custom reports", "reports.CustomReport", "reports", _safe(lambda r: r.name),
          _safe(lambda r: reverse("web:report", args=[f"custom-{r.id}"]))),
+    # Slice 28: device incidents and their holds, read with Incidents View (the device's own history never names the incident).
+    Area("incidents", "Incidents", "incidents.Incident", "incidents", _safe(lambda r: r.number),
+         _safe(lambda r: reverse("web:incident", args=[r.number]))),
+    Area("incident_holds", "Incident holds", "incidents.IncidentHold", "incidents", _safe(lambda r: f"{r.incident.number} hold · {r.asset.tag}"),
+         _safe(lambda r: reverse("web:incident", args=[r.incident.number])), select=("incident", "asset")),
 )}
 ACCESS = Area("access", "Access", "accounts.AccessEvent", "users", _safe(lambda e: str(e.user) if e.user_id else ""))
 ALL_AREAS = {**AREAS, ACCESS.key: ACCESS}
@@ -212,12 +217,15 @@ HIDE = {
     "pm.aemdecision": {"device_model"},  # the record: "AEM · <model>"
     "accounts.role": {"slug"},  # follows the name; never shown on a screen
     "reports.customreport": {"created_by"},
+    "incidents.incident": {"number", "created_by"},  # the record; the creator is the "added" entry's who
+    "incidents.incidenthold": {"incident", "asset"},  # in the record's name
 }
 
 # Labels that read better than the verbose names, per model; `_label` falls back to the verbose name.
 LABELS = {
     "equipment.asset": {"serial": "Serial number", "installed_on": "Installed", "warranty_end": "Warranty ends", "last_pm_on": "Last PM",
-                        "next_pm_on": "Next PM", "awaiting_inspection": "Waiting for incoming inspection"},
+                        "next_pm_on": "Next PM", "awaiting_inspection": "Waiting for incoming inspection",
+                        "incident_hold": "Held for an incident investigation"},
     "equipment.devicemodel": {"oem_pm_interval_months": "OEM PM interval", "aem_interval_months": "AEM interval", "expected_life_years": "Expected life",
                               "list_cost": "List price", "pm_procedure": "PM procedure", "risk_function": "Risk: clinical function",
                               "risk_physical": "Risk: physical risk of failure", "risk_maintenance": "Risk: maintenance requirement",
@@ -247,6 +255,15 @@ LABELS = {
                                   "pm_window_other_days": "PM on time, medium and low risk: days after the due date"},
     "reports.customreport": {"group_by": "Grouped by", "sort": "Sorted by"},
     "tenants.tenant": {"slug": "Portal link name", "timezone": "Time zone", "is_active": "Can sign in"},
+    "incidents.incident": {"asset": "Device", "work_order": "Investigation work order", "opened_work_order": "Work order opened by the incident",
+                           "occurred_on": "Occurred", "aware_on": "Clinical staff first knew", "event_reference": "Event report number",
+                           "report_due_on": "Report due", "decided_on": "Decided on", "decided_by": "Decided by",
+                           "recorded_by": "Decision recorded by", "fda_reported_on": "Reported to the FDA",
+                           "manufacturer_reported_on": "Reported to the manufacturer", "report_number": "Report number",
+                           "accessories": "Accessories and disposables", "event_log": "Event log", "closed_on": "Closed",
+                           "closed_by": "Closed by"},
+    "incidents.incidenthold": {"held_on": "Held", "status_before": "Status before the hold", "sent_on": "Sent to the manufacturer",
+                               "back_on": "Back from the manufacturer", "released_on": "Released", "released_by": "Released by"},
 }
 
 # How a value reads, per model and field (see _kind_text); the rest read by their field's type (_plain_text).
@@ -335,6 +352,7 @@ _NAMERS = {
     "accounts.user": str,
     "accounts.role": lambda o: o.name,
     "recalls.alert": lambda o: f"{o.get_source_display()} {o.external_id}",
+    "incidents.incident": lambda o: o.number,
 }
 
 

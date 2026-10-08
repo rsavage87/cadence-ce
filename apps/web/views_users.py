@@ -220,13 +220,15 @@ def user_invite(request):
 # --- Roles tab ------------------------------------------------------------------------------------
 
 # Column order from the mock's MODULES list (Recalls before Contracts), not the enum's declaration order.
-ROLE_MATRIX_MODULES = [Module.EQUIPMENT, Module.WORKORDERS, Module.PM, Module.RECALLS, Module.CONTRACTS, Module.REPORTS, Module.USERS, Module.SETTINGS]
+# Slice 28: Incidents beside Recalls.
+ROLE_MATRIX_MODULES = [Module.EQUIPMENT, Module.WORKORDERS, Module.PM, Module.RECALLS, Module.INCIDENTS, Module.CONTRACTS, Module.REPORTS, Module.USERS,
+                       Module.SETTINGS]
 
 def _roles_context(request) -> dict:
     counts = services.role_user_counts(request.tenant)
     matrix = []
     for role in services.role_order(Role.objects.prefetch_related("permissions")):
-        levels = {p.module: p.level for p in role.permissions.all()}
+        levels = role.levels()  # the level in force, a default role's default for a module it has no row for (slice 28)
         matrix.append({"role": role, "cells": [(m.value, levels.get(m.value, Level.NONE)) for m in ROLE_MATRIX_MODULES], "users": counts.get(role.id, 0),
                        "scope": role.effective_scope, "scope_fixed": services.scope_fixed_reason(role)})
     return {**tabs_context(request, "roles"),"matrix": matrix, "modules": [(m.value, m.label) for m in ROLE_MATRIX_MODULES], "levels": Level.choices,

@@ -54,7 +54,7 @@ def test_the_binder_lists_every_section_without_rows(client, signed_in, monkeypa
     data = r.json()
     assert data["period"] == {"from": "2026-01-01", "to": "2026-06-30", "today": "2026-10-07", "label": "Jan 1, 2026 to Jun 30, 2026"}
     assert data["complete"] is True and data["left_out"] == [] and data["counts"] == {"gap": 1, "finding": 1, "check": 1}
-    assert [s["key"] for s in data["sections"]] == ["program", "inventory", "maintenance", "aem", "inspections", "recalls", "staff"]
+    assert [s["key"] for s in data["sections"]] == ["program", "inventory", "maintenance", "aem", "inspections", "recalls", "incidents", "staff"]
     m = next(s for s in data["sections"] if s["key"] == "maintenance")
     assert m["title"] == "Scheduled maintenance (PM) completion" and m["topic"] == "Whether PMs were done by their due dates"
     assert m["covers"] == "Jan 1, 2026 to Jun 30, 2026" and m["notes"] == ["On time means completed on or before the due date."]

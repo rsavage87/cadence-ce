@@ -10,7 +10,7 @@ import uuid
 from rest_framework import serializers
 
 from apps.accounts import invitations, services
-from apps.accounts.models import DEFAULT_ROLES, DataScope, Level, Module, Role
+from apps.accounts.models import DEFAULT_ROLES, DataScope, Role
 from apps.credentials.models import Credential, Scope, Technician
 from apps.credentials.services import SOURCES, credential_options, credential_state
 from apps.tenants.context import get_current_tenant
@@ -175,8 +175,7 @@ class RoleSerializer(serializers.Serializer):
         return role.slug in STANDARD_ROLE_SLUGS
 
     def get_levels(self, role):
-        held = {p.module: p.level for p in role.permissions.all()}
-        return {m: held.get(m, Level.NONE) for m in Module.values}
+        return role.levels()  # the levels in force (slice 28: a default role's default for a module it has no row for)
 
     def get_scope(self, role):
         return role.effective_scope

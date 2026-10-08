@@ -142,6 +142,10 @@ class Asset(TenantModel):
     # nothing puts it in service but a passed inspection or use_before_inspection (Approve, with a reason).
     awaiting_inspection = models.BooleanField(default=False, editable=False,
                                               help_text="New, and waiting for its incoming inspection before first use")
+    # Slice 28: held as evidence by an open device incident (apps.incidents). Set and cleared only by equipment.services
+    # set_incident_hold / clear_incident_hold, on the locked row. While it is set nobody uses, repairs, or tests the device: set_status
+    # refuses every move, and no work order but the incident's investigation starts or completes (workorders.services.change_status).
+    incident_hold = models.BooleanField(default=False, editable=False, help_text="Held as evidence for an incident investigation")
     history = HistoricalRecords()
 
     class Meta:

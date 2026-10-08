@@ -2,7 +2,7 @@
 The survey binder (slice 25, beyond the mock): the evidence a Joint Commission, CMS, or DNV surveyor asks a Clinical Engineering
 department for, read from the records Cadence already keeps, for a period, with what is missing listed and linked.
 
-One module per section (program, inventory, maintenance, aem, inspections, recalls, staff), each with `build(period, user) ->
+One module per section (program, inventory, maintenance, aem, inspections, recalls, incidents, staff), each with `build(period, user) ->
 Section`, registered in SECTIONS in the order the binder prints them. Each section needs Reports View plus its own areas' View
 (apps.reports.permissions.SURVEY_NEEDS); `binder()` builds the sections a reader may see and names the ones left out.
 
@@ -48,6 +48,7 @@ GAPS_SHOWN = 50  # a section's gaps listed on the screen; all of them in the gap
 
 # Table.links: the column holding a record's key, and what kind of record it is (the screen and print make the link).
 WORK_ORDER, DEVICE = "work_order", "device"
+INCIDENT = "incident"  # slice 28: an incident's number (web:incident), linked for Incidents View only
 
 
 @dataclass(frozen=True)
@@ -115,7 +116,7 @@ class Gap:
 # with no link (the page, the print, the gaps CSV, the API: gap_links), as table cells and the change log do: a section needs only the
 # areas it lists, and a gap may point into another (Program's checks open Settings, Inventory's open a model's PM program).
 LINK_NEEDS = {"settings": Module.SETTINGS, "pm_model": Module.PM, "asset": Module.EQUIPMENT, "wo": Module.WORKORDERS, "recalls": Module.RECALLS,
-              "credentials": Module.USERS}
+              "credentials": Module.USERS, "incidents": Module.INCIDENTS, "incident": Module.INCIDENTS}
 
 
 def gap_links(user) -> Callable[[Gap], str]:
@@ -211,7 +212,9 @@ class Binder:
 NOT_COVERED = [
     "The facility's written medical equipment management plan and its annual evaluation",
     "Checks done after a repair before the device went back into use (Cadence records the repair, not those checks)",
-    "Device incident investigations and reports to the FDA or the manufacturer",
+    # Slice 28 keeps CE's part of device incidents (the Device incidents section); the rest is the facility's own MDR program.
+    "The facility's written MDR procedures, its annual report (Form FDA 3419), and the deliberations and report copies in its own event "
+    "files; incidents involving equipment not in Cadence (disposables, implants, patients' own devices)",
     "Training of the clinical staff who use the equipment",
     "Rental, loaner, and vendor-owned equipment not entered in Cadence",
     "The competence of contracted vendor staff",
@@ -219,7 +222,7 @@ NOT_COVERED = [
 
 
 def _sections():
-    from . import aem, inspections, inventory, maintenance, program, recalls, staff
+    from . import aem, incidents, inspections, inventory, maintenance, program, recalls, staff
 
     return [
         ("program", "Program and policies", program.build),
@@ -228,6 +231,7 @@ def _sections():
         ("aem", "Alternate equipment maintenance (AEM)", aem.build),
         ("inspections", "Incoming inspection before first use", inspections.build),
         ("recalls", "Recalls and safety alerts", recalls.build),
+        ("incidents", "Device incidents", incidents.build),  # slice 28
         ("staff", "Technician qualifications", staff.build),
     ]
 

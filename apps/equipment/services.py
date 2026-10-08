@@ -178,6 +178,9 @@ def asset_service_summary(asset, today: date | None = None, work_orders=None) ->
 
 INCOMING_WAITING = "waiting"  # create_asset's incoming_inspection (slice 26)
 AWAITING_LABEL = "Awaiting inspection"
+HELD_LABEL = "Held for incident"  # slice 28: a device held as evidence (Asset.incident_hold); it wins over AWAITING_LABEL
+HELD_REASON = "Held for an incident investigation"  # the device's history (Equipment View): never the incident's number
+RELEASED_REASON = "Hold released"
 NEW_DEVICE_STATUSES = (AssetStatus.IN_SERVICE, AssetStatus.OUT_OF_SERVICE)  # a new device is in use, or waiting for incoming inspection
 # /equipment/new/ adds a device, so no device can be tagged "new"; "." and ".." are path segments browsers rewrite, so a device
 # tagged that way could never be opened.
@@ -654,7 +657,9 @@ def create_asset(*, tag, device_model, department, serial="", room="", installed
 
 def status_label(asset) -> str:
     """The device's status as every screen, CSV, and the API words it (slice 26): "Awaiting inspection" for a device out of service
-    waiting for its incoming inspection, else its status."""
+    waiting for its incoming inspection, else its status. Slice 28: "Held for incident" for a device held as evidence, first."""
+    if getattr(asset, "incident_hold", False):
+        return HELD_LABEL
     if asset.awaiting_inspection and asset.status == AssetStatus.OUT_OF_SERVICE:
         return AWAITING_LABEL
     return asset.get_status_display()
@@ -760,6 +765,8 @@ def set_status(asset: Asset, to_status: str, *, by=None, note: str = "", today: 
     if to_status not in AssetStatus.values:
         raise ValidationError("Choose a device status.")
     caller, asset = asset, _locked_row(asset)  # the row as it is now (review fix: never a copy from before a pass)
+    if asset.incident_hold:  # slice 28: the incident's release is the only way out
+        raise ValidationError(held_message(asset))
     if to_status not in STATUS_CHANGES.get(asset.status, set()):
         raise ValidationError(f"{asset.tag} cannot go from {asset.get_status_display().lower()} to {AssetStatus(to_status).label.lower()}.")
     if asset.awaiting_inspection and to_status in HOLD:
@@ -808,6 +815,13 @@ def hold_message(asset: Asset) -> str:
     return f"{asset.tag} is waiting for its incoming inspection ({wo.number}): it goes into service when that inspection passes."
 
 
+def held_message(asset: Asset) -> str:
+    """Why a device held as evidence does not change status (slice 28): set_status's refusal. No incident number: the reader may not
+    see incidents (Equipment Edit is enough to try)."""
+    return (f"{asset.tag} is held as evidence for an incident investigation: nobody uses, repairs, or tests it until the incident "
+            "releases it.")
+
+
 def pm_clock_message(asset: Asset) -> str:
     """Why a device waiting for its incoming inspection takes no next PM date (slice 26): update_asset's refusal, keyed next_pm_on."""
     from apps.workorders import inspections
@@ -823,6 +837,8 @@ def status_actions(asset: Asset, user) -> list[dict]:
     offers it on its own (permissions.can_use_before_inspection, use_before_inspection)."""
     from . import permissions as perms
 
+    if asset.incident_hold:  # slice 28: held as evidence, released only from its incident
+        return []
     level = user.level_for(perms.MODULE)  # once, not once per button
     awaiting = asset.awaiting_inspection
     # A device in use is most likely being tagged out; one that is not is most likely coming back (the mock's single button).
@@ -950,3 +966,54 @@ def pass_incoming_inspection(asset: Asset, wo, *, by=None, on: date) -> Asset:
         change_status(other, WoStatus.CANCELLED, by=by, note=note, as_of=on)
     asset.refresh_from_db(fields=["status", "awaiting_inspection", "next_pm_on", "last_pm_on", "updated_at"])
     return fresh
+
+
+# --- incident holds (slice 28) ---------------------------------------------------------------------------------------------------
+#
+# A device suspected in an incident is held as evidence (Asset.incident_hold) while any open incident holds it (apps.incidents:
+# IncidentHold rows). These two are the flag's only writers, called by apps.incidents.services on the device's row as it is, locked
+# (_locked_row: its open inspections, then its row). Neither checks levels or the incident's rules: the incident services do.
+
+
+@transaction.atomic
+def set_incident_hold(asset: Asset, *, by=None, today: date | None = None) -> Asset:
+    """Hold the device as evidence: incident_hold set; a device in service or on loan goes out of service (any other status stays:
+    in repair, out of service, awaiting its incoming inspection). A missing or retired device is refused (record the incident
+    without a hold). Holding a device already held changes nothing. The history reads HELD_REASON (no incident number: the device's
+    history is Equipment View's). Returns the caller's device, read again."""
+    caller, fresh = asset, _locked_row(asset)
+    if fresh.status in (AssetStatus.MISSING, AssetStatus.RETIRED):
+        raise ValidationError(f"{fresh.tag} is {fresh.get_status_display().lower()}: record the incident without holding it.")
+    if not fresh.incident_hold:
+        fresh.incident_hold = True
+        if fresh.status in (AssetStatus.IN_SERVICE, AssetStatus.ON_LOAN):
+            fresh.status = AssetStatus.OUT_OF_SERVICE
+        fresh._change_reason = HELD_REASON
+        if by is not None:
+            fresh._history_user = by
+        fresh.save()
+    caller.refresh_from_db()
+    return caller
+
+
+@transaction.atomic
+def clear_incident_hold(asset: Asset, *, to_status: str | None = None, by=None) -> Asset:
+    """End the device's hold: incident_hold cleared and, when `to_status` is given, the status set to it in the same save (in
+    service for a return to use the incident's release allowed; the status before the hold for "recorded in error"). The caller decides
+    whether another open incident still holds the device (then it does not call this) and whether the device may go in service (not
+    awaiting its incoming inspection, no repair holding it). The history reads RELEASED_REASON. Returns the caller's device, read
+    again."""
+    caller, fresh = asset, _locked_row(asset)
+    if to_status is not None and to_status not in AssetStatus.values:
+        raise ValidationError("Choose a device status.")
+    changed = fresh.incident_hold or (to_status is not None and to_status != fresh.status)
+    fresh.incident_hold = False
+    if to_status is not None:
+        fresh.status = to_status
+    if changed:
+        fresh._change_reason = RELEASED_REASON
+        if by is not None:
+            fresh._history_user = by
+        fresh.save()
+    caller.refresh_from_db()
+    return caller

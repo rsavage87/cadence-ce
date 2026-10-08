@@ -84,7 +84,7 @@ def test_the_page_shows_the_summary_the_gaps_and_each_section(client, signed_in,
     card = card[:card.index("</a>")]
     assert '<span class="chip crit">2 gaps</span>' in card and '<span class="chip warn">1 finding</span>' in card and "1 check" in card
     assert 'href="#sv-program"><span class="t">Program and policies</span><span class="sv-chips"><span class="chip ok">No gaps</span>' in body
-    assert "2 gaps, 1 finding, 1 check in the 7 sections your role can see" in body and "incomplete" not in body
+    assert "2 gaps, 1 finding, 1 check in the 8 sections your role can see" in body and "incomplete" not in body
     # the gaps: kind chip, words, and the record's link (the drawer for a work order, a page for Settings); gaps first, then findings, then checks
     gaps = body[body.index('id="sv-gaps-h"'):body.index('id="sv-program"')]
     assert gaps.index("WO-26-0000 on CE-10000") < gaps.index("Medium risk") < gaps.index("Your policy text")
@@ -201,7 +201,7 @@ def test_a_left_out_section_is_named_with_why_and_the_binder_never_reads_as_read
             "which your role does not have.</span></div>") in body
     assert "This binder is incomplete for your role: Technician qualifications is left out." in body
     assert 'id="sv-staff"' not in body and 'href="#sv-staff"' not in body
-    assert "in the 6 sections your role can see" in body
+    assert "in the 7 sections your role can see" in body
 
 
 # --- CSVs ---------------------------------------------------------------------------------------------------------------------
@@ -257,7 +257,7 @@ def test_the_print_has_a_cover_and_a_page_per_section(client, signed_in, monkeyp
     assert "<td>Technician qualifications</td><td class=\"out\" colspan=\"2\">Left out: Needs Users and access View" in cover
     assert "<td>Scheduled maintenance (PM) completion</td><td>Jan 1, 2026 to Jun 30, 2026</td><td>2 gaps, 1 finding, 1 check</td>" in cover
     assert "Not covered by this binder" in cover and all(item in html.unescape(cover) for item in NOT_COVERED)
-    assert body.count('<section class="sheet svp-sec"') == 6
+    assert body.count('<section class="sheet svp-sec"') == 7
     sec = body[body.index('id="sv-maintenance"'):body.index('id="sv-aem"')]
     assert body.count('<tr><td class="nw"><a href="/work-orders/WO-26-') == PRINT_ROWS and "3 more rows in the CSV" in sec
     assert '<a href="/work-orders/WO-26-0000/?facility=riverside">WO-26-0000</a>' in sec  # links name the facility

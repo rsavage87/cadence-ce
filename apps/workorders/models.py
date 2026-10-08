@@ -71,6 +71,7 @@ class LateReason(models.TextChoices):
     STAFFING = "staffing", "Staffing or workload"
     SCHEDULING = "scheduling", "Scheduling error"
     DUPLICATE = "duplicate", "Duplicate work order (the PM was done on another)"
+    INCIDENT_HOLD = "incident_hold", "Held as evidence for an incident investigation"  # slice 28 (apps.incidents.services.release sets it)
     OTHER = "other", "Other (see the work order's notes)"
 
 

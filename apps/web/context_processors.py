@@ -17,6 +17,7 @@ NAV = [
     ("pm", "PM schedule", "pm", "web:pm", Module.PM),
     ("contracts", "Contracts", "contract", "web:contracts", Module.CONTRACTS),
     ("recalls", "Recalls and alerts", "recall", "web:recalls", Module.RECALLS),
+    ("incidents", "Incidents", "incident", "web:incidents", Module.INCIDENTS),  # slice 28: device incidents (beyond the mock)
     ("reports", "Reports", "rep", "web:reports", Module.REPORTS),
     ("users", "Users and access", "users", "web:users", Module.USERS),
     ("settings", "Settings", "set", "web:settings", Module.SETTINGS),

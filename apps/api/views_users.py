@@ -350,7 +350,7 @@ class RoleViewSet(UsersModule):
         _refuse_fields(body, parsed.fields, shown=self._show([role]), why=self.ELSEWHERE)
         parsed.is_valid(raise_exception=True)
         d = parsed.validated_data
-        held = {p.module: p.level for p in role.permissions.all()}
+        held = role.levels()  # the levels in force, as the matrix shows them (slice 28)
         with transaction.atomic():
             for module, level in d.get("levels", {}).items():
                 if module in Module.values and level in Level.values and held.get(module, Level.NONE) == level:

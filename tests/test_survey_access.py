@@ -30,7 +30,7 @@ from apps.workorders.models import Priority, WorkOrder, WoStatus, WoType
 from apps.workorders.services import add_note, assign, change_status, create_service_request, create_work_order
 
 HX = {"HTTP_HX_REQUEST": "true"}
-ALL = ["program", "inventory", "maintenance", "aem", "inspections", "recalls", "staff"]
+ALL = ["program", "inventory", "maintenance", "aem", "inspections", "recalls", "incidents", "staff"]  # slice 28: incidents
 SEES = {"director": ALL, "manager": ALL, "technician": [k for k in ALL if k != "staff"], "analyst": [k for k in ALL if k != "staff"]}
 STAFF_REFUSAL = "Needs Users and access View, which your role does not have."
 

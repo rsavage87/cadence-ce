@@ -1,0 +1,7 @@
+{% extends "web/base.html" %}
+{% block title %}Incidents{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>Incidents</h1></div></div>
+{# Slice 28 scaffold: wave 2 builds the list and the drawer. #}
+<div class="panel"><div class="panel-b">{% for inc in incidents %}<div>{{ inc.number }} · {{ inc.asset.tag }}</div>{% empty %}<div class="note">No incidents recorded.</div>{% endfor %}</div></div>
+{% endblock %}

@@ -9,7 +9,7 @@ from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 
 from apps.equipment.models import AssetStatus, RiskClass
-from apps.equipment.services import AWAITING_LABEL, status_label
+from apps.equipment.services import AWAITING_LABEL, HELD_LABEL, status_label
 from apps.workorders.models import Priority, WoStatus, WoType
 
 register = template.Library()
@@ -32,6 +32,7 @@ ICONS = {
     "link": ("1.8", '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.5 1.5M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.5-1.5"/>'),
     "contract": ("1.7", '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 12.5h6M10 16.5h6"/>'),
     "recall": ("1.7", '<path d="M12 3 2.5 20h19zM12 10v4M12 17.5v.5"/>'),
+    "incident": ("1.7", '<path d="M5 21V4M5 4h12l-2.5 4.5L17 13H5"/>'),  # slice 28: a flag, the incident reported
     "sync": ("1.8", '<path d="M20 12a8 8 0 0 1-14.5 4.6M4 12a8 8 0 0 1 14.5-4.6M18 3v5h-5M6 21v-5h5"/>'),
     "rep": ("1.7", '<path d="M4 20h16M6 16V9M11 16V5M16 16v-6"/>'),
     "dl": ("1.8", '<path d="M12 4v11M7 10l5 5 5-5M4 20h16"/>'),
@@ -70,6 +71,7 @@ def risk_chip(risk):
 
 
 AWAITING_CSS = "info"  # slice 26: a device out of service waiting for its incoming inspection is on hold, not broken
+HELD_CSS = "crit"  # slice 28: held as evidence: nobody touches it
 
 
 @register.simple_tag
@@ -80,6 +82,8 @@ def asset_status_chip(device_or_status):
     if isinstance(device_or_status, str):
         return _chip(ASSET_STATUS_CSS.get(device_or_status, "neutral"), AssetStatus(device_or_status).label)
     label = status_label(device_or_status)
+    if label == HELD_LABEL:  # slice 28: held as evidence for an incident investigation
+        return _chip(HELD_CSS, label)
     return _chip(AWAITING_CSS if label == AWAITING_LABEL else ASSET_STATUS_CSS.get(device_or_status.status, "neutral"), label)
 
 

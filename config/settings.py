@@ -60,6 +60,7 @@ INSTALLED_APPS = [
     "apps.reports",
     "apps.notifications",
     "apps.imports",
+    "apps.incidents",
     "apps.api",
     "apps.demo",
     "apps.web",

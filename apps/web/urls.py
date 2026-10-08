@@ -66,6 +66,7 @@ urlpatterns = [
     path("users/", include("apps.web.urls_users")),
     path("users/credentials/", include("apps.web.urls_credentials")),
     path("recalls/", include("apps.web.urls_recalls")),
+    path("incidents/", include("apps.web.urls_incidents")),  # slice 28: device incidents
     path("reports/", include("apps.web.urls_reports")),
     path("settings/", include("apps.web.urls_settings")),
     path("export/", include("apps.web.urls_exports")),

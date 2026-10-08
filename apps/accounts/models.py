@@ -16,6 +16,7 @@ class Module(models.TextChoices):
     REPORTS = "reports", "Reports"
     USERS = "users", "Users and access"
     SETTINGS = "settings", "Settings"
+    INCIDENTS = "incidents", "Incidents"  # slice 28: device incidents (apps.incidents)
 
 
 class Level(models.IntegerChoices):
@@ -61,9 +62,17 @@ class Role(TenantModel):
     def effective_scope(self) -> str:
         return self.scope or DEFAULT_SCOPES.get(self.slug, DataScope.FACILITY)
 
+    def levels(self) -> dict:
+        """{module: level} for every module. A module the role has no row for (one added after the role was made: Incidents, slice
+        28) takes FULL on a system role, its default level on a default role (DEFAULT_LEVELS, by slug), and None on a custom role; a row
+        saved as None stays None. Every reader of a role's levels goes through this (level_for, the role matrix, the API's role
+        serializer and its PATCH), so the matrix shows the level in force and the "never more than your own" check reads the same."""
+        held = {p.module: p.level for p in self.permissions.all()}
+        defaults = DEFAULT_LEVELS.get(self.slug, {})
+        return {m: held[m] if m in held else (Level.FULL if self.is_system else defaults.get(m, Level.NONE)) for m in Module.values}
+
     def level_for(self, module: str) -> int:
-        perm = self.permissions.filter(module=module).first()
-        return perm.level if perm else Level.NONE
+        return self.levels().get(module, Level.NONE)
 
     def set_levels(self, levels: dict):
         for module, level in levels.items():
@@ -164,20 +173,22 @@ DEFAULT_ROLES = [
     ("director", "Director", "Everything, including policy, contracts, integrations, and user management", {m: Level.FULL for m in Module.values}),
     ("manager", "CE manager", "Assigns and closes work, approves AEM changes and recall closures",
      {"equipment": Level.EDIT, "workorders": Level.APPROVE, "pm": Level.APPROVE, "contracts": Level.EDIT, "recalls": Level.APPROVE,
-      "reports": Level.VIEW, "users": Level.VIEW, "settings": Level.VIEW}),
+      "reports": Level.VIEW, "users": Level.VIEW, "settings": Level.VIEW, "incidents": Level.APPROVE}),
     ("technician", "Technician", "Work orders, PM checklists, and parts requests; cannot close recalls",
      {"equipment": Level.EDIT, "workorders": Level.EDIT, "pm": Level.EDIT, "contracts": Level.VIEW, "recalls": Level.VIEW,
-      "reports": Level.VIEW, "users": Level.NONE, "settings": Level.NONE}),
+      "reports": Level.VIEW, "users": Level.NONE, "settings": Level.NONE, "incidents": Level.EDIT}),
     ("requester", "Clinical requester", "Submits requests and sees status for their own unit",
      {"equipment": Level.VIEW, "workorders": Level.REQUEST, "pm": Level.NONE, "contracts": Level.NONE, "recalls": Level.NONE,
-      "reports": Level.NONE, "users": Level.NONE, "settings": Level.NONE}),
+      "reports": Level.NONE, "users": Level.NONE, "settings": Level.NONE, "incidents": Level.NONE}),
     ("analyst", "Finance and quality", "Dashboards and reports, read-only",
      {"equipment": Level.VIEW, "workorders": Level.VIEW, "pm": Level.VIEW, "contracts": Level.VIEW, "recalls": Level.VIEW,
-      "reports": Level.FULL, "users": Level.NONE, "settings": Level.NONE}),
+      "reports": Level.FULL, "users": Level.NONE, "settings": Level.NONE, "incidents": Level.VIEW}),
     ("vendor", "Vendor technician", "Sees and updates only work orders assigned to their company",
      {"equipment": Level.VIEW, "workorders": Level.EDIT, "pm": Level.NONE, "contracts": Level.NONE, "recalls": Level.NONE,
-      "reports": Level.NONE, "users": Level.NONE, "settings": Level.NONE}),
+      "reports": Level.NONE, "users": Level.NONE, "settings": Level.NONE, "incidents": Level.NONE}),
 ]
+# A default role's level for a module it has no row for (Role.levels): a facility made before a module existed gets its default.
+DEFAULT_LEVELS = {slug: levels for slug, _name, _desc, levels in DEFAULT_ROLES}
 
 
 def create_default_roles(tenant):
