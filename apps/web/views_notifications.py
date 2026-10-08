@@ -2,7 +2,8 @@
 Notifications (slice 20, part C): the account menu's Notifications page, where people choose the emails Cadence sends them about
 their own work (apps.notifications): work orders assigned to them, a daily digest, and contract reminders (offered only with Contracts
 Edit). Self-service only: it always sets the signed-in user's own choices, and the emails go to their account's address, which the page
-shows (or says there is none).
+shows (or says there is none). Slice 28: incident report deadlines (apps.incidents.notify) for the people who decide whether an incident
+is reportable (Incidents Approve); the page shows that switch only to them (SHOWN_WHEN_OFFERED), never as a disabled row.
 
 Scoped users (apps.workorders.scoping) are not offered it: the emails are about the facility's work (web_view refuses them, and the
 service says so again). Each switch saves only itself as it is flipped (its own hx-post with a hidden 0 before it), so a tab opened
@@ -23,7 +24,10 @@ ROWS = (
     ("assignments", "When a work order is assigned to you: its number, device, department, priority, and due date, with a link."),
     ("daily_digest", "Each morning: your work orders due or overdue, and your PMs this week."),
     ("contract_reminders", "When a service contract is about to end."),
+    ("incidents", "When an incident is recorded that may need a report to the FDA or the manufacturer, and as its due date nears: its "
+                  "number, the device's tag, and the due date, with a link."),
 )
+SHOWN_WHEN_OFFERED = frozenset({"incidents"})  # a row the page leaves out for someone not offered it (no disabled switch)
 
 
 def _choices(post) -> dict:
@@ -45,6 +49,7 @@ def _ctx(request) -> dict:
     now = ns.shown(user)
     rows = [{"kind": kind, "label": ns.LABELS[kind], "help": help_text, "on": now[kind], "offered": ns.offered(user, kind)}
             for kind, help_text in ROWS]
+    rows = [row for row in rows if row["offered"] or row["kind"] not in SHOWN_WHEN_OFFERED]
     return {"rows": rows, "email": user.email, "not_offered": ns.NOT_OFFERED,  # a dict: the template reads the row's own reason
             "is_technician": Technician.objects.filter(user=user, is_active=True).exists()}
 
@@ -56,7 +61,7 @@ def _message(choices: dict) -> str:
     return "Notifications saved"
 
 
-@web_view()  # scoped users are refused by web_view; the rest by ns.refusal: Work orders View or Contracts Edit
+@web_view()  # scoped users are refused by web_view; the rest by ns.refusal: Work orders View, Contracts Edit, or Incidents Approve
 def notifications(request):
     if ns.refusal(request.user) and request.user.tenant_id == getattr(request.tenant, "id", None):
         raise PermissionDenied

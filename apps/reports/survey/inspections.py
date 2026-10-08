@@ -38,7 +38,7 @@ from django.urls import reverse
 from apps.core.days import local_day
 from apps.core.history import _person, _rows
 from apps.equipment.models import AddedAs, Asset, AssetStatus, RiskClass
-from apps.equipment.services import AWAITING_LABEL
+from apps.equipment.services import AWAITING_LABEL, HELD_LABEL
 from apps.workorders.inspections import uses_before
 from apps.workorders.models import OPEN_STATUSES, InspectionResult, WorkOrder, WoStatus, WoType
 
@@ -113,13 +113,15 @@ def _inspections(new) -> dict:
 
 def _history(new) -> dict:
     """{device id: (its status as its first history row words it, the facility's day of its first row in service, or None)}. One
-    read."""
+    read. Worded as equipment.services.status_label words a status: held for an incident first (slice 28), then awaiting inspection."""
     out = {}
     rows = (_rows(Asset.history.model).filter(id__in=new.values("id")).order_by("id", "history_date", "history_id")
-            .values_list("id", "status", "awaiting_inspection", "history_date"))
-    for pk, status, awaiting, when in rows:
+            .values_list("id", "status", "awaiting_inspection", "incident_hold", "history_date"))
+    for pk, status, awaiting, held, when in rows:
         first, in_service = out.get(pk, (None, None))
-        if first is None:
+        if first is None and held:
+            first = HELD_LABEL
+        elif first is None:
             first = AWAITING_LABEL if awaiting and status == AssetStatus.OUT_OF_SERVICE else _STATUS_LABELS.get(status, NOT_RECORDED)
         if in_service is None and status == AssetStatus.IN_SERVICE:
             in_service = local_day(when)

@@ -16,6 +16,9 @@ contract is reminded again before its new end). A missed day catches up with the
 has passed: a contract found 28 days from its end that was never reminded at 30 gets the 30-day reminder, once, not the 90-day one
 too. A person gets one email a day listing every contract due a reminder.
 
+Slice 28: the incident reminders (apps.incidents.notify.send_reminders: an incident whose report may be due in a few work days, or is
+past due, to the people who decide whether it is reportable) go in the same run, facility by facility, on the facility's day.
+
 Claim, then send: the NotificationSent row is inserted before the email goes (the unique constraint is the lock, so two runs at once
 send each email once) and removed when the send fails, so the next run tries again. One person or facility failing is logged and
 counted, and the rest still go. Deactivated accounts are never emailed and not counted; someone who chose an email but cannot have it
@@ -48,6 +51,7 @@ from apps.accounts.models import Level, Module, User
 from apps.contracts.models import Contract
 from apps.credentials.models import Technician
 from apps.equipment.models import Asset
+from apps.incidents import notify as incident_notify
 from apps.tenants.context import tenant_context
 from apps.tenants.models import Tenant
 from apps.workorders import my_work, scoping
@@ -318,8 +322,8 @@ def _tally(counts: dict, kind: str, outcome: str, sent_key: str) -> None:
 
 
 def _send_facility(tenant, today: date, counts: dict) -> None:
-    """Send `tenant`'s digests and contract reminders for `today`, counting into `counts`. Inside the tenant's context. One person's
-    email failing is logged and counted, and the rest still go (_attempt)."""
+    """Send `tenant`'s digests, contract reminders, and incident reminders for `today`, counting into `counts`. Inside the tenant's
+    context. One person's email failing is logged and counted, and the rest still go (_attempt; the incident reminders' own)."""
     people = list(User.objects.filter(tenant=tenant, is_active=True).select_related("role").order_by("username"))  # deactivated: never
     technicians = {t.user_id: t for t in Technician.objects.filter(is_active=True, user__isnull=False)}
     digested = set(NotificationSent.objects.filter(kind=Kind.DIGEST, key=today.isoformat()).values_list("user_id", flat=True))
@@ -346,21 +350,31 @@ def _send_facility(tenant, today: date, counts: dict) -> None:
         _tally(counts, Kind.CONTRACT.value, outcome, "reminders")
         counts["reminded"] += listed if outcome == "sent" else 0
 
+    try:
+        incidents = incident_notify.send_reminders(today)  # slice 28: to those who decide, each incident and stage once
+    except Exception:  # reading the incidents failed: counted, and the digests and contract reminders above stand
+        log.exception("The incident reminders at %s failed", tenant.slug)
+        counts["failed"] += 1
+        return
+    counts["incident_reminders"] += incidents["sent"]
+    counts["incidents"] += incidents["incidents"]
+    counts["failed"] += incidents["failed"]
+
 
 def send_due(today: date | None = None, facility=None) -> dict:
-    """Send the digests and contract reminders due `today`, facility by facility (active facilities only; only `facility` when
-    given, as the daily job does). With no `today`, each facility's own today (its time zone). Returns what happened:
+    """Send the digests, contract reminders, and incident reminders due `today`, facility by facility (active facilities only; only
+    `facility` when given, as the daily job does). With no `today`, each facility's own today (its time zone). Returns what happened:
     {"day" (`today`, or None), "sent", "failed", "skipped", "tenants": [{"slug", "name", "day" (the facility's), "digests" (sent),
     "quiet" (chosen, nothing to list), "reminders" (emails sent), "reminded" (contracts they listed), "contracts" (in a reminder
-    stage), "failed", "skipped": Counter of (kind, SKIP_REASONS key), "error"}]}; "error" is set when a facility could not be
-    worked through at all (one failure)."""
+    stage), "incident_reminders" (emails sent), "incidents" (incidents they listed), "failed", "skipped": Counter of (kind,
+    SKIP_REASONS key), "error"}]}; "error" is set when a facility could not be worked through at all (one failure)."""
     summary = {"day": today, "sent": 0, "failed": 0, "skipped": 0, "tenants": []}
     tenants = Tenant.objects.filter(is_active=True).order_by("slug")  # a system table: read before any tenant is set
     if facility is not None:
         tenants = tenants.filter(pk=facility.pk)
     for tenant in tenants:
         counts = {"slug": tenant.slug, "name": tenant.name, "day": today, "digests": 0, "quiet": 0, "reminders": 0, "reminded": 0,
-                  "contracts": 0, "failed": 0, "skipped": Counter(), "error": ""}
+                  "contracts": 0, "incident_reminders": 0, "incidents": 0, "failed": 0, "skipped": Counter(), "error": ""}
         try:
             with tenant_context(tenant):
                 counts["day"] = today or local_today()  # inside the facility's context: its today
@@ -372,7 +386,7 @@ def send_due(today: date | None = None, facility=None) -> dict:
             if not connection.is_usable():  # a connection that broke is not reopened on its own outside a request: the next facility needs one
                 connection.close()
         summary["tenants"].append(counts)
-        summary["sent"] += counts["digests"] + counts["reminders"]
+        summary["sent"] += counts["digests"] + counts["reminders"] + counts["incident_reminders"]
         summary["failed"] += counts["failed"]
         summary["skipped"] += sum(counts["skipped"].values())
     return summary

@@ -18,6 +18,14 @@ each recall match reached the facility the day its notice was published.
 
 Slice 27: the North Campus's written policy counts a medium or low risk PM on time by the end of its due month (its PM completion
 window, Settings), so All facilities shows a facility judged by a window other than the due date. Riverside keeps the default.
+
+Slice 28: Riverside has two device incidents, recorded through apps.incidents.services as the screens record them, so the Incidents
+nav badge, the survey binder's Device incidents section, and the incident drawer have something real. An open one: a defibrillator a
+nurse reported through the portal (tagged out), adopted as the investigation by the on-call technician who recorded it, outcome not
+known yet for a patient, held with its accessories kept and its log saved, the investigation in progress, the decision pending, its
+report due OPEN_INCIDENT_LEFT work days from the seed's today. A closed one, two months back: a vital signs monitor, no harm, the
+investigation done (the device met its specifications), decided not serious by risk management, returned to use, closed. Neither
+emails anyone (apps.incidents.notify.quiet()), and each one's history is dated the days it happened.
 """
 import random
 from datetime import date, datetime, time, timedelta
@@ -25,17 +33,22 @@ from decimal import Decimal
 
 from django.core.management.base import BaseCommand
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.accounts import people, services
 from apps.accounts.models import Role, User, create_default_roles
 from apps.contracts.models import Contract, ContractType, Coverage
+from apps.core.workdays import is_work_day
 from apps.credentials.models import Credential, Scope, Technician
 from apps.credentials.services import qualified_technicians, renew_credential
 from apps.equipment import services as equipment
 from apps.equipment.models import AddedAs, Asset, AssetStatus, Department, DeviceModel, RiskClass, UseBeforeInspection
 from apps.facility.models import PmWindow
 from apps.facility.services import labor_rates, update_settings
+from apps.incidents import notify as incident_notify
+from apps.incidents import services as incident_services
+from apps.incidents.models import Accessories, Affected, Basis, DecidedBy, EventLog, Finding, Incident, IncidentHold, Outcome, Release
 from apps.notifications import assignments
 from apps.pm import aem
 from apps.pm.dates import add_months
@@ -47,8 +60,21 @@ from apps.tenants.context import tenant_context, zone_of
 from apps.tenants.models import Tenant
 from apps.workorders import inspections
 from apps.workorders.completion import complete_work_order
-from apps.workorders.models import InspectionResult, LaborLine, LateReason, PartLine, PmResult, Priority, Source, WorkOrder, WoType
-from apps.workorders.services import assign, change_status, create_work_order, set_late_reason
+from apps.workorders.models import (
+    OPEN_STATUSES,
+    InspectionResult,
+    LaborLine,
+    LateReason,
+    PartLine,
+    PmResult,
+    Priority,
+    ServiceRequest,
+    Source,
+    Urgency,
+    WorkOrder,
+    WoType,
+)
+from apps.workorders.services import assign, change_status, create_service_request, create_work_order, set_late_reason
 
 MODELS = [
     # manufacturer, model, description, category, risk, pm months, life yrs, cost, n, support
@@ -182,6 +208,21 @@ LAPSE_RESOLUTION = "Replaced the bed exit sensor; alarm verified in every positi
 # reviewed days ago. The second's yearly review is overdue (the binder's inventory lists it as the facility's own check).
 RISK_SCORES = [("Hamilton-G5", (10, 5, 3, 0), 90), ("R Series Plus", (10, 4, 3, 0), 425)]
 
+# Slice 28, Riverside's device incidents (_incidents). No patient details anywhere: an incident has no free text, the portal request's
+# problem says what the device did, and the investigation's resolution what was tested and found.
+OPEN_INCIDENT_MODEL = "R Series Plus"  # a defibrillator (the pumps all have recall work under way: holding one would hold it up)
+OPEN_INCIDENT_LEFT = 4  # work days from the seed's today to the open incident's report due date (the badge turns hot at 3)
+OPEN_INCIDENT_PROBLEM = "Did not charge to the selected energy during use. Unit staff took it out of use and kept the pads and cable with it."
+OPEN_INCIDENT_REFERENCE = "SE-{yy}-0412"  # the facility's event report number (its year: the year it happened)
+CLOSED_INCIDENT_MODEL = "Connex Spot"
+CLOSED_INCIDENT_DAYS_AGO = 60
+# The closed incident's steps, days after it happened: the investigation started, completed (and the finding), decided, released, closed.
+CLOSED_INCIDENT_STEPS = {"started": 1, "completed": 2, "decided": 5, "released": 6, "closed": 7}
+CLOSED_INCIDENT_REFERENCE = "SE-{yy}-0377"
+CLOSED_INCIDENT_RESOLUTION = ("Bench tested per the service manual: NIBP and SpO2 accuracy against the simulator, alarms, and electrical "
+                              "safety all within specification. No device fault found.")
+INCIDENT_CLEAR_DAYS = 30  # an incident's device has no PM due within this many days of the seed's today (none is missed while held)
+
 
 def _noon(day: date) -> datetime:
     """Noon of `day` in the current time zone (the facility's, inside tenant_context): a backdated timestamp's moment."""
@@ -196,7 +237,8 @@ class Command(BaseCommand):
         parser.add_argument("--name", default="Riverside Regional Medical Center")
 
     def handle(self, *args, **opts):
-        with assignments.quiet():  # a data load: the demo's work orders are assigned without emailing the demo's technicians
+        # A data load: the demo's work orders are assigned, and its incidents recorded, without emailing anyone.
+        with assignments.quiet(), incident_notify.quiet():
             self._seed(*args, **opts)
 
     @transaction.atomic
@@ -339,6 +381,7 @@ class Command(BaseCommand):
             # in (dwhitfield@... and the others, once they have a password) finds their own work on My work
             assign_week(today=today)
             self._late_reasons(today)
+            self._incidents(today, domain)
         devices = len(assets) + len(NEW_DEVICES)
         self.stdout.write(self.style.SUCCESS(f"Seeded {tenant.name}: {devices} devices, {len(techs)} technicians. Sign in as {kim} / DemoPass-2026"))
         self._north_campus(tenant, opts)
@@ -445,6 +488,93 @@ class Command(BaseCommand):
         late = list(missed_pms(today).filter(asset__device_model__risk_class__in=(RiskClass.LIFE_SUPPORT, RiskClass.HIGH)).order_by("due_on", "number"))
         for i, wo in enumerate(late[:-1]):
             set_late_reason(wo, LATE_REASONS[i % len(LATE_REASONS)], today=today)
+
+    @staticmethod
+    def _incidents(today: date, domain: str) -> None:
+        """Riverside's device incidents (slice 28), oldest first so they number in order: the closed one, then the open one."""
+        Command._closed_incident(today, domain)
+        Command._open_incident(today)
+
+    @staticmethod
+    def _incident_device(model: str, since: date, today: date) -> Asset:
+        """The first device of `model` by tag in service with no open work order, none opened or completed since `since`, and no PM
+        due within INCIDENT_CLEAR_DAYS: holding it changes nothing else in the demo (no PM missed while held, no work held up)."""
+        busy = WorkOrder.objects.filter(Q(status__in=OPEN_STATUSES) | Q(opened_on__gte=since) | Q(completed_on__gte=since)).values("asset_id")
+        return (Asset.objects.filter(device_model__model=model, status=AssetStatus.IN_SERVICE,
+                                     next_pm_on__gt=today + timedelta(days=INCIDENT_CLEAR_DAYS))
+                .exclude(pk__in=busy).order_by("tag").first())
+
+    @staticmethod
+    def _work_days_before(day: date, n: int) -> date:
+        """The day with `n` work days after it, up to and including `day` (apps.core.workdays): an incident that happened then is due
+        REPORT_WORK_DAYS - n work days after `day`."""
+        current, counted = day, 0
+        while counted < n:
+            if is_work_day(current):
+                counted += 1
+            current -= timedelta(days=1)
+        return current
+
+    @staticmethod
+    def _dated(incident, day_of: dict) -> None:
+        """The incident and its holds as if recorded on the days they happened: each history row whose reason is in `day_of` dated
+        noon of that day (the seed writes them all today), and the rows' created_at the day the incident was recorded."""
+        recorded = day_of["Recorded"]
+        for model, ids in ((Incident, [incident.pk]), (IncidentHold, list(incident.holds.values_list("pk", flat=True)))):
+            for reason, day in day_of.items():
+                model.history.filter(id__in=ids, history_change_reason=reason).update(history_date=_noon(day))
+            model.objects.filter(pk__in=ids).update(created_at=_noon(recorded))
+
+    @staticmethod
+    def _closed_incident(today: date, domain: str) -> None:
+        """A vital signs monitor two months back: no harm, recorded and held by a credentialed technician (the incident opened its
+        investigation), bench tested and found within specification, decided not serious by risk management (CE manager entering
+        it), returned to use, closed."""
+        occurred = today - timedelta(days=CLOSED_INCIDENT_DAYS_AGO)
+        on = {step: occurred + timedelta(days=n) for step, n in CLOSED_INCIDENT_STEPS.items()}
+        device = Command._incident_device(CLOSED_INCIDENT_MODEL, occurred - timedelta(days=1), today)
+        technician = qualified_technicians(device, occurred)[0][0]
+        manager = User.objects.get(username=f"rfeldman@{domain}")
+        incident = incident_services.record_incident(
+            asset=device, occurred_on=occurred, outcome=Outcome.NO_HARM, affected=Affected.PATIENT,
+            event_reference=CLOSED_INCIDENT_REFERENCE.format(yy=f"{occurred:%y}"), accessories=Accessories.KEPT, event_log=EventLog.NO_LOG,
+            by=technician.user, today=occurred)
+        wo = incident.work_order
+        assign(wo, technician=technician)
+        change_status(wo, "in_progress", as_of=on["started"])
+        complete_work_order(wo, resolution=CLOSED_INCIDENT_RESOLUTION, today=on["completed"])
+        change_status(wo, "closed", as_of=on["completed"])
+        incident_services.record_finding(incident, Finding.MET_SPECS, by=technician.user)
+        incident_services.decide(incident, outcome=Outcome.NO_HARM, basis=Basis.NOT_SERIOUS, decided_on=on["decided"],
+                                 decided_by=DecidedBy.RISK, by=manager, today=today)
+        incident_services.release(incident.holds.get(), Release.RETURN_TO_USE, by=manager, today=on["released"])
+        incident_services.close(incident, by=manager, today=on["closed"])
+        Command._dated(incident, {"Recorded": occurred, "Held": occurred, "Finding recorded": on["completed"],
+                                  "Decided: not reportable": on["decided"], Release.RETURN_TO_USE.label: on["released"], "Closed": on["closed"]})
+
+    @staticmethod
+    def _open_incident(today: date) -> None:
+        """A defibrillator a nurse reported through the portal, tagged out, OPEN_INCIDENT_LEFT work days before its report is due:
+        the on-call technician took the request, recorded the incident on it (adopting the request as the investigation: outcome not
+        known yet, a patient, accessories kept, log saved), the defibrillator held, the investigation in progress, the decision
+        pending."""
+        occurred = Command._work_days_before(today, incident_services.REPORT_WORK_DAYS - OPEN_INCIDENT_LEFT)
+        device = Command._incident_device(OPEN_INCIDENT_MODEL, occurred - timedelta(days=1), today)
+        technician = qualified_technicians(device, occurred)[0][0]
+        request = create_service_request(asset=device, department=device.department, problem=OPEN_INCIDENT_PROBLEM, urgency=Urgency.HIGH,
+                                         room=device.room, tagged_out=True)
+        wo = request.work_order
+        # Reported the day it happened: the request and its work order dated then (create_service_request opens them today).
+        WorkOrder.objects.filter(pk=wo.pk).update(opened_on=occurred, due_on=occurred + (wo.due_on - wo.opened_on))
+        ServiceRequest.objects.filter(pk=request.pk).update(created_at=_noon(occurred))
+        wo.refresh_from_db()
+        assign(wo, technician=technician)
+        incident = incident_services.record_incident(
+            asset=device, outcome=Outcome.UNKNOWN, affected=Affected.PATIENT, work_order=wo,
+            event_reference=OPEN_INCIDENT_REFERENCE.format(yy=f"{occurred:%y}"), accessories=Accessories.KEPT, event_log=EventLog.SAVED,
+            by=technician.user, today=occurred)
+        change_status(wo, "in_progress", as_of=occurred)
+        Command._dated(incident, {"Recorded": occurred, "Held": occurred})
 
     @staticmethod
     def _credential_lapse(today: date) -> None:

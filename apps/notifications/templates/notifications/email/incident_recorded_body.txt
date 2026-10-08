@@ -1,0 +1,16 @@
+{% autoescape off %}{% with i=items.0 %}Hello {{ name }},
+
+An incident was recorded at {{ facility }} that may need a report to the FDA or the manufacturer.
+
+{{ i.number }} · device {{ i.tag }}
+If it is reportable, the report is due by {{ i.due_on|date:"l, F j, Y" }}{% if i.overdue %}, which has passed{% elif i.left %} ({{ i.left }} work day{{ i.left|pluralize }} left){% else %} (today){% endif %}.
+{{ i.url }}
+
+The 10 work days run from the day the facility's clinical staff first knew, and never wait for the investigation. Decide whether it was reportable, and record the reports sent, in Cadence CE (you may be asked to sign in). This email does not repeat what happened; please keep patient information out of any reply.
+
+Every incident, on the Incidents screen:
+{{ incidents_url }}
+
+These emails go to {{ email }} because you can decide whether an incident is reportable. To stop them, turn off "Incident report deadlines" on your Notifications page:
+{{ preferences_url }}
+{% endwith %}{% endautoescape %}

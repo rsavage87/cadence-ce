@@ -12,9 +12,9 @@ and the presets swap #survey-body and push the address, so a reload, Back, and e
 refuses shows the form's words (never a 500); its CSVs and print answer 400 in the same words.
 
 Sections build their tables lazily (Table.rows): the screen reads each table's first PREVIEW_ROWS rows, the print up to PRINT_ROWS,
-and the CSVs stream every row (apps.web.exports.csv_response). A table's link columns (Table.links) open the work order or device
-drawer on the screen, for a reader who can view them; the print's and the gaps CSV's links name the facility (people.with_facility),
-since record numbers repeat across facilities.
+and the CSVs stream every row (apps.web.exports.csv_response). A table's link columns (Table.links) open the work order, device, or
+(slice 28) incident drawer on the screen, for a reader who can view them; the print's and the gaps CSV's links name the facility
+(people.with_facility), since record numbers repeat across facilities.
 """
 from datetime import date, datetime
 from decimal import Decimal
@@ -32,7 +32,7 @@ from apps.accounts import people
 from apps.accounts.models import Level, Module
 from apps.reports import permissions as rep_perms
 from apps.reports import survey as sv
-from apps.reports.survey import DEVICE, GAPS_SHOWN, KIND_HELP, KIND_LABELS, KINDS, PREVIEW_ROWS, PRINT_ROWS, WORK_ORDER
+from apps.reports.survey import DEVICE, GAPS_SHOWN, INCIDENT, KIND_HELP, KIND_LABELS, KINDS, PREVIEW_ROWS, PRINT_ROWS, WORK_ORDER
 
 from .decorators import web_view
 from .exports import csv_response
@@ -40,9 +40,11 @@ from .htmx import is_partial
 from .views_reports import refused
 
 # The record pages a gap or a table cell opens in the drawer over the binder (by URL name); any other page opens on its own.
-DRAWERS = frozenset({"wo", "asset", "pm_model", "contract"})
+DRAWERS = frozenset({"wo", "asset", "pm_model", "contract", "incident"})
 KIND_CSS = {sv.GAP: "crit", sv.FINDING: "warn", sv.CHECK: "neutral"}
-LINK_VIEWS = {WORK_ORDER: ("web:wo", Module.WORKORDERS), DEVICE: ("web:asset", Module.EQUIPMENT)}
+# A table's link column: the page its key opens, and the area whose View the reader needs for the link (slice 28: an incident's
+# number links only for Incidents View; the binder refuses scoped users, so View is the whole rule here).
+LINK_VIEWS = {WORK_ORDER: ("web:wo", Module.WORKORDERS), DEVICE: ("web:asset", Module.EQUIPMENT), INCIDENT: ("web:incident", Module.INCIDENTS)}
 GAPS_COLUMNS = ["Section", "Kind", "Record", "Description", "Link"]
 
 
@@ -86,7 +88,7 @@ def opens_in_drawer(url: str) -> bool:
 
 
 def _record_path(kind: str, key) -> str:
-    """The work order's or device's page for a table cell holding its number or tag; "" when it names none."""
+    """The work order's, device's, or incident's page for a table cell holding its number or tag; "" when it names none."""
     name, _module = LINK_VIEWS[kind]
     if key in (None, ""):
         return ""

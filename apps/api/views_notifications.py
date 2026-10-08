@@ -4,16 +4,18 @@ A user's own notification preferences over the API (slice 20, part C): what the 
 account's address. Work orders View, as the page; scoped users (apps.workorders.scoping) are refused, as the page refuses them.
 
 GET  /api/v1/notification-preferences/   {"email": the account's address ("" when it has none: nothing is sent),
-                                          "assignments", "daily_digest", "contract_reminders": what the user gets (true or false;
-                                          contract reminders are false for someone without Contracts Edit, whatever was saved),
-                                          "contract_reminders_offered": whether they have Contracts Edit}. Until the user first
-                                          saves, the defaults: assignments on, the digest off, contract reminders on.
-PUT  /api/v1/notification-preferences/   Any of {"assignments", "daily_digest", "contract_reminders"}, each true or false; the others
-                                          keep what they were (set_preferences, which creates the row on the first save). Returns the
-                                          preferences as GET shows them. "email" and "contract_reminders_offered" may be sent back as
-                                          GET showed them; any other value for them, an unknown field, or a value that is not true or
-                                          false is a 400, and so is turning contract reminders on without Contracts Edit (sending
-                                          false for them then changes nothing).
+                                          "assignments", "daily_digest", "contract_reminders", "incidents": what the user gets (true or
+                                          false; contract reminders are false for someone without Contracts Edit, incident emails for
+                                          someone without Incidents Approve, whatever was saved), "contract_reminders_offered": whether
+                                          they have Contracts Edit, "incidents_offered": whether they have Incidents Approve (slice
+                                          28)}. Until the user first saves, the defaults: assignments on, the digest off, contract
+                                          reminders on, incident emails on.
+PUT  /api/v1/notification-preferences/   Any of {"assignments", "daily_digest", "contract_reminders", "incidents"}, each true or
+                                          false; the others keep what they were (set_preferences, which creates the row on the first
+                                          save). Returns the preferences as GET shows them. "email", "contract_reminders_offered", and
+                                          "incidents_offered" may be sent back as GET showed them; any other value for them, an unknown
+                                          field, or a value that is not true or false is a 400, and so is turning on a kind the user is
+                                          not offered (sending false for it then changes nothing).
 """
 from django.http import QueryDict
 from rest_framework.exceptions import PermissionDenied
@@ -25,13 +27,14 @@ from apps.notifications import services as ns
 
 from .base import ApiViewSet, _via_service
 
-SHOWN = ("email", "contract_reminders_offered")  # what GET shows and no write sets
+SHOWN = ("email", "contract_reminders_offered", "incidents_offered")  # what GET shows and no write sets
 TRUE, FALSE = {"true", "1", "on", "yes"}, {"false", "0", "off", "no"}
 
 
 def preferences(user) -> dict:
     """The user's preferences as GET shows them."""
-    return {"email": user.email or "", **ns.shown(user), "contract_reminders_offered": ns.offered(user, "contract_reminders")}
+    return {"email": user.email or "", **ns.shown(user), "contract_reminders_offered": ns.offered(user, "contract_reminders"),
+            "incidents_offered": ns.offered(user, "incidents")}
 
 
 def _flag(value):
@@ -50,10 +53,15 @@ class NotificationPreferenceViewSet(ApiViewSet):
 
     @property
     def module(self):
-        """The module whose View lets someone choose here: Work orders, or Contracts for someone who gets only contract reminders
-        (ns.refusal then checks the exact rule: Work orders View or Contracts Edit)."""
+        """The module whose View lets someone choose here: Work orders, or Contracts for someone who gets only contract reminders, or
+        Incidents for someone who gets only incident emails (ns.refusal then checks the exact rule: Work orders View, Contracts Edit,
+        or Incidents Approve)."""
         user = self.request.user
-        return Module.CONTRACTS if not user.has_level(Module.WORKORDERS, Level.VIEW) and user.has_level(Module.CONTRACTS, Level.VIEW) else Module.WORKORDERS
+        if user.has_level(Module.WORKORDERS, Level.VIEW):
+            return Module.WORKORDERS
+        if user.has_level(Module.CONTRACTS, Level.VIEW):
+            return Module.CONTRACTS
+        return Module.INCIDENTS if user.has_level(Module.INCIDENTS, Level.VIEW) else Module.WORKORDERS
 
     @classmethod
     def as_view(cls, actions=None, **initkwargs):
