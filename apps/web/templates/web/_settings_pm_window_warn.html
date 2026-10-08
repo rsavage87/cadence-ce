@@ -1,0 +1,4 @@
+{% comment %}Slice 27: the PM window panel's warning, one line per PM policy line that plainly contradicts its group's window
+   (apps.pm.windows.policy_disagrees). Always on the page, empty when there is nothing to say, so saving or resetting the policy can
+   swap it out of band (oob).{% endcomment %}
+<div class="pmw-warn" id="set-pm-window-warn" aria-live="polite"{% if oob %} hx-swap-oob="true"{% endif %}>{% for w in pm_window_warnings %}<div class="note warn">The {{ w.label|lower }} PM policy line reads “{{ w.text }}”, but those PMs count as on time {{ w.window }}. {% if can_edit %}Update the line under <a class="link" href="#set-{{ w.field }}">Maintenance policy</a>, or choose the window it describes.{% else %}See <a class="link" href="#set-{{ w.field }}">Maintenance policy</a>.{% endif %} The survey binder lists it as a check.</div>{% endfor %}</div>

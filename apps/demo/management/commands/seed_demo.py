@@ -15,6 +15,9 @@ new to the facility (slice 26 adds them through the incoming inspection's own se
 failed it and passed its re-inspection, one put in use before it in an emergency and inspected the next day, and one in service with no
 inspection, added in service as the API's old path still allows); two models are risk-scored, one of them past its yearly review; and
 each recall match reached the facility the day its notice was published.
+
+Slice 27: the North Campus's written policy counts a medium or low risk PM on time by the end of its due month (its PM completion
+window, Settings), so All facilities shows a facility judged by a window other than the due date. Riverside keeps the default.
 """
 import random
 from datetime import date, datetime, time, timedelta
@@ -31,6 +34,7 @@ from apps.credentials.models import Credential, Scope, Technician
 from apps.credentials.services import qualified_technicians, renew_credential
 from apps.equipment import services as equipment
 from apps.equipment.models import AddedAs, Asset, AssetStatus, Department, DeviceModel, RiskClass, UseBeforeInspection
+from apps.facility.models import PmWindow
 from apps.facility.services import labor_rates, update_settings
 from apps.notifications import assignments
 from apps.pm import aem
@@ -362,6 +366,9 @@ class Command(BaseCommand):
                     now = timezone.now()
                     User.objects.filter(pk=account.pk).update(last_login=now - timedelta(days=1))
                     User.objects.filter(pk=kim.pk).update(last_login=now - timedelta(hours=1))
+            # Slice 27: its written policy, set when it started on Cadence: medium and low risk PMs are on time by the end of their due
+            # month (life support and high risk keep the due date); its default PM policy line follows the window
+            update_settings(pm_window_other=PmWindow.DUE_MONTH)
             depts = [Department.objects.create(name=d) for d in NORTH_DEPTS]
             techs = []
             for name, title, local, creds in NORTH_TECHS:

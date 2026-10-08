@@ -14,6 +14,14 @@ Taking work (slice 24, #set-take): whether technicians may take unassigned work 
 take", the new work order form's "Assign it to me"; apps.workorders.services.take). One switch that saves as it changes, posted to
 /settings/take-work/ (settings_take, Settings Edit).
 
+PM completion window (slice 27, #set-pm-window, under the KPI targets): when a PM counts as on time, one window for life support and
+high risk and one for medium and low (FacilitySettings.pm_window_high / _other and their days; apps.pm.windows, the one rule every
+on-time figure uses). An explicit Save behind a confirm, since a change recounts past months too, posted to /settings/pm-window/
+(settings_pm_window, Settings Edit); a refused save keeps what was chosen and marks the field. A group's PM policy line that plainly
+contradicts its window (windows.policy_disagrees) is warned about in the panel (#set-pm-window-warn, swapped out of band when the
+policy is saved or reset), and when a window change makes a default PM policy line follow it (update_settings), the policy panel is
+swapped out of band too, so it never shows the old line to be saved back. Read-only users see the windows in words.
+
 Import data (slice 23, #set-import): a link to /settings/import/ (views_imports) for anyone who may import a kind of file
 (apps.imports.permissions.importable: each kind its own module's level), with the files of those kinds not finished yet (those
 left for too long are ended first: apps.imports.services.expire_stale).
@@ -27,18 +35,22 @@ from apps.accounts.models import Level, Module
 from apps.equipment.models import Department
 from apps.facility import permissions as fac_perms
 from apps.facility import services as fs
+from apps.facility.models import PmWindow
 from apps.imports import permissions as imp_perms
 from apps.imports import services as imp_services
 from apps.imports.models import ImportRun
+from apps.pm import windows as pm_windows
 from apps.tenants.context import zone_of
 
 from .decorators import web_view
 from .forms import parse_uuid
 from .forms_settings import (
+    PM_WINDOW_GROUPS,
     RATE_FORM,
     TARGET_FORM,
     error_dict,
     plain_number,
+    pm_window_fields,
     policy_fields,
     portal_fields,
     rate_fields,
@@ -50,6 +62,7 @@ from .htmx import is_partial, toast
 
 CHIPS = {fs.CONNECTED: ("ok", "Connected"), fs.LICENSE: ("warn", "License needed"), fs.NOT_CONNECTED: ("neutral", "Not connected")}
 DEPT_LINK_BOX = "share-dept-box"
+SAMPLE_DAYS = 14  # the PM window panel's example for "Within a number of days" while a group has no days saved
 
 
 # --- panel contexts ---------------------------------------------------------------------------------
@@ -84,6 +97,52 @@ def _targets_ctx(request, s, typed: dict | None = None, errors: dict | None = No
 def _take_ctx(request, s) -> dict:
     """The Taking work panel (slice 24): the switch, on or off as saved."""
     return {"take_on": s.technicians_take_work, "can_edit": fac_perms.can_edit(request.user)}
+
+
+def _lower(text: str) -> str:
+    """A window in words, capitalized ("By the end of the due month"), to go inside a sentence."""
+    return text[:1].lower() + text[1:]
+
+
+def _pm_window_warnings(s) -> list[dict]:
+    """The PM policy lines that plainly contradict their group's saved window (windows.policy_disagrees: word classes, never
+    numbers), each with its group, field, and text. The default lines follow the window, so only a line the facility wrote can."""
+    w = pm_windows.windows(s)
+    out = []
+    for key, label in PM_WINDOW_GROUPS:
+        field = pm_windows.PM_POLICY_FIELDS[key]
+        text = getattr(s, field)
+        if pm_windows.policy_disagrees(text, getattr(w, key)):
+            out.append({"label": label, "field": field, "text": text, "window": _lower(getattr(w, key).describe())})
+    return out
+
+
+def _pm_window_warn_ctx(request, s) -> dict:
+    return {"pm_window_warnings": _pm_window_warnings(s), "can_edit": fac_perms.can_edit(request.user)}
+
+
+def _pm_window_ctx(request, s, typed: dict | None = None, errors: dict | None = None) -> dict:
+    """The PM completion window panel (slice 27): per group, the saved window in words with its example (what read-only users see),
+    and the four choices with the saved one checked or, after a refused save, what was posted (`typed`, the form's raw values) with
+    the refusal under its field. Each choice carries its example on the fixed sample day (Window.example: no clock read); the days
+    choice needs a number for one, so it shows the saved days' example, or one for 14 days."""
+    w = pm_windows.windows(s)
+    errors = errors or {}
+    sample = f"With {SAMPLE_DAYS} days, {_lower(pm_windows.Window(PmWindow.DAYS_AFTER, SAMPLE_DAYS).example())}"
+    groups = []
+    for key, label in PM_WINDOW_GROUPS:
+        kind_field, days_field = fs.WINDOW_GROUPS[key]
+        saved = getattr(w, key)
+        kind = typed.get(kind_field, "") if typed is not None else saved.kind
+        days = typed.get(days_field, "") if typed is not None else ("" if saved.days is None else str(saved.days))
+        days_example = saved.example() if saved.kind == PmWindow.DAYS_AFTER else sample
+        choices = [{"value": value, "label": text, "checked": value == kind,
+                    "example": days_example if value == PmWindow.DAYS_AFTER else pm_windows.Window(value).example()}
+                   for value, text in PmWindow.choices]
+        groups.append({"key": key, "label": label, "kind_field": kind_field, "days_field": days_field, "choices": choices, "days": days,
+                       "kind_error": errors.get(kind_field, ""), "days_error": errors.get(days_field, ""),
+                       "saved_text": saved.describe(), "saved_example": saved.example()})
+    return {"pm_window_groups": groups, "pm_window_days_max": fs.PM_WINDOW_DAYS_MAX, **_pm_window_warn_ctx(request, s)}
 
 
 def _integrations() -> dict:
@@ -130,7 +189,7 @@ def settings_page(request):
     s = fs.get_settings()
     user = request.user
     ctx = {"nav_active": "settings", **_integrations(), **_portal_ctx(request, s), **_policy_ctx(request, s), **_targets_ctx(request, s),
-           **_zone_ctx(request), **_imports_ctx(user), **_take_ctx(request, s),
+           **_zone_ctx(request), **_imports_ctx(user), **_take_ctx(request, s), **_pm_window_ctx(request, s),
            "risk_rubric": fs.RISK_RUBRIC, "risk_rows": fs.risk_summary(), "risk_scoring": fs.risk_scoring_summary(),
            "can_view_contracts": user.has_level(Module.CONTRACTS, Level.VIEW), "can_view_users": user.has_level(Module.USERS, Level.VIEW),
            "can_view_recalls": user.has_level(Module.RECALLS, Level.VIEW), "can_view_equipment": user.has_level(Module.EQUIPMENT, Level.VIEW)}
@@ -177,6 +236,19 @@ def settings_dept_links(request):
 
 # --- maintenance policy ---------------------------------------------------------------------------------
 
+def _with_oob(response, request, template: str, ctx: dict):
+    """`response` with `template` appended, rendered to swap itself in out of band (its root carries hx-swap-oob when `oob`)."""
+    response.content += render(request, template, {**ctx, "oob": True}).content
+    return response
+
+
+def _policy_response(request, s, message: str):
+    """The saved policy panel, with the PM window panel's warning out of band (slice 27): a PM line saved or reset may now agree or
+    disagree with its group's window."""
+    response = render(request, "web/_settings_policy.html", _policy_ctx(request, s))
+    return toast(_with_oob(response, request, "web/_settings_pm_window_warn.html", _pm_window_warn_ctx(request, s)), message)
+
+
 @require_POST
 @web_view(fac_perms.MODULE, fac_perms.EDIT_LEVEL)
 def settings_policy(request):
@@ -186,14 +258,14 @@ def settings_policy(request):
     except ValidationError as e:
         errors = error_dict(e)
         return toast(render(request, "web/_settings_policy.html", _policy_ctx(request, fs.get_settings(), typed, errors)), _first(errors))
-    return toast(render(request, "web/_settings_policy.html", _policy_ctx(request, s)), "Maintenance policy saved")
+    return _policy_response(request, s, "Maintenance policy saved")
 
 
 @require_POST
 @web_view(fac_perms.MODULE, fac_perms.EDIT_LEVEL)
 def settings_policy_reset(request):
     s = fs.reset_policy(by=request.user)
-    return toast(render(request, "web/_settings_policy.html", _policy_ctx(request, s)), "Policy reset to defaults")
+    return _policy_response(request, s, "Policy reset to defaults")
 
 
 # --- KPI targets ----------------------------------------------------------------------------------------
@@ -212,6 +284,46 @@ def settings_targets(request):
                  **{field: request.POST.get(field, plain_number(getattr(s, field))) for field, _label, _help in RATE_FORM}}
         return toast(render(request, "web/_settings_targets.html", _targets_ctx(request, s, typed, errors)), _first(errors))
     return toast(render(request, "web/_settings_targets.html", _targets_ctx(request, s)), "Targets and labor rates saved" if rates else "Targets saved")
+
+
+# --- the PM completion window (slice 27) ------------------------------------------------------------------
+
+def _pm_window_message(before, after, followed: int) -> str:
+    """The toast: what the save changed, in words, and that past months count by it too."""
+    changed = [(label, getattr(after, key)) for key, label in PM_WINDOW_GROUPS if getattr(before, key) != getattr(after, key)]
+    if not changed:
+        return "The PM windows are unchanged"
+    if len(changed) == 2 and after.uniform:
+        message = f"Every PM now counts as on time {_lower(after.high.describe())}, past months included"
+    elif len(changed) == 2:
+        message = (f"PMs now count as on time {_lower(after.high.describe())} for life support and high risk and "
+                   f"{_lower(after.other.describe())} for medium and low risk, past months included")
+    else:
+        label, window = changed[0]
+        message = f"{label} PMs now count as on time {_lower(window.describe())}, past months included"
+    if followed:
+        message += ". The default PM policy line follows it" if followed == 1 else ". The default PM policy lines follow them"
+    return message
+
+
+@require_POST
+@web_view(fac_perms.MODULE, fac_perms.EDIT_LEVEL)
+def settings_pm_window(request):
+    """Save both groups' windows (fs.update_settings, which checks a kind and its days together on the saved row and makes a default
+    PM policy line follow its window). A refused save changes nothing and answers with what was posted, the refusal under its field.
+    When a PM policy line followed, the policy panel comes along out of band."""
+    before = fs.get_settings()
+    try:
+        s = fs.update_settings(by=request.user, **pm_window_fields(request.POST))
+    except ValidationError as e:
+        errors = error_dict(e)
+        typed = {field: request.POST.get(field, "") for pair in fs.WINDOW_GROUPS.values() for field in pair}
+        return toast(render(request, "web/_settings_pm_window.html", _pm_window_ctx(request, fs.get_settings(), typed, errors)), _first(errors))
+    followed = [field for field in pm_windows.PM_POLICY_FIELDS.values() if getattr(s, field) != getattr(before, field)]
+    response = render(request, "web/_settings_pm_window.html", _pm_window_ctx(request, s))
+    if followed:
+        response = _with_oob(response, request, "web/_settings_policy.html", _policy_ctx(request, s))
+    return toast(response, _pm_window_message(pm_windows.windows(before), pm_windows.windows(s), len(followed)))
 
 
 # --- taking work (slice 24) -----------------------------------------------------------------------------

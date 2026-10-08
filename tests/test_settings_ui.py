@@ -13,7 +13,7 @@ from apps.tenants.context import tenant_context
 HX = {"HTTP_HX_REQUEST": "true"}
 BASE = "https://cadence.example"
 PORTAL = f"{BASE}/r/riverside/"
-POSTS = ["/settings/portal/", "/settings/policy/", "/settings/policy/reset/", "/settings/targets/"]
+POSTS = ["/settings/portal/", "/settings/policy/", "/settings/policy/reset/", "/settings/targets/", "/settings/pm-window/"]
 
 
 @pytest.fixture
