@@ -9,7 +9,8 @@ an optional Hours box logs time with the completion (offered by the view when th
 
 Slice 25: a PM completed after its due date (completion.completes_late) gets an optional "Why was it late?" select (late_reason,
 LateReason's choices). Blank keeps a reason already recorded; the blank choice says which. The view says where it sits: before the
-result for a life-support or high-risk PM (late_first), else after the hours.
+result for a life-support or high-risk PM (late_first), else after the hours. Slice 27: "after its due date" is after its on-time
+window (apps.pm.windows: the due date unless the facility chose otherwise); the view decides whether the select is offered.
 
 Slice 26: an incoming inspection (is_inspection) takes its checklist like a PM (every step or none: completion's rule) and its result
 (inspection_result, InspectionResult: required while the device waits for it, optional otherwise; the service says so). A failed

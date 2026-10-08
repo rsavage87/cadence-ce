@@ -1,6 +1,12 @@
 """
 Why a PM was late (slice 25, the survey binder): the work order drawer's "Why late" row (web/_wo_late.html), on a PM that missed its
-due date (apps.pm.services.missed_due_date: open past due, completed late, or cancelled), and the select in it that saves itself.
+on-time window (apps.pm.services.missed_due_date: open past it, completed after it, or cancelled; slice 27, the window is the due date
+unless the facility chose otherwise, apps.pm.windows), and the select in it that saves itself. A PM past its due date but still inside
+its window has no row: it is not late yet.
+
+Slice 27: a PM with a reason recorded that is on time now (the facility widened its window since, or its due date moved) keeps the row
+("stale"), saying so, and someone who may record reasons can clear it: the select offers only "Not recorded" and the reason on record
+(the service sets a reason only on a missed PM, and clears one on any PM).
 
 The row shows the reason recorded (WorkOrder.late_reason, a LateReason) or "Not recorded". Someone who may record it
 (permissions.can_set_late_reason: Work orders Edit, Approve once the work order is closed) gets a select instead, which posts on
@@ -33,6 +39,9 @@ ROW = "web/_wo_late.html"
 FLAGGED = (RiskClass.LIFE_SUPPORT, RiskClass.HIGH)
 FLAG_NOTE = "The survey binder lists this PM until a reason is recorded."
 CLOSED = "{number} is closed: recording why it was late now needs Work orders Approve."
+# Slice 27: a reason on a PM that is on time now (the window widened, or the due date moved, since it was recorded)
+STALE_NOTE = "On time by the facility's PM policy now, so it needs no reason."
+STALE_CLEAR = "Choose Not recorded to clear it."
 
 
 def flagged_class(wo) -> bool:
@@ -41,17 +50,21 @@ def flagged_class(wo) -> bool:
 
 
 def late_context(request, wo, *, error: str = "", today=None) -> dict:
-    """The "Why late" row, under "why_late": None unless `wo` is a PM that missed its due date (one query, only for a PM past its due
-    date). With `error` and no longer a missed PM (its due date moved since), the row says only why nothing was saved."""
+    """The "Why late" row, under "why_late": None unless `wo` is a PM that missed its on-time window (two queries, the window and the
+    test, only for a PM past its due date), or one on time now with a reason still on record (slice 27: `stale`, offered to clear).
+    With `error` and neither (its due date moved since), the row says only why nothing was saved."""
     today = today or timezone.localdate()
     missed = wo.type == WoType.PM and wo.due_on is not None and wo.due_on < today and missed_due_date(wo, today)
-    if not missed:
+    stale = not missed and wo.type == WoType.PM and bool(wo.late_reason)
+    if not (missed or stale):
         return {"why_late": {"gone": True, "error": error} if error else None}
+    label = wo.get_late_reason_display() if wo.late_reason else ""
     return {"why_late": {
-        "reason": wo.late_reason, "label": wo.get_late_reason_display() if wo.late_reason else "",
-        "can_set": wo_perms.can_set_late_reason(request.user, wo), "choices": LateReason.choices,
-        "flag": not wo.late_reason and flagged_class(wo) and wo.source != Source.IMPORTED, "flag_note": FLAG_NOTE,
-        "imported": wo.source == Source.IMPORTED, "error": error,
+        "reason": wo.late_reason, "label": label,
+        "can_set": wo_perms.can_set_late_reason(request.user, wo),
+        "choices": [(wo.late_reason, label)] if stale else LateReason.choices,
+        "flag": missed and not wo.late_reason and flagged_class(wo) and wo.source != Source.IMPORTED, "flag_note": FLAG_NOTE,
+        "imported": wo.source == Source.IMPORTED, "error": error, "stale": stale, "stale_note": STALE_NOTE, "stale_clear": STALE_CLEAR,
     }}
 
 

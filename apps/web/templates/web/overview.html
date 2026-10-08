@@ -39,7 +39,7 @@
 
 <div class="grid g-32">
   <div class="panel">
-    <div class="panel-h"><h2>PM completion rate</h2><span class="sub">12 months ending {{ k.period.start|date:"M Y" }}, share of PMs due that were closed on time</span></div>
+    <div class="panel-h"><h2>PM completion rate</h2><span class="sub">12 months ending {{ k.period.start|date:"M Y" }}, share of PMs due that were closed on time{% if not k.pm_window.default %} (the PM policy's window: {{ k.pm_window.words|lower }}){% endif %}</span></div>
     <div class="panel-b">{% include "web/_chart_line.html" with c=pm_chart aria="PM completion rate by month" %}</div>
   </div>
   <div class="panel">

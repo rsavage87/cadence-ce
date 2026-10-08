@@ -31,7 +31,10 @@ of three 44px buttons on a phone), and a reading box brings up the number pad wh
 Slice 25, why a PM was late (the survey binder): completing a PM after its due date (completion.completes_late) offers an optional
 "Why was it late?" select (late_offer): before the result for a life-support or high-risk PM, prominent, since the binder lists such a
 PM until a reason is recorded; after the hours for the others. Blank keeps a reason already recorded. The drawer's "Why late" row
-(views_wo_late, on a PM that missed its due date) comes in through results_context, which the drawer already calls.
+(views_wo_late, on a PM that missed its due date) comes in through results_context, which the drawer already calls. Slice 27, the PM
+completion window (apps.pm.windows): "late" is after the PM's on-time window, the due date unless the facility chose otherwise. A PM
+completed after its due date but inside its window is on time: no select, and a line saying so and that its next PM is set from its
+due date (inside_window); past a window other than the due date, the select's hint names the window and the day it ended.
 
 Slice 26, incoming inspections (apps.workorders.inspections): an inspection is completed like a PM, in one step from open, with its
 checklist (completion.procedure_for: the model's PM procedure when it has steps, else the incoming checklist; every step or none) and
@@ -52,6 +55,7 @@ from django.utils import timezone
 from django_htmx.http import reswap, retarget, trigger_client_event
 
 from apps.equipment.models import AssetStatus
+from apps.pm.windows import windows
 from apps.workorders import completion, costs, inspections, scoping
 from apps.workorders import permissions as wo_perms
 from apps.workorders import services as wo_services
@@ -202,14 +206,29 @@ def _form_kwargs(wo, steps, offers, hours, late) -> dict:
 
 
 def _late(request, wo, today) -> dict:
-    """The "Why was it late?" select (slice 25), under "late_offer": None unless completing today finishes a PM after its due date
-    (completion.completes_late), for someone who may record the reason once it is completed (Work orders Edit). Prominent (before the
-    result) for a life-support or high-risk model (its class today) the binder would list, so never for one imported from the previous
-    system (the binder never calls those gaps); `recorded` names a reason already on record (blank keeps it)."""
-    if not completion.completes_late(wo, today) or not request.user.has_level(wo_perms.MODULE, wo_perms.late_reason_level(WoStatus.COMPLETED)):
-        return {"late_offer": None}
+    """The "Why was it late?" select (slice 25), under "late_offer": None unless completing today finishes a PM after its on-time
+    window (completion.completes_late; slice 27: the facility's window by the model's class, the due date by default), for someone who
+    may record the reason once it is completed (Work orders Edit). Prominent (before the result) for a life-support or high-risk model
+    (its class today) the binder would list, so never for one imported from the previous system (the binder never calls those gaps);
+    `recorded` names a reason already on record (blank keeps it); under a window other than the due date, `window` says it and
+    `window_end` when it ended. Slice 27, under "inside_window": a PM done after its due date but inside its window, which is on time
+    (no reason asked) and sets its next PM from its due date: its due date and the window's last day. The window is read once, and only
+    for a PM past its due date."""
+    if wo.type != WoType.PM or wo.due_on is None or today <= wo.due_on:
+        return {"late_offer": None, "inside_window": None}
+    w = windows()
+    end = completion.inside_window(wo, today, w)
+    if end is not None:
+        return {"late_offer": None, "inside_window": {"due_on": wo.due_on, "end": end}}
+    if not completion.completes_late(wo, today, w) or not request.user.has_level(wo_perms.MODULE, wo_perms.late_reason_level(WoStatus.COMPLETED)):
+        return {"late_offer": None, "inside_window": None}
+    window = completion.on_time_window(wo, w)
+    words = window.describe()
     return {"late_offer": {"prominent": views_wo_late.flagged_class(wo) and wo.source != Source.IMPORTED, "due_on": wo.due_on,
-                           "days": (today - wo.due_on).days, "recorded": wo.get_late_reason_display() if wo.late_reason else ""}}
+                           "days": (today - wo.due_on).days, "recorded": wo.get_late_reason_display() if wo.late_reason else "",
+                           "window": "" if window.is_due_date else words[0].lower() + words[1:],
+                           "window_end": None if window.is_due_date else window.end(wo.due_on)},
+            "inside_window": None}
 
 
 def _hours(request, wo) -> dict:

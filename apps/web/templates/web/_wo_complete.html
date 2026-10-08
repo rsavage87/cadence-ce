@@ -8,6 +8,9 @@
    posts from=my_work (the save then leaves the technician on My work).
    Slice 25: a PM completed after its due date gets an optional "Why was it late?" select (late_offer): before the result for a
    life-support or high-risk PM, highlighted (the survey binder lists it until a reason is recorded), else after the hours.
+   Slice 27: "after its due date" is after its on-time window (the facility's PM policy, the due date by default): the hint names a
+   window other than the due date and the day it ended, and a PM done after its due date inside its window says it is on time
+   (inside_window) instead of asking why.
    Slice 26: an incoming inspection shows its checklist like a PM (the incoming checklist when the model's procedure has none; every
    step or none), its result (Passed / Failed, each saying what it does to the device; optional when the device is not waiting for
    its inspection), and a waiting device's "If it fails" (shown once Failed is chosen): the re-inspection, and the tag-out of a device
@@ -54,7 +57,7 @@
     <div class="full wc-late flag">
       <label class="wc-label" for="wc-late_reason">Why was it late?</label>
       {{ form.late_reason }}
-      <div class="hint" id="wc-late-hint">Due {{ late_offer.due_on|date:"M j, Y" }}, {{ late_offer.days }} day{{ late_offer.days|pluralize }} ago. Optional, but the survey binder lists a late life-support or high-risk PM until a reason is recorded.</div>
+      <div class="hint" id="wc-late-hint">Due {{ late_offer.due_on|date:"M j, Y" }}, {{ late_offer.days }} day{{ late_offer.days|pluralize }} ago{% if late_offer.window_end %}; its on-time window ({{ late_offer.window }}) ended {{ late_offer.window_end|date:"M j, Y" }}{% endif %}. Optional, but the survey binder lists a late life-support or high-risk PM until a reason is recorded.</div>
       {% if form.late_reason.errors %}<span class="err">{{ form.late_reason.errors|striptags }}</span>{% endif %}
     </div>
     {% endif %}
@@ -119,8 +122,9 @@
     {% endif %}
     {% if late_offer and not late_offer.prominent %}
     <label class="wc-late">Why was it late? Optional{{ form.late_reason }}{% if form.late_reason.errors %}<span class="err">{{ form.late_reason.errors|striptags }}</span>{% endif %}</label>
-    <div class="hint wc-late-hint" id="wc-late-hint">Due {{ late_offer.due_on|date:"M j, Y" }}, {{ late_offer.days }} day{{ late_offer.days|pluralize }} ago.</div>
+    <div class="hint wc-late-hint" id="wc-late-hint">Due {{ late_offer.due_on|date:"M j, Y" }}, {{ late_offer.days }} day{{ late_offer.days|pluralize }} ago{% if late_offer.window_end %}; its on-time window ({{ late_offer.window }}) ended {{ late_offer.window_end|date:"M j, Y" }}{% endif %}.</div>
     {% endif %}
+    {% if inside_window %}<div class="full hint wc-window">Past its due date, {{ inside_window.due_on|date:"M j, Y" }}, but inside the PM policy's on-time window until {{ inside_window.end|date:"M j, Y" }}: it counts as on time, and the next PM is set from the due date.</div>{% endif %}
     {% if requester_emailed %}<div class="full hint">A portal request: the requester's done email never includes this resolution.</div>{% endif %}
   </div>
   <div class="modal-f wc-foot"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Mark completed</button></div>

@@ -37,8 +37,10 @@ The rules (complete_work_order checks them all and reports every problem at once
   results ignore open_repair and tag_out.
 - late_reason (optional, slice 25): why a PM completed after its due date was late (LateReason), recorded through
   services.set_late_reason in the same transaction, after the completion (the survey binder reads it). Blank keeps a reason already
-  recorded. Only a PM completed after its due date (completes_late) takes one; anything else, or a value not listed, is refused under
-  late_reason with the rest, and nothing is saved. Never required: an API client or a hurried technician still completes.
+  recorded. Only a PM completed after its on-time window (completes_late; slice 27: the facility's window by the model's class, the
+  due date by default) takes one; anything else, or a value not listed, is refused under late_reason with the rest, and nothing is
+  saved. Never required: an API client or a hurried technician still completes. A PM done after its due date but inside its window
+  is on time: no reason, and its device's next PM is set from its due date (services.pm_schedule_anchor).
 - One transaction: a refusal anywhere (the start, the hours, the repair, the tag-out, the completion, the late reason) leaves nothing
   behind.
 - The status history says the result: "PM passed", "PM passed with minor repair", "PM failed; WO-26-0057 opened for the repair".
@@ -80,6 +82,7 @@ from django.utils import timezone
 from apps.credentials.services import qualification
 from apps.equipment.models import AssetStatus, RiskClass
 from apps.pm.procedures import step_parts
+from apps.pm.windows import window_of
 from apps.tenants.context import get_current_tenant
 
 from . import costs, inspections, services
@@ -173,10 +176,31 @@ def starts_on_completion(wo: WorkOrder, by=None) -> bool:
                           and wo_perms.can_transition(by, WoStatus.IN_PROGRESS, WoStatus.COMPLETED))
 
 
-def completes_late(wo: WorkOrder, today: date) -> bool:
-    """Whether completing `wo` on `today` finishes a PM after its due date (slice 25): it is then one of the PMs that missed their due
-    date (apps.pm.services.missed_pms) and may record why (LateReason). The modal offers "Why was it late?" on these only."""
-    return wo.type == WoType.PM and wo.due_on is not None and today > wo.due_on
+def on_time_window(wo: WorkOrder, w=None):
+    """The on-time window (apps.pm.windows.Window) of a PM work order: its group's, by its model's class today (slice 27). Reads the
+    class only when the facility's two groups differ: the callers select the device and its model with the work order."""
+    w = window_of(w)
+    return w.high if w.uniform else w.for_class(wo.asset.device_model.risk_class)
+
+
+def completes_late(wo: WorkOrder, today: date, w=None) -> bool:
+    """Whether completing `wo` on `today` finishes a PM after its on-time window (slice 25; slice 27, the window: by the due date unless
+    the facility chose otherwise, apps.pm.windows, by the model's class today): it is then one of the PMs not on time
+    (apps.pm.services.missed_pms) and may record why (LateReason). The modal offers "Why was it late?" on these only. A PM done by its
+    due date reads no window."""
+    if wo.type != WoType.PM or wo.due_on is None or today <= wo.due_on:
+        return False
+    return today > on_time_window(wo, w).end(wo.due_on)
+
+
+def inside_window(wo: WorkOrder, today: date, w=None):
+    """The last day of `wo`'s on-time window when completing it on `today` finishes a PM after its due date but inside its window
+    (slice 27: on time, so no reason for lateness, and its next PM is set from its due date: services.pm_schedule_anchor), else None.
+    Always None under the default window."""
+    if wo.type != WoType.PM or wo.due_on is None or today <= wo.due_on:
+        return None
+    end = on_time_window(wo, w).end(wo.due_on)
+    return end if today <= end else None
 
 
 def blocker(wo: WorkOrder, today: date | None = None, by=None) -> str:
@@ -399,10 +423,19 @@ def _late_reason(wo: WorkOrder, value, by, today: date, errors: dict) -> str:
     elif wo.type != WoType.PM:
         errors["late_reason"] = "Only a PM records why it was late."
     elif not completes_late(wo, today):
-        errors["late_reason"] = f"{wo.number} is done by its due date, so it has no reason to record."
+        errors["late_reason"] = done_on_time_message(wo, today)
     elif by is not None and not by.has_level(wo_perms.MODULE, wo_perms.late_reason_level(WoStatus.COMPLETED)):
         errors["late_reason"] = "Recording why a PM was late needs Work orders Edit."
     return reason
+
+
+def done_on_time_message(wo: WorkOrder, today: date, w=None) -> str:
+    """Why a PM completed on `today` takes no reason for lateness: done by its due date, or (slice 27) after it but inside its on-time
+    window, whose last day it names."""
+    end = inside_window(wo, today, w)
+    if end is None:
+        return f"{wo.number} is done by its due date, so it has no reason to record."
+    return f"{wo.number} is done inside its on-time window (until {end:%b} {end.day}, {end.year}), so it has no reason to record."
 
 
 def _record_late_reason(wo: WorkOrder, reason: str, by, today: date) -> None:

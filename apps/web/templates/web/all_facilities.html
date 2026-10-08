@@ -27,7 +27,7 @@
           {% if months_differ and r.month %}<small>{{ r.month|date:"F Y" }} to date</small>{% endif %}
         </th>
         {% if r.cells %}
-          {% for c in r.cells %}<td class="num" data-label="{{ c.label }}"><span class="two">{{ c.value }}{% if c.sub %}<small>{{ c.sub }}</small>{% endif %}</span></td>{% endfor %}
+          {% for c in r.cells %}<td class="num" data-label="{{ c.label }}"><span class="two">{{ c.value }}{% if c.sub %}<small>{{ c.sub }}</small>{% endif %}{% if c.window %}<small class="allf-window">{{ c.window }}</small>{% endif %}</span></td>{% endfor %}
         {% else %}
           <td class="allf-none" colspan="{{ columns|length }}">No access to its Overview</td>
         {% endif %}
@@ -38,14 +38,14 @@
     <tfoot>
       <tr class="allf-total">
         <th scope="row" class="allf-fac"><span class="allf-name">All facilities</span><small>{{ totals.facilities }} facilities added up</small></th>
-        {% for c in totals.cells %}<td class="num" data-label="{{ c.label }}"><span class="two">{{ c.value }}{% if c.sub %}<small>{{ c.sub }}</small>{% endif %}</span></td>{% endfor %}
+        {% for c in totals.cells %}<td class="num" data-label="{{ c.label }}"><span class="two">{{ c.value }}{% if c.sub %}<small>{{ c.sub }}</small>{% endif %}{% if c.window %}<small class="allf-window">{{ c.window }}</small>{% endif %}</span></td>{% endfor %}
       </tr>
     </tfoot>
     {% endif %}
   </table>
 </div>
 <p class="hint allf-foot">
-  {% if totals %}The totals add each figure up and work every rate out again from the sums: PM on time over all PMs due, repair time weighted by repairs closed, uptime over all device-days, and service cost over all acquisition value. A recall alert that needs action in several facilities counts once.{% elif rows|length == 1 %}Each facility you join appears here beside this one.{% endif %}
+  {% if totals %}The totals add each figure up and work every rate out again from the sums: PM on time over all PMs due, repair time weighted by repairs closed, uptime over all device-days, and service cost over all acquisition value. A recall alert that needs action in several facilities counts once.{% if pm_windows_differ %} The facilities count a PM as on time by different PM policies: the PM totals add up PMs each facility judged by its own policy.{% endif %}{% elif rows|length == 1 %}Each facility you join appears here beside this one.{% endif %}
   {% if switchable %}Select a facility's name to switch to it and open its Overview.{% endif %}
 </p>
 {% endblock %}

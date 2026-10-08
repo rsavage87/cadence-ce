@@ -25,6 +25,7 @@ from django.utils import timezone
 from apps.equipment.models import AssetStatus
 from apps.notifications import assignments
 from apps.pm.dates import add_months
+from apps.pm.windows import window_of, windows
 
 from .models import (
     ALLOWED_TRANSITIONS,
@@ -133,13 +134,28 @@ def _still_waiting(asset) -> bool:
     return Asset.objects.filter(pk=asset.pk, awaiting_inspection=True).exists()
 
 
+def pm_schedule_anchor(wo: WorkOrder, done_on: date, w=None) -> date:
+    """The day a PM completed on `done_on` sets its device's next PM from (slice 27): its due date when it was done after the due date
+    but inside the facility's on-time window (apps.pm.windows, the model's class today), so a window that allows late completion never
+    stretches the interval cycle after cycle; otherwise the day it was done, as always (by its due date, after its window, or under the
+    default window, where nothing changes). The window is read only for a PM done after its due date."""
+    if wo.due_on is None or done_on <= wo.due_on:
+        return done_on
+    w = window_of(w)
+    if w.is_default:
+        return done_on
+    window = w.high if w.uniform else w.for_class(wo.asset.device_model.risk_class)
+    return wo.due_on if done_on <= window.end(wo.due_on) else done_on
+
+
 def _on_completed(wo: WorkOrder, as_of, by=None):
     asset = wo.asset
     if wo.type == WoType.PM:
         asset.last_pm_on = as_of
         fields = ["last_pm_on", "updated_at"]
         if not asset.awaiting_inspection:  # slice 26: a waiting device's PM clock starts at its pass (and no door opens a PM on one)
-            asset.next_pm_on = add_months(as_of, asset.pm_interval_months)
+            # Slice 27: from the due date for a PM done late but inside its window (pm_schedule_anchor), else from the day it was done
+            asset.next_pm_on = add_months(pm_schedule_anchor(wo, as_of), asset.pm_interval_months)
             fields.append("next_pm_on")
         asset.save(update_fields=fields)
     elif wo.type == WoType.INSPECTION and wo.inspection_result == InspectionResult.PASSED:
@@ -184,20 +200,34 @@ def assign(wo: WorkOrder, technician=None, vendor_name: str = "", by=None) -> Wo
 
 # --- why a PM was late (slice 25) -----------------------------------------------------------------
 
+def not_missed_message(wo: WorkOrder, w=None) -> str:
+    """Why `wo` takes no reason for lateness: it is not a PM that missed its on-time window (slice 27). Under the default window the
+    window is the due date, and the words stay slice 25's."""
+    w = window_of(w)
+    if wo.type != WoType.PM or w.is_default:
+        return f"{wo.number} is not a PM that missed its due date, so it has no reason to record."
+    window = w.high if w.uniform else w.for_class(wo.asset.device_model.risk_class)
+    text = window.describe()
+    return f"{wo.number} is not a PM that missed its on-time window ({text[0].lower()}{text[1:]}), so it has no reason to record."
+
+
 @transaction.atomic
 def set_late_reason(wo: WorkOrder, reason: str, by=None, today: date | None = None) -> WorkOrder:
-    """Record why a PM missed its due date (LateReason; blank clears it), for the survey binder. Only on a PM that missed its due date
-    (apps.pm.services.missed_pms: open past due, completed late, or cancelled), at any status: it documents the work, never changes
-    it. The caller checks the level (permissions.can_set_late_reason: Approve once the work order is closed). Audited in the work
-    order's history, which is where the binder reads when a reason was recorded."""
+    """Record why a PM missed its on-time window (LateReason; blank clears it), for the survey binder. A reason is set only on a PM that
+    missed its window (apps.pm.services.missed_pms: past its window and not completed within it, whether open, completed late, or
+    cancelled; the window is the due date unless the facility chose otherwise, apps.pm.windows), at any status: it documents the
+    work, never changes it. Slice 27: blank clears a reason on any PM, so one recorded before the facility widened its window (the PM
+    now on time) can be taken off. The caller checks the level (permissions.can_set_late_reason: Approve once the work order is
+    closed). Audited in the work order's history, which is where the binder reads when a reason was recorded."""
     from apps.pm.services import missed_due_date
 
     reason = str(reason or "").strip()
     if reason and reason not in LateReason.values:
         raise ValidationError({"late_reason": "Choose one of the reasons listed."})
     locked = WorkOrder.objects.select_for_update().get(pk=wo.pk)
-    if not missed_due_date(locked, today):
-        raise ValidationError({"late_reason": f"{locked.number} is not a PM that missed its due date, so it has no reason to record."})
+    w = windows()
+    if locked.type != WoType.PM or (reason and not missed_due_date(locked, today, w=w)):
+        raise ValidationError({"late_reason": not_missed_message(locked, w)})
     if reason != locked.late_reason:
         locked.late_reason = reason
         locked._change_reason = f"Why late: {LateReason(reason).label}" if reason else "Why late cleared"

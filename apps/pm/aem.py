@@ -36,7 +36,7 @@ from datetime import date
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import Count, F, Q
+from django.db.models import Count, Q
 from django.utils import timezone
 
 from apps.core.days import local_day
@@ -44,6 +44,7 @@ from apps.equipment.models import Asset, AssetStatus, DeviceModel, RiskClass
 
 from .dates import add_months
 from .models import AemDecision, AemStatus
+from .windows import window_of
 
 AEM_HISTORY_YEARS = 3  # the policy's "3-year failure history"
 INTERVAL_MAX = 120  # months, as the OEM interval
@@ -87,18 +88,21 @@ def _retired_on(asset_ids) -> dict:
     return out
 
 
-def evidence(dm: DeviceModel, today: date | None = None) -> dict:
+def evidence(dm: DeviceModel, today: date | None = None, *, w=None) -> dict:
     """The model's failure history over the last AEM_HISTORY_YEARS, from the facility's own records (JSON-ready: ISO dates and
     plain numbers). Every device of the model counts for the time it was in use inside the window: from its install date (or the
     day it was added here, when none is on file) to today, or to the day it was retired. Corrective repairs and recall work
     orders count by the day they were opened (cancelled ones were never done); PMs by the day they were completed, on time when
-    completed by their due date. enough_history: a device of the model was installed at least AEM_HISTORY_YEARS ago; a model
-    whose devices carry no install date has no history on record."""
+    completed within the facility's PM window for the model's class (slice 27, apps.pm.windows: by the due date unless the facility
+    chose otherwise; `w`, read when not given), which `pm_window` says in words, so a case's snapshot keeps the rule its figure was
+    counted by. enough_history: a device of the model was installed at least AEM_HISTORY_YEARS ago; a model whose devices carry no
+    install date has no history on record."""
     from apps.recalls.models import AlertMatch
     from apps.recalls.services import DONE_STATUSES
     from apps.workorders.models import WorkOrder, WoStatus, WoType
 
     today = today or timezone.localdate()
+    window = window_of(w).for_class(dm.risk_class)
     since = history_start(today)
     devices = list(Asset.objects.filter(device_model=dm).values("id", "status", "installed_on", "created_at", "updated_at"))
     retired = _retired_on([d["id"] for d in devices if d["status"] == AssetStatus.RETIRED])
@@ -130,7 +134,7 @@ def evidence(dm: DeviceModel, today: date | None = None) -> dict:
     counts = WorkOrder.objects.filter(asset__device_model=dm).aggregate(
         repairs=Count("id", filter=Q(type=WoType.REPAIR, **in_window) & ~Q(status=WoStatus.CANCELLED)),
         pm_completed=Count("id", filter=done_in_window),
-        pm_on_time=Count("id", filter=done_in_window & Q(completed_on__lte=F("due_on"))),
+        pm_on_time=Count("id", filter=done_in_window & window.on_time_q(due="due_on", completed="completed_on")),
         recall_work_orders=Count("id", filter=Q(type=WoType.RECALL, **in_window) & ~Q(status=WoStatus.CANCELLED)),
     )
     open_recalls = AlertMatch.objects.filter(device_model=dm).exclude(status__in=DONE_STATUSES).count()
@@ -147,6 +151,7 @@ def evidence(dm: DeviceModel, today: date | None = None) -> dict:
         "pm_completed": counts["pm_completed"],
         "pm_on_time": counts["pm_on_time"],
         "pm_on_time_pct": round(counts["pm_on_time"] * 100 / counts["pm_completed"]) if counts["pm_completed"] else None,
+        "pm_window": window.describe(),  # slice 27: the rule "on time" was counted by, for the model's class
         "recall_work_orders": counts["recall_work_orders"],
         "open_recalls": open_recalls,
         "oldest_install": oldest.isoformat() if oldest else None,

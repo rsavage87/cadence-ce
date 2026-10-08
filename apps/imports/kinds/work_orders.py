@@ -21,7 +21,8 @@ it refuses, are described there); this module reads the file's values and report
 
 The check runs every row through the same service with a stand-in number (ctx.check), so it takes no lock on the facility's
 numbering. The summary adds up what the person reconciles with the old system: work orders by type, year, and status, hours,
-labor, parts, outside service, and a total kept alone, the cents the labor rate's rounding moved, and PM history on time or late.
+labor, parts, outside service, and a total kept alone, the cents the labor rate's rounding moved, and PM history on time or late
+(slice 27: within the facility's PM window for the model's class, apps.pm.windows, as the Overview and the reports count it).
 """
 from decimal import Decimal
 
@@ -32,6 +33,7 @@ from apps.credentials import services as credentials
 from apps.credentials.models import Technician
 from apps.equipment.models import Asset
 from apps.facility.services import get_settings
+from apps.pm.windows import windows
 from apps.workorders import legacy
 from apps.workorders.models import OPEN_STATUSES, Priority, WoStatus, WoType
 
@@ -154,13 +156,15 @@ class WorkOrdersImporter(Importer):
     def load(self, ctx, rows: list[dict]) -> None:
         ctx.cache["existing"] = legacy.find_many(row.get("legacy_number") for row in rows)
         tags = {row["tag"].lower() for row in rows if row.get("tag")}
-        ctx.cache["assets"] = ({a.tag.lower(): a for a in Asset.objects.annotate(tag_lower=Lower("tag")).filter(tag_lower__in=tags)}
+        ctx.cache["assets"] = ({a.tag.lower(): a for a in Asset.objects.annotate(tag_lower=Lower("tag")).filter(tag_lower__in=tags)
+                                .select_related("device_model")}  # the model's class: a PM's on-time window (_count)
                                if tags else {})
         technicians: dict = {}
         for t in Technician.objects.all():
             technicians.setdefault(person_key(t.name), []).append(t)
         ctx.cache["technicians"] = technicians
         ctx.cache["settings"] = get_settings()
+        ctx.cache["windows"] = windows(ctx.cache["settings"])  # slice 27: the PM history's On time / Late, as every on-time figure counts
 
     # --- reading one row ------------------------------------------------------------------------------------------------------
 
@@ -293,4 +297,6 @@ class WorkOrdersImporter(Importer):
         if imported.drift:
             ctx.total("Costs", "Labor rate rounding (cents)", imported.drift * 100)
         if wo.type == WoType.PM and wo.completed_on:
-            ctx.total("PM history", "On time" if wo.completed_on <= wo.due_on else "Late")
+            # Slice 27: within the facility's PM window for the model's class (apps.pm.windows), as the Overview will count it
+            on_time = wo.completed_on <= ctx.cache["windows"].end(wo.due_on, wo.asset.device_model.risk_class)
+            ctx.total("PM history", "On time" if on_time else "Late")

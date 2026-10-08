@@ -1,8 +1,11 @@
 """
 KPI math for the Overview. Definitions match the mock so the demo and the product agree:
 
-- PM completion on time: PM work orders due in the period (and already due, or completed)
-  that were completed on or before their due date.
+- PM completion on time: PM work orders due in the period (and already past their on-time window, or completed) that were
+  completed within their window: on or before their due date unless the facility chose another window (slice 27, apps.pm.windows,
+  by the model's class). Under such a window the tiles also say how many PMs due so far are still inside it (`pending`), so a month
+  window's current month never reads 100% without saying what is still to come. The window is read once per entry point and passed
+  down (`w`).
 - Fleet uptime: 1 - (repair downtime days / active devices x days in period).
 - MTTR: mean turnaround of repairs completed in the period.
 - Cost of service ratio: trailing-6-month service cost annualized, plus active contract
@@ -17,9 +20,10 @@ from django.utils import timezone
 from apps.contracts.models import Contract
 from apps.equipment.models import Asset, AssetStatus, RiskClass
 from apps.equipment.services import fleet_bucket_counts
-from apps.facility.services import kpi_targets
+from apps.facility.services import get_settings, kpi_targets
 from apps.pm.dates import month_bounds
-from apps.pm.services import overdue_assets, pm_on_time_rate, pm_on_time_series
+from apps.pm.services import overdue_assets, pm_on_time_rate, pm_on_time_series, pm_pending
+from apps.pm.windows import window_of, windows
 from apps.recalls.models import AlertMatch
 from apps.workorders import my_work, scoping
 from apps.workorders.models import LABOR_AMOUNT, OPEN_STATUSES, PART_AMOUNT, LaborLine, PartLine, Priority, WorkOrder, WoStatus, WoType
@@ -29,8 +33,27 @@ TRAILING_DAYS = 182  # the "6 months" every service-cost figure annualizes from 
 ANNUALIZE = 365 / TRAILING_DAYS
 
 
-def overview_kpis(year: int, month: int, today: date | None = None) -> dict:
+def _lower_first(text: str) -> str:
+    return text[:1].lower() + text[1:]
+
+
+def window_words(w) -> dict:
+    """The facility's PM windows (apps.pm.windows.Windows) as plain values for the screens and the API: whether they are the default
+    (by the due date), whether both groups share one, each group's in words, and `words`, one line for all PMs."""
+    high, other = w.high.describe(), w.other.describe()
+    words = high if w.uniform else f"Life support and high risk {_lower_first(high)}; medium and low {_lower_first(other)}"
+    return {"default": w.is_default, "uniform": w.uniform, "high": high, "other": other, "words": words}
+
+
+def _pm_figure(start: date, end: date, today: date, w, life_support_only: bool = False) -> dict:
+    """pm_on_time_rate (due, on_time, rate) plus `pending` (pm_pending: PMs due so far still inside their window, 0 for the default)."""
+    return {**pm_on_time_rate(start, end, today, life_support_only, w=w), "pending": pm_pending(start, end, today, life_support_only, w=w)}
+
+
+def overview_kpis(year: int, month: int, today: date | None = None, *, w=None) -> dict:
+    """The Overview's figures for one month. `w`: the facility's PM windows (apps.pm.windows; read once when not given)."""
     today = today or timezone.localdate()
+    w = window_of(w)
     start, end = month_bounds(year, month)
     current = (year, month) == (today.year, today.month)
     as_of = today if current else end
@@ -45,8 +68,8 @@ def overview_kpis(year: int, month: int, today: date | None = None) -> dict:
     overdue_count = open_at.filter(due_on__lt=as_of).count()
     awaiting_parts = open_at.filter(status=WoStatus.AWAITING_PARTS).count()
 
-    pm = pm_on_time_rate(start, end, today)  # read on today: a past month counts the PM due on its last day too
-    pm_ls = pm_on_time_rate(start, end, today, life_support_only=True)
+    pm = _pm_figure(start, end, today, w)  # read on today: a past month counts the PM due on its last day too
+    pm_ls = _pm_figure(start, end, today, w, life_support_only=True)
 
     repairs = list(WorkOrder.objects.filter(type=WoType.REPAIR, completed_on__gte=start, completed_on__lte=as_of).prefetch_related("labor_lines", "part_lines"))
     turnaround = [w.turnaround_days for w in repairs]
@@ -64,7 +87,7 @@ def overview_kpis(year: int, month: int, today: date | None = None) -> dict:
     return {
         "period": {"year": year, "month": month, "start": start, "end": end, "as_of": as_of, "current": current, "days": days},
         "active_devices": active_count,
-        "pm_on_time": pm, "pm_on_time_life_support": pm_ls,
+        "pm_on_time": pm, "pm_on_time_life_support": pm_ls, "pm_window": window_words(w),
         "open_work_orders": open_count, "overdue_work_orders": overdue_count, "awaiting_parts": awaiting_parts,
         "repairs_closed": len(repairs), "mttr_days": mttr, "repair_spend": spend,
         "downtime_days": downtime, "uptime_pct": uptime,
@@ -115,14 +138,28 @@ def _item(rail, title, sub, right, **link):
     return {"rail": rail, "title": title, "sub": sub, "right": right, **link}
 
 
-def attention_items(today: date | None = None) -> list[dict]:
-    """The Overview's "Needs attention" list, in the mock's order. Each item carries one link key: asset, wo, contract, or recall."""
+def _pm_overdue(a, today: date, w) -> str:
+    """A device's "PM overdue N d" (days past its due date: the schedule), and, under a window other than the due date (slice 27),
+    where its window stands: "on time until Apr 30", or "past its policy window"."""
+    text = f"PM overdue {(today - a.next_pm_on).days} d"
+    window = w.for_class(a.device_model.risk_class)
+    if window.is_due_date:
+        return text
+    end = window.end(a.next_pm_on)
+    return f"{text} · on time until {end:%b} {end.day}" if end >= today else f"{text} · past its policy window"
+
+
+def attention_items(today: date | None = None, *, w=None) -> list[dict]:
+    """The Overview's "Needs attention" list, in the mock's order. Each item carries one link key: asset, wo, contract, or recall.
+    Devices past their PM due date are listed by the due date (the schedule: what to do next); slice 27, under a PM window other than
+    the due date (`w`, read when not given), their lines also say where the window stands."""
     today = today or timezone.localdate()
+    pm_windows = window_of(w)  # not `w`: the loops below name work orders w
     items = []
     overdue = overdue_assets(today).order_by("next_pm_on", "tag")
     for a in overdue.filter(device_model__risk_class=RiskClass.LIFE_SUPPORT):
         items.append(_item("crit", f"{a.tag} · {a.device_model.description}", f"{a.device_model} · {a.department} · life support",
-                           f"PM overdue {(today - a.next_pm_on).days} d", asset=a.tag))
+                           _pm_overdue(a, today, pm_windows), asset=a.tag))
 
     active_q = Q(device_model__assets__status__in=Asset.ACTIVE_STATUSES)
     for m in (AlertMatch.objects.filter(status=AlertMatch.Status.NEEDS_ACTION).select_related("alert", "device_model")
@@ -147,7 +184,7 @@ def attention_items(today: date | None = None) -> list[dict]:
 
     for a in overdue.filter(device_model__risk_class=RiskClass.HIGH)[:ATTENTION_HIGH_RISK_LIMIT]:
         items.append(_item("warn", f"{a.tag} · {a.device_model.description}", f"{a.device_model} · {a.department} · high risk",
-                           f"PM overdue {(today - a.next_pm_on).days} d", asset=a.tag))
+                           _pm_overdue(a, today, pm_windows), asset=a.tag))
 
     urgent = (WorkOrder.objects.filter(status__in=OPEN_STATUSES).filter(Q(priority=Priority.CRITICAL) | Q(priority=Priority.HIGH, due_on__lt=today))
               .exclude(pk__in=[w.pk for w in portal]).select_related(*wo_related).order_by(PRIORITY_RANK, "due_on"))
@@ -245,21 +282,24 @@ def recent_activity(start: date, as_of: date, limit: int = 8):
 
 
 def overview_page(year: int, month: int, today: date | None = None) -> dict:
-    """Everything the Overview screen shows for one month. Fleet state and attention items are always as of today; the targets are
-    the tenant's, from Settings (apps.facility)."""
+    """Everything the Overview screen shows for one month. Fleet state and attention items are always as of today; the targets and the
+    PM windows are the tenant's, from Settings (apps.facility), read once for the whole page."""
     today = today or timezone.localdate()
-    k = overview_kpis(year, month, today)
+    s = get_settings()
+    w = windows(s)
+    k = overview_kpis(year, month, today, w=w)
     py, pm = _shift_month(year, month, -1)
     # No deltas against a month before the tenant has any history; they would compare against zeros.
     has_prev = WorkOrder.objects.filter(opened_on__lte=month_bounds(py, pm)[1]).exists()
-    prev = overview_kpis(py, pm, today=today) if has_prev else None
+    prev = overview_kpis(py, pm, today=today, w=w) if has_prev else None
     start, as_of = k["period"]["start"], k["period"]["as_of"]
     affected = Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES, device_model__alert_matches__status=AlertMatch.Status.NEEDS_ACTION).distinct().count()
     return {
-        "k": k, "prev": prev, "targets": kpi_targets(), "alert_devices_affected": affected,
+        "k": k, "prev": prev, "targets": kpi_targets(s), "alert_devices_affected": affected,
         "buckets": fleet_bucket_counts(today),
-        "pm_series": pm_on_time_series(year, month), "pm_series_life_support": pm_on_time_series(year, month, life_support_only=True),
-        "attention": attention_items(today),
+        "pm_series": pm_on_time_series(year, month, today=today, w=w),
+        "pm_series_life_support": pm_on_time_series(year, month, life_support_only=True, today=today, w=w),
+        "attention": attention_items(today, w=w),
         "opened_by_type": work_orders_opened_by_type(year, month),
         "spend_by_category": repair_spend_by_category(start, as_of),
         "recent": recent_activity(start, as_of),

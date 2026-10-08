@@ -45,6 +45,15 @@ def _parts(*parts):
     return [p if isinstance(p, tuple) else (p, "") for p in parts if p]
 
 
+def pending_line(pm: dict) -> str | None:
+    """Slice 27: under a PM window other than the due date, the PMs due so far that are still inside it (not yet counted either way):
+    "2 still inside their window". None when there are none (always, for the default window)."""
+    n = pm.get("pending") or 0
+    if not n:
+        return None
+    return f"{n} still inside {'its' if n == 1 else 'their'} window"
+
+
 def kpi_tiles(data: dict, recalls_url: str | None = None, pm_url: str | None = None) -> list[dict]:
     """`recalls_url` and `pm_url` are None for users without View on those modules; a tile without a url renders static."""
     k, p, t = data["k"], data["prev"], data["targets"]
@@ -59,12 +68,12 @@ def kpi_tiles(data: dict, recalls_url: str | None = None, pm_url: str | None = N
         {"label": "PM completion on time", "value": f"{k['pm_on_time']['rate']:.1f}", "unit": "%", **({"url": pm_url} if pm_url else {}),
          "parts": _parts(_delta(k["pm_on_time"]["rate"], pv(lambda p: p["pm_on_time"]["rate"]), True, lambda v: f"{v:.1f}", " pts"),
                          f"{k['pm_on_time']['on_time']} of {k['pm_on_time']['due']} PMs due {'so far this month' if cur else 'in month'}",
-                         f"target {pct_label(t['pm_on_time'])}%")},
+                         pending_line(k["pm_on_time"]), f"target {pct_label(t['pm_on_time'])}%")},
         {"label": "Life-support PM completion", "value": f"{k['pm_on_time_life_support']['rate']:.1f}", "unit": "%",
          "url": f"{eq}?bucket={FleetBucket.PM_OVERDUE.value}&risk={RiskClass.LIFE_SUPPORT.value}",
          "parts": _parts(_delta(k["pm_on_time_life_support"]["rate"], pv(lambda p: p["pm_on_time_life_support"]["rate"]), True, lambda v: f"{v:.1f}", " pts"),
                          f"{k['pm_on_time_life_support']['on_time']} of {k['pm_on_time_life_support']['due']} due",
-                         f"target {pct_label(t['pm_on_time_life_support'])}%")},
+                         pending_line(k["pm_on_time_life_support"]), f"target {pct_label(t['pm_on_time_life_support'])}%")},
         {"label": "Fleet uptime", "value": f"{k['uptime_pct']:.2f}", "unit": "%", "url": report("mtbf"),
          "parts": _parts(_delta(k["uptime_pct"], pv(lambda p: p["uptime_pct"]), True, lambda v: f"{v:.2f}", " pts"),
                          f"{k['downtime_days']} device-days down of {k['active_devices'] * k['period']['days']:,}", f"target {pct_label(t['uptime_pct'])}%")},

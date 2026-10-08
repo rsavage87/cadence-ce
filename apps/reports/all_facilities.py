@@ -20,6 +20,11 @@ nothing was due, as on the Overview), the mean time to repair is weighted by the
 days over the summed device-days, and the cost of service ratio is the summed annual cost over the summed acquisition value. Alerts
 needing action count each alert once: a recall alert is shared by every facility it matches, so one that needs action in two
 facilities is one alert in the totals.
+
+Slice 27, the PM completion window (apps.pm.windows): each facility's PM figures are counted by its own window, read inside it, never
+another's (nothing caches a window across facilities). Its row says the window in words (`pm_window`, the Overview's window_words)
+and how many PMs due so far are still inside it (`pm_pending`, `life_support_pm_pending`). The totals still add the parts up, and say
+when the facilities' windows differ (`pm_windows_differ`): each facility is then judged by its own policy.
 """
 from datetime import date, datetime
 
@@ -27,16 +32,19 @@ from django.utils import timezone
 
 from apps.accounts import people
 from apps.accounts.models import Level, Module
+from apps.pm.windows import windows
 from apps.tenants.context import tenant_context
 from apps.workorders import scoping
 
-from .services import alerts_needing_action_ids, overview_kpis
+from .services import alerts_needing_action_ids, overview_kpis, window_words
 
 # A facility's figures, in the order the page shows them. Every one is a plain int or float.
 FIGURES = ("active_devices", "open_work_orders", "overdue_work_orders", "awaiting_parts",
            "pm_due", "pm_on_time", "pm_rate", "life_support_pm_due", "life_support_pm_on_time", "life_support_pm_rate",
            "repairs_closed", "mttr_days", "repair_spend", "downtime_days", "device_days", "uptime_pct",
            "cost_of_service", "acquisition_value", "cost_of_service_ratio_pct", "alerts_needing_action")
+# Slice 27: a facility's PMs due so far still inside its PM window, added up as they are; kept out of FIGURES (the API's figures).
+PENDING = ("pm_pending", "life_support_pm_pending")
 # The figures that add up across facilities as they are (counts, days, money); the totals work the others out from these.
 SUMMED = ("active_devices", "open_work_orders", "overdue_work_orders", "awaiting_parts", "pm_due", "pm_on_time", "life_support_pm_due",
           "life_support_pm_on_time", "repairs_closed", "repair_spend", "downtime_days", "device_days", "cost_of_service", "acquisition_value")
@@ -57,7 +65,8 @@ def facility_figures(now: datetime) -> dict:
     """The current facility's Overview figures for its current month to date, at the instant `now` in its time zone: plain values,
     plus `today`, `month` (its first day), and `alert_ids` (the alerts needing action, which the totals unite)."""
     today = timezone.localdate(now)
-    k = overview_kpis(today.year, today.month, today)
+    w = windows()  # this facility's: read inside it, every time (never one facility's window for another)
+    k = overview_kpis(today.year, today.month, today, w=w)
     pm, ls, cost = k["pm_on_time"], k["pm_on_time_life_support"], k["cost_of_service"]
     alert_ids = frozenset(alerts_needing_action_ids())
     return {
@@ -71,6 +80,7 @@ def facility_figures(now: datetime) -> dict:
         "cost_of_service": float(cost["total"]), "acquisition_value": float(cost["acquisition"]),
         "cost_of_service_ratio_pct": float(cost["ratio_pct"]),
         "alert_ids": alert_ids, "alerts_needing_action": len(alert_ids),
+        "pm_window": window_words(w), "pm_pending": pm["pending"], "life_support_pm_pending": ls["pending"],
     }
 
 
@@ -88,7 +98,7 @@ def totals(rows: list[dict]) -> dict | None:
     shown = [r for r in rows if r["overview"]]
     if not shown:
         return None
-    t = {key: sum(r[key] for r in shown) for key in SUMMED}
+    t = {key: sum(r[key] for r in shown) for key in SUMMED + PENDING}
     repairs, device_days = t["repairs_closed"], t["device_days"]
     alert_ids = frozenset().union(*(r["alert_ids"] for r in shown))
     return {
@@ -99,7 +109,12 @@ def totals(rows: list[dict]) -> dict | None:
         "uptime_pct": 100.0 - (t["downtime_days"] / device_days * 100 if device_days else 0.0),
         "cost_of_service_ratio_pct": t["cost_of_service"] / t["acquisition_value"] * 100 if t["acquisition_value"] else 0.0,
         "alert_ids": alert_ids, "alerts_needing_action": len(alert_ids),
+        "pm_windows_differ": len({_window_key(r["pm_window"]) for r in shown}) > 1,
     }
+
+
+def _window_key(words: dict) -> tuple:
+    return (words["high"], words["other"])
 
 
 def joined_accounts(user) -> list:

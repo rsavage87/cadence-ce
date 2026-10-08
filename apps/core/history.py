@@ -428,7 +428,8 @@ def _evidence_text(ev) -> str:
         repairs += f" ({_number(ev['repairs_per_device_year'])} per device-year)"
     parts.append(repairs)
     if ev.get("pm_on_time_pct") is not None:
-        parts.append(f"{ev['pm_on_time_pct']}% of PMs on time")
+        window = ev.get("pm_window")  # slice 27: the PM window "on time" was counted by (evidence from before it has none)
+        parts.append(f"{ev['pm_on_time_pct']}% of PMs on time" + (f" ({window[:1].lower()}{window[1:]})" if window else ""))
     if ev.get("open_recalls"):
         parts.append(_plural(ev["open_recalls"], "open recall", "open recalls"))
     return f"{_day(ev['since'])} to {_day(ev['as_of'])}: " + ", ".join(parts)
