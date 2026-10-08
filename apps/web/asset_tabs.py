@@ -130,10 +130,19 @@ def pm_upcoming(asset, open_pm, today: date) -> dict:
     who = _who(open_pm, suggested)
     rows = [{"on": nxt, "next": True, "overdue": nxt < today}]
     d = max(nxt, today)
+    from_due = False
+    if nxt < today:
+        # Slice 27 (review fix): done today inside its PM window, the next PM counts from its due date, as completing it would
+        # (workorders.services.next_pm_after); otherwise from today.
+        from apps.pm.windows import windows
+
+        w = windows()
+        if not w.is_default and today <= w.end(nxt, asset.device_model.risk_class) and add_months(nxt, interval) > today:
+            d, from_due = nxt, True
     for _ in range(PROJECTED):
         d = add_months(d, interval)
         rows.append({"on": d, "next": False, "overdue": False})
-    return {"rows": rows, "who": who, "open_pm": open_pm, "interval": _months(interval), "unscheduled": ""}
+    return {"rows": rows, "who": who, "open_pm": open_pm, "interval": _months(interval), "unscheduled": "", "from_due": from_due}
 
 
 def _done_by(wo) -> str:

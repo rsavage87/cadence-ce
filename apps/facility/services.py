@@ -232,7 +232,10 @@ def _window_days(value, field: str, errors: dict):
     """A whole number of days, 1 to PM_WINDOW_DAYS_MAX, or None (blank): never True, 14.5, "1e1", or "14 days"."""
     if value is None or value == "":
         return None
-    if isinstance(value, bool) or not (isinstance(value, int) or (isinstance(value, str) and value.strip().isdigit())):
+    text = value.strip() if isinstance(value, str) else ""
+    # ASCII digits only, and short: "²" and "①" are digits to str.isdigit() but not to int(), and a 5,000-digit string is too long
+    # for int() (review fix: both were a 500)
+    if isinstance(value, bool) or not (isinstance(value, int) or (text.isascii() and text.isdecimal() and len(text) <= 3)):
         errors[field] = f"Enter a whole number of days, 1 to {PM_WINDOW_DAYS_MAX}."
         return None
     days = int(value)
@@ -272,7 +275,10 @@ def _follow_window_in_policy(cleaned: dict, s: FacilitySettings | None) -> None:
     current = s or FacilitySettings()
     for group, (kind_field, days_field) in WINDOW_GROUPS.items():
         policy_field = pm_windows.PM_POLICY_FIELDS[group]
-        if policy_field in cleaned or (kind_field not in cleaned and days_field not in cleaned):
+        # Text sent back unchanged is no edit: an API client that GETs, changes the window, and PATCHes the whole body sends the line it
+        # read (review fix: the line then stayed on the old window's default while the screen's change made it follow).
+        edited = policy_field in cleaned and cleaned[policy_field] != getattr(current, policy_field)
+        if edited or (kind_field not in cleaned and days_field not in cleaned):
             continue
         old = pm_windows.Window(getattr(current, kind_field), getattr(current, days_field))
         new = pm_windows.Window(cleaned.get(kind_field, old.kind), cleaned[days_field] if days_field in cleaned else old.days)
@@ -320,9 +326,10 @@ def update_settings(by=None, **fields) -> FacilitySettings:
         s = _locked_row()
         if s is None:
             _check_portal_email(cleaned, None)
-            _check_window(cleaned, None)
-            _follow_window_in_policy(cleaned, None)
-            s = FacilitySettings(**cleaned)
+            first = dict(cleaned)  # the window checks fill in derived values: on a lost race, start again from what was sent (review fix)
+            _check_window(first, None)
+            _follow_window_in_policy(first, None)
+            s = FacilitySettings(**first)
             if by is not None:
                 s._history_user = by
             try:

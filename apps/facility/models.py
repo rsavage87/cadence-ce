@@ -36,7 +36,8 @@ PM_WINDOW_DAYS_MAX = 45  # the widest tolerance in the Joint Commission's freque
 
 def _window_days_rule(kind: str, days: str) -> models.Q:
     """A group's days are set (1 to PM_WINDOW_DAYS_MAX) with "days_after" and only with it."""
-    return (models.Q(**{kind: PmWindow.DAYS_AFTER, f"{days}__gte": 1, f"{days}__lte": PM_WINDOW_DAYS_MAX})
+    # days__isnull=False: a NULL would make this branch NULL, and a CHECK passes on NULL (review fix: days_after with no days)
+    return (models.Q(**{kind: PmWindow.DAYS_AFTER, f"{days}__isnull": False, f"{days}__gte": 1, f"{days}__lte": PM_WINDOW_DAYS_MAX})
             | (~models.Q(**{kind: PmWindow.DAYS_AFTER}) & models.Q(**{f"{days}__isnull": True})))
 
 

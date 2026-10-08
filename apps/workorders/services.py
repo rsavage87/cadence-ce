@@ -148,6 +148,22 @@ def pm_schedule_anchor(wo: WorkOrder, done_on: date, w=None) -> date:
     return wo.due_on if done_on <= window.end(wo.due_on) else done_on
 
 
+def next_pm_after(wo: WorkOrder, asset, done_on: date, w=None) -> date:
+    """The device's next PM when its PM `wo` is completed on `done_on` (slice 27): one interval after pm_schedule_anchor, except that
+    an anchored date never lands on or before the day the PM was done (a monthly PM under a window longer than a month) and never pulls
+    the device's next PM back from a later date already set (an older PM reopened and completed again after a newer one moved it):
+    then from the day it was done, as before the window (review fix)."""
+    interval = asset.pm_interval_months
+    plain = add_months(done_on, interval)
+    anchor = pm_schedule_anchor(wo, done_on, w)
+    if anchor == done_on:
+        return plain
+    anchored = add_months(anchor, interval)
+    if anchored <= done_on or (asset.next_pm_on is not None and anchored < asset.next_pm_on):
+        return plain
+    return anchored
+
+
 def _on_completed(wo: WorkOrder, as_of, by=None):
     asset = wo.asset
     if wo.type == WoType.PM:
@@ -155,7 +171,7 @@ def _on_completed(wo: WorkOrder, as_of, by=None):
         fields = ["last_pm_on", "updated_at"]
         if not asset.awaiting_inspection:  # slice 26: a waiting device's PM clock starts at its pass (and no door opens a PM on one)
             # Slice 27: from the due date for a PM done late but inside its window (pm_schedule_anchor), else from the day it was done
-            asset.next_pm_on = add_months(pm_schedule_anchor(wo, as_of), asset.pm_interval_months)
+            asset.next_pm_on = next_pm_after(wo, asset, as_of)
             fields.append("next_pm_on")
         asset.save(update_fields=fields)
     elif wo.type == WoType.INSPECTION and wo.inspection_result == InspectionResult.PASSED:

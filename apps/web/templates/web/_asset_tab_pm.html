@@ -29,7 +29,7 @@
       <div class="empty">{{ up.unscheduled }}</div>
     {% endfor %}
     </div>
-    {% if up.rows %}<div class="hint" style="margin-top:8px">Projected dates assume each PM is done when due{% if up.rows.0.overdue %}, the overdue one today{% endif %}. {% if up.who.kind == "suggested" %}The technician is the one the PM schedule suggests: credentialed for this device and least loaded.{% elif up.who.kind == "none" %}No active technician is credentialed for this device{% if asset.under_contract %}; {{ asset.contract.vendor }} covers it under {{ asset.contract.reference }}{% endif %}.{% elif can_view_wo %}The next PM is on {{ up.open_pm.number }}.{% endif %}</div>{% endif %}
+    {% if up.rows %}<div class="hint" style="margin-top:8px">Projected dates assume each PM is done when due{% if up.rows.0.overdue %}, the overdue one today{% if up.from_due %}, still inside its PM window, so the next ones keep counting from its due date{% endif %}{% endif %}. {% if up.who.kind == "suggested" %}The technician is the one the PM schedule suggests: credentialed for this device and least loaded.{% elif up.who.kind == "none" %}No active technician is credentialed for this device{% if asset.under_contract %}; {{ asset.contract.vendor }} covers it under {{ asset.contract.reference }}{% endif %}.{% elif can_view_wo %}The next PM is on {{ up.open_pm.number }}.{% endif %}</div>{% endif %}
   </div>
 
   {% comment %}Work-order details (numbers, technicians, results, hours) only for roles with Work orders View, the same rule as the
