@@ -5,7 +5,8 @@ service contracts, recall matching, technician credentials, a public service req
 
 This is the starter codebase generated from the interactive mock in `spec/`. It contains the data model, tenancy,
 permissions, lifecycle services, importer, PM engine, KPI math, REST API, admin, portal, and tests, plus the HTMX
-web UI for Overview, Equipment, Work orders, Contracts, Recalls and alerts, Reports (eight survey-ready reports with CSV
+web UI for Overview, Equipment, Work orders, Contracts, Recalls and alerts, Incidents (devices suspected in a death or serious
+injury, held and reported under the Safe Medical Devices Act), Reports (eight survey-ready reports with CSV
 download, the facility's own custom reports, and the survey binder), Users and access (Users, Roles, Technician credentials), and Settings
 (portal options, maintenance policy, KPI targets, integrations, risk scoring), and the PM schedule (calendar, a day's
 devices, create that day's PM work orders).
@@ -207,6 +208,24 @@ work order lists still call a PM past its due date overdue, and a PM finished in
 date, so the schedule never drifts. A change counts every PM by the new window, past months included, is recorded with who made it, and
 the survey binder notes it; the default PM policy lines follow the window, and Settings warns when a line the facility wrote disagrees.
 
+## Device incidents
+When a device in Cadence may have played a part in a patient's or a staff member's death, serious injury, or serious illness, the
+Incidents screen (or Record incident on the device, or on the repair request it was reported as) records it in a few choices: the day
+it happened, the day the facility's clinical staff first knew, the outcome ("not known yet" counts as serious until decided), and who
+was affected (patient, staff member on duty, visitor, no one), never who they are. The device is held as evidence: it goes out of
+service, nobody can start or complete any work on it but its investigation (the request it was reported as, or a repair the incident
+opens), and only the incident releases it. Other parts of the system (a pump's channel module) can be held on the same incident, and a
+device sent to the manufacturer stays held until it comes back. The Safe Medical Devices Act's clock (21 CFR 803) is counted for you:
+10 work days (weekdays, Federal holidays skipped) after clinical staff first knew, with the people who decide (Incidents Approve) emailed
+when one is recorded and as the due date nears. The decision asks the regulation's question (may the device have caused or
+contributed, use error included?) with a reason from a short list, who decided, and the facility's event report number, where the
+narrative and the deliberations live: Cadence keeps no free text about an incident. Reports sent to the FDA and the manufacturer are
+recorded with the 803.3(x) report number; the list's year filter and CSV give CE's share for the facility's annual report (Form FDA
+3419). The survey binder's Device incidents section shows them, with what is late or missing. Technicians record and hold (Incidents
+Edit); CE managers and directors decide, record reports, release, and close (Incidents Approve); clinical requesters and vendors never
+see an incident, only that a device is "Held by Clinical Engineering". A facility made before this slice gets Incidents on its
+standard roles at their defaults; set it for any custom role on the Roles tab.
+
 ## Custom reports
 Reports' "+ Custom report" (Reports Edit: the director and Finance and quality by default) builds a report from work orders, devices,
 labor, or parts: pick the columns, filter by type, status, department, category, technician, or a date range (a rolling period such
@@ -234,7 +253,8 @@ their role can view, and vendor technicians and clinical requesters see no histo
 The account menu's Notifications page chooses the emails Cadence sends you: when a work order is assigned to you (on by default;
 a batch, such as a day's PMs or Auto-assign week, sends one email listing them all), a morning digest of your work due or overdue
 and your PMs this week (off by default), and reminders 90, 30, and 7 days before a service contract ends and once after (for people
-who can edit contracts). The digest and reminders go out with the daily jobs; nothing is ever sent twice. These emails never carry
+who can edit contracts), and, for the people who decide whether a device incident was reportable, when one is recorded and as its
+report's due date nears. The digest and reminders go out with the daily jobs; nothing is ever sent twice. These emails never carry
 what a requester typed (the problem, who asked, where): open the work order in Cadence to read it.
 
 ## API
@@ -247,6 +267,7 @@ its module's docstring under `apps/api/`, and the browsable API (open `/api/v1/`
 - the Overview, the eight reports, custom reports (build and run), and your own report emails (`views_reports.py`);
 - recall alert matches, recall work orders, and Check FDA feed (`views_recalls.py`); Scan (`views_scan.py`);
 - users, roles, technicians, and credentials (`views_users.py`); Settings;
+- device incidents: recording, holds, the decision, reports, release, and closing (`views_incidents.py`);
 - the signed-in person's facilities and All facilities (`views_facilities.py`, `views_all_facilities.py`; session only).
 
 Vendor technicians and clinical requesters reach only their own devices and work orders (and Scan), as on the screens. Nobody gives

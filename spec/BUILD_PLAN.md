@@ -1,12 +1,12 @@
 # Build plan
 
 The mock (`cadence-ce-cmms-mock.html`) is the spec. Each slice below is shippable on its own and ends with green tests.
-Slices 0 to 27 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
+Slices 0 to 28 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
 export and print, devices are added and changed in the product, reports and request confirmations go out by email, each
 device model's PM program (risk score, procedure, AEM interval) is kept in the product, and the work itself (time, parts,
 what was done, a PM's results) is recorded on the work order; vendors and clinical requesters see only their own share; facilities
 build their own reports, and a label opens its device with Scan tag; the API covers what the screens do, by session or token; every record's changes and every access change can be read back;
-staff get the emails they choose about their own work; each facility works on its own clock; one person signs in once to every facility they work at; a facility brings its records over from the CMMS it is leaving; technicians work from their phones on My work; a survey binder gathers the evidence surveyors ask for; new equipment is inspected before its first use; and each facility says when a PM counts as on time. What each slice deferred is noted in its row and below.
+staff get the emails they choose about their own work; each facility works on its own clock; one person signs in once to every facility they work at; a facility brings its records over from the CMMS it is leaving; technicians work from their phones on My work; a survey binder gathers the evidence surveyors ask for; new equipment is inspected before its first use; each facility says when a PM counts as on time; and a device suspected in a death or serious injury is held as evidence and reported on the Safe Medical Devices Act's clock. What each slice deferred is noted in its row and below.
 
 | # | Slice | Mock screen(s) | Code | Status |
 |---|-------|----------------|------|--------|
@@ -38,6 +38,7 @@ staff get the emails they choose about their own work; each facility works on it
 | 25 | Survey readiness | (none: Reports, Survey binder; the work order's Why late; Add device's new or existing) | `reports` + `pm` + `workorders` + `equipment` + `credentials` + `web` + `api` | done (the incoming inspection workflow and a PM completion window deferred) |
 | 26 | Incoming inspections | (none: Add device, the device drawer, Mark completed for an inspection) | `equipment` + `workorders` + `reports` + `web` + `api` | done (a temporary-equipment kind for loaners and rentals, and bulk new devices through the importer, deferred) |
 | 27 | PM completion window | (none: Settings, PM on-time window; every on-time figure) | `facility` + `pm` + `reports` + `workorders` + `web` + `api` | done (an interval-scaled window and judging each PM by the window in force on its due date deferred) |
+| 28 | Device incidents | (none: Incidents; the device and work order drawers' hold; Record incident) | new `incidents` + `core` + `accounts` + `equipment` + `workorders` + `pm` + `reports` + `notifications` + `web` + `api` | done (the annual report (Form 3419), voluntary reports, a custody log, 3500A prefill, and a printable event file deferred) |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.
@@ -394,3 +395,32 @@ The mock's export and print buttons work since slice 11, Add device since slice 
   the next PMs as completing today would; an API client that sends back the whole settings body with a new window gets the default
   PM policy line following it, as the screen does; days typed with digits int() cannot read are refused in words; a first save that
   loses a race starts again from what was sent, never from values derived for the defaults.
+- Device incidents (slice 28, beyond the mock; the survey binder listed them as not covered): a device in Cadence suspected in a death,
+  serious injury, or serious illness is recorded (`apps/incidents`: Incident, IncidentHold) in choices only, held as evidence, investigated,
+  and decided under 21 CFR 803. The facts: the day it happened, the day the facility's clinical staff first knew (the clock's start,
+  defaulting to the day it happened, moved later only at Approve with a reason), the outcome (not known yet counts as serious until
+  decided), who was affected as a category (a patient, staff on duty, a visitor, no one), and the facility's event report number, where
+  the narrative and the deliberations stay (no free text in Cadence). The clock: 10 work days (`apps/core/workdays.py`, Federal holidays
+  as observed) for a death, serious injury, or not known yet of a patient of the facility; a death goes to the FDA and the manufacturer,
+  a serious injury to the manufacturer (the FDA's copy counts in its place). The decision asks the regulation's question (may the device
+  have caused or contributed, use error included) with a basis from four, who decided, and the day; a failure found later clears a "does
+  not suggest" decision. The hold (`Asset.incident_hold`, one writer pair in equipment.services): out of service, set_status refuses every
+  move, no work order but the investigation (the repair it was reported as, adopted, or one the incident opens) starts or completes, PMs
+  are still opened and never assigned or started, a trip to the manufacturer stays inside the hold, and only the release ends it (return
+  to use waits for the investigation, the decision, the reports, and a PM not past due; the device goes in service only when nothing
+  else holds it). Every writer of a device's work takes its open work orders in number order, then its row
+  (`workorders.services.lock_work`). Incidents (Module.INCIDENTS: Edit records and holds, Approve decides, reports, releases, closes; a role
+  made before the module takes its default by `Role.levels()`, a custom one None) are never shown to scoped users, never in custom reports
+  or report emails; emails to the deciders carry the number, the tag, and the due date only. Screens, the API, the binder's Device
+  incidents section, the notifications preference, and the seed. Deferred: the annual report (Form 3419) as a record (the list's year
+  filter and CSV give CE's share), voluntary reports, a custody log beyond the manufacturer, 3500A prefill, a printable event file,
+  FDA acknowledgments, a digest section, an Overview attention item, a work order type of its own, and incidents with equipment not in
+  Cadence. Rules settled in review: once decided, the outcome and who was affected change only by deciding again, which takes both (a
+  visitor found to be staff on duty, a near miss found to be a death), and a harm outcome always names who was affected; a decision
+  points to the event report whenever the recorded or the final facts harmed someone; "recorded in error" needs Equipment Edit to put a
+  device back in use and Work orders Edit to cancel the work order it opened, and clears the report number and days (the correct
+  incident records them); numbers are counted per printed year and a day before 2000 is refused; report numbers take ASCII digits only;
+  every writer of a device's work (a completion, a start, the incident services, `_locked_row`) locks its open work orders in number
+  order before any one of them, before the work order numbering, and before the device's row; an investigation's device and type never
+  change through the API; a held device's PM tab and route sheets say it waits for the incident's release; the API's incident links name
+  their facility; a report date left out keeps what the locked row has.
