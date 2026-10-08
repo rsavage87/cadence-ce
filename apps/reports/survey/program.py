@@ -16,7 +16,6 @@ the settings row, its history, and the active devices by risk class.
 """
 from __future__ import annotations
 
-import re
 from decimal import Decimal
 
 from django.urls import reverse
@@ -41,22 +40,19 @@ GROUPS = (("high", "life support and high risk"), ("other", "medium and low risk
 POLICY_GROUP = {field: group for group, field in pm_windows.PM_POLICY_FIELDS.items()}
 ON_TIME_NOTE = "How on time is measured: a PM is on time when completed on or before its due date, as on the Overview. No grace period is added."
 # "no grace", "without grace", "without a grace period", "zero grace", "0-day grace": a text that denies a grace period agrees with Cadence.
-_DENIED_GRACE = re.compile(r"\b(?:no|without(?:\s+an?y?)?|zero|0[-\s]?days?)\s+grace", re.IGNORECASE)
 WINDOW_FIELDS = ("pm_window_high", "pm_window_high_days", "pm_window_other", "pm_window_other_days")
 
 
 def disagrees_with_due_date(text: str) -> bool:
-    """Whether a PM policy line speaks of a month or a grace period (any letter case), which Cadence does not measure: a PM is on time
-    only when completed by its due date. A grace period the text denies ("no grace") agrees."""
-    if "month" in text.lower():
-        return True
-    return "grace" in _DENIED_GRACE.sub("", text).lower()
+    """Whether a PM policy line speaks of a month or a grace period (any letter case) it does not deny, against the default window:
+    a PM is on time only when completed by its due date."""
+    return pm_windows.policy_disagrees(text, pm_windows.Window())
 
 
 def disagrees(text: str, window: pm_windows.Window) -> bool:
-    """Whether a PM policy line contradicts its group's window (slice 27): by the due date, disagrees_with_due_date; any other window,
-    apps.pm.windows.policy_disagrees (the Settings panel's warning)."""
-    return disagrees_with_due_date(text) if window.is_due_date else pm_windows.policy_disagrees(text, window)
+    """Whether a PM policy line contradicts its group's window (slice 27): apps.pm.windows.policy_disagrees, the one check the Settings
+    panel's warning shares (merge fix: the two once judged the due-date window differently)."""
+    return pm_windows.policy_disagrees(text, window)
 
 
 def on_time_note(w: pm_windows.Windows) -> str:

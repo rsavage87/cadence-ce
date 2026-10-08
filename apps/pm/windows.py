@@ -22,6 +22,7 @@ window the conditions name no class (no join), and the default window gives exac
 from __future__ import annotations
 
 import calendar
+import re
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -197,18 +198,26 @@ def policy_default(group: str, window: Window) -> str:
     return f"{_POLICY_LEADS[group]}, complete {text[0].lower()}{text[1:]}"
 
 
+# A grace period the text denies ("no grace", "without any grace", "0-day grace") is no grace period.
+_DENIED_GRACE = re.compile(r"\b(?:no|without(?:\s+an?y?)?|zero|0[-\s]?days?)\s+grace", re.IGNORECASE)
+
+
+def _grants_grace(text: str) -> bool:
+    return "grace" in _DENIED_GRACE.sub("", text).lower()
+
+
 def policy_disagrees(text: str, window: Window) -> bool:
-    """Whether a PM policy line's words plainly contradict the window: word classes, never numbers. By the due date: the text
-    mentions a month or a grace period it does not deny. A month window: the text never mentions a month. Days after the due date:
-    the text mentions neither days nor a grace period."""
-    t = (text or "").lower()
-    denies_grace = any(p in t for p in ("no grace", "without grace", "without a grace", "zero grace"))
-    grace = "grace" in t and not denies_grace
+    """Whether a PM policy line's words plainly contradict the window: word classes, never numbers. The one check the Settings
+    panel's warning and the survey binder's CHECK share. By the due date: the text mentions a month, or a grace period it does not
+    deny. A month window: the text never mentions a month. Days after the due date: the text mentions neither days nor a grace
+    period."""
+    t = text or ""
+    low = t.lower()
     if window.is_due_date:
-        return "month" in t or grace
+        return "month" in low or _grants_grace(t)
     if window.kind in (PmWindow.DUE_MONTH, PmWindow.NEXT_MONTH):
-        return "month" not in t
-    return not ("day" in t or grace)
+        return "month" not in low
+    return not ("day" in low or _grants_grace(t))
 
 
 __all__ = ["Window", "Windows", "windows", "window_of", "DEFAULT", "HIGH_CLASSES", "WORK_ORDER_RISK", "ASSET_RISK", "PM_WINDOW_DAYS_MAX",
