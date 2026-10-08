@@ -884,7 +884,8 @@ def use_before_inspection(asset: Asset, reason: str, *, by=None, today: date | N
     drawer's banner and the survey binder read back (inspections.uses_before). Its open incoming inspection (one is opened if none is)
     goes to high priority, due the next day (an earlier due date is kept), with a status-history note naming the reason, so CE
     inspects it where it is. Equipment Approve (permissions.can_use_before_inspection) for a user given as `by` (PermissionDenied).
-    Refused in words: a device not waiting, or not out of service or missing; a reason not listed is keyed "reason". Returns the
+    Refused in words: a device not waiting, or not out of service or missing; a reason not listed is keyed "reason". Slice 28: a
+    device held as evidence for an incident investigation is refused first (held_message): only its incident releases it. Returns the
     device, read again; inspections.open_inspection(asset) is the inspection."""
     from apps.workorders import inspections
     from apps.workorders.models import Priority, WorkOrderStatusHistory
@@ -897,6 +898,8 @@ def use_before_inspection(asset: Asset, reason: str, *, by=None, today: date | N
         raise ValidationError({"reason": "Choose why the device goes into use before its incoming inspection."})
     inspections.lock_open(asset.pk)  # its inspections, then its row (the order completing one takes): a pass at that moment goes first or after
     fresh = Asset.objects.select_for_update().get(pk=asset.pk)
+    if fresh.incident_hold:  # slice 28: held as evidence, so nobody uses it
+        raise ValidationError(held_message(fresh))
     if not fresh.awaiting_inspection:
         raise ValidationError(f"{fresh.tag} is not waiting for an incoming inspection.")
     if fresh.status not in USE_BEFORE_FROM:
@@ -935,8 +938,9 @@ def pass_incoming_inspection(asset: Asset, wo, *, by=None, on: date) -> Asset:
     clears, the PM clock starts (next PM one interval after `on`; a retired device keeps none), and a device out of service goes in
     service unless an open tagged-out repair still holds it (services.holding_repairs: the last of them returns it). A device already
     in service (use_before_inspection) only stops waiting. Then the device's other open incoming inspections are cancelled with a note
-    naming `wo` (one in progress goes back to open first; one another transaction holds at that moment is left open). The caller's
-    `asset` is read again."""
+    naming `wo` (one in progress goes back to open first; one another transaction holds at that moment is left open). Slice 28: a
+    device held as evidence for an incident investigation stays out of service (the pass is still recorded, the flag cleared, the PM
+    clock started): only its incident's release puts it in use. The caller's `asset` is read again."""
     from apps.pm.dates import add_months
     from apps.workorders import inspections
     from apps.workorders.models import OPEN_STATUSES, WoStatus
@@ -948,7 +952,7 @@ def pass_incoming_inspection(asset: Asset, wo, *, by=None, on: date) -> Asset:
     fresh.awaiting_inspection = False
     if fresh.status != AssetStatus.RETIRED:
         fresh.next_pm_on = add_months(on, fresh.pm_interval_months)
-    if fresh.status == AssetStatus.OUT_OF_SERVICE and not holding_repairs(fresh).exists():
+    if fresh.status == AssetStatus.OUT_OF_SERVICE and not fresh.incident_hold and not holding_repairs(fresh).exists():
         fresh.status = AssetStatus.IN_SERVICE
     fresh._change_reason = inspections.passed_reason(wo)
     if by is not None:

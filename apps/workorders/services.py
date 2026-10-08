@@ -13,13 +13,21 @@ Slice 26, incoming inspections (apps.workorders.inspections): a device waiting f
 has one inspection open at a time and no PM work order (its PMs start when it passes): create_work_order refuses either, keyed "type".
 Completing its passed inspection clears the flag, starts its PM clock, and puts it in service (equipment.services
 .pass_incoming_inspection, from _on_completed); completing a tagged-out repair never puts it in service while it still waits.
+
+Slice 28, a device held as evidence for an incident investigation (Asset.incident_hold, apps.incidents): nobody uses, repairs, or tests
+it. change_status refuses to start or complete any of its work orders but the investigation of an open incident holding it
+(incidents.services.investigation_of, by identity), reading the hold on the device's row locked after the work order's
+(_lock_for_hold); completion.blocker says the same before anything starts (hold_blocker). Completing a repair, the investigation
+included, never returns a held device to service: only the incident's release does. Everything else stays allowed: opening work
+orders (PM generation included), assigning and taking them, notes, labor and parts, waiting on parts, and cancelling. History imported
+from another system (apps.workorders.legacy) is written in its final state without change_status, so a hold never refuses it.
 """
 from dataclasses import dataclass
 from datetime import date, timedelta
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import Case, Q, Value, When
+from django.db.models import BooleanField, Case, Exists, OuterRef, Q, Value, When
 from django.utils import timezone
 
 from apps.equipment.models import AssetStatus
@@ -92,14 +100,21 @@ def create_work_order(*, asset, type, priority, problem, requester="", source=So
 
 @transaction.atomic
 def change_status(wo: WorkOrder, to_status: str, by=None, note: str = "", as_of=None) -> WorkOrder:
+    """Move `wo` along ALLOWED_TRANSITIONS, with a status history row. Slice 28: a start or a completion (HOLD_MOVES) of a work order
+    whose device is held as evidence is refused in words (held_work_message) unless it is the investigation of an open incident holding
+    the device, read on the device's row locked after the work order's (_lock_for_hold)."""
     as_of = as_of or timezone.localdate()
     if to_status not in ALLOWED_TRANSITIONS[wo.status]:
         raise ValidationError(f"Cannot move {wo.number} from {wo.get_status_display()} to {to_status}.")
-    if to_status in (WoStatus.IN_PROGRESS, WoStatus.COMPLETED) and as_of < wo.opened_on:
+    if to_status in HOLD_MOVES and as_of < wo.opened_on:
         raise ValidationError(f"{wo.number} cannot be started or completed before it was opened on {wo.opened_on:%b %-d, %Y}.")
     note = (note or "").strip()
     if len(note) > STATUS_NOTE_MAX:  # the API passes its note straight in; PostgreSQL refuses longer text (a 500, not a 400)
         raise ValidationError({"note": f"Keep the note to {STATUS_NOTE_MAX} characters."})
+    if to_status in HOLD_MOVES:
+        device = _lock_for_hold(wo)
+        if _held_from(wo, device):
+            raise ValidationError(held_work_message(device))
     from_status = wo.status
     wo.status = to_status
     if to_status == WoStatus.IN_PROGRESS:
@@ -132,6 +147,73 @@ def _still_waiting(asset) -> bool:
     from apps.equipment.models import Asset
 
     return Asset.objects.filter(pk=asset.pk, awaiting_inspection=True).exists()
+
+
+# --- a device held as evidence (slice 28) -----------------------------------------------------------
+
+HOLD_MOVES = (WoStatus.IN_PROGRESS, WoStatus.COMPLETED)  # the moves a device's hold refuses to all but its investigation
+
+
+def held_work_message(asset) -> str:
+    """Why a work order on a device held as evidence does not start or complete: change_status's refusal and completion.blocker's
+    words. No incident number: whoever reads it may not see incidents (Work orders Edit is enough to try)."""
+    return f"{asset.tag} is held as evidence for an incident investigation: only its investigation work order may be started or completed."
+
+
+def _held_from(wo: WorkOrder, asset) -> bool:
+    """Whether `asset` (the device of `wo`, as read by the caller) is held as evidence and `wo` is not the investigation of an open
+    incident holding it (incidents.services.investigation_of, by identity, never by type). The incidents are read only for a held
+    device."""
+    if not asset.incident_hold:
+        return False
+    from apps.incidents.services import investigation_of  # apps.incidents imports this app
+
+    return wo.pk not in investigation_of(asset)
+
+
+def _lock_for_hold(wo: WorkOrder):
+    """The device of `wo` as it is now, locked until the transaction ends, for change_status's hold check. In the established order:
+    the work order's row (an incoming inspection's after the device's open inspections, as completing one takes them:
+    inspections.lock_open), then the device's row. A work order of another type takes no inspection: nothing after this in its
+    transaction waits on one, and taking them here would put them after the device's row where a failed PM's repair or tag-out has
+    already locked it (completion.complete_work_order opens that repair, its number first, before the start)."""
+    from apps.equipment.models import Asset
+
+    from . import inspections
+
+    if wo.type == WoType.INSPECTION:
+        inspections.lock_open(wo.asset_id)
+    list(WorkOrder.objects.select_for_update().filter(pk=wo.pk).values_list("pk", flat=True))
+    return Asset.objects.select_for_update().only("pk", "tag", "incident_hold").get(pk=wo.asset_id)
+
+
+def hold_blocker(wo: WorkOrder) -> str:
+    """Why `wo` may not be started or completed because its device is held as evidence (held_work_message), or "": read now, without a
+    lock, for what a screen offers and for completion.blocker (change_status checks again on the locked row)."""
+    from apps.equipment.models import Asset
+
+    asset = Asset.objects.only("pk", "tag", "incident_hold").get(pk=wo.asset_id)
+    return held_work_message(asset) if _held_from(wo, asset) else ""
+
+
+def with_held(qs):
+    """Work orders `qs` annotated `held`: True for one its device's hold keeps from starting or completing (the device is held as
+    evidence and the work order is not the investigation of an open incident holding it), in the same query. For lists that show
+    the moves (My work's cards); change_status decides on the locked row."""
+    from apps.incidents.models import IncidentHold
+    from apps.incidents.models import Status as IncidentStatus
+
+    investigation = IncidentHold.objects.filter(asset_id=OuterRef("asset_id"), released_on__isnull=True, incident__status=IncidentStatus.OPEN,
+                                                incident__work_order=OuterRef("pk"))
+    return qs.annotate(held=Case(When(asset__incident_hold=False, then=Value(False)), When(Exists(investigation), then=Value(False)),
+                                 default=Value(True), output_field=BooleanField()))
+
+
+def _still_held(asset) -> bool:
+    """Whether the device is held as evidence (slice 28), read from the database: the copy a work order holds may predate the hold."""
+    from apps.equipment.models import Asset
+
+    return Asset.objects.filter(pk=asset.pk, incident_hold=True).exists()
 
 
 def pm_schedule_anchor(wo: WorkOrder, done_on: date, w=None) -> date:
@@ -185,8 +267,9 @@ def _on_completed(wo: WorkOrder, as_of, by=None):
         # repair. A device out of service for another reason (quarantined by hand) stays out until someone returns it from its
         # drawer, and one waiting for its incoming inspection (slice 26) until the inspection passes. And only when no other open
         # repair holds it out too (a second tagged-out request, or the repair a failed PM opened: apps.workorders.completion): the
-        # last of them returns it.
-        if not holding_repairs(asset, exclude=wo).exists() and not _still_waiting(asset):
+        # last of them returns it. Slice 28: never a device held as evidence (the investigation's own completion included): only the
+        # incident's release returns it.
+        if not holding_repairs(asset, exclude=wo).exists() and not _still_waiting(asset) and not _still_held(asset):
             asset.status = AssetStatus.IN_SERVICE
             asset.save(update_fields=["status", "updated_at"])
 
