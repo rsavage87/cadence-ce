@@ -131,6 +131,29 @@ def incoming_banner(asset, user):
 
 
 @register.simple_tag
+def incident_box(asset, user):
+    """The device drawer's hold banner and Record incident offer for `user` (slice 28; apps.web.asset_tabs.incident_box):
+    `{% incident_box asset request.user as ib %}`, then ib.hold (None when not held) and ib.record."""
+    from ..asset_tabs import incident_box as box  # asset_tabs imports this module
+
+    return box(asset, user)
+
+
+@register.simple_tag
+def held_chip():
+    """The "Held" chip (slice 28): a work order the device's hold keeps from starting or completing, a held device on the PM day list."""
+    return format_html('<span class="chip {}" title="{}">{}</span>', HELD_CSS, "Held as evidence for an incident investigation", "Held")
+
+
+@register.simple_tag
+def held_words():
+    """apps.incidents.services.HELD_WORDS (slice 28): a hold in words for anyone, a scoped user included (no incident number)."""
+    from apps.incidents.services import HELD_WORDS
+
+    return HELD_WORDS
+
+
+@register.simple_tag
 def local_now():
     """Now in the time zone at work (the facility's, in a request): `{% local_now as at %}{{ at|date:"g:i A T" }}`. Unlike Django's
     {% now %}, which reads the system clock itself, this reads django.utils.timezone.now like the rest of the app."""

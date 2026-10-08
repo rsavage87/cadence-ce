@@ -1,0 +1,23 @@
+{% load web %}
+{# Re-fetches itself when a drawer action changes an incident. Phone-friendly cards: the rail is the report clock's colour. #}
+<div id="inc-body" class="inc-body" hx-get="{{ list_url }}{% query request.GET %}" hx-trigger="incidents-changed from:body" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap">
+  {% if oob_summary %}{% include "web/_incidents_summary.html" %}{% endif %}{# the page head's line, refreshed with the list #}
+  {% if f.year %}<p class="hint inc-3419">{{ f.year }}: the incidents that happened that year and those whose report went out that year. Exported, this is {{ form_3419 }}.</p>{% endif %}
+  <div class="panel"><div class="panel-b">
+    <div class="list inc-list">
+      {% for r in rows %}{% with i=r.i %}
+      <a class="li" href="{% url 'web:incident' i.number %}" hx-get="{% url 'web:incident' i.number %}" hx-target="#drawer">
+        <span class="rail {{ r.clock.rail }}"></span>
+        <div class="bd">
+          <div class="t">{{ i.number }} · {{ i.asset.tag }} {{ i.asset.device_model.description }}</div>
+          <div class="s">{{ i.occurred_on|date:"M j, Y" }} · {{ r.outcome }} · {{ i.get_affected_display }} · {{ i.asset.department }}</div>
+        </div>
+        <div class="r">{% if i.status != "open" %}<span class="chip {% if i.status == 'closed' %}ok{% else %}neutral{% endif %}">{{ i.get_status_display }}</span>{% elif r.clock.chip %}<span class="chip {{ r.clock.chip.0 }}">{{ r.clock.chip.1 }}</span>{% else %}<span class="chip neutral">Open</span>{% endif %}{% if i.held_now %}<span class="inc-held">Device held</span>{% endif %}</div>
+      </a>
+      {% endwith %}{% empty %}
+      <div class="empty">{% if f.status or f.year %}No incidents match these filters.{% else %}No incidents recorded. Record one when a device in Cadence is suspected in an event.{% endif %}</div>
+      {% endfor %}
+    </div>
+  </div></div>
+  {% if page.paginator.num_pages > 1 %}{% include "web/_pager.html" with noun="incidents" target="#inc-body" %}{% endif %}
+</div>

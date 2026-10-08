@@ -1,0 +1,56 @@
+{% load web %}
+{% comment %}Record incident (slice 28, views_incidents.incident_new). The device (from the drawer that opened it, or searched by tag), the
+   facts, the hold, the investigation (the request it was reported as, taken over, or a new work order), then the facility's event
+   report number under its own heading. The due date (#inc-due) re-fetches as the fields change. No free text anywhere: the narrative
+   is in the facility's event report. "None for now" shows only while the hold is off (CSS :has; the service refuses it with a hold
+   anyway).{% endcomment %}
+<div class="modal-h"><h2>Record incident</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+<form id="inc-form" class="inc-form" hx-post="{% url 'web:incident_new' %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  {{ form.asset }}
+  {% if fixed %}<input type="hidden" name="work_order" value="{{ fixed.number }}">{% endif %}
+  <input type="hidden" name="shown" value="1">
+  <div class="form">
+    <label class="full sugg-host">Device
+      {% if asset and fixed %}
+        <input value="{{ asset.tag }} · {{ asset.device_model.description }}" readonly aria-describedby="inc-asset-hint">
+      {% elif asset %}
+        <input id="inc-asset-q" name="asset_q" autocomplete="off" value="{{ asset.tag }} · {{ asset.device_model.description }}" aria-describedby="inc-asset-hint"
+               hx-get="{% url 'web:incident_devices' %}" hx-trigger="input changed delay:250ms" hx-target="#inc-sugg" hx-include="this">
+      {% else %}
+        <input id="inc-asset-q" name="asset_q" autocomplete="off" autofocus placeholder="Scan or type the asset tag, serial, or model"
+               hx-get="{% url 'web:incident_devices' %}" hx-trigger="input changed delay:250ms" hx-target="#inc-sugg" hx-include="this">
+      {% endif %}
+      {% if asset %}<span class="hint" id="inc-asset-hint">{{ asset.device_model }} · {{ asset.department }}{% if asset.serial %} · SN {{ asset.serial }}{% endif %} · {{ asset.get_status_display }}</span>{% endif %}
+      <div class="sugg" id="inc-sugg"></div>
+      {% if form.asset.errors %}<span class="err" role="alert">{{ form.asset.errors|striptags }}</span>{% endif %}
+    </label>
+    <div class="full note inc-keep"><b>Keep it as found.</b> Tag it, and keep the tubing, disposables, and accessories with it. Don't change its settings, power-cycle it, clean it, or download its log yourself.</div>
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    <label>{{ form.occurred_on.label }}{{ form.occurred_on }}{% if form.occurred_on.errors %}<span class="err">{{ form.occurred_on.errors|striptags }}</span>{% endif %}</label>
+    <label>{{ form.aware_on.label }}{{ form.aware_on }}<span class="hint">{{ form.aware_on.help_text }}</span>{% if form.aware_on.errors %}<span class="err">{{ form.aware_on.errors|striptags }}</span>{% endif %}</label>
+    <label>{{ form.outcome.label }}{{ form.outcome }}{% if form.outcome.errors %}<span class="err">{{ form.outcome.errors|striptags }}</span>{% endif %}</label>
+    <label>{{ form.affected.label }}{{ form.affected }}{% if form.affected.errors %}<span class="err">{{ form.affected.errors|striptags }}</span>{% endif %}</label>
+    <div class="full" id="inc-due" aria-live="polite" hx-get="{% url 'web:incident_due' %}" hx-trigger="change from:#inc-form" hx-include="#inc-form" hx-target="this" hx-swap="innerHTML">{% include "web/_incident_due.html" %}</div>
+    <div class="full">
+      <label class="check-row inc-hold">{% if can_hold %}{{ form.hold }}{% else %}<input type="checkbox" name="hold" disabled>{% endif %} {{ form.hold.label }}: it is tagged out, and nobody uses, repairs, or tests it until the incident releases it</label>
+      {% if not can_hold %}<span class="hint">Holding a device needs Incidents Edit and Equipment Edit.</span>{% endif %}
+      {% if form.hold.errors %}<span class="err" role="alert">{{ form.hold.errors|striptags }}</span>{% endif %}
+    </div>
+    <fieldset class="full inc-inv"{% if form.investigation.errors %} aria-describedby="inc-investigation_error"{% endif %}>
+      <legend>Investigation</legend>
+      <div class="radio">
+        {% for wo in choices %}<label><input type="radio" name="investigation" value="{{ wo.number }}"{% if chosen == wo.number %} checked{% endif %}><span>Take {{ wo.number }} as the investigation<small>{% if fixed %}The request it was reported as{% else %}{{ wo.get_type_display }}{% endif %}: opened {{ wo.opened_on|date:"M j" }}, {{ wo.get_status_display|lower }}{% if wo.assigned_to %}, {{ wo.assigned_to.name }}{% elif wo.vendor_service %}, {{ wo.vendor_name }}{% endif %}. It keeps its assignee, time, and tag-out.</small></span></label>{% endfor %}
+        {% if not fixed %}
+        <label><input type="radio" name="investigation" value="{{ new }}"{% if chosen == new %} checked{% endif %}{% if not can_open %} disabled{% endif %}><span>Open an investigation work order<small>A repair, high priority, tagged out, unassigned.{% if not can_open %} Opening one needs Work orders Edit.{% endif %}</small></span></label>
+        <label class="inc-if-nohold"><input type="radio" name="investigation" value="{{ none }}"{% if chosen == none %} checked{% endif %}><span>None for now<small>Only for a device that is not held.</small></span></label>
+        {% endif %}
+      </div>
+      {% if form.investigation.errors %}<span class="err" id="inc-investigation_error" role="alert">{{ form.investigation.errors|striptags }}</span>{% endif %}
+    </fieldset>
+    <label>{{ form.accessories.label }}{{ form.accessories }}{% if form.accessories.errors %}<span class="err">{{ form.accessories.errors|striptags }}</span>{% endif %}</label>
+    <label>{{ form.event_log.label }}{{ form.event_log }}{% if form.event_log.errors %}<span class="err">{{ form.event_log.errors|striptags }}</span>{% endif %}</label>
+    <h3 class="full inc-sub">Your facility's safety event report</h3>
+    <label class="full">{{ form.event_reference.label }}{{ form.event_reference }}<span class="hint">{{ form.event_reference.help_text }}</span>{% if form.event_reference.errors %}<span class="err">{{ form.event_reference.errors|striptags }}</span>{% endif %}</label>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Record incident</button></div>
+</form>

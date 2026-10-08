@@ -33,6 +33,10 @@ from apps.equipment import services as eq_services
 from apps.equipment.models import Asset
 from apps.equipment.services import FleetBucket, asset_service_summary, filter_assets, fleet_summary, search_assets
 from apps.facility.services import asset_request_url, get_settings
+from apps.incidents import permissions as inc_perms
+from apps.incidents import services as inc_services
+from apps.incidents.models import Incident
+from apps.incidents.models import Status as IncidentStatus
 from apps.recalls.models import AlertMatch
 from apps.reports.services import overview_page
 from apps.workorders import inspections, scoping
@@ -257,6 +261,9 @@ def _wo_drawer_context(request, wo) -> dict:
     actions = [] if unassigned else [{"to": to, "label": label, "primary": primary} for to, label, primary in WO_ACTIONS.get(wo.status, [])
                                      if to in ALLOWED_TRANSITIONS[wo.status] and wo_perms.can_transition(user, wo.status, to)]
     actions = views_wo_complete.drawer_actions(user, wo, actions)  # slice 24: Mark completed on a PM still open, in one step
+    held_by = wo_services.hold_blocker(wo)  # slice 28: the device is held as evidence and this is not the incident's investigation
+    if held_by:
+        actions = [a for a in actions if a["to"] not in wo_services.HOLD_MOVES]
     is_open = wo.status in OPEN_STATUSES
     can_assign = is_open and wo_perms.can_assign(user) and not scoped  # wo_assign refuses scoped users
     current = VENDOR if wo.vendor_service else (str(wo.assigned_to_id) if wo.assigned_to_id else "")
@@ -283,9 +290,36 @@ def _wo_drawer_context(request, wo) -> dict:
         "labor_hours": sum(float(line.hours) for line in wo.labor_lines.all()),
         "is_portal": wo.source == Source.PORTAL,
         "recall_match": recall_match,
+        **_wo_incident_context(user, wo, held_by, scoped),
         **views_wo_costs.costs_context(request, wo),
         **views_wo_complete.results_context(request, wo),
     }
+
+
+INVESTIGATION_HELD_WORDS = "Held by Clinical Engineering: this work order is the only work allowed on the device while it is held."
+
+
+def _wo_incident_context(user, wo, held_by: str, scoped: bool) -> dict:
+    """Slice 28, the work order drawer's incident parts (under "incident"). `links`: the incidents this work order is the investigation
+    of (Incidents View only; the number is never a scoped user's); `hold`: the device's hold in words when it is held (the incident's
+    number and link for Incidents View, apps.incidents.services.HELD_WORDS for everyone else); `blocked`: this work order may not start
+    or complete while the hold lasts (workorders.services.hold_blocker); `record`: "Record incident on this device" on an open repair
+    that is not already an open incident's investigation (Incidents Edit, not scoped); `placeholder`: the note box's, which on an
+    incident's work order asks for technical findings only (services.NOTES_PLACEHOLDER)."""
+    can_view = inc_perms.can_view(user)
+    rows = list(Incident.objects.filter(work_order=wo).order_by("-occurred_on", "-number").only("number", "status", "occurred_on"))
+    hold = None
+    if wo.asset.incident_hold:
+        hold = inc_services.hold_words(wo.asset, user)
+        if hold is not None and not held_by:  # this is the investigation the hold lets through
+            hold = {**hold, "text": INVESTIGATION_HELD_WORDS} if not can_view else None
+    record = (wo.type == WoType.REPAIR and wo.status in OPEN_STATUSES and not scoped and inc_perms.can_record(user)
+              and not any(r.status == IncidentStatus.OPEN for r in rows))
+    return {"incident": {"links": rows if can_view else [], "hold": hold, "blocked": bool(held_by), "record": record,
+                         "placeholder": inc_services.NOTES_PLACEHOLDER if rows else NOTE_PLACEHOLDER}}
+
+
+NOTE_PLACEHOLDER = "Add a note (no patient information)"
 
 
 def get_wo(request, number):

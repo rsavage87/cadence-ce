@@ -1,0 +1,21 @@
+{% load web %}
+{% comment %}Release a hold (slice 28, views_incidents.incident_hold_release; services.release, Incidents Approve; returning a device to
+   use also Equipment Edit). What each choice does is under it; the service refuses one that does not apply yet, in words.{% endcomment %}
+<div class="modal-h"><h2>Release {{ hold.asset.tag }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="incl-form" hx-post="{% url 'web:incident_hold_release' i.number hold.pk %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    <p class="full hint">{{ hold.asset.tag }} · {{ hold.asset.device_model.description }}, held for {{ i.number }} since {{ hold.held_on|date:"M j, Y" }}{% if hold.with_manufacturer %}; with the manufacturer since {{ hold.sent_on|date:"M j" }}{% endif %}.</p>
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    <fieldset class="full inc-release"{% if form.release.errors %} aria-describedby="incl-release_error"{% endif %}>
+      <legend>{{ form.release.label }}</legend>
+      <div class="radio">{% for radio in form.release %}<label for="{{ radio.id_for_label }}">{{ radio.tag }}<span>{{ radio.choice_label }}<small>{% for k, w in words.items %}{% if k == radio.data.value %}{{ w }}{% endif %}{% endfor %}{% if radio.data.value == "return_to_use" and not can_return %} Returning a device to use needs Equipment Edit.{% endif %}</small></span></label>{% endfor %}</div>
+      {% if form.release.errors %}<span class="err" id="incl-release_error" role="alert">{{ form.release.errors|striptags }}</span>{% endif %}
+    </fieldset>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Release</button></div>
+</form>
+{% endif %}

@@ -1,0 +1,23 @@
+{% load web %}
+{% comment %}Hold another device (slice 28, views_incidents.incident_hold; services.hold_device): another part of the system (a pump's
+   channel module, the generator an accessory was used with). Search by tag; the device picked comes back in this modal.{% endcomment %}
+<div class="modal-h"><h2>{{ i.number }}: hold another device</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="inch-form" hx-post="{% url 'web:incident_hold' i.number %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  {% if asset %}<input type="hidden" name="asset" value="{{ asset.tag }}">{% endif %}
+  <div class="form">
+    <label class="full sugg-host">Device
+      <input id="inch-asset-q" name="asset_q" autocomplete="off"{% if asset %} value="{{ asset.tag }} · {{ asset.device_model.description }}"{% else %} autofocus placeholder="Scan or type the asset tag, serial, or model"{% endif %}
+             hx-get="{% url 'web:incident_devices' %}?incident={{ i.number|urlencode }}" hx-trigger="input changed delay:250ms" hx-target="#inch-sugg" hx-include="this">
+      {% if asset %}<span class="hint">{{ asset.device_model }} · {{ asset.department }} · {{ asset.get_status_display }}</span>{% endif %}
+      <div class="sugg" id="inch-sugg"></div>
+    </label>
+    {% if error %}<div class="full"><span class="err" role="alert">{{ error }}</span></div>{% endif %}
+    <p class="full hint">The device is tagged out and held with {{ i.asset.tag }}: nobody uses, repairs, or tests it until the incident releases it. Keep it as found.</p>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit"{% if not asset %} disabled{% endif %}>Hold it</button></div>
+</form>
+{% endif %}

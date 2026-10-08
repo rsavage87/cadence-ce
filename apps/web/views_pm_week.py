@@ -45,9 +45,16 @@ def assigned_message(done: WeekAssignment) -> str:
         return f"{_plural(c, 'PM work order')} created, none assigned: nobody is credentialed for {'this device' if c == 1 else 'these devices'}"
     if u:
         return f"Nothing to assign: {_plural(u, 'PM')} this week still {'needs' if u == 1 else 'need'} a credentialed technician"
+    on_hold = len(getattr(done, "on_hold", ()))  # slice 28: devices held as evidence (a summary from before slice 28 has none)
+    if on_hold and not done.held:  # only devices held as evidence are due
+        return f"Nothing to assign: {held_devices(on_hold)} due this week {'is' if on_hold == 1 else 'are'} held for an incident investigation"
     if done.held:
         return "Nothing to assign: every PM due this week is already with a technician or the vendor"
     return "Nothing to assign: no PMs are due this week"
+
+
+def held_devices(n: int) -> str:
+    return "the device" if n == 1 else f"the {n} devices"
 
 
 def _context(w: WeekAssignment) -> dict:
@@ -56,7 +63,9 @@ def _context(w: WeekAssignment) -> dict:
     else:
         confirm = f"Create {_plural(w.created, 'PM work order')}"
     return {"w": w, "uncovered": w.uncovered[:UNCOVERED_LIMIT], "uncovered_more": max(0, w.unassigned - UNCOVERED_LIMIT),
-            "confirm": confirm}
+            "confirm": confirm,
+            # slice 28: the devices held as evidence, by tag (the rest counted): nobody may start their PMs, so none is created or assigned
+            "on_hold": w.on_hold[:UNCOVERED_LIMIT], "on_hold_more": max(0, len(w.on_hold) - UNCOVERED_LIMIT)}
 
 
 @require_http_methods(["GET", "POST"])

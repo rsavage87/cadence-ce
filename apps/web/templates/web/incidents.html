@@ -1,7 +1,20 @@
 {% extends "web/base.html" %}
+{% load web %}
 {% block title %}Incidents{% endblock %}
 {% block content %}
-<div class="page-head"><div><h1>Incidents</h1></div></div>
-{# Slice 28 scaffold: wave 2 builds the list and the drawer. #}
-<div class="panel"><div class="panel-b">{% for inc in incidents %}<div>{{ inc.number }} · {{ inc.asset.tag }}</div>{% empty %}<div class="note">No incidents recorded.</div>{% endfor %}</div></div>
+{% comment %}Slice 28 (views_incidents): device incidents. The Contracts pattern: filters that re-fetch the body, cards that open the drawer
+   (the page renders with it open when an incident's address is opened directly). Incidents View; Record incident for Incidents Edit.{% endcomment %}
+<div class="page-head">
+  <div><h1>Incidents</h1>{% include "web/_incidents_summary.html" %}</div>
+  <div class="actions">
+    {% query request.GET page=None as inc_q %}<a class="btn" href="{% url 'web:incidents_csv' %}{{ inc_q }}" data-act="with-filters" data-base="{% url 'web:incidents_csv' %}" download title="Download the incidents in this list as CSV; filtered to a year, {{ form_3419 }}">{% icon "dl" %} Export</a>
+    {% if can_record %}<button class="btn primary" type="button" hx-get="{% url 'web:incident_new' %}" hx-target="#modal-card">{% icon "plus" %} Record incident</button>{% endif %}
+  </div>
+</div>
+<form class="toolbar" id="inc-filters" method="get" action="{{ list_url }}"
+      hx-get="{{ list_url }}" hx-trigger="change, submit" hx-target="#inc-body" hx-swap="outerHTML" hx-push-url="true">
+  <label class="field"><span>Status</span><select name="status" aria-label="Status">{% for v, l in statuses %}<option value="{{ v }}"{% if f.status == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+  <label class="field"><span>Year</span><select name="year" aria-label="Year"><option value="">All years</option>{% for y in years %}<option value="{{ y }}"{% if f.year == y %} selected{% endif %}>{{ y }}</option>{% endfor %}</select></label>
+</form>
+{% include "web/_incidents_body.html" %}
 {% endblock %}

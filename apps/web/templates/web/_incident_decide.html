@@ -1,0 +1,27 @@
+{% load web %}
+{% comment %}The reportability decision (slice 28, views_incidents.incident_decide; services.decide, Incidents Approve). It asks 21 CFR
+   803.3's question; the deliberations themselves are in the facility's event report, whose number the decision points to (asked here
+   when none is on file).{% endcomment %}
+<div class="modal-h"><h2>{{ i.number }}: was it reportable?</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="incd-form" class="inc-decide" hx-post="{% url 'web:incident_decide' i.number %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    <p class="full inc-question">Does the information reasonably suggest that {{ i.asset.tag }} has or may have caused or contributed to a death or a serious injury of a patient of the facility, or of a staff member on duty? Use error counts. If the device cannot be ruled out, it is reportable.</p>
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    <label class="full">{{ form.outcome.label }}{{ form.outcome }}<span class="hint">Recorded as: {{ i.get_outcome_display }}. Who was affected: {{ i.get_affected_display|lower }}.</span>{% if form.outcome.errors %}<span class="err">{{ form.outcome.errors|striptags }}</span>{% endif %}</label>
+    <fieldset class="full inc-basis"{% if form.basis.errors %} aria-describedby="incd-basis_error"{% endif %}>
+      <legend>{{ form.basis.label }}</legend>
+      <div class="radio">{% for radio in form.basis %}<label for="{{ radio.id_for_label }}">{{ radio.tag }}<span>{% if radio.data.value == "may_have" %}Reportable: {% else %}Not reportable: {% endif %}{{ radio.choice_label }}</span></label>{% endfor %}</div>
+      {% if form.basis.errors %}<span class="err" id="incd-basis_error">{{ form.basis.errors|striptags }}</span>{% endif %}
+    </fieldset>
+    <label>{{ form.decided_on.label }}{{ form.decided_on }}{% if form.decided_on.errors %}<span class="err">{{ form.decided_on.errors|striptags }}</span>{% endif %}</label>
+    <label>{{ form.decided_by.label }}{{ form.decided_by }}{% if form.decided_by.errors %}<span class="err">{{ form.decided_by.errors|striptags }}</span>{% endif %}</label>
+    {% if form.event_reference %}<label class="full">{{ form.event_reference.label }}{{ form.event_reference }}<span class="hint">{{ form.event_reference.help_text }}</span>{% if form.event_reference.errors %}<span class="err">{{ form.event_reference.errors|striptags }}</span>{% endif %}</label>
+    {% else %}<p class="full hint">The deliberations are in event report {{ i.event_reference }}.</p>{% endif %}
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Record the decision</button></div>
+</form>
+{% endif %}

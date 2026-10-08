@@ -1,12 +1,13 @@
 {% load web %}
 {% comment %}Auto-assign week (slice 14, views_pm_week): what the button does over the next 7 days, from the week plan the day list and
    the workload show. Per technician, the PMs they get (new work orders, and open ones on nobody's plate) and the hours; the devices
-   nobody is credentialed for; what is already held; and the overdue devices it leaves alone. With nothing to do there is no button.{% endcomment %}
+   nobody is credentialed for; what is already held; and the overdue devices it leaves alone. With nothing to do there is no button.
+   Slice 28: the devices held as evidence for an incident investigation (w.on_hold): named, and why they get no PM this week.{% endcomment %}
 <div class="modal-h"><h2>Auto-assign week</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
 <div class="form pm-week">
   <p class="full hint">{{ w.start|date:"M j" }} to {{ w.end|date:"M j, Y" }}. Each PM due goes to the least-loaded credentialed technician, day by day: the technician the day list names.</p>
   {% if w.nothing_to_do %}
-  <div class="full note">{% if w.unassigned %}Nothing to assign: the PMs this week that are on nobody's plate need a credentialed technician.{% elif w.held %}Nothing to assign: every PM due this week is already with a technician or the vendor.{% else %}Nothing to assign: no PMs are due this week.{% endif %}</div>
+  <div class="full note">{% if w.unassigned %}Nothing to assign: the PMs this week that are on nobody's plate need a credentialed technician.{% elif w.on_hold and not w.held %}Nothing to assign: the PMs due this week are on devices held for an incident investigation.{% elif w.held %}Nothing to assign: every PM due this week is already with a technician or the vendor.{% else %}Nothing to assign: no PMs are due this week.{% endif %}</div>
   {% else %}
   <div class="full stats">
     <div class="stat"><div class="v">{{ w.assigned }}</div><div class="l">PM{{ w.assigned|pluralize }} to assign</div></div>
@@ -21,6 +22,7 @@
   {% endif %}
   {% endif %}
   {% if w.uncovered %}<div class="full note warn" role="status">Nobody is credentialed for {{ w.unassigned }} device{{ w.unassigned|pluralize }}: {% for u in uncovered %}{{ u.asset.tag }} ({{ u.asset.device_model.description }}, due {{ u.asset.next_pm_on|date:"M j" }}){% if not forloop.last %}, {% endif %}{% endfor %}{% if uncovered_more %}, and {{ uncovered_more }} more{% endif %}. {% if w.unassigned == 1 %}Its PM stays{% else %}Their PMs stay{% endif %} unassigned{% if w.unassigned_new %}; {{ w.unassigned_new }} work order{{ w.unassigned_new|pluralize }} {{ w.unassigned_new|pluralize:"is,are" }} still created for a manager to assign{% endif %}.</div>{% endif %}
+  {% with n=w.on_hold|length %}{% if n %}<div class="full note" role="status">{{ n }} device{{ n|pluralize }} due this week {{ n|pluralize:"is,are" }} held as evidence for an incident investigation: {% for h in on_hold %}{{ h.asset.tag }} ({{ h.asset.device_model.description }}, due {{ h.asset.next_pm_on|date:"M j" }}){% if not forloop.last %}, {% endif %}{% endfor %}{% if on_hold_more %}, and {{ on_hold_more }} more{% endif %}. Nobody may start {{ n|pluralize:"its,their" }} PM while {{ n|pluralize:"it is,they are" }} held, so Auto-assign week neither creates nor assigns {{ n|pluralize:"it,them" }}{% if n == 1 %}; it waits{% else %}; they wait{% endif %} for the incident's release.</div>{% endif %}{% endwith %}
   {% if w.held %}<p class="full hint">{{ w.held }} PM{{ w.held|pluralize }} already with a technician or the vendor {{ w.held|pluralize:"stays,stay" }} as {{ w.held|pluralize:"it is,they are" }}.</p>{% endif %}
   {% if w.overdue_to_create or w.overdue_waiting %}<div class="full note">Overdue PMs (due before {{ w.start|date:"M j" }}) are outside this week and not assigned here.{% if w.overdue_to_create %} {{ w.overdue_to_create }} device{{ w.overdue_to_create|pluralize:" has,s have" }} no PM work order: open {{ w.overdue_to_create|pluralize:"its day,their days" }} on the calendar (the red counts) to create {{ w.overdue_to_create|pluralize:"it,them" }}.{% endif %}{% if w.overdue_waiting %} {{ w.overdue_waiting }} open PM work order{{ w.overdue_waiting|pluralize:" is,s are" }} on nobody's plate: assign {{ w.overdue_waiting|pluralize:"it,them" }} from <a href="{% url 'web:workorders' %}?type=pm&amp;assigned=unassigned">Work orders</a>.{% endif %}</div>{% endif %}
 </div>
