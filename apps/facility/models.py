@@ -22,6 +22,24 @@ POLICY_DEFAULTS = {field: default for field, _label, default in POLICY}
 POLICY_MAX_LENGTH = 300
 
 
+class PmWindow(models.TextChoices):
+    """When a PM counts as on time (slice 27): the facility's written policy, one for life support and high risk and one for medium
+    and low. Read through apps.pm.windows (the one rule every on-time figure uses). The default is the mock's KPI: by the due date."""
+    DUE_DATE = "due_date", "By the due date"
+    DAYS_AFTER = "days_after", "Within a number of days after the due date"
+    DUE_MONTH = "due_month", "By the end of the due month"
+    NEXT_MONTH = "next_month", "By the end of the month after the due month"
+
+
+PM_WINDOW_DAYS_MAX = 45  # the widest tolerance in the Joint Commission's frequency table (a three-year PM, +/- 45 days)
+
+
+def _window_days_rule(kind: str, days: str) -> models.Q:
+    """A group's days are set (1 to PM_WINDOW_DAYS_MAX) with "days_after" and only with it."""
+    return (models.Q(**{kind: PmWindow.DAYS_AFTER, f"{days}__gte": 1, f"{days}__lte": PM_WINDOW_DAYS_MAX})
+            | (~models.Q(**{kind: PmWindow.DAYS_AFTER}) & models.Q(**{f"{days}__isnull": True})))
+
+
 class FacilitySettings(TenantModel):
     """One row per tenant. Read through apps.facility.services.get_settings() (which returns unsaved defaults when the
     tenant has never saved anything) and change only through the services, which validate and record who changed it."""
@@ -58,12 +76,21 @@ class FacilitySettings(TenantModel):
     # take", the new work order form's "Assign it to me"; apps.workorders.services.take). On by default; the rest a CE manager assigns.
     technicians_take_work = models.BooleanField(default=True, verbose_name="technicians may take unassigned work",
                                                 help_text="Technicians may take unassigned work they are credentialed for")
+    # The PM completion window (slice 27): when a PM counts as on time, for life support and high risk and for medium and low.
+    pm_window_high = models.CharField("PM on time, life support and high risk", max_length=20, choices=PmWindow.choices,
+                                      default=PmWindow.DUE_DATE)
+    pm_window_high_days = models.PositiveSmallIntegerField("PM on time, life support and high risk: days after the due date", null=True,
+                                                           blank=True)
+    pm_window_other = models.CharField("PM on time, medium and low risk", max_length=20, choices=PmWindow.choices, default=PmWindow.DUE_DATE)
+    pm_window_other_days = models.PositiveSmallIntegerField("PM on time, medium and low risk: days after the due date", null=True, blank=True)
     history = HistoricalRecords()
 
     class Meta:
         verbose_name = "facility settings"
         verbose_name_plural = "facility settings"
-        constraints = [models.UniqueConstraint(fields=["tenant"], name="uniq_facility_settings_per_tenant")]
+        constraints = [models.UniqueConstraint(fields=["tenant"], name="uniq_facility_settings_per_tenant"),
+                       models.CheckConstraint(condition=_window_days_rule("pm_window_high", "pm_window_high_days"), name="pm_window_high_days"),
+                       models.CheckConstraint(condition=_window_days_rule("pm_window_other", "pm_window_other_days"), name="pm_window_other_days")]
 
     def __str__(self):
         return "Facility settings"

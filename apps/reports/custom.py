@@ -56,7 +56,6 @@ from django.db.models import (
     ExpressionWrapper,
     F,
     FloatField,
-    Func,
     IntegerField,
     OrderBy,
     OuterRef,
@@ -70,6 +69,7 @@ from django.db.models.functions import Cast, Coalesce, Lower, NullIf, TruncDate,
 from django.utils import timezone
 from django.utils.text import slugify
 
+from apps.core.expressions import DayNumber
 from apps.credentials.models import Technician
 from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, RiskClass, SupportType
 from apps.pm.dates import month_bounds
@@ -115,22 +115,6 @@ _MONEY = DecimalField(max_digits=14, decimal_places=2)
 _DECIMAL = DecimalField(max_digits=14, decimal_places=2)  # hours and quantities
 _INT = IntegerField()
 _EPOCH = date(1970, 1, 1)
-
-
-class DayNumber(Func):
-    """A date as its number of days since 1970-01-01, the same integer on SQLite and PostgreSQL, so date arithmetic (days open,
-    age) stays in the database where it sorts, averages, and groups. Django's own date subtraction gives a duration, which the two
-    databases average differently."""
-
-    output_field = IntegerField()
-
-    def as_sql(self, compiler, connection, **extra):  # PostgreSQL: a date minus a date is a number of days
-        sql, params = compiler.compile(self.source_expressions[0])
-        return f"(({sql}) - DATE '1970-01-01')", params
-
-    def as_sqlite(self, compiler, connection, **extra):
-        sql, params = compiler.compile(self.source_expressions[0])
-        return f"CAST(julianday({sql}) - 2440587.5 AS INTEGER)", params
 
 
 def _day_number(day: date) -> Value:

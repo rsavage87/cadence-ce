@@ -253,4 +253,9 @@ class FacilitySettingsSerializer(serializers.Serializer):
     vendor_labor_rate = serializers.DecimalField(max_digits=14, decimal_places=2, required=False)
     time_zone = serializers.CharField(required=False, allow_blank=True)  # slice 21: the facility's IANA time zone; set_time_zone checks it
     technicians_take_work = serializers.BooleanField(required=False)  # slice 24: technicians may take unassigned work they are credentialed for
+    # Slice 27: the PM completion window (apps.pm.windows); the service checks the kinds, the days, and how they go together
+    pm_window_high = serializers.CharField(required=False, allow_blank=True)
+    pm_window_high_days = serializers.IntegerField(required=False, allow_null=True)
+    pm_window_other = serializers.CharField(required=False, allow_blank=True)
+    pm_window_other_days = serializers.IntegerField(required=False, allow_null=True)
     updated_at = serializers.DateTimeField(read_only=True, allow_null=True)

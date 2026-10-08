@@ -240,7 +240,11 @@ LABELS = {
                                   "portal_confirmation": "Portal: confirmation", "portal_email_domains": "Portal: email domains",
                                   "target_pm_pct": "Target: PM completion", "target_uptime_pct": "Target: uptime",
                                   "target_mttr_days": "Target: mean time to repair", "repair_budget_monthly": "Monthly repair budget",
-                                  "labor_rate": "In-house labor rate", "vendor_labor_rate": "Vendor labor rate"},
+                                  "labor_rate": "In-house labor rate", "vendor_labor_rate": "Vendor labor rate",
+                                  "pm_window_high": "PM on time, life support and high risk",
+                                  "pm_window_high_days": "PM on time, life support and high risk: days after the due date",
+                                  "pm_window_other": "PM on time, medium and low risk",
+                                  "pm_window_other_days": "PM on time, medium and low risk: days after the due date"},
     "reports.customreport": {"group_by": "Grouped by", "sort": "Sorted by"},
     "tenants.tenant": {"slug": "Portal link name", "timezone": "Time zone", "is_active": "Can sign in"},
 }
@@ -259,7 +263,8 @@ KINDS = {
     "pm.aemdecision": {"interval_months": "months", "oem_interval_months": "months", "evidence": "evidence"},
     "accounts.role": {"scope": "role_scope"},
     "facility.facilitysettings": {"target_pm_pct": "percent", "target_uptime_pct": "percent", "target_mttr_days": "days",
-                                  "repair_budget_monthly": "money", "labor_rate": "rate", "vendor_labor_rate": "rate"},
+                                  "repair_budget_monthly": "money", "labor_rate": "rate", "vendor_labor_rate": "rate",
+                                  "pm_window_high_days": "days", "pm_window_other_days": "days"},
     "reports.customreport": {"columns": "report_columns", "filters": "report_filters", "group_by": "report_group", "sort": "report_sort"},
     "tenants.tenant": {"timezone": "zone"},
 }

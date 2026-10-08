@@ -36,7 +36,7 @@ from apps.equipment.models import Asset, RiskClass
 from apps.tenants.context import get_current_tenant
 from apps.tenants.models import Tenant
 
-from .models import POLICY, POLICY_DEFAULTS, POLICY_MAX_LENGTH, FacilitySettings
+from .models import PM_WINDOW_DAYS_MAX, POLICY, POLICY_DEFAULTS, POLICY_MAX_LENGTH, FacilitySettings, PmWindow
 
 PORTAL_FIELDS = ("portal_require_callback", "portal_hotline", "portal_confirmation", "portal_email_domains")
 POLICY_FIELDS = tuple(field for field, _label, _default in POLICY)
@@ -46,7 +46,12 @@ TARGET_FIELDS = ("target_pm_pct", "target_uptime_pct", "target_mttr_days", "repa
 RATE_FIELDS = ("labor_rate", "vendor_labor_rate")
 # Taking work (slice 24): whether technicians may take unassigned work they are credentialed for (apps.workorders.services.take).
 TAKE_FIELDS = ("technicians_take_work",)
-EDITABLE = PORTAL_FIELDS + POLICY_FIELDS + TARGET_FIELDS + RATE_FIELDS + TAKE_FIELDS
+# Slice 27: the PM completion window (apps.pm.windows), a kind and its days for each group.
+WINDOW_GROUPS = {"high": ("pm_window_high", "pm_window_high_days"), "other": ("pm_window_other", "pm_window_other_days")}
+WINDOW_KINDS = tuple(kind for kind, _days in WINDOW_GROUPS.values())
+WINDOW_DAYS = tuple(days for _kind, days in WINDOW_GROUPS.values())
+WINDOW_FIELDS = WINDOW_KINDS + WINDOW_DAYS
+EDITABLE = PORTAL_FIELDS + POLICY_FIELDS + TARGET_FIELDS + RATE_FIELDS + TAKE_FIELDS + WINDOW_FIELDS
 TOGGLES = ("portal_require_callback", "technicians_take_work")  # on or off, and nothing else
 
 # (field, label, low, high): the ranges a target may take. Life support and high risk PM stay at 100% (survey rule).
@@ -196,6 +201,12 @@ def _clean(fields: dict) -> dict:
             elif d is not None and d > BUDGET_MAX:
                 errors[field] = "That budget is too large."
             cleaned[field] = d
+        elif field in WINDOW_KINDS:
+            if value not in PmWindow.values:
+                errors[field] = "Choose when a PM counts as on time."
+            cleaned[field] = value
+        elif field in WINDOW_DAYS:
+            cleaned[field] = _window_days(value, field, errors)
         elif field in RATE_FIELDS:
             d = _decimal(value, field, errors)
             label = RATE_LABELS[field]
@@ -215,6 +226,69 @@ def _clean(fields: dict) -> dict:
     if errors:
         raise ValidationError(errors)
     return cleaned
+
+
+def _window_days(value, field: str, errors: dict):
+    """A whole number of days, 1 to PM_WINDOW_DAYS_MAX, or None (blank): never True, 14.5, "1e1", or "14 days"."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool) or not (isinstance(value, int) or (isinstance(value, str) and value.strip().isdigit())):
+        errors[field] = f"Enter a whole number of days, 1 to {PM_WINDOW_DAYS_MAX}."
+        return None
+    days = int(value)
+    if not 1 <= days <= PM_WINDOW_DAYS_MAX:
+        errors[field] = f"Enter a whole number of days, 1 to {PM_WINDOW_DAYS_MAX}."
+    return days
+
+
+def _check_window(cleaned: dict, s: FacilitySettings | None) -> None:
+    """The window on the saved row with this change applied (slice 27): "days after the due date" needs its days (sent or saved); any
+    other kind keeps none, so days sent with it, or sent alone while the saved kind takes none, are refused rather than silently
+    dropped. Days a kind no longer uses are cleared. Mutates `cleaned`."""
+    current = s or FacilitySettings()
+    errors = {}
+    for kind_field, days_field in WINDOW_GROUPS.values():
+        if kind_field not in cleaned and days_field not in cleaned:
+            continue
+        kind = cleaned.get(kind_field, getattr(current, kind_field))
+        days = cleaned[days_field] if days_field in cleaned else getattr(current, days_field)
+        if kind == PmWindow.DAYS_AFTER:
+            if days is None:
+                errors[days_field] = f"Say how many days after the due date (1 to {PM_WINDOW_DAYS_MAX})."
+        elif cleaned.get(days_field) is not None:
+            errors[days_field] = "Days apply only to \"Within a number of days after the due date\"."
+        else:
+            cleaned[days_field] = None
+    if errors:
+        raise ValidationError(errors)
+
+
+def _follow_window_in_policy(cleaned: dict, s: FacilitySettings | None) -> None:
+    """When a group's window changes and its PM policy line is still the default text for the old window, the line follows the new
+    window in the same save (the policy line and the measure never contradict each other by default); a line the facility wrote is
+    left alone (the survey binder checks it against the window). Mutates `cleaned`."""
+    from apps.pm import windows as pm_windows
+
+    current = s or FacilitySettings()
+    for group, (kind_field, days_field) in WINDOW_GROUPS.items():
+        policy_field = pm_windows.PM_POLICY_FIELDS[group]
+        if policy_field in cleaned or (kind_field not in cleaned and days_field not in cleaned):
+            continue
+        old = pm_windows.Window(getattr(current, kind_field), getattr(current, days_field))
+        new = pm_windows.Window(cleaned.get(kind_field, old.kind), cleaned[days_field] if days_field in cleaned else old.days)
+        if new != old and getattr(current, policy_field) == pm_windows.policy_default(group, old):
+            cleaned[policy_field] = pm_windows.policy_default(group, new)
+
+
+def policy_defaults(s: FacilitySettings | None = None) -> dict:
+    """The eight policy lines' default texts, the two PM lines following the facility's window (slice 27)."""
+    from apps.pm import windows as pm_windows
+
+    w = pm_windows.windows(s or get_settings())
+    out = dict(POLICY_DEFAULTS)
+    for group, field in pm_windows.PM_POLICY_FIELDS.items():
+        out[field] = pm_windows.policy_default(group, getattr(w, group))
+    return out
 
 
 def _locked_row():
@@ -246,6 +320,8 @@ def update_settings(by=None, **fields) -> FacilitySettings:
         s = _locked_row()
         if s is None:
             _check_portal_email(cleaned, None)
+            _check_window(cleaned, None)
+            _follow_window_in_policy(cleaned, None)
             s = FacilitySettings(**cleaned)
             if by is not None:
                 s._history_user = by
@@ -256,6 +332,8 @@ def update_settings(by=None, **fields) -> FacilitySettings:
             except IntegrityError:
                 s = FacilitySettings.objects.select_for_update().get()
         _check_portal_email(cleaned, s)
+        _check_window(cleaned, s)
+        _follow_window_in_policy(cleaned, s)
         for field, value in cleaned.items():
             setattr(s, field, value)
         if by is not None:
@@ -265,14 +343,15 @@ def update_settings(by=None, **fields) -> FacilitySettings:
 
 
 def reset_policy(by=None) -> FacilitySettings:
-    return update_settings(by=by, **POLICY_DEFAULTS)
+    return update_settings(by=by, **policy_defaults())
 
 
 def policy_items(s: FacilitySettings | None = None) -> list[dict]:
-    """The eight policy lines for the screen: field, label, current text, default text."""
+    """The eight policy lines for the screen: field, label, current text, default text (the PM lines' for the facility's window)."""
     s = s or get_settings()
-    return [{"field": field, "label": label, "text": getattr(s, field), "default": default, "is_default": getattr(s, field) == default}
-            for field, label, default in POLICY]
+    defaults = policy_defaults(s)
+    return [{"field": field, "label": label, "text": getattr(s, field), "default": defaults[field], "is_default": getattr(s, field) == defaults[field]}
+            for field, label, _default in POLICY]
 
 
 def kpi_targets(s: FacilitySettings | None = None) -> dict:

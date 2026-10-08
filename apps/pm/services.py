@@ -9,7 +9,7 @@ from typing import NamedTuple
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.db.models import Exists, F, OuterRef, Q
+from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 
 from apps.equipment.models import Asset, AssetStatus, RiskClass
@@ -19,6 +19,7 @@ from apps.workorders.services import create_work_order
 
 from .dates import month_bounds
 from .schedule import DEFAULT_PM_HOURS, WEEK_DAYS, _planned, week_plan
+from .windows import ASSET_RISK, window_of
 
 
 def _create_pm(asset, as_of: date, by=None):
@@ -284,50 +285,69 @@ def _retired_by_due_date() -> Exists:
 RETIRED_AND_CANCELLED = Q(status=WoStatus.CANCELLED) & Q(_retired_by_due_date())  # the cheap test first
 
 
-def pm_due_queryset(start: date, end: date, as_of: date | None = None, life_support_only: bool = False):
+def pm_due_queryset(start: date, end: date, as_of: date | None = None, life_support_only: bool = False, *, w=None):
     """
     PM work orders that count toward on-time completion for a period, read on `as_of` (today, the facility's, by default): due inside
-    [start, end] (up to as_of) and already due by as_of (due before it) or already completed. So for the current period a PM due today
-    is not counted until it is done, and for a period that has ended every PM due in it is counted, the one due on its last day too
-    (review fix: passing the period's end as as_of left a PM due that day and never done out of every figure). One counts as on time
-    when it was completed on or before its due date (the Overview's rule, the mock's KPI; the survey binder says so in words), with no
-    grace period. A PM cancelled while its device was retired on its due date is left out (RETIRED_AND_CANCELLED).
+    [start, end] (up to as_of) and already past their window by as_of (apps.pm.windows: by the due date unless the facility chose
+    otherwise) or already completed. So for the current period a PM still inside its window is not counted until it is done
+    (pm_pending says how many), and for a period that has ended every PM due in it is counted, the one due on its last day too (slice
+    25 review fix). One counts as on time when it was completed within its window (`w`, the facility's windows: windows.windows() when
+    not given). A PM cancelled while its device was retired on its due date is left out (RETIRED_AND_CANCELLED).
     """
     as_of = as_of or timezone.localdate()
+    w = window_of(w)
     qs = (WorkOrder.objects.filter(type=WoType.PM, due_on__gte=start, due_on__lte=min(end, as_of))
-          .filter(Q(due_on__lt=as_of) | Q(completed_on__isnull=False)).exclude(RETIRED_AND_CANCELLED))
+          .filter(w.past_window_q(as_of) | Q(completed_on__isnull=False)).exclude(RETIRED_AND_CANCELLED))
     if life_support_only:
         qs = qs.filter(asset__device_model__risk_class=RiskClass.LIFE_SUPPORT)
     return qs
 
 
-def missed_pms(today: date | None = None):
-    """PM work orders that missed their due date as of `today` (slice 25): due before today and not completed by it, whether still
-    open, completed late, or cancelled. RETIRED_AND_CANCELLED is the one exclusion, as in pm_due_queryset, so these are exactly the
-    PMs the on-time figures count as not on time. Why one was late (WorkOrder.late_reason) is recorded on these and only these
-    (apps.workorders.services.set_late_reason)."""
+def pm_pending(start: date, end: date, as_of: date | None = None, life_support_only: bool = False, *, w=None) -> int:
+    """PMs due in the period before `as_of`, not done, whose window is still open (slice 27): not yet counted by pm_due_queryset, so a
+    month window's current month never reads 100% without saying how many are still to come. Always 0 for the default window."""
+    as_of = as_of or timezone.localdate()
+    w = window_of(w)
+    if w.is_default:
+        return 0
+    qs = (WorkOrder.objects.filter(type=WoType.PM, due_on__gte=start, due_on__lte=min(end, as_of), completed_on__isnull=True)
+          .filter(w.inside_window_q(as_of)).exclude(RETIRED_AND_CANCELLED))
+    if life_support_only:
+        qs = qs.filter(asset__device_model__risk_class=RiskClass.LIFE_SUPPORT)
+    return qs.count()
+
+
+def missed_pms(today: date | None = None, *, w=None):
+    """PM work orders not on time as of `today` (slice 25; slice 27 the window): past their window and not completed within it,
+    whether still open, completed late, or cancelled. RETIRED_AND_CANCELLED is the one exclusion, as in pm_due_queryset, so these are
+    exactly the PMs the on-time figures count as not on time. Why one was late (WorkOrder.late_reason) is recorded on these and only
+    these (apps.workorders.services.set_late_reason)."""
     today = today or timezone.localdate()
-    return (WorkOrder.objects.filter(type=WoType.PM, due_on__lt=today).exclude(completed_on__lte=F("due_on"))
+    w = window_of(w)
+    return (WorkOrder.objects.filter(type=WoType.PM).filter(w.past_window_q(today)).filter(w.not_on_time_q())
             .exclude(RETIRED_AND_CANCELLED))
 
 
-def missed_due_date(wo, today: date | None = None) -> bool:
+def missed_due_date(wo, today: date | None = None, *, w=None) -> bool:
     """Whether `wo` is one of missed_pms(today)."""
-    return wo.type == WoType.PM and missed_pms(today).filter(pk=wo.pk).exists()
+    return wo.type == WoType.PM and missed_pms(today, w=w).filter(pk=wo.pk).exists()
 
 
-def pm_on_time_rate(start: date, end: date, as_of: date | None = None, life_support_only: bool = False) -> dict:
-    due = pm_due_queryset(start, end, as_of, life_support_only)
+def pm_on_time_rate(start: date, end: date, as_of: date | None = None, life_support_only: bool = False, *, w=None) -> dict:
+    w = window_of(w)
+    due = pm_due_queryset(start, end, as_of, life_support_only, w=w)
     total = due.count()
-    on_time = due.filter(completed_on__isnull=False, completed_on__lte=F("due_on")).count()
+    on_time = due.filter(w.on_time_q()).count()
     return {"due": total, "on_time": on_time, "rate": (on_time / total * 100) if total else 100.0}
 
 
-def pm_on_time_series(year: int, month: int, months: int = 12, life_support_only: bool = False, today: date | None = None) -> list[dict]:
+def pm_on_time_series(year: int, month: int, months: int = 12, life_support_only: bool = False, today: date | None = None, *,
+                      w=None) -> list[dict]:
     """Monthly on-time rates for the `months` months ending at (year, month): one query over the PM work orders due in the
-    range, bucketed by month with pm_due_queryset's rule read on `today` (due inside the month, up to today, and already due by
-    today or already completed). Months after `today` have no rate."""
+    range, bucketed by month with pm_due_queryset's rule read on `today` (due inside the month, up to today, and already past its window
+    by today or already completed; on time within its window, by the device model's class). Months after `today` have no rate."""
     today = today or timezone.localdate()
+    w = window_of(w)
     points = []
     y, m = year, month
     for _ in range(months):
@@ -341,8 +361,11 @@ def pm_on_time_series(year: int, month: int, months: int = 12, life_support_only
     if life_support_only:
         qs = qs.filter(asset__device_model__risk_class=RiskClass.LIFE_SUPPORT)
     by_month: dict = {}
-    for due_on, completed_on in qs.values_list("due_on", "completed_on"):
-        by_month.setdefault((due_on.year, due_on.month), []).append((due_on, completed_on))
+    fields = ("due_on", "completed_on") if w.uniform else ("due_on", "completed_on", "asset__device_model__risk_class")
+    for row in qs.values_list(*fields):
+        due_on, completed_on = row[0], row[1]
+        window = w.high if w.uniform else w.for_class(row[2])
+        by_month.setdefault((due_on.year, due_on.month), []).append((due_on, completed_on, window))
     out = []
     for y, m in points:
         start, end = month_bounds(y, m)
@@ -350,10 +373,20 @@ def pm_on_time_series(year: int, month: int, months: int = 12, life_support_only
             out.append({"year": y, "month": m, "rate": None, "due": 0, "on_time": 0})
             continue
         as_of = min(end, today)
-        rows = [(d, c) for d, c in by_month.get((y, m), []) if d <= as_of and (d < today or c is not None)]
-        due, on_time = len(rows), sum(1 for d, c in rows if c is not None and c <= d)
+        rows = [(d, c, win) for d, c, win in by_month.get((y, m), []) if d <= as_of and (d < win.cutoff(today) or c is not None)]
+        due, on_time = len(rows), sum(1 for d, c, win in rows if c is not None and c <= win.end(d))
         out.append({"year": y, "month": m, "due": due, "on_time": on_time, "rate": (on_time / due * 100) if due else 100.0})
     return out
+
+
+def assets_past_window(today: date | None = None, *, w=None):
+    """Active devices whose next PM's window has closed by `today` (slice 27): the compliance reader of "overdue" (report_compliance's
+    Overdue now, the survey binder's devices past their window). The schedule's reader stays overdue_assets (by the due date: the nav
+    badge, Auto-assign week, the attention list)."""
+    today = today or timezone.localdate()
+    w = window_of(w)
+    return (Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES, next_pm_on__isnull=False)
+            .filter(w.past_window_q(today, date_field="next_pm_on", risk=ASSET_RISK)))
 
 
 def overdue_assets(as_of: date | None = None):
