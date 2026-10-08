@@ -84,7 +84,8 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
 - `apps/tenants` tenant model (with its time zone), context var, middleware, `enable_rls`; `tenant_context()` sets the facility's time
   zone (`zone_of`, `zone_override`), the ORM scope, and the Postgres
   `app.tenant_id` that RLS reads, so the public portal and management commands see the same rows under RLS
-- `apps/core` TenantModel, TenantManager, Sequence, TenantModelAdmin; `days.local_day` (a timestamp's facility day: read audit
+- `apps/core` TenantModel, TenantManager, Sequence, TenantModelAdmin; `expressions.DayNumber` (a date as a day number, the same on
+  SQLite and PostgreSQL); `days.local_day` (a timestamp's facility day: read audit
   timestamps and history dates inside the facility, never with .date()); `history.py` a record's changes in words from django-simple-history
   (`record_history`, `entries_for_rows`; `who(rec)` names whoever made a historical row's change as this facility may read it) and the facility's change log (`change_log`) across the areas a role can view (`can_read`,
   `readable_areas`: none for scoped users). The historical tables' managers are not tenant-scoped, so every query there filters on the
@@ -146,7 +147,10 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   in-house hours that name no technician here as an in-house cost line, never vendor time; imported labor never fills a technician's live day)
 - `apps/pm` PmProcedure, PM generation, on-time math (`pm_due_queryset`; `RETIRED_AND_CANCELLED` excuses a cancelled PM only when its
   device was retired on the PM's due date, from the device's history; `missed_pms`, the PMs not on time as of a
-  day), month helpers; `schedule.py` the PM schedule's read models (month calendar,
+  day; slice 27, `windows.py` the PM completion window, the one rule every compliance figure uses: `Window` / `Windows` from Settings'
+  `pm_window_high` / `pm_window_other` (`PmWindow`), `end`, `cutoff`, positive conditions only (`on_time_q`, `not_on_time_q`,
+  `past_window_q`, `inside_window_q`: never negate one), read once per figure and passed down as `w`; `pm_pending`, `assets_past_window`;
+  the schedule (`overdue_assets`, the badge, Auto-assign week, the calendar, Equipment's buckets, My work) keeps the due date), month helpers; `schedule.py` the PM schedule's read models (month calendar,
   a day's devices, suggested technicians, `planned_technicians` (who does each device due on a day: the day panel, route sheets, and
   the device drawer's PM tab share it), 30-day outlook, 7-day workload, PM library); `services.create_pm_work_orders_for_day` and
   `assign_week` / `week_assignment_preview` (Auto-assign week; both take `lock_planner()` first); `aem.py` the AEM program
@@ -169,7 +173,8 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   "Open <tag> in Cadence" (the user's role is read only for a member, inside the facility's tenant_context), which follows
   `my_work.scan_target` (their one open work order on it, or the device: the iPhone Camera app's way into My work), and nothing else changes
 - `apps/facility` Settings: `FacilitySettings` (one row per tenant: portal callback and hotline, the eight maintenance-policy texts,
-  KPI targets and the monthly repair budget, whether technicians may take unassigned work); `services.py` reads (`get_settings`, defaults until first saved), `update_settings`,
+  KPI targets and the monthly repair budget, whether technicians may take unassigned work, and slice 27's PM on-time window: a kind and
+  days per group, checked on the saved row with the change applied, the default PM policy lines following it); `services.py` reads (`get_settings`, defaults until first saved), `update_settings`,
   `reset_policy`, `kpi_targets`, `compliance_targets`, `portal_url`, the integration list, risk bands, `set_time_zone` (the facility's
   Tenant.timezone: its today, its clock, its jobs' hour; audited in Tenant history, the change log's "facility" area); `permissions.py`
   (View to see, Edit to change). Named `facility` so it never reads like `django.conf.settings`.
@@ -188,7 +193,7 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `views_users.py` Users and Roles tabs; `views_account.py` sign-in, password reset and change; `views_invite.py` accepting an invitation; `views_credentials.py`; `views_recalls.py`; `views_reports.py` with the CSV download and `views_custom_reports.py` the custom report builder (with `reports_custom.py`); `views_settings.py`; `views_pm.py` with `pm_panels.py` for its lower panels; `views_pm_week.py` Auto-assign week; `views_wo_costs.py` and `views_wo_complete.py` the work order drawer's labor and parts and its Mark completed; `views_models.py` the device model drawer (PM program tab, Add model, Edit details, risk score) with `views_procedures.py` and `views_aem.py` for its Procedure and AEM tabs; `views_exports.py` the list CSVs; `views_scan.py` Scan tag (with `static/web/scan.js`, the camera where the browser reads codes); `history_tabs.py` the
   History tab or section of the device, work order, contract, and model drawers; `views_change_log.py` Users and access's Change log
   (with its CSV and print); `views_notifications.py` the account menu's Notifications page; `views_facilities.py` the facility switch and
-  an invitation's join page, `views_my_work.py` My work (slice 24: the cards, `wo_waiting`, `from=my_work` answers without the drawer), `views_survey.py` the survey
+  an invitation's join page, `views_my_work.py` My work (slice 24: the cards, `wo_waiting`, `from=my_work` answers without the drawer), `views_settings.py`'s `settings_pm_window` the PM on-time window panel (slice 27), `views_survey.py` the survey
   binder (slice 25: the page for a period, a CSV per section table and one of every gap, the printable binder), `views_wo_late.py` the work
   order drawer's Why late row (slice 26: Add device's intake choice and Put in use before inspection in `views_equipment.py`, the
   drawer's inspection banner through the `incoming_banner` tag, an inspection's checklist and result in `views_wo_complete.py`, its

@@ -197,6 +197,16 @@ it (an emergency, a loaner or rental needed now, one that arrived on the unit al
 use before inspection" with the reason; its inspection becomes high priority, due the next day, and the survey binder lists it. The
 device drawer says where the inspection stands, and the Work orders page tells a manager how many are waiting for a technician.
 
+## When a PM counts as on time
+Settings' "PM on-time window" says when a completed PM counts as on time, once for life support and high risk and once for medium and
+low: by the due date (the default), within a number of days after it (up to 45), by the end of the due month, or by the end of the month
+after. Every compliance figure follows it: the Overview's PM tiles and trend (with how many PMs are still inside their window), the PM
+compliance and technician reports, custom reports, All facilities, and the survey binder; a PM completed after its window asks why it was
+late. The schedule keeps the due date: the PM calendar, the PM badge, Auto-assign week, Equipment's overdue filter, My work, and the
+work order lists still call a PM past its due date overdue, and a PM finished inside its window takes its next due date from its due
+date, so the schedule never drifts. A change counts every PM by the new window, past months included, is recorded with who made it, and
+the survey binder notes it; the default PM policy lines follow the window, and Settings warns when a line the facility wrote disagrees.
+
 ## Custom reports
 Reports' "+ Custom report" (Reports Edit: the director and Finance and quality by default) builds a report from work orders, devices,
 labor, or parts: pick the columns, filter by type, status, department, category, technician, or a date range (a rolling period such

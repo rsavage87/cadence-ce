@@ -1,12 +1,12 @@
 # Build plan
 
 The mock (`cadence-ce-cmms-mock.html`) is the spec. Each slice below is shippable on its own and ends with green tests.
-Slices 0 to 26 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
+Slices 0 to 27 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
 export and print, devices are added and changed in the product, reports and request confirmations go out by email, each
 device model's PM program (risk score, procedure, AEM interval) is kept in the product, and the work itself (time, parts,
 what was done, a PM's results) is recorded on the work order; vendors and clinical requesters see only their own share; facilities
 build their own reports, and a label opens its device with Scan tag; the API covers what the screens do, by session or token; every record's changes and every access change can be read back;
-staff get the emails they choose about their own work; each facility works on its own clock; one person signs in once to every facility they work at; a facility brings its records over from the CMMS it is leaving; technicians work from their phones on My work; a survey binder gathers the evidence surveyors ask for; and new equipment is inspected before its first use. What each slice deferred is noted in its row and below.
+staff get the emails they choose about their own work; each facility works on its own clock; one person signs in once to every facility they work at; a facility brings its records over from the CMMS it is leaving; technicians work from their phones on My work; a survey binder gathers the evidence surveyors ask for; new equipment is inspected before its first use; and each facility says when a PM counts as on time. What each slice deferred is noted in its row and below.
 
 | # | Slice | Mock screen(s) | Code | Status |
 |---|-------|----------------|------|--------|
@@ -37,6 +37,7 @@ staff get the emails they choose about their own work; each facility works on it
 | 24 | My work | (none: the technician's phone page) | `workorders` + `facility` + `portal` + `notifications` + `web` + `api` | done (its own API endpoint and a route sheet per technician deferred) |
 | 25 | Survey readiness | (none: Reports, Survey binder; the work order's Why late; Add device's new or existing) | `reports` + `pm` + `workorders` + `equipment` + `credentials` + `web` + `api` | done (the incoming inspection workflow and a PM completion window deferred) |
 | 26 | Incoming inspections | (none: Add device, the device drawer, Mark completed for an inspection) | `equipment` + `workorders` + `reports` + `web` + `api` | done (a temporary-equipment kind for loaners and rentals, and bulk new devices through the importer, deferred) |
+| 27 | PM completion window | (none: Settings, PM on-time window; every on-time figure) | `facility` + `pm` + `reports` + `workorders` + `web` + `api` | done (an interval-scaled window and judging each PM by the window in force on its due date deferred) |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.
@@ -375,3 +376,21 @@ The mock's export and print buttons work since slice 11, Add device since slice 
   pass (a page, the API, an import chunk) never puts the wait back; a failed checklist step needs the result Failed; only the
   inspection whose pass ended the wait stays passed when reopened (a pass that changed nothing may be corrected); a device in use before
   its inspection is an inventory gap whatever day it was added; a checklist sent to the API as anything but a list is a 400.
+- The PM completion window (slice 27, beyond the mock; slice 25 deferred it): Settings says when a PM counts as on time, once for life
+  support and high risk and once for medium and low (`FacilitySettings.pm_window_*`, `PmWindow`): by the due date (the default and the
+  mock's KPI: no figure moves for a facility that never chooses), within N days after it (1 to 45, the widest tolerance in the Joint
+  Commission's frequency table), by the end of the due month, or by the end of the month after. `apps/pm/windows.py` is the one rule
+  every compliance figure reads (the Overview's PM tiles and trend with the PMs still inside their window, report_compliance's on time
+  and Overdue now, the technician report, the custom report's PM on time, All facilities, AEM evidence, the imports check, the survey
+  binder, missed PMs and the late reason). The schedule keeps the due date (overdue_assets, the PM badge and screen, Auto-assign week,
+  Equipment's buckets, My work, the digest, the Work orders lists), and a PM done after its due date but inside its window sets the next
+  PM from its due date, so a window never stretches the interval. Each PM is judged by today's window and its model's class today; a
+  change recounts past months (the Save says so), is audited, and the binder lists it with a CHECK; the default PM policy lines follow
+  the window, and Settings and the binder flag a line the facility wrote that contradicts it. Deferred: a window scaled by the PM
+  interval (the Joint Commission's frequency table), judging each PM by the window in force on its due date, a provisional mark on the
+  trend chart, and the windows in the All facilities API. Rules settled in review: the database refuses "days after the due date"
+  with no days (the check constraint's NULL case); an anchored next PM never lands on or before the day the PM was done (a monthly PM
+  under a window longer than a month) and never pulls the schedule back from a later date a newer PM set; the device drawer projects
+  the next PMs as completing today would; an API client that sends back the whole settings body with a new window gets the default
+  PM policy line following it, as the screen does; days typed with digits int() cannot read are refused in words; a first save that
+  loses a race starts again from what was sent, never from values derived for the defaults.
