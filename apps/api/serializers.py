@@ -78,7 +78,14 @@ class AssetSerializer(serializers.ModelSerializer):
     adds it in the status given. Read back: awaiting_inspection (read-only: only its passed inspection clears it), status_label (the
     status as the screens word it, equipment.services.status_label: "Awaiting inspection" for a device out of service waiting for
     it), and, while it waits, its open inspection: open_inspection (the work order's id, as follow_up_of is given) and
-    open_inspection_number, both null for a scoped user outside whose share that work order is."""
+    open_inspection_number, both null for a scoped user outside whose share that work order is.
+
+    Slice 28: incident_hold (read-only), held as evidence for an incident investigation (status_label then reads "Held for incident");
+    only apps.incidents.services sets and clears it (POST /api/v1/incidents/, a hold's release). A different value sent is refused
+    rather than dropped; sending back what a GET returned is fine. No incident number here: the devices API is Equipment View's."""
+
+    HOLD_REFUSAL = ("A device is held as evidence by recording an incident (POST /api/v1/incidents/) and released by the incident "
+                    "(POST /api/v1/incidents/{id}/holds/{hold}/release/).")
 
     device_model_detail = DeviceModelSerializer(source="device_model", read_only=True)
     department_name = serializers.CharField(source="department.name", read_only=True)
@@ -99,11 +106,24 @@ class AssetSerializer(serializers.ModelSerializer):
     class Meta:
         model = Asset
         fields = ["id", "tag", "serial", "device_model", "device_model_detail", "department", "department_name", "room", "status", "status_label",
-                  "awaiting_inspection", "open_inspection", "open_inspection_number", "installed_on", "acquisition_cost", "condition",
-                  "warranty_end", "support_type", "contract", "contract_reference", "under_contract", "last_pm_on", "next_pm_on", "notes",
-                  "added_as", "added_as_label", "incoming_inspection", "inspection_due", "updated_at"]
-        read_only_fields = ["support_type", "awaiting_inspection"]
+                  "awaiting_inspection", "incident_hold", "open_inspection", "open_inspection_number", "installed_on", "acquisition_cost",
+                  "condition", "warranty_end", "support_type", "contract", "contract_reference", "under_contract", "last_pm_on", "next_pm_on",
+                  "notes", "added_as", "added_as_label", "incoming_inspection", "inspection_due", "updated_at"]
+        read_only_fields = ["support_type", "awaiting_inspection", "incident_hold"]
         list_serializer_class = AssetListSerializer
+
+    def validate(self, attrs):
+        """Slice 28: incident_hold is read-only (the incidents' services are its one writer): a value other than the device's is a 400
+        keyed incident_hold, never dropped in silence."""
+        data = self.initial_data if hasattr(self.initial_data, "get") else {}
+        if "incident_hold" in data:
+            try:
+                sent = serializers.BooleanField().to_internal_value(data["incident_hold"])
+            except serializers.ValidationError:
+                sent = None
+            if sent is not (self.instance.incident_hold if self.instance is not None else False):
+                raise serializers.ValidationError({"incident_hold": [self.HOLD_REFUSAL]})
+        return attrs
 
     def get_status_label(self, obj) -> str:
         return eq_services.status_label(obj)

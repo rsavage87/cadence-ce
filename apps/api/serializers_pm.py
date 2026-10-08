@@ -230,11 +230,22 @@ def aem_data(dm, today) -> dict:
 # --- Auto-assign week ---------------------------------------------------------------------------------------------------------
 
 
+def _week_device(row) -> dict:
+    """A device the week leaves on nobody's plate ({"asset", "has_open_pm"}): its tag, model, PM due date, and whether its PM work
+    order is open already."""
+    asset = row["asset"]
+    return {"asset_id": str(asset.pk), "tag": asset.tag, "description": asset.device_model.description,
+            "due_on": asset.next_pm_on.isoformat() if asset.next_pm_on else None, "has_open_pm": row["has_open_pm"]}
+
+
 def week_data(w) -> dict:
     """Auto-assign week as its modal shows it (apps.pm.services.WeekAssignment): the preview, or what was done. Per technician, the
     new work orders and the open ones on nobody's plate they get, and the hours; the devices nobody is credentialed for (their
     PMs stay unassigned; a work order is still created for those without one); what is already held; and the overdue devices
-    the week leaves alone."""
+    the week leaves alone. Slice 28: `on_hold`, the devices due this week held as evidence for an incident investigation (nobody
+    may start their PM until the incident releases them, so the week neither creates nor assigns one; an open one stays open and
+    unassigned), shaped as `uncovered`. They count in no other figure: a week with only held devices due reads nothing_to_do, with
+    them listed here. No incident number: Auto-assign week is PM Approve's, not Incidents View's."""
     return {
         "start": w.start.isoformat(),
         "end": w.end.isoformat(),
@@ -249,9 +260,8 @@ def week_data(w) -> dict:
                     "count": s.count, "hours": _hours(s.hours)} for s in w.shares],
         "unassigned": w.unassigned,
         "unassigned_new": w.unassigned_new,
-        "uncovered": [{"asset_id": str(u["asset"].pk), "tag": u["asset"].tag, "description": u["asset"].device_model.description,
-                       "due_on": u["asset"].next_pm_on.isoformat() if u["asset"].next_pm_on else None, "has_open_pm": u["has_open_pm"]}
-                      for u in w.uncovered],
+        "uncovered": [_week_device(u) for u in w.uncovered],
+        "on_hold": [_week_device(h) for h in w.on_hold],
         "held": w.held,
         "overdue": w.overdue,
         "overdue_to_create": w.overdue_to_create,
