@@ -155,7 +155,7 @@ class Table:
     columns: list[str]
     rows: Callable[[], Iterable[list]]  # lazy: every row, plain values (str, int, Decimal, float, date, None)
     count: int | None = None  # how many rows, when the section knows it cheaply (else the page says "see the CSV")
-    links: dict[int, str] = field(default_factory=dict)  # {column index: WORK_ORDER or DEVICE}
+    links: dict[int, str] = field(default_factory=dict)  # {column index: WORK_ORDER, DEVICE, or INCIDENT}
     printed: bool = True  # False: the print shows the count and points to the CSV (the inventory's every device)
     empty: str = "None in this period."
 
