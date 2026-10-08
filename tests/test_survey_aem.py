@@ -90,7 +90,7 @@ def test_an_interval_in_force_with_its_approval_evidence_and_record_since(ctx, t
     assert rows_of(s, "in_force") == [[
         "Acme", "MX750", "High", 3, 12, 24, t(60), "EMC minutes, item 4", "Technician User", "Manager User", t(100),
         Decimal(str(ev["device_years"])), ev["repairs"], None if ev["repairs_per_device_year"] is None else Decimal(str(ev["repairs_per_device_year"])),
-        ev["pm_completed"], ev["pm_on_time"], 2, 1]]
+        ev["pm_completed"], ev["pm_on_time"], ev.get("pm_window"), 2, 1]]  # slice 27: the evidence's PM window, as recorded
     assert _figures(s)["Models on AEM today"] == 1 and _figures(s)["Devices on AEM today"] == 3 and s.gaps == []
     assert MARKER not in repr([r for tbl in s.tables for r in tbl.rows()])
 
@@ -128,7 +128,7 @@ def test_an_interval_with_no_recorded_approval_is_a_gap_unless_the_model_is_excl
     assert [(g.kind, g.record, g.url) for g in gaps_of(s)] == [(GAP, "BD Alaris 8015 PCU", f"/pm/models/{pump_model.pk}/?tab=aem")]
     assert gaps_of(s)[0].text == ("BD Alaris 8015 PCU runs on a 18-month AEM interval with no recorded approval: ratify it from the "
                                   "model's AEM tab.")
-    assert rows_of(s, "in_force") == [["BD", "Alaris 8015 PCU", "High", 2, 12, 18, None, "No recorded approval", "", ""] + [None] * 8]
+    assert rows_of(s, "in_force") == [["BD", "Alaris 8015 PCU", "High", 2, 12, 18, None, "No recorded approval", "", ""] + [None] * 9]
     figures = _figures(s)
     assert figures["Models on AEM today"] == 1 and figures["Devices on AEM today"] == 2
     assert figures["Life-support models"] == 1 and figures["Imaging, radiologic, and laser models"] == 1 and figures["Excluded models on AEM"] == 0

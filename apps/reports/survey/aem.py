@@ -10,6 +10,9 @@ is_legacy) is a GAP: the committee ratifies it from the model's AEM tab.
 
 Queries: the models with their active devices (one), the approved decisions (one), corrective repairs and failed PMs since each
 approval on every AEM model at once (one grouped query), and the decisions in the period (one).
+
+Slice 27: the evidence's PM window (apps.pm.aem records "pm_window", the rule its "PMs on time" was counted by, in words) is printed
+beside it as recorded, never recounted.
 """
 from datetime import date
 from decimal import Decimal
@@ -32,7 +35,7 @@ _STATUS_LABELS = dict(AemStatus.choices)
 
 IN_FORCE_COLUMNS = ["Manufacturer", "Model", "Risk class", "Active devices", "OEM interval (months)", "AEM interval (months)", "Approved on",
                     "Minutes reference", "Proposed by", "Decided by", "Evidence as of", "Evidence: device-years", "Evidence: corrective repairs",
-                    "Evidence: repairs per device-year", "Evidence: PMs completed", "Evidence: PMs on time",
+                    "Evidence: repairs per device-year", "Evidence: PMs completed", "Evidence: PMs on time", "Evidence: PM window",
                     "Corrective repairs since approval", "Failed PMs since approval"]
 DECISION_COLUMNS = ["Date", "Decision", "Manufacturer", "Model", "Interval (months)", "OEM interval (months)", "Proposed on",
                     "Minutes reference", "End reason", "By", "Status today"]
@@ -52,6 +55,13 @@ def _number(value):
     return value
 
 
+def _window_words(ev: dict) -> str | None:
+    """The PM window the evidence's "PMs on time" was counted by (slice 27: apps.pm.aem records it with the evidence, in words for the
+    model's class), as recorded; None for evidence recorded before Cadence kept one (every PM then counted by its due date)."""
+    value = ev.get("pm_window")
+    return value if isinstance(value, str) and value else None
+
+
 def _since_approval() -> dict:
     """{model id: {"repairs", "failed"}} for every model with an approved decision: corrective repairs opened (not cancelled) and
     PMs failed, from the committee's date. One grouped query over all of them (one approved decision per model)."""
@@ -67,13 +77,13 @@ def _since_approval() -> dict:
 def _in_force_row(dm: DeviceModel, decision: AemDecision | None, since: dict) -> list:
     name = [dm.manufacturer, dm.model, _CLASS_LABELS.get(dm.risk_class, dm.risk_class), dm.active, dm.oem_pm_interval_months, dm.pm_interval_months]
     if decision is None:
-        return name + [None, NO_APPROVAL] + [""] * 2 + [None] * 8
+        return name + [None, NO_APPROVAL] + [""] * 2 + [None] * 9
     ev = decision.evidence or {}
     as_of = ev.get("as_of")
     counts = since.get(dm.pk, {})
     return name + [decision.decided_on, decision.decision_note, _name(decision.proposed_by), _name(decision.decided_by),
                    date.fromisoformat(as_of) if isinstance(as_of, str) else None, _number(ev.get("device_years")), _number(ev.get("repairs")),
-                   _number(ev.get("repairs_per_device_year")), _number(ev.get("pm_completed")), _number(ev.get("pm_on_time")),
+                   _number(ev.get("repairs_per_device_year")), _number(ev.get("pm_completed")), _number(ev.get("pm_on_time")), _window_words(ev),
                    counts.get("repairs", 0), counts.get("failed", 0)]
 
 
@@ -141,7 +151,9 @@ def build(period: Period, user) -> Section:
         f"history on the manufacturer's schedule (Cadence asks for {aem.AEM_HISTORY_YEARS} years of a model's history before a proposal). "
         "An AEM interval on file for an excluded model never applies, so its devices are not counted as on AEM.",
         "Approved on is the committee's meeting date; the minutes reference is what the approver recorded. The evidence is what the "
-        "committee saw: the model's failure history as the proposal recorded it, on the date shown.",
+        "committee saw: the model's failure history as the proposal recorded it, on the date shown. Its PM window is the rule its PMs on "
+        "time were counted by when it was recorded; blank for evidence recorded before Cadence kept one, when every PM was counted on time "
+        "by its due date.",
         "Since approval: corrective repairs opened (not cancelled) and PMs that failed on the model's devices from the committee's date "
         "to today.",
         "Decisions in the period: approvals and rejections by the committee's date, withdrawals and ends by the day they happened.",

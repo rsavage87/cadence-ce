@@ -24,6 +24,8 @@ The rules:
 - Money is to the cent the way the rest of the product adds it: each labor and part line rounded (LABOR_AMOUNT, PART_AMOUNT), and a
   work order's cost the sum of its rounded lines, so a custom report agrees with the work order drawer and the standard reports.
   Everything aggregates in the database (annotations and correlated subqueries: no query per row), the same on SQLite and PostgreSQL.
+- PM on time follows the facility's PM completion window (slice 27, apps.pm.windows; a `windowed` column), read once per run and only
+  when the run shows it, so its share agrees with the Overview's PM figures.
 - At most MAX_ROWS rows are listed (the CSV and the email attachment), with the total and a truncated flag; the screen shows the
   first SCREEN_ROWS of them (apps.web.reports_custom).
 - A saved definition that no longer fits the registry (a column dropped in a later release) still runs: unknown parts are skipped
@@ -74,6 +76,7 @@ from apps.credentials.models import Technician
 from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, RiskClass, SupportType
 from apps.pm.dates import month_bounds
 from apps.pm.services import RETIRED_AND_CANCELLED
+from apps.pm.windows import window_of, windows
 from apps.tenants.context import get_current_tenant
 from apps.workorders.models import (
     LABOR_AMOUNT,
@@ -131,12 +134,13 @@ class Column:
     key: str
     label: str
     kind: str
-    value: object  # an ORM path, or a function of the run's `today` returning an expression
+    value: object  # an ORM path, or a function of the run's `today` (and, when `windowed`, the facility's PM windows) returning an expression
     group: bool = False  # the report can group by it
     agg: str = ""  # SUM, AVG, SHARE: how it adds up in a grouped table; "" leaves it out
     choices: type | None = None  # TextChoices of a coded value: shown by label, sorted in declared order
     month: bool = False  # a date the report can group by month
     blank: str = "Not set"  # a group's label when the value is empty
+    windowed: bool = False  # slice 27: its value follows the PM completion window (apps.pm.windows), read once per run
 
 
 @dataclass(frozen=True)
@@ -213,14 +217,18 @@ def _days_open(today):
                 default=_day_number(today) - DayNumber("opened_on"), output_field=IntegerField())
 
 
-def _pm_on_time(today):
-    """A PM done on or before its due date: yes. Done late, or not done and past due today: no; a PM cancelled on a device still
-    in use was missed, so it is no once past due too. Not due yet, cancelled while its device was retired, or not a PM: empty. The rule
-    of the PM completion KPI (apps.pm.services.pm_due_queryset, RETIRED_AND_CANCELLED), so the share agrees with the Overview."""
+def _pm_on_time(today, w=None):
+    """A PM done within its window (slice 27, apps.pm.windows: by its due date unless the facility chose otherwise): yes. Done after
+    its window, or not done and its window closed by today: no; a PM cancelled on a device still in use was missed, so it is no once
+    past its window too. Not due yet, still inside its window, cancelled while its device was retired, or not a PM: empty. The rule of
+    the PM completion KPI (apps.pm.services.pm_due_queryset, RETIRED_AND_CANCELLED), so the share agrees with the Overview. Every
+    condition is the window's own positive one (on_time_q, not_on_time_q, past_window_q), never a negation: a negated month comparison
+    over a blank completion date is NULL and would drop the open PMs. `w` is the run's (custom.run reads it once)."""
+    w = window_of(w)
     return Case(When(~Q(type=WoType.PM) | RETIRED_AND_CANCELLED, then=_NONE_INT),
-                When(completed_on__isnull=False, completed_on__lte=F("due_on"), then=Value(1)),
-                When(completed_on__isnull=False, then=Value(0)),
-                When(due_on__lt=today, then=Value(0)),
+                When(Q(completed_on__isnull=False) & w.on_time_q(), then=Value(1)),
+                When(Q(completed_on__isnull=False) & w.not_on_time_q(), then=Value(0)),
+                When(Q(completed_on__isnull=True) & w.past_window_q(today), then=Value(0)),
                 default=_NONE_INT, output_field=IntegerField())
 
 
@@ -332,7 +340,7 @@ WORK_ORDERS = SourceSpec(
         Column("labor_cost", "Labor cost", MONEY, _labor_cost, agg=SUM),
         Column("parts_cost", "Parts cost", MONEY, _parts_cost, agg=SUM),
         Column("total_cost", "Total cost", MONEY, _total_cost, agg=SUM),
-        Column("pm_on_time", "PM on time", YESNO, _pm_on_time, agg=SHARE),
+        Column("pm_on_time", "PM on time", YESNO, _pm_on_time, agg=SHARE, windowed=True),
         Column("pm_result", "PM result", TEXT, "pm_result", group=True, choices=PmResult),
     ),
     filters=(
@@ -816,8 +824,21 @@ def describe(spec: SourceSpec, d: dict, today: date | None = None) -> str:
 
 # --- running -------------------------------------------------------------------------------------------------------------------
 
-def _expr(c: Column, today: date):
-    return F(c.value) if isinstance(c.value, str) else c.value(today)
+def _expr(c: Column, today: date, w=None):
+    if isinstance(c.value, str):
+        return F(c.value)
+    return c.value(today, w) if c.windowed else c.value(today)
+
+
+def _run_windows(spec: SourceSpec, d: dict):
+    """The facility's PM windows when the run shows a column that follows them (slice 27), read once for the whole run; None (no
+    read) otherwise."""
+    used = [spec.column(k) for k in d["columns"]]
+    if d["group_by"]:
+        used.append(_group_column(spec, d["group_by"])[0])
+    if "date" in d["filters"]:
+        used.append(spec.column(d["filters"]["date"]["field"]))
+    return windows() if any(c is not None and c.windowed for c in used) else None
 
 
 def _rank(path: str, choices) -> Case:
@@ -826,12 +847,12 @@ def _rank(path: str, choices) -> Case:
     return Case(*[When(**{path: v}, then=Value(i)) for i, v in enumerate(choices.values)], default=_NONE_INT, output_field=IntegerField())
 
 
-def _filtered(spec: SourceSpec, filters: dict, today: date):
+def _filtered(spec: SourceSpec, filters: dict, today: date, w=None):
     qs = spec.model.objects.all()
     for key, values in filters.items():
         if key == "date":
             start, end = period_range(values, today)
-            qs = qs.alias(cr_date=_expr(spec.column(values["field"]), today))
+            qs = qs.alias(cr_date=_expr(spec.column(values["field"]), today, w))
             if start:
                 qs = qs.filter(cr_date__gte=start)
             if end:
@@ -855,8 +876,8 @@ def _filtered(spec: SourceSpec, filters: dict, today: date):
     return qs
 
 
-def _aggregate(c: Column, today: date):
-    expr = _expr(c, today)
+def _aggregate(c: Column, today: date, w=None):
+    expr = _expr(c, today, w)
     if c.agg == SUM:
         return Sum(expr, output_field=_MONEY if c.kind == MONEY else _DECIMAL if c.kind in (HOURS, QUANTITY) else _INT)
     return Avg(expr, output_field=FloatField())  # AVG, and SHARE (the mean of 1 and 0, as a percent below)
@@ -892,10 +913,10 @@ def _plain_agg(c: Column, v):
     return v * 100 if c.agg == SHARE else v
 
 
-def _listed(spec: SourceSpec, d: dict, qs, today: date, limit: int) -> dict:
+def _listed(spec: SourceSpec, d: dict, qs, today: date, limit: int, w=None) -> dict:
     cols = [spec.column(k) for k in d["columns"]]
     total = qs.count()
-    aliases = {f"cr_{c.key}": _expr(c, today) for c in cols}
+    aliases = {f"cr_{c.key}": _expr(c, today, w) for c in cols}
     order = []
     if d["sort"]:
         c = spec.column(d["sort"].lstrip("-"))
@@ -907,7 +928,7 @@ def _listed(spec: SourceSpec, d: dict, qs, today: date, limit: int) -> dict:
     totals = None
     summed = [c for c in cols if c.agg == SUM]
     if summed and total:
-        sums = qs.aggregate(**{f"t_{c.key}": _aggregate(c, today) for c in summed})
+        sums = qs.aggregate(**{f"t_{c.key}": _aggregate(c, today, w) for c in summed})
         totals = [_plain_agg(c, sums[f"t_{c.key}"]) if c.agg == SUM else None for c in cols]
     return {"columns": [c.label for c in cols], "rows": rows, "kinds": [c.kind for c in cols], "keys": [c.key for c in cols],
             "total": total, "records": total, "truncated": total > limit, "grouped": False, "left_out": [], "totals": totals}
@@ -932,16 +953,16 @@ def _ordered(items: list, key, descending: bool) -> list:
     return present + [i for i in items if key(i) is None]
 
 
-def _grouped(spec: SourceSpec, d: dict, qs, today: date, limit: int) -> dict:
+def _grouped(spec: SourceSpec, d: dict, qs, today: date, limit: int, w=None) -> dict:
     gcol, month = _group_column(spec, d["group_by"])
-    gexpr = _expr(gcol, today)
+    gexpr = _expr(gcol, today, w)
     if month:
         gexpr = TruncMonth(gexpr, output_field=DateField())
     chosen = [spec.column(k) for k in d["columns"]]
     agg_cols = [c for c in chosen if c.agg]
     left_out = [c.label for c in chosen if not c.agg and not (c.key == gcol.key and not month)]
     def aggs() -> dict:
-        return {"cr_n": Count("pk"), **{f"cr_{c.key}": _aggregate(c, today) for c in agg_cols}}
+        return {"cr_n": Count("pk"), **{f"cr_{c.key}": _aggregate(c, today, w) for c in agg_cols}}
 
     groups = []
     for row in qs.annotate(cr_g=gexpr).values("cr_g").annotate(**aggs()).order_by():
@@ -992,8 +1013,9 @@ def run(definition: dict, today: date, limit: int | None = None) -> dict:
     if d is None:
         return _nothing("This report's source is no longer offered, so it lists nothing. Delete it or build it again.")
     spec = SOURCES[d["source"]]
-    qs = _filtered(spec, d["filters"], today)
-    table = _grouped(spec, d, qs, today, limit) if d["group_by"] else _listed(spec, d, qs, today, limit)
+    w = _run_windows(spec, d)
+    qs = _filtered(spec, d["filters"], today, w)
+    table = _grouped(spec, d, qs, today, limit, w) if d["group_by"] else _listed(spec, d, qs, today, limit, w)
     return {**table, "description": describe(spec, d, today), "problem": "", "source": spec.key, "source_label": spec.label,
             "noun": spec.noun, "limit": limit, "definition": d}
 

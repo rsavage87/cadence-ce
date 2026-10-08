@@ -18,4 +18,4 @@
 {% else %}
 <div class="empty">No active technicians.</div>
 {% endif %}
-<div class="hint" style="margin-top:8px">Vendor-performed work is excluded. Hours are as logged on work orders, not badge time. PM on time is green at or above the {{ p.pm_target }}% PM completion target. Last {{ r.days }} days, {{ r.since|date:"M j" }} to {{ today|date:"M j, Y" }}.</div>
+<div class="hint" style="margin-top:8px">Vendor-performed work is excluded. Hours are as logged on work orders, not badge time. PM on time is green at or above the {{ p.pm_target }}% PM completion target{% if not r.window.is_default %}; a PM counts as on time when it is done {{ r.window.words }} (Settings){% endif %}. Last {{ r.days }} days, {{ r.since|date:"M j" }} to {{ today|date:"M j, Y" }}.</div>
