@@ -29,6 +29,8 @@ from apps.equipment import permissions as eq_perms
 from apps.equipment import services as eq_services
 from apps.equipment.models import AddedAs, Asset, AssetStatus, Department, DeviceModel
 from apps.facility import services as fac_services
+from apps.incidents import permissions as inc_perms
+from apps.incidents.models import Incident
 from apps.pm import permissions as pm_perms
 from apps.tenants.context import get_current_tenant
 from apps.workorders import permissions as wo_perms
@@ -384,7 +386,11 @@ class WorkOrderViewSet(TenantViewSet):
     @action(detail=True, methods=["post"])
     def transition(self, request, pk=None):
         wo = self.get_object()
+        if not hasattr(request.data, "get"):  # a JSON list or scalar body has no fields
+            raise DRFValidationError({"detail": "Send the fields as a JSON object."})
         to_status = request.data.get("status")
+        if not isinstance(to_status, str):  # a list or an object would reach the service's set lookup (a 500)
+            raise DRFValidationError({"status": [f"Required; one of {', '.join(WoStatus.values)}."]})
         if not wo_perms.can_transition(request.user, wo.status, to_status):
             raise PermissionDenied("Closing or reopening a closed work order needs Approve access.")
         if to_status == WoStatus.COMPLETED:
@@ -407,9 +413,26 @@ class WorkOrderViewSet(TenantViewSet):
             return Response(self.get_serializer(wo).data)
         try:
             wo_services.change_status(wo, to_status, by=request.user, note=request.data.get("note", ""))
-        except (ValidationError, KeyError) as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except ValidationError as e:
+            # Slice 28: the service's words (a held device's refusal among them), keyed by field when it names one; never str(e),
+            # which shows the list's brackets and quotes.
+            return Response(e.message_dict if hasattr(e, "error_dict") else {"detail": " ".join(e.messages)}, status=status.HTTP_400_BAD_REQUEST)
+        except KeyError:
+            return Response({"detail": f"Cannot move {wo.number} from {wo.get_status_display()} to {to_status}."}, status=status.HTTP_400_BAD_REQUEST)
         return Response(self.get_serializer(wo).data)
+
+    def perform_destroy(self, instance):
+        """Slice 28: an incident's investigation (Incident.work_order, PROTECT) stays with the incident's file, which is never deleted:
+        a 400 in words, never a 500. The incident's number only for Incidents View (the delete needs Work orders Full, not that)."""
+        try:
+            instance.delete()
+        except ProtectedError as e:
+            numbers = sorted(o.number for o in e.protected_objects if isinstance(o, Incident))
+            which = "an incident"
+            if numbers and inc_perms.can_view(self.request.user):
+                which = f"incident {numbers[0]}" if len(numbers) == 1 else f"incidents {', '.join(numbers)}"
+            raise DRFValidationError({"detail": f"{instance.number} is the investigation of {which}, so it cannot be deleted: the "
+                                                "incident's file keeps it."}) from None
 
     @action(detail=True, methods=["post"])
     def assign(self, request, pk=None):

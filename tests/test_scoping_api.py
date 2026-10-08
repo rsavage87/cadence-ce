@@ -14,10 +14,13 @@ from apps.api.permissions import ModulePermission, PersonPermission
 from apps.api.views import AssetViewSet, WorkOrderViewSet
 from apps.api.views_all_facilities import AllFacilitiesViewSet
 from apps.api.views_facilities import FacilityViewSet
+from apps.api.views_incidents import IncidentViewSet
 from apps.api.views_scan import ScanViewSet
 from apps.api.views_work import WorkOrderLaborViewSet, WorkOrderNoteViewSet, WorkOrderPartViewSet
 from apps.contracts.models import Contract, ContractType
 from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, RiskClass
+from apps.incidents.models import Affected, Incident, Outcome
+from apps.incidents.services import record_incident
 from apps.tenants.context import tenant_context
 from apps.workorders.models import WorkOrder, WoStatus
 from apps.workorders.services import create_work_order
@@ -72,8 +75,10 @@ def world(ctx, dept, vent, pump, pump_model, techs):
     }
     contract = Contract.objects.create(reference="SC-ACME-1", vendor="Acme Biomedical", type=ContractType.OEM, start_on=TODAY,
                                        end_on=TODAY + timedelta(days=365))
+    # Slice 28: an incident on the vendor's device, not held (its status and work orders stay as they are)
+    incident = record_incident(asset=vent, outcome=Outcome.NO_HARM, affected=Affected.NONE, hold=False)
     return {"assets": {"vent": vent, "pump": pump, "card_mon": card_mon, "card_pump": card_pump}, "wos": wos, "cardio": cardio,
-            "icu": dept, "monitor": monitor, "contract": contract}
+            "icu": dept, "monitor": monitor, "contract": contract, "incident": incident}
 
 
 @pytest.fixture
@@ -370,6 +375,24 @@ def closed_endpoints(world, pump_recall, techs):
         ("get", f"{API}pm/calendar/", None), ("get", f"{API}pm/day/?day={day}", None),
         ("post", f"{API}pm/create-for-day/", {"day": day}), ("post", f"{API}pm/generate/", None),
         ("get", f"{API}settings/", None), ("patch", f"{API}settings/", {"portal_hotline": "x"}), ("post", f"{API}settings/reset-policy/", None),
+        *incident_endpoints(world),
+    ]
+
+
+def incident_endpoints(world):
+    """Slice 28: every incidents endpoint (apps/api/views_incidents.py), never a scoped user's, whatever the device."""
+    a, i = world["assets"]["vent"], f"{API}incidents/{world['incident'].id}/"
+    day = TODAY.isoformat()
+    return [
+        ("get", f"{API}incidents/", None), ("get", i, None), ("get", f"{API}incidents/{world['incident'].number}/", None),
+        ("post", f"{API}incidents/", {"asset": a.tag, "outcome": "unknown", "affected": "patient"}),
+        ("post", f"{i}facts/", {"event_log": "saved"}), ("patch", f"{i}facts/", {"event_log": "saved"}),
+        ("post", f"{i}decide/", {"outcome": "no_harm", "basis": "not_serious", "decided_on": day, "decided_by": "ce"}),
+        ("post", f"{i}reports/", {"fda_reported_on": day, "report_number": f"0123456789-{TODAY.year}-0001"}),
+        ("post", f"{i}finding/", {"finding": "met_specs"}), ("post", f"{i}hold/", {"asset": a.tag}), ("post", f"{i}open-investigation/", None),
+        ("post", f"{i}holds/{a.tag}/sent/", {"sent_on": day}), ("post", f"{i}holds/{a.tag}/back/", {"back_on": day}),
+        ("post", f"{i}holds/{a.tag}/release/", {"release": "keep_out"}),
+        ("post", f"{i}close/", None), ("post", f"{i}reopen/", None), ("post", f"{i}in-error/", None),
     ]
 
 
@@ -385,14 +408,17 @@ def call(client, method, url, body):
 def test_every_other_endpoint_refuses_a_scoped_role_with_full_levels(client, person, custom_role, world, pump_recall, techs, scope, attrs):
     """A custom scoped role given Full everywhere (Contracts, Reports, PM, Settings...) still reads nothing facility-wide."""
     person(custom_role(f"scoped-{scope}", scope, ALL_FULL), **attrs)
-    counts = (WorkOrder.objects.count(), Asset.objects.count(), Department.objects.count(), DeviceModel.objects.count())
+    counts = (WorkOrder.objects.count(), Asset.objects.count(), Department.objects.count(), DeviceModel.objects.count(), Incident.objects.count())
     for method, url, body in closed_endpoints(world, pump_recall, techs):
         r = call(client, method, url, body)
         assert r.status_code == 403, (method, url, r.status_code)
         assert "part of this facility" in r.json()["detail"], url
-    assert (WorkOrder.objects.count(), Asset.objects.count(), Department.objects.count(), DeviceModel.objects.count()) == counts
+    assert (WorkOrder.objects.count(), Asset.objects.count(), Department.objects.count(), DeviceModel.objects.count(),
+            Incident.objects.count()) == counts
     pump_recall.refresh_from_db()
     assert pump_recall.status == "needs_action" and world["contract"].covered_assets().count() == 0
+    incident = Incident.objects.get(pk=world["incident"].pk)
+    assert (incident.status, incident.event_log, incident.finding, incident.reportable, incident.holds.count()) == ("open", "", "", None, 0)
 
 
 @pytest.mark.parametrize("who", ["vendor", "requester"])
@@ -438,3 +464,5 @@ def test_only_work_orders_and_devices_opt_in():
     assert AssetViewSet.scoped_actions == {"list", "retrieve"}
     assert WorkOrderLaborViewSet.scoped_actions == WorkOrderPartViewSet.scoped_actions == {"list", "create", "destroy"}
     assert WorkOrderNoteViewSet.scoped_actions == {"list", "create"} and ScanViewSet.scoped_actions == {"list"}
+    # Slice 28: incidents are never a scoped user's (the device shows only "Held by Clinical Engineering")
+    assert IncidentViewSet.scoped_actions == frozenset()

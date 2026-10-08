@@ -14,7 +14,8 @@ The PM schedule, /api/v1/pm/:
   POST pm/generate/                 PM Approve. The nightly generate_pm, now.
   GET  pm/week/                     PM Approve and Work orders Approve (pm_perms.can_assign_week), as the Auto-assign week modal:
                                     what it would do over today through today + 6 (pm.services.week_assignment_preview). Changes
-                                    nothing.
+                                    nothing. Slice 28: "on_hold" lists the devices due that week held as evidence for an incident
+                                    investigation, which it neither creates nor assigns a PM for (serializers_pm.week_data).
   POST pm/assign-week/              The same levels; no body. Does it (pm.services.assign_week, which takes the planner lock first, so
                                     a second request finds nothing left to do) and returns what was done in the preview's shape.
 
