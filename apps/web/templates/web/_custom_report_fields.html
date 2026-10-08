@@ -10,6 +10,7 @@
   <div class="cr-cols">{% for c in f.columns %}<label class="cr-check"><input type="checkbox" name="col" value="{{ c.key }}"{% if c.checked %} checked{% endif %}><span>{{ c.label }}</span></label>{% endfor %}</div>
   {% if errors.columns %}<span class="err" id="cr-cols-err">{{ errors.columns }}</span>{% endif %}
   <p class="hint">Up to {{ f.max_columns }}, shown in this order. What people typed into a work order (the problem, notes, who asked, where) is never offered: reports are emailed.</p>
+  {% for c in f.columns %}{% if c.key == "pm_on_time" %}<p class="hint">PM on time counts as the Overview does, by the facility's PM completion window in Settings: yes when the PM was done within its window, no when it was done after it or its window closed before it was done, and empty while it is not due or still inside its window, and for other work.</p>{% endif %}{% endfor %}
 </fieldset>
 
 <fieldset class="cr-sec">

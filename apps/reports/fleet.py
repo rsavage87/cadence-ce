@@ -6,11 +6,12 @@ The math follows the mock's repContent; departures are noted inline. Everything 
 from datetime import date, timedelta
 from decimal import Decimal
 
-from django.db.models import Count, DecimalField, F, Q, Sum
+from django.db.models import Count, DecimalField, Q, Sum
 
 from apps.equipment.models import Asset, AssetStatus, DeviceModel, RiskClass
-from apps.facility.services import compliance_targets
+from apps.facility.services import compliance_targets, get_settings
 from apps.pm.dates import month_bounds
+from apps.pm.windows import ASSET_RISK, Windows, windows
 from apps.reports.services import TRAILING_DAYS
 from apps.workorders.models import LABOR_AMOUNT, PART_AMOUNT, LaborLine, PartLine, WorkOrder, WoStatus, WoType
 
@@ -34,23 +35,49 @@ def _repairs_in_window(today: date):
 # --- PM compliance summary ---------------------------------------------------------------------------------------
 
 
+def _lower_first(text: str) -> str:
+    return text[:1].lower() + text[1:]
+
+
+def on_time_words(w: Windows) -> str:
+    """When a PM counts as on time, in words for a note (slice 27, from Window.describe): "by the due date", "by the end of the due
+    month", or, when the two groups differ, "by the end of the due month for life support and high risk, within 14 days after the due
+    date for medium and low risk". The survey binder's notes and the technician report say it the same way."""
+    if w.uniform:
+        return _lower_first(w.high.describe())
+    return f"{_lower_first(w.high.describe())} for life support and high risk, {_lower_first(w.other.describe())} for medium and low risk"
+
+
 def report_compliance(today: date) -> dict:
     """One row per risk class: active devices, this month's PMs (due, completed, on time), devices overdue now, and compliance
-    (the share of active devices whose PM is not past due today) against the class's target. Two grouped queries, no per-class work.
-    A device marked missing stays in the active count and is always overdue (the mock's rule: it can never be shown compliant), but
-    for a new device waiting for its incoming inspection (slice 26: it has no PM schedule until the inspection passes, so no PM to be
-    overdue, missing or not), and this month's PMs are counted on active devices only, so every column describes the same fleet."""
+    (the share of active devices whose PM is not past its window today) against the class's target. Two grouped queries and the
+    settings row, no per-class work. A device marked missing stays in the active count and is always overdue (the mock's rule: it can
+    never be shown compliant), but for a new device waiting for its incoming inspection (slice 26: it has no PM schedule until the
+    inspection passes, so no PM to be overdue, missing or not), and this month's PMs are counted on active devices only, so every
+    column describes the same fleet.
+
+    Slice 27, the PM completion window (apps.pm.windows): a PM is on time when completed within its class's window, and a device is
+    overdue now when its next PM's window has closed (apps.pm.services.assets_past_window's rule), so this report and the survey
+    binder count compliance as the facility's policy defines it. By the due date unless the facility chose otherwise, which gives
+    exactly the figures from before. Under another window the note also says how many devices are past their due date but still
+    inside their window ("inside") and how many of this month's PMs are ("pending"): neither is overdue yet."""
     start, end = month_bounds(today.year, today.month)
-    overdue_q = Q(next_pm_on__lt=today) | Q(status=AssetStatus.MISSING, awaiting_inspection=False)
+    s = get_settings()
+    w = windows(s)  # read once, with the targets' row
+    overdue_q = w.past_window_q(today, date_field="next_pm_on", risk=ASSET_RISK) | Q(status=AssetStatus.MISSING, awaiting_inspection=False)
+    device_counts = {"devices": Count("id"), "overdue": Count("id", filter=overdue_q)}
+    pm_counts = {"due": Count("id"), "completed": Count("id", filter=Q(completed_on__isnull=False)), "on_time": Count("id", filter=w.on_time_q())}
+    if not w.is_default:  # always 0 by the due date: the default's SQL stays as it was
+        found = [st for st in Asset.ACTIVE_STATUSES if st != AssetStatus.MISSING]  # a missing device is overdue already
+        device_counts["inside"] = Count("id", filter=w.inside_window_q(today, date_field="next_pm_on", risk=ASSET_RISK) & Q(status__in=found))
+        pm_counts["pending"] = Count("id", filter=Q(completed_on__isnull=True) & w.inside_window_q(today))
     fleet = {row["device_model__risk_class"]: row for row in
-             _active_assets().order_by().values("device_model__risk_class").annotate(devices=Count("id"), overdue=Count("id", filter=overdue_q))}
+             _active_assets().order_by().values("device_model__risk_class").annotate(**device_counts)}
     pms = {row["asset__device_model__risk_class"]: row for row in
            WorkOrder.objects.filter(type=WoType.PM, due_on__gte=start, due_on__lte=end, asset__status__in=Asset.ACTIVE_STATUSES)
-           .exclude(status=WoStatus.CANCELLED).order_by().values("asset__device_model__risk_class")
-           .annotate(due=Count("id"), completed=Count("id", filter=Q(completed_on__isnull=False)),
-                     on_time=Count("id", filter=Q(completed_on__lte=F("due_on"))))}
+           .exclude(status=WoStatus.CANCELLED).order_by().values("asset__device_model__risk_class").annotate(**pm_counts)}
     # Survey targets by risk class: life support and high at 100%, medium and low at the tenant's PM completion target (Settings).
-    targets = compliance_targets()
+    targets = compliance_targets(s)
     classes = []
     for rc in CLASS_ORDER:
         f, p = fleet.get(rc, {}), pms.get(rc, {})
@@ -60,11 +87,15 @@ def report_compliance(today: date) -> dict:
         # Exact: 17 of 250 overdue is 93.2% exactly, which float division makes 93.19999... and would score as a miss.
         meets = Decimal((devices - overdue) * 100) >= Decimal(str(target)) * devices if devices else True
         classes.append({"key": rc.value, "label": rc.label, "devices": devices, "due": p.get("due", 0), "completed": p.get("completed", 0),
-                        "on_time": p.get("on_time", 0), "overdue": overdue, "compliance_pct": float(pct), "target_pct": target, "meets": meets})
+                        "on_time": p.get("on_time", 0), "overdue": overdue, "compliance_pct": float(pct), "target_pct": target, "meets": meets,
+                        "inside": f.get("inside", 0), "pending": p.get("pending", 0)})
     return {
         "columns": ["Risk class", "Devices", "PMs due this month", "Completed", "On time", "Overdue now", "Current compliance %", "Target %"],
         "rows": [[c["label"], c["devices"], c["due"], c["completed"], c["on_time"], c["overdue"], c["compliance_pct"], c["target_pct"]] for c in classes],
         "classes": classes, "month_label": today.strftime("%B %Y"), "today": today, "policy_target_pct": targets[RiskClass.MEDIUM],
+        # The window the figures follow: the note says it in words, and the chart's series read it rather than reading Settings again.
+        "w": w, "window": {"is_default": w.is_default, "words": on_time_words(w)},
+        "inside": sum(c["inside"] for c in classes), "pending": sum(c["pending"] for c in classes),
     }
 
 

@@ -6,10 +6,12 @@ from .overview import pct_label, pm_trend_chart
 
 def present_compliance(r: dict) -> dict:
     """The Overview's 12-month PM trend, ending at the report's month (the mock draws the same chart under this table). The series
-    follow the report's clock, so the chart and the table describe the same day; the target line is the policy target the table uses."""
-    today = r["today"]
-    return {"chart": pm_trend_chart(pm_on_time_series(today.year, today.month, today=today),
-                                    pm_on_time_series(today.year, today.month, life_support_only=True, today=today), target=r["policy_target_pct"]),
+    follow the report's clock and its PM window (slice 27: read once, with the report), so the chart and the table describe the same day
+    by the same rule; the target line is the policy target the table uses."""
+    today, w = r["today"], r.get("w")
+    return {"chart": pm_trend_chart(pm_on_time_series(today.year, today.month, today=today, w=w),
+                                    pm_on_time_series(today.year, today.month, life_support_only=True, today=today, w=w),
+                                    target=r["policy_target_pct"]),
             "policy_target": pct_label(r["policy_target_pct"])}
 
 
