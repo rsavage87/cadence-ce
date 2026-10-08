@@ -1,0 +1,49 @@
+{% comment %}The Settings screen's PM completion window panel (slice 27): when a PM counts as on time, one window for life support and high
+   risk and one for medium and low (FacilitySettings.pm_window_high / _other and their days; apps.pm.windows, the one rule every on-time
+   figure uses). Per group, the four choices as radio cards, each with its example on a fixed sample day; the days box shows while
+   "Within a number of days" is chosen (CSS :has; without it the box always shows, and the server ignores it for any other choice).
+   Saved with its own button behind a confirm (a change recounts past months), posted to /settings/pm-window/; the panel swaps itself
+   (#set-pm-window). The warning (#set-pm-window-warn) is its own partial, swapped out of band when the policy is saved. Read-only
+   without Settings Edit: the windows in words, no form.{% endcomment %}
+<div class="panel mt" id="set-pm-window">
+  <div class="panel-h"><h2>PM on-time window</h2><span class="sub">When a completed PM counts as on time</span></div>
+  <div class="panel-b">
+    {% include "web/_settings_pm_window_warn.html" %}
+    {% if can_edit %}
+    <form class="pmw-form" hx-post="{% url 'web:settings_pm_window' %}" hx-target="#set-pm-window" hx-swap="outerHTML" hx-disinherit="hx-swap hx-target hx-confirm"
+          hx-confirm="Every PM on-time figure, past months included, will be counted by this window.">
+      {% for g in pm_window_groups %}
+      <fieldset class="pmw-group" id="pmw-{{ g.key }}"{% if g.kind_error %} aria-describedby="pmw-{{ g.key }}-err"{% endif %}>
+        <legend>{{ g.label }}</legend>
+        <div class="pmw-choices">
+          {% for c in g.choices %}
+          <div class="radio"><label for="pmw-{{ g.key }}-{{ c.value }}"><input type="radio" id="pmw-{{ g.key }}-{{ c.value }}" name="{{ g.kind_field }}" value="{{ c.value }}"{% if c.checked %} checked{% endif %}><span>{{ c.label }}<small>{{ c.example }}</small></span></label></div>
+          {% if c.value == "days_after" %}
+          <div class="pmw-days">
+            <label for="pmw-{{ g.key }}-days">Days after the due date</label>
+            <input id="pmw-{{ g.key }}-days" name="{{ g.days_field }}" value="{{ g.days }}" inputmode="numeric" autocomplete="off" aria-describedby="pmw-{{ g.key }}-days-help{% if g.days_error %} pmw-{{ g.key }}-days-err{% endif %}"{% if g.days_error %} aria-invalid="true"{% endif %}>
+            <span class="hint" id="pmw-{{ g.key }}-days-help">1 to {{ pm_window_days_max }}</span>
+            {% if g.days_error %}<span class="hint err" id="pmw-{{ g.key }}-days-err">{{ g.days_error }}</span>{% endif %}
+          </div>
+          {% endif %}
+          {% endfor %}
+        </div>
+        {% if g.kind_error %}<span class="hint err" id="pmw-{{ g.key }}-err">{{ g.kind_error }}</span>{% endif %}
+      </fieldset>
+      {% endfor %}
+      <div class="set-actions"><button class="btn sm primary" type="submit">Save PM windows</button></div>
+    </form>
+    {% else %}
+    <div class="set-rows">
+      {% for g in pm_window_groups %}
+      <div class="set-row{% if forloop.last %} last{% endif %}"><span class="lbl">{{ g.label }}<span class="why">{{ g.saved_example }}</span></span><span class="pmw-now">{{ g.saved_text }}</span></div>
+      {% endfor %}
+    </div>
+    {% endif %}
+    <div class="hint pmw-what">
+      <p>The window decides every on-time figure: the Overview's PM tiles and trend, the PM compliance and technician reports, custom reports, All facilities, and the survey binder. A PM completed after its window is late, and Cadence asks why. The schedule keeps the due date: a PM past its due date is overdue on the PM schedule, My work, and the work order lists whatever the window, and one finished inside its window takes its next due date from its due date, so the schedule does not drift. A device's group is its model's risk class today.</p>
+      <p>A change counts every PM by the new window, past months included, and is recorded with who made it; the survey binder notes it. Narrowing a window can turn PMs that were on time into late ones. A tolerance that follows each PM's interval (the Joint Commission's frequency table) is not offered yet.</p>
+    </div>
+    {% if not can_edit %}<div class="hint" style="margin-top:8px">Changing settings needs Settings Edit access.</div>{% endif %}
+  </div>
+</div>

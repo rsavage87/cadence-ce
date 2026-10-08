@@ -7,7 +7,8 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 
-from apps.facility.services import POLICY_FIELDS, RATE_FIELDS, RATE_MAX, TARGET_FIELDS, TARGET_RANGES
+from apps.facility.models import PmWindow
+from apps.facility.services import POLICY_FIELDS, RATE_FIELDS, RATE_MAX, TARGET_FIELDS, TARGET_RANGES, WINDOW_GROUPS
 
 
 def plain_number(value) -> str:
@@ -96,6 +97,23 @@ def take_work_field(post) -> dict:
     """Slice 24: the Taking work toggle (technicians may take unassigned work they are credentialed for), as _toggle reads it. Always
     present, so a post without it is refused by the service rather than saving nothing."""
     return {"technicians_take_work": _toggle(post, "technicians_take_work")}
+
+
+# The PM completion window (slice 27): each group's key (apps.facility.services.WINDOW_GROUPS) and its label, in screen order. The
+# labels are the maintenance policy's for the two PM lines, so the panel and the policy name the groups alike.
+PM_WINDOW_GROUPS = [("high", "Life support and high risk"), ("other", "Medium and low risk")]
+
+
+def pm_window_fields(post) -> dict:
+    """Slice 27: both groups' windows, as posted. A kind missing from the post counts as blank, which the service refuses (the panel
+    always sends both). The days go only with "Within a number of days after the due date", as typed (blank included: the service
+    asks for them); with any other kind they are None, so a number left in the hidden days box never rides along and is refused."""
+    fields = {}
+    for kind_field, days_field in WINDOW_GROUPS.values():
+        kind = post.get(kind_field, "")
+        fields[kind_field] = kind
+        fields[days_field] = post.get(days_field, "").strip() if kind == PmWindow.DAYS_AFTER else None
+    return fields
 
 
 def time_zone_field(post) -> str:

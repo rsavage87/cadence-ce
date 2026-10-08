@@ -1,5 +1,5 @@
-{# The Settings screen's maintenance policy panel. Save and Reset answer with this panel re-rendered. #}
-<div class="panel" id="set-policy">
+{# The Settings screen's maintenance policy panel. Save and Reset answer with this panel re-rendered (out of band after a PM window save). #}
+<div class="panel" id="set-policy"{% if oob %} hx-swap-oob="true"{% endif %}>
   <div class="panel-h"><h2>Maintenance policy</h2><span class="sub">Shown on work orders and in the PM planner</span></div>
   <div class="panel-b">
     <form{% if can_edit %} hx-post="{% url 'web:settings_policy' %}" hx-target="#set-policy" hx-swap="outerHTML"{% endif %} hx-disinherit="hx-swap hx-target">

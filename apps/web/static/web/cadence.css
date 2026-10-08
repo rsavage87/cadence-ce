@@ -971,6 +971,35 @@ a.sv-card:hover{border-color:var(--line-2);background:var(--surface-2)}
   .dv-intake .dv-if{padding-left:0}
 }
 
+/* Slice 27, C: the PM on-time window (Settings: web/_settings_pm_window.html). Per group a fieldset of radio cards (the portal's
+   .radio), each with its example; the days box under "Within a number of days" shows while that choice is chosen (CSS :has; without
+   it the box always shows, and the server ignores it for any other choice). The warning when a PM policy line contradicts its
+   window; read-only, the windows in words. Theme tokens only. */
+.pmw-form{display:grid;gap:12px}
+.pmw-group{margin:0;padding:8px 12px 12px;border:1px solid var(--line);border-radius:8px;min-width:0}
+.pmw-group legend{padding:0 4px;font-size:12.5px;font-weight:600;color:var(--ink-2)}
+.pmw-choices{display:grid;gap:8px}
+.pmw-choices .radio label span{display:block;min-width:0}
+.pmw-days{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:0 0 2px 35px;font-size:12.5px;color:var(--ink-2)}
+.pmw-days input{font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line-2);border-radius:6px;padding:6px 8px;width:64px}
+.pmw-days input[aria-invalid="true"]{border-color:var(--crit)}
+.pmw-days .err{flex-basis:100%}
+.pmw-group>.err{display:block;margin-top:6px}
+@supports selector(:has(*)){
+  .pmw-days{display:none}
+  .pmw-group:has(input[value="days_after"]:checked) .pmw-days{display:flex}
+}
+.pmw-warn .note{margin-bottom:10px}
+.pmw-warn .note .link{color:inherit;font-weight:600;text-decoration:underline}
+.pmw-now{font-weight:500;color:var(--ink);text-align:right}
+.pmw-what{margin-top:10px}
+.pmw-what p{margin:0}
+.pmw-what p+p{margin-top:6px}
+@media (max-width:760px){
+  .pmw-days{padding-left:0}
+  .pmw-days input{font-size:16px;min-height:44px}
+}
+
 /* Slice 11: printing app pages */
 /* What the browser prints of an app page (the Overview's Export button calls window.print(); any other screen prints from the
    browser's menu): the page's content on white, in the light theme whatever the screen shows, with chart and chip colours kept.

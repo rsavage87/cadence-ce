@@ -57,6 +57,12 @@ def test_seed_demo_gives_kim_a_second_facility(db, client):
         assert WorkOrder.objects.count() == 7 and WorkOrder.objects.filter(status="closed").count() == 4
         assert WorkOrder.objects.filter(type=WoType.PM, status="closed").exclude(pm_result="").count() == 2
         assert User.objects.filter(tenant=north).count() == 3
+        # slice 27: its medium and low risk PMs are on time by the end of their due month, its default policy line saying so
+        s = get_settings()
+        assert (s.pm_window_high, s.pm_window_other, s.pm_window_other_days) == ("due_date", "due_month", None)
+        assert s.policy_medium_low == "AEM allowed, complete by the end of the due month"
+    with tenant_context(riverside):
+        assert get_settings().pm_window_other == "due_date"  # Riverside keeps the default
     with tenant_context(riverside):
         assert User.objects.filter(tenant=riverside).count() == 14  # the North Campus's staff are its own
     assert client.post("/login/", {"username": "kim@riverside.example", "password": "DemoPass-2026"}).status_code == 302
