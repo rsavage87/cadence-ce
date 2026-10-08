@@ -3,6 +3,8 @@
 {% comment %}Slice 18: only for someone signed in who could open this device in Cadence (views._open_in_cadence). Styled here, not in
    base.html, so the page everyone else gets is byte for byte what it was. Slice 24: the link opens what Scan from My work would (the
    one open work order of theirs on the device, named in the link, else the device), a 44px target for a phone.{% endcomment %}{% if in_cadence %}<div class="note in-cadence" style="margin-bottom:10px;border:1px solid var(--line);background:var(--surface)">Signed in to Cadence as {{ in_cadence.name }}. <a href="{{ in_cadence.url }}" style="color:var(--accent);font-weight:600;display:inline-flex;align-items:center;min-height:44px">{{ in_cadence.label }}</a></div>
+{% endif %}{% comment %}Slice 28: a device held as evidence for an incident investigation says so to anyone, without a word of the incident
+   (no number, nothing of what happened). The form stays: a request about it still reaches Clinical Engineering.{% endcomment %}{% if asset.incident_hold %}<div class="note held" role="alert" style="margin-bottom:10px;border:1px solid var(--line);border-left:4px solid #B0202E;background:var(--surface);color:var(--ink);font-weight:600">Held by Clinical Engineering: do not use it.</div>
 {% endif %}<div class="note">If a device failure is affecting a patient right now, call the Clinical Engineering hotline{% if hotline %} at {{ hotline }}{% endif %} in addition to submitting this form.</div>
 <form method="post">{% csrf_token %}
   {% if form.non_field_errors %}<div class="err">{{ form.non_field_errors }}</div>{% endif %}

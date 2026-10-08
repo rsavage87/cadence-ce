@@ -248,7 +248,22 @@ def incoming_banner(asset, user) -> dict | None:
     scoped = scoping.is_scoped(user)
     return {"lines": [_parts(line, numbers) for line in b.lines], "tone": "warn" if b.failed_on or b.in_use else "",
             "offer_open": b.offer_open and not scoped and user.has_level(wo_perms.MODULE, wo_perms.CREATE_LEVEL),
-            "use_before": asset.status in USE_BEFORE_FROM and not scoped and eq_perms.can_use_before_inspection(user)}
+            # slice 28: never for a device held as evidence (equipment.services.use_before_inspection refuses it: nobody uses it)
+            "use_before": (asset.status in USE_BEFORE_FROM and not asset.incident_hold and not scoped
+                           and eq_perms.can_use_before_inspection(user))}
+
+
+# --- the device drawer's incident parts (slice 28) -------------------------------------------------------------------------------
+
+def incident_box(asset, user) -> dict:
+    """What the device drawer says and offers about incidents, for `user`: `hold`, the banner for a device held as evidence
+    (apps.incidents.services.hold_words: the incident's number and link for Incidents View, the plain HELD_WORDS for everyone else, a
+    scoped user included; None, and no query, when the device is not held), and `record`, whether to offer Record incident (Incidents
+    Edit, never a scoped user: the modal offers the device's one open repair as the investigation)."""
+    from apps.incidents import permissions as inc_perms
+    from apps.incidents.services import hold_words
+
+    return {"hold": hold_words(asset, user), "record": inc_perms.can_record(user)}
 
 
 # --- Costs tab ------------------------------------------------------------------------------------------------------------

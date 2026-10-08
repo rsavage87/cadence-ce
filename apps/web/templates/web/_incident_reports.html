@@ -1,0 +1,19 @@
+{% load web %}
+{% comment %}The reports sent (slice 28, views_incidents.incident_reports; services.record_reports, Incidents Approve): one report number
+   (803.3(x): the facility's 10-digit number, the year it went out, a sequence), the day each copy went out.{% endcomment %}
+<div class="modal-h"><h2>{{ i.number }}: reports sent</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="incr-form" hx-post="{% url 'web:incident_reports' i.number %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    <p class="full hint">{% if required %}Required: a report to {{ required }}.{% else %}Not decided reportable: record a report here if one was sent anyway.{% endif %} A death goes to the FDA and the manufacturer; a serious injury to the manufacturer, or to the FDA when the manufacturer cannot be identified.</p>
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    <label>{{ form.fda_reported_on.label }}{{ form.fda_reported_on }}{% if form.fda_reported_on.errors %}<span class="err">{{ form.fda_reported_on.errors|striptags }}</span>{% endif %}</label>
+    <label>{{ form.manufacturer_reported_on.label }}{{ form.manufacturer_reported_on }}{% if form.manufacturer_reported_on.errors %}<span class="err">{{ form.manufacturer_reported_on.errors|striptags }}</span>{% endif %}</label>
+    <label class="full">{{ form.report_number.label }}{{ form.report_number }}<span class="hint">{{ form.report_number.help_text }}</span>{% if form.report_number.errors %}<span class="err">{{ form.report_number.errors|striptags }}</span>{% endif %}</label>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Save</button></div>
+</form>
+{% endif %}

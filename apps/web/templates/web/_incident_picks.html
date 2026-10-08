@@ -1,0 +1,6 @@
+{# The device search of Record incident and of Hold another device (views_incidents.incident_devices): picking one re-renders that modal with it, keeping what was typed. #}
+{% for a in assets %}
+<button type="button" hx-get="{{ pick_url }}" hx-include="{{ form_id }}" hx-vals='{"asset": "{{ a.tag|escapejs }}"}' hx-target="#modal-card"><b style="font-weight:600">{{ a.tag }}</b> · {{ a.device_model.description }}<small>{{ a.device_model.manufacturer }} {{ a.device_model.model }} · {{ a.department }}{% if a.serial %} · SN {{ a.serial }}{% endif %}</small></button>
+{% empty %}
+<div class="hint" style="padding:8px 10px">No devices match. Check the tag on the sticker.</div>
+{% endfor %}

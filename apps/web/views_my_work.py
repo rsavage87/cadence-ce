@@ -100,6 +100,7 @@ class Card:
     pm: str = ""              # a PM's procedure code and estimated hours
     waiting: dict | None = None  # {"days", "note", "pos"} for work waiting on parts
     take: bool = False        # a card in "You could take" (part C's Take button)
+    held: bool = False        # slice 28: its device is held as evidence and this is not the incident's investigation (the Held chip)
 
 
 def _where(wo) -> str:
@@ -135,10 +136,13 @@ def _actions(user, wo) -> list[dict]:
     """The moves a card offers, by status and the user's levels: the drawer's rules (apps.workorders.permissions), checked again
     by each endpoint. None on in-house work nobody is assigned to: a CE manager assigns it first, as the drawer says. A PM completes
     from open (part B's one step), so it is not offered Start; a repair is started first (its start date counts for downtime). Which
-    work completes in one step is completion.starts_on_completion's to say, as for the drawer (slice 26: an incoming inspection too)."""
+    work completes in one step is completion.starts_on_completion's to say, as for the drawer (slice 26: an incoming inspection too).
+    Slice 28: work on a device held as evidence (`held`, my_work's annotation: not the incident's investigation) offers no Start,
+    Resume, or Complete (services.change_status refuses them); Waiting on parts, Log time, and Add part stay."""
     if wo.assigned_to_id is None and not wo.vendor_service:
         return []
     status, number = wo.status, wo.number
+    held = getattr(wo, "held", False)
 
     def may(to):
         return to in ALLOWED_TRANSITIONS[status] and wo_perms.can_transition(user, status, to)
@@ -150,17 +154,17 @@ def _actions(user, wo) -> list[dict]:
         return {"label": label, "url": reverse("web:wo_status", args=[number]), "to": to, "primary": True}
 
     out = []
-    if status == WoStatus.OPEN:
+    if status == WoStatus.OPEN and not held:
         if completion.starts_on_completion(wo, user):
             out.append(modal("Complete", "web:wo_complete", primary=True))
         elif may(WoStatus.IN_PROGRESS):
             out.append(move("Start", WoStatus.IN_PROGRESS))
     elif status == WoStatus.IN_PROGRESS:
-        if may(WoStatus.COMPLETED):
+        if may(WoStatus.COMPLETED) and not held:
             out.append(modal("Complete", "web:wo_complete", primary=True))
         if may(WoStatus.AWAITING_PARTS):
             out.append(modal("Waiting on parts", "web:wo_waiting"))
-    elif status == WoStatus.AWAITING_PARTS and may(WoStatus.IN_PROGRESS):
+    elif status == WoStatus.AWAITING_PARTS and may(WoStatus.IN_PROGRESS) and not held:
         out.append(move("Resume", WoStatus.IN_PROGRESS))
     if wo_perms.can_record_work(user) and not costs.locked_reason(wo):
         out.append(modal("Log time", "web:wo_labor_add"))
@@ -202,7 +206,7 @@ def _cards(user, groups, today) -> dict:
         return Card(wo=wo, where=_where(wo), problem=_first_line(wo.problem), due=due, late=late, rail=RAIL.get(wo.priority, "info"),
                     actions=_actions(user, wo), vendor=wo.vendor_service and not company,
                     qualified=qualification(technician, wo.asset, today).ok if technician is not None else None,
-                    pm=_pm(wo), waiting=waiting.get(wo.pk), take=take)
+                    pm=_pm(wo), waiting=waiting.get(wo.pk), take=take, held=getattr(wo, "held", False))
 
     return {"repairs": [card(wo) for wo in groups.repairs], "recalls": [[card(wo) for wo in b["work_orders"]] for b in groups.recalls],
             "pms_today": [card(wo) for wo in groups.pms_today], "waiting": [card(wo) for wo in groups.waiting],

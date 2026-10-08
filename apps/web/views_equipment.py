@@ -261,7 +261,10 @@ def asset_status(request, tag):
 # --- in use before its incoming inspection (slice 26) ----------------------------------------------------------
 
 def _use_before_blocker(asset) -> str:
-    """Why the drawer's "Put in use before inspection" no longer applies to `asset` (it changed since the drawer was drawn), or ""."""
+    """Why the drawer's "Put in use before inspection" no longer applies to `asset` (it changed since the drawer was drawn), or "".
+    Slice 28: a device held as evidence first (equipment.services.held_message: no incident number)."""
+    if asset.incident_hold:
+        return eq.held_message(asset)
     if not asset.awaiting_inspection:
         return f"{asset.tag} is not waiting for an incoming inspection."
     if asset.status not in eq.USE_BEFORE_FROM:

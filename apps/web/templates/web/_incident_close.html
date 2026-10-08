@@ -1,0 +1,15 @@
+{% load web %}
+{# Close an incident (slice 28, views_incidents.incident_close; services.close, Incidents Approve): what it needs, then what is still missing, all at once. #}
+<div class="modal-h"><h2>Close {{ i.number }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="incc-form" hx-post="{% url 'web:incident_close' i.number %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]">
+  <div class="form">
+    <p class="full hint">Closing needs every device released, the investigation work order completed, closed, or cancelled, the device evaluation's finding, a decision when someone was harmed, and the required reports when it was reportable. It can be reopened.</p>
+    {% if errors %}<div class="full note warn" role="alert"><b>Not yet:</b><ul class="inc-errors">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul></div>{% endif %}
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Close incident</button></div>
+</form>
+{% endif %}

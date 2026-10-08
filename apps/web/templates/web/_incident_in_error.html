@@ -1,0 +1,15 @@
+{% load web %}
+{# Recorded in error (slice 28, views_incidents.incident_in_error; services.recorded_in_error, Incidents Approve): what it does, then do it. #}
+<div class="modal-h"><h2>{{ i.number }} recorded in error</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="ince-form" hx-post="{% url 'web:incident_in_error' i.number %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]">
+  <div class="form">
+    <p class="full">For an incident recorded on the wrong device, or by mistake. Every device it holds is released and goes back to its status before the hold (out of service while a repair or its incoming inspection holds it); {% if i.opened_work_order %}the investigation work order it opened is cancelled if still open{% else %}the request it took over as its investigation goes on as it was{% endif %}. The incident is kept, marked recorded in error, and counted nowhere. This cannot be undone.</p>
+    {% if error %}<div class="full"><span class="err" role="alert">{{ error }}</span></div>{% endif %}
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn danger" type="submit">Mark recorded in error</button></div>
+</form>
+{% endif %}

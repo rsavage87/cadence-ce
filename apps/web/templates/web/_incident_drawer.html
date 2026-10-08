@@ -1,0 +1,98 @@
+{% load web %}
+{% comment %}One incident (slice 28, views_incidents._drawer_context): the clock in words, the facts, the decision, the reports, the device
+   evaluation's finding, the holds, the investigation work order, and History. Each change is a modal (#modal-card) or a button posting
+   here; a refusal from a button shows at the top (`refusal`). Incidents View only: the outcome and who was affected are shown here.{% endcomment %}
+<div class="dr-h">
+  <div>
+    <h2>{{ i.number }} · {{ i.asset.tag }} {{ dm.description }}</h2>
+    <div class="sub">{{ dm.manufacturer }} {{ dm.model }} · {{ i.asset.department }} · happened {{ i.occurred_on|date:"M j, Y" }}</div>
+    <div class="chips"><span class="chip {% if i.status == 'open' %}info{% elif i.status == 'closed' %}ok{% else %}neutral{% endif %}">{{ i.get_status_display }}</span>{% if clock.chip and i.status != "in_error" %}<span class="chip {{ clock.chip.0 }}">{{ clock.chip.1 }}</span>{% endif %}{% if held_now %}<span class="chip crit">Device held</span>{% endif %}</div>
+  </div>
+  <button class="iconbtn" type="button" data-act="close-drawer" aria-label="Close">{% icon "x" %}</button>
+</div>
+<div class="dr-b">
+  {% if refusal %}<div class="sec"><div class="note warn" role="alert">{{ refusal }}</div></div>{% endif %}
+  <div class="sec"><div class="note inc-clock{% if clock.tone %} {{ clock.tone }}{% endif %}" role="status">{{ clock.text }}</div></div>
+
+  <div class="sec"><h3>What happened {% if can_record %}<button class="link" type="button" hx-get="{% url 'web:incident_facts' i.number %}" hx-target="#modal-card">Edit facts</button>{% endif %}</h3>
+    <dl class="dl">
+      <div><dt>Happened on</dt><dd>{{ i.occurred_on|date:"D M j, Y" }}</dd></div>
+      <div><dt>Clinical staff first knew on</dt><dd>{{ i.aware_on|date:"D M j, Y" }}</dd></div>
+      <div class="inc-wide"><dt>Outcome</dt><dd>{{ i.get_outcome_display }}</dd></div>
+      <div><dt>Who was affected</dt><dd>{{ i.get_affected_display }}</dd></div>
+      <div><dt>Event report number</dt><dd>{% if i.event_reference %}{{ i.event_reference }}{% elif needs_decision %}<span class="down">Not recorded yet</span>{% else %}Not recorded yet{% endif %}</dd></div>
+      <div><dt>Accessories and disposables</dt><dd>{{ i.get_accessories_display|default:"Not recorded yet" }}</dd></div>
+      <div><dt>Event log</dt><dd>{{ i.get_event_log_display|default:"Not recorded yet" }}</dd></div>
+      <div><dt>Recorded</dt><dd>{{ i.created_at|date:"M j, Y" }}{% if i.created_by %} by {{ i.created_by }}{% endif %}</dd></div>
+      {% if i.closed_on %}<div><dt>Closed</dt><dd>{{ i.closed_on|date:"M j, Y" }}{% if i.closed_by %} by {{ i.closed_by }}{% endif %}</dd></div>{% endif %}
+    </dl>
+    <p class="hint inc-privacy">The narrative and the deliberations are in the facility's event report, not here.</p>
+  </div>
+
+  <div class="sec"><h3>Reportable? {% if can_decide %}<button class="link" type="button" hx-get="{% url 'web:incident_decide' i.number %}" hx-target="#modal-card">{% if i.reportable is None %}Decide{% else %}Decide again{% endif %}</button>{% endif %}</h3>
+    {% if i.reportable is None %}
+    <p class="inc-line">{% if needs_decision %}Not decided yet.{% else %}Not decided (no one was harmed, so no decision is needed).{% endif %}</p>
+    {% else %}
+    <dl class="dl">
+      <div><dt>Decision</dt><dd>{% if i.reportable %}<span class="chip warn">Reportable</span>{% else %}<span class="chip neutral">Not reportable</span>{% endif %}</dd></div>
+      <div><dt>Decided on</dt><dd>{{ i.decided_on|date:"M j, Y" }}</dd></div>
+      <div class="inc-wide"><dt>Basis</dt><dd>{{ i.get_basis_display }}</dd></div>
+      <div><dt>Decided by</dt><dd>{{ i.get_decided_by_display }}</dd></div>
+      <div><dt>Recorded by</dt><dd>{{ i.recorded_by|default:"—" }}</dd></div>
+    </dl>
+    {% endif %}
+  </div>
+
+  <div class="sec"><h3>Reports sent {% if can_decide %}<button class="link" type="button" hx-get="{% url 'web:incident_reports' i.number %}" hx-target="#modal-card">{% if i.report_number %}Correct reports{% else %}Record reports{% endif %}</button>{% endif %}</h3>
+    {% if required %}<p class="inc-line">Required: a report to {{ required }}{% if missing %}; not recorded yet to {{ missing }}{% endif %}.</p>{% endif %}
+    {% if i.report_number or i.fda_reported_on or i.manufacturer_reported_on %}
+    <dl class="dl">
+      <div><dt>Sent to the FDA</dt><dd>{{ i.fda_reported_on|date:"M j, Y"|default:"—" }}</dd></div>
+      <div><dt>Sent to the manufacturer</dt><dd>{{ i.manufacturer_reported_on|date:"M j, Y"|default:"—" }}</dd></div>
+      <div><dt>Report number</dt><dd>{{ i.report_number|default:"—" }}</dd></div>
+    </dl>
+    {% elif not required %}<p class="inc-line muted">None recorded.</p>{% endif %}
+  </div>
+
+  <div class="sec"><h3>Device evaluation</h3>
+    {% if finding_form %}
+    <form class="inc-finding" hx-post="{% url 'web:incident_finding' i.number %}" hx-target="#drawer">
+      {{ finding_form.finding }}
+      <button class="btn sm" type="submit">Save</button>
+    </form>
+    {% else %}<p class="inc-line">{{ i.get_finding_display|default:"Not recorded yet." }}</p>{% endif %}
+    <p class="hint">What was found on the device, never who was at fault: the root cause is in the facility's analysis.</p>
+  </div>
+
+  <div class="sec"><h3>Devices held <span>{{ holds|length }}</span></h3>
+    <div class="list inc-holds">
+      {% for r in holds %}{% with h=r.h %}
+      <div class="li static">
+        <span class="rail {% if h.active %}crit{% else %}ok{% endif %}"></span>
+        <div class="bd">
+          <div class="t">{% if can_view_asset %}<a class="tag" href="{% url 'web:asset' h.asset.tag %}" hx-get="{% url 'web:asset' h.asset.tag %}" hx-target="#drawer">{{ h.asset.tag }}</a>{% else %}{{ h.asset.tag }}{% endif %} · {{ h.asset.device_model.description }}{% if h.asset_id == i.asset_id %} <span class="muted">(the suspect device)</span>{% endif %}</div>
+          <div class="s">Held {{ h.held_on|date:"M j" }}{% if h.sent_on %} · to the manufacturer {{ h.sent_on|date:"M j" }}{% if h.back_on %}, back {{ h.back_on|date:"M j" }}{% else %}, not back yet{% endif %}{% endif %}{% if h.released_on %} · released {{ h.released_on|date:"M j" }}: {{ r.how|lower }}{% endif %}</div>
+        </div>
+        {% if r.custody or r.release %}<div class="r inc-hold-acts">
+          {% if r.custody == "sent" %}<button class="btn sm" type="button" hx-get="{% url 'web:incident_hold_sent' i.number h.pk %}" hx-target="#modal-card">Sent to manufacturer</button>{% elif r.custody == "back" %}<button class="btn sm" type="button" hx-get="{% url 'web:incident_hold_back' i.number h.pk %}" hx-target="#modal-card">Back from manufacturer</button>{% endif %}
+          {% if r.release %}<button class="btn sm" type="button" hx-get="{% url 'web:incident_hold_release' i.number h.pk %}" hx-target="#modal-card">Release</button>{% endif %}
+        </div>{% endif %}
+      </div>
+      {% endwith %}{% empty %}<div class="empty">No device is held for this incident.</div>{% endfor %}
+    </div>
+    {% if can_hold %}<div class="sec-actions inc-more"><button class="link" type="button" hx-get="{% url 'web:incident_hold' i.number %}" hx-target="#modal-card">Hold another device</button></div>{% endif %}
+  </div>
+
+  <div class="sec"><h3>Investigation</h3>
+    {% if wo %}
+    <p class="inc-line">{% if can_view_wo %}<a class="link" href="{% url 'web:wo' wo.number %}" hx-get="{% url 'web:wo' wo.number %}" hx-target="#drawer">{{ wo.number }}</a>{% else %}{{ wo.number }}{% endif %} {% wo_status_chip wo.status %} <span class="muted">{% if i.opened_work_order %}opened by the incident{% else %}the request it was reported as{% endif %}</span></p>
+    {% else %}<p class="inc-line">No investigation work order.</p>{% endif %}
+    {% if can_open_wo and not investigation_live %}<button class="btn sm" type="button" hx-post="{% url 'web:incident_investigation' i.number %}" hx-target="#drawer">Open investigation</button>{% endif %}
+  </div>
+  {% if can_history %}{% include "web/_history_section.html" %}{% endif %}
+</div>
+<div class="dr-f">
+  {% if can_decide %}<button class="btn primary" type="button" hx-get="{% url 'web:incident_close' i.number %}" hx-target="#modal-card">Close incident</button>{% endif %}
+  {% if can_reopen %}<button class="btn" type="button" hx-post="{% url 'web:incident_reopen' i.number %}" hx-target="#drawer" hx-confirm="Reopen {{ i.number }}? Its holds stay released.">Reopen</button>{% endif %}
+  {% if can_decide %}<button class="btn danger" type="button" hx-get="{% url 'web:incident_in_error' i.number %}" hx-target="#modal-card">Recorded in error</button>{% endif %}
+</div>

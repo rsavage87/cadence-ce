@@ -1000,6 +1000,58 @@ a.sv-card:hover{border-color:var(--line-2);background:var(--surface-2)}
   .pmw-days input{font-size:16px;min-height:44px}
 }
 
+/* Slice 28, A: device incidents. The Incidents list (.li cards, the rail the report clock's colour), the incident drawer's clock note
+   (crit overdue, warn soon, info running, ok reported in time), its facts and holds; Record incident's "Keep it as found" reminder, its
+   due date, and "None for now" shown only while the hold is off (CSS :has; without :has it always shows, and the service refuses it
+   with a hold); the device and work order drawers' hold note; My work's held line; the Roles tab's notice. Theme tokens only. */
+.inc-3419{margin:0 0 8px}
+.inc-list .li .s{white-space:normal}
+.inc-list .li .r{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+.inc-held{font-size:12px;color:var(--crit);font-weight:500}
+.note.inc-clock{color:var(--ink);font-size:13px}
+.note.inc-clock.info,.note.inc-due.info{background:var(--info-soft);border-color:transparent;color:var(--info)}
+.note.inc-clock.warn,.note.inc-due.warn{background:var(--warn-soft);border-color:transparent;color:var(--warn)}
+.note.inc-clock.crit{background:var(--crit-soft);border-color:transparent;color:var(--crit);font-weight:500}
+.note.inc-clock.ok{background:var(--ok-soft);border-color:transparent;color:var(--ok)}
+.dl .inc-wide{grid-column:1/-1}
+.dl .inc-wide dd{white-space:normal;overflow:visible}
+.inc-line{margin:0 0 6px;font-size:13px}
+.inc-line .chip{margin:0 4px}
+.inc-privacy{margin-top:8px}
+.inc-finding{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
+.inc-finding select{flex:1;min-width:200px;font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line-2);border-radius:6px;padding:7px 9px}
+.inc-holds .li .s{white-space:normal}
+.inc-hold-acts{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+.inc-more{margin:8px 0 0}
+.note.inc-keep{color:var(--ink-2)}
+.note.inc-keep b{color:var(--ink)}
+.form .inc-hold{color:var(--ink);font-weight:500;display:flex;flex-direction:row;align-items:flex-start;gap:8px}
+.form .inc-hold input{width:auto;margin:3px 0 0}
+.inc-inv,.inc-basis,.inc-release{margin:0;padding:0;border:0;min-width:0}
+.inc-inv legend,.inc-basis legend,.inc-release legend{padding:0;margin-bottom:6px;font-size:12.5px;color:var(--ink-2)}
+.inc-inv .radio label span,.inc-basis .radio label span,.inc-release .radio label span{display:block;min-width:0}
+.inc-inv .radio input,.inc-basis .radio input,.inc-release .radio input{padding:0;border:0;flex:none}
+@supports selector(:has(*)){
+  .inc-form:has(input[name="hold"]:checked) .inc-if-nohold{display:none}
+}
+.form h3.inc-sub{margin:6px 0 -4px;font-size:13px}
+.inc-question{margin:0;font-size:13px;color:var(--ink);font-weight:500}
+.inc-errors{margin:6px 0 0;padding-left:18px}
+.inc-errors li{margin:2px 0}
+.note.inc-held-note{background:var(--crit-soft);border-color:transparent;color:var(--crit)}
+.note.inc-held-note.inv{background:var(--info-soft);color:var(--info)}
+.note.inc-held-note p{margin:0}
+.note.inc-held-note p+p{margin-top:4px}
+.note.inc-held-note .link{color:inherit;font-weight:600;text-decoration:underline}
+.mw-held{font-size:12.5px;color:var(--crit);padding:6px 9px;border-radius:6px;background:var(--crit-soft);overflow-wrap:anywhere}
+.note.roles-new{margin-bottom:12px}
+@media (max-width:760px){
+  .inc-list .li{padding:12px 0}
+  .inc-hold-acts .btn,.inc-finding .btn{min-height:44px}
+  .inc-finding select{font-size:16px;min-height:44px}
+  .inc-form .form :is(input:not([type="checkbox"]):not([type="radio"]),select){font-size:16px;min-height:44px}
+}
+
 /* Slice 11: printing app pages */
 /* What the browser prints of an app page (the Overview's Export button calls window.print(); any other screen prints from the
    browser's menu): the page's content on white, in the light theme whatever the screen shows, with chart and chip colours kept.

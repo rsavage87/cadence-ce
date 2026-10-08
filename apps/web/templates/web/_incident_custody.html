@@ -1,0 +1,16 @@
+{% load web %}
+{# A held device to the manufacturer for evaluation, or back (slice 28, views_incidents._custody; Incidents Approve): the day. The hold stays. #}
+<div class="modal-h"><h2>{{ hold.asset.tag }}: {{ title|lower }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="incu-form" hx-post="{{ url }}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    <p class="full hint">The day {{ hold.asset.tag }} {{ verb }}. It stays held for {{ i.number }} while it is there.</p>
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    <label>{{ form.on.label }}{{ form.on }}{% if form.on.errors %}<span class="err">{{ form.on.errors|striptags }}</span>{% endif %}</label>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Save</button></div>
+</form>
+{% endif %}

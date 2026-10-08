@@ -30,8 +30,9 @@ PARTIALS = ("hist", "hist-more")  # a section's first page, and Show older
 RELATED = {
     "work_orders": {"labor": "work_order_id", "parts": "work_order_id"},
     "device_models": {"aem": "device_model_id"},
+    "incidents": {"incident_holds": "incident_id"},  # slice 28: the incident drawer's History carries its holds' changes
 }
-NOUNS = {"labor": "Labor", "parts": "Part", "aem": "AEM case"}  # a related row's entries: "Labor added", "Part removed"
+NOUNS = {"labor": "Labor", "parts": "Part", "aem": "AEM case", "incident_holds": "Hold"}  # a related row's entries: "Labor added", "Part removed"
 VERBS = {"added": "added", "changed": "changed", "deleted": "removed"}
 
 
