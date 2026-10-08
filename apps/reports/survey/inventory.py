@@ -12,7 +12,8 @@ for its incoming inspection (slice 26: Asset.awaiting_inspection; its PM schedul
 inspection section lists it). FINDING a life-support or high-risk device marked missing, with the day it went missing (from its
 history). CHECK a risk-scored model with active devices whose yearly risk review is overdue (equipment.services.risk_review_due),
 linked to the model's drawer where the score is reviewed. A device's status is worded as every screen words it (equipment.services
-.status_label's rule: "Awaiting inspection" for a device out of service waiting for its incoming inspection).
+.status_label's rule: "Held for incident" for a device held as evidence (slice 28), first; "Awaiting inspection" for a device out of
+service waiting for its incoming inspection).
 
 Queries: three for the figures and gaps, plus two when devices are missing (them, and their history in one read); the device list
 (two) and the risk class changes (one) are read only when their rows are.
@@ -23,7 +24,7 @@ from django.urls import reverse
 from apps.core.days import local_day
 from apps.core.history import _rows, who
 from apps.equipment.models import AddedAs, Asset, AssetStatus, DeviceModel, RiskClass
-from apps.equipment.services import AWAITING_LABEL, risk_review_due, risk_review_due_on
+from apps.equipment.services import AWAITING_LABEL, HELD_LABEL, risk_review_due, risk_review_due_on
 
 from . import CHECK, DEVICE, FINDING, GAP, Figure, Gap, Period, Section, Table
 
@@ -50,8 +51,10 @@ def _class(value: str) -> str:
     return _CLASS_LABELS.get(value, value)
 
 
-def _status(status: str, awaiting: bool) -> str:
-    """A device's status as equipment.services.status_label words it, from the two columns."""
+def _status(status: str, awaiting: bool, held: bool = False) -> str:
+    """A device's status as equipment.services.status_label words it, from the three columns: held first (slice 28)."""
+    if held:
+        return HELD_LABEL
     return AWAITING_LABEL if awaiting and status == AssetStatus.OUT_OF_SERVICE else _STATUS_LABELS.get(status, status)
 
 
@@ -75,12 +78,12 @@ def _every_device():
     """Every active device, by tag (the CSV; never printed in full). Two queries whatever the fleet's size: the models, then the
     devices streamed in chunks."""
     models = {dm.pk: dm for dm in DeviceModel.objects.all()}
-    rows = (_active().order_by("tag").values_list("tag", "device_model_id", "department__name", "room", "status", "awaiting_inspection", "last_pm_on",
-                                                  "next_pm_on", "added_as"))
-    for tag, dm_id, department, room, status, awaiting, last_pm, next_pm, added_as in rows.iterator(chunk_size=ROW_CHUNK):
+    rows = (_active().order_by("tag").values_list("tag", "device_model_id", "department__name", "room", "status", "awaiting_inspection",
+                                                  "incident_hold", "last_pm_on", "next_pm_on", "added_as"))
+    for tag, dm_id, department, room, status, awaiting, held, last_pm, next_pm, added_as in rows.iterator(chunk_size=ROW_CHUNK):
         dm = models[dm_id]
-        yield [tag, dm.manufacturer, dm.model, dm.description, dm.category, _class(dm.risk_class), department, room, _status(status, awaiting),
-               strategy(dm), dm.pm_interval_months, last_pm, next_pm, _ADDED_LABELS.get(added_as, NOT_RECORDED)]
+        yield [tag, dm.manufacturer, dm.model, dm.description, dm.category, _class(dm.risk_class), department, room,
+               _status(status, awaiting, held), strategy(dm), dm.pm_interval_months, last_pm, next_pm, _ADDED_LABELS.get(added_as, NOT_RECORDED)]
 
 
 def _risk_changes(period: Period):

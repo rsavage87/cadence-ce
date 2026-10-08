@@ -19,7 +19,7 @@
   <div class="panel-h"><h2>Emails</h2><span class="sub">Changes save as you make them</span></div>
   <div class="panel-b">
     {% include "web/_notifications_form.html" %}
-    <div class="hint">These emails never include what was reported on a work order or who reported it: open the work order in Cadence CE to read it.</div>
+    <div class="hint">These emails never include what was reported on a work order or who reported it: open the work order in Cadence CE to read it.{% for row in rows %}{% if row.kind == "incidents" %} Incident emails never say what happened or to whom: only the incident's number, the device's tag, and the due date.{% endif %}{% endfor %}</div>
   </div>
 </div>
 {% endif %}

@@ -1,0 +1,16 @@
+{% autoescape off %}Hello {{ name }},
+
+{% if count == 1 %}This incident at {{ facility }} may need a report to the FDA or the manufacturer, and it is{% else %}These incidents at {{ facility }} may need a report to the FDA or the manufacturer, and they are{% endif %} not yet decided or reported.
+{% for i in items %}
+{{ i.number }} · device {{ i.tag }}
+{% if i.overdue %}Was due {{ i.due_on|date:"l, F j, Y" }}: past due. If the device cannot be ruled out, report it.{% elif i.left %}Due {{ i.due_on|date:"l, F j, Y" }} ({{ i.left }} work day{{ i.left|pluralize }} left){% else %}Due today, {{ i.due_on|date:"l, F j, Y" }}{% endif %}
+{{ i.url }}
+{% endfor %}
+Decide whether {% if count == 1 %}it was{% else %}each was{% endif %} reportable, and record the reports sent, in Cadence CE (you may be asked to sign in). This email does not repeat what happened; please keep patient information out of any reply.
+
+Every incident, on the Incidents screen:
+{{ incidents_url }}
+
+Cadence CE reminds the people who can decide whether an incident is reportable when {{ soon_days }} work days or fewer are left, and once more when a report is past due. These go to {{ email }}. To stop them, turn off "Incident report deadlines" on your Notifications page:
+{{ preferences_url }}
+{% endautoescape %}

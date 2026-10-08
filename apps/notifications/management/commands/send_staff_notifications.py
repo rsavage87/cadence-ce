@@ -1,7 +1,8 @@
 """
 Daily job (apps.jobs: staff_notifications): in every active facility, email each technician who chose it their daily digest (their
 work orders due today or overdue, their PMs in the next seven days), and each person with Contracts Edit the contracts ending in 90,
-30, or 7 days, or just ended (apps/notifications/daily.py). No email goes twice, so a rerun only retries what failed. Each facility
+30, or 7 days, or just ended (apps/notifications/daily.py), and (slice 28) each person with Incidents Approve the incidents whose report
+may be due within 3 work days or is past due (apps/incidents/notify.py). No email goes twice, so a rerun only retries what failed. Each facility
 works on its own day (its time zone, Tenant.timezone); the daily job runs it for one facility and that facility's day.
 
     python manage.py send_staff_notifications                         # every facility, each as of its today
@@ -31,6 +32,8 @@ def _line(counts: dict) -> str:
         parts.append(part)
     if counts["reminders"]:
         parts.append(f"{_plural(counts['reminders'], 'contract reminder')} sent ({_plural(counts['reminded'], 'contract')})")
+    if counts.get("incident_reminders"):  # slice 28
+        parts.append(f"{_plural(counts['incident_reminders'], 'incident reminder')} sent ({_plural(counts['incidents'], 'incident')})")
     skipped = counts["skipped"]
     if skipped:
         why = "; ".join(f"{n} {daily.KIND_WORDS[kind]}: {daily.SKIP_REASONS[reason]}" for (kind, reason), n in sorted(skipped.items()))
@@ -41,7 +44,7 @@ def _line(counts: dict) -> str:
 
 
 class Command(BaseCommand):
-    help = "Email the daily digests and the contract reminders due today."
+    help = "Email the daily digests, the contract reminders, and the incident reminders due today."
 
     def add_arguments(self, parser):
         parser.add_argument("--tenant", help="Facility slug; default every active facility")

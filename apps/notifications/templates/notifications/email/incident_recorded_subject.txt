@@ -1,0 +1,1 @@
+{% autoescape off %}{% with i=items.0 %}Incident {{ i.number }} on {{ i.tag }} may need a report by {{ i.due_on|date:"D, M j" }} · {{ facility }}{% endwith %}{% endautoescape %}

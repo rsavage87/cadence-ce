@@ -29,19 +29,29 @@ each PM not on time (Days late stays from the due date: the fact the record show
 due date, a GAP only once its window has closed (apps.pm.services.assets_past_window's rule, as the PM compliance report counts it),
 the others showing the day their window ends. Due dates moved after they had passed stay on the due date (a move pushes the window out
 with it). The tables keep their columns by the due date, so nothing changes for a facility that never chooses a window.
+
+Slice 28, a device held as evidence for an incident investigation (Asset.incident_hold): nobody uses, repairs, or tests it until the
+incident releases it, so its PM cannot be done. A held life-support or high-risk device past its PM date is a FINDING that says so
+("held as evidence for an incident investigation since <day>; not in use"), never a GAP; so is its open PM due on or after the day the
+hold began with no reason recorded (releasing the hold records LateReason.INCIDENT_HOLD on it). A PM that was already late when the
+device was held keeps its GAP: the hold does not explain it. The held day is the earliest active hold's (one query, only when a device
+listed is held), and the status column reads "Held for incident" (equipment.services.HELD_LABEL).
 """
 from __future__ import annotations
 
 from bisect import bisect_left
 from decimal import ROUND_DOWN, Decimal
 
-from django.db.models import Count, F, Q
+from django.db.models import Count, F, Min, Q
 from django.urls import reverse
 
 from apps.core.days import local_day
 from apps.core.history import _rows, who
 from apps.equipment.models import Asset, AssetStatus, RiskClass
+from apps.equipment.services import HELD_LABEL
 from apps.facility.services import compliance_targets, get_settings
+from apps.incidents.models import IncidentHold
+from apps.incidents.models import Status as IncidentStatus
 from apps.pm.services import RETIRED_AND_CANCELLED, pm_due_queryset
 from apps.pm.windows import ASSET_RISK, Windows, windows
 from apps.reports.fleet import on_time_words
@@ -202,13 +212,37 @@ def _late_rows(late, today, w: Windows):
                ((completed_on or today) - due_on).days, later[0] if later else None, later[1] if later else "", why, recorded_on]
 
 
-def _no_reason_gaps(late, today, w: Windows) -> list[Gap]:
-    """A GAP per life-support or high-risk PM not on time with no reason recorded; imported ones never (one query). Under a window
-    other than the due date, each says when its window ended."""
+def _no_reason(late) -> list[tuple]:
+    """The life-support and high-risk PMs not on time with no reason recorded, imported ones never: (number, tag, due_on, completed_on,
+    status, risk class, device id, the device held now). One query."""
+    return list(late.filter(asset__device_model__risk_class__in=CRITICAL, late_reason="").exclude(source=Source.IMPORTED)
+                .order_by("due_on", "number").values_list("number", "asset__tag", "due_on", "completed_on", "status",
+                                                          "asset__device_model__risk_class", "asset_id", "asset__incident_hold"))
+
+
+def _held_since(asset_ids) -> dict:
+    """{device id: the day its earliest active hold began} for the devices held by an open incident (slice 28). One query."""
+    return dict(IncidentHold.objects.filter(asset_id__in=asset_ids, released_on__isnull=True, incident__status=IncidentStatus.OPEN)
+                .order_by().values("asset_id").annotate(since=Min("held_on")).values_list("asset_id", "since"))
+
+
+def _held_words(since) -> str:
+    """Why a held device's PM is not done (slice 28)."""
+    when = f" since {_day(since)}" if since else ""
+    return f"held as evidence for an incident investigation{when}; not in use"
+
+
+def _no_reason_gaps(rows, today, w: Windows, held: dict) -> list[Gap]:
+    """A GAP per life-support or high-risk PM not on time with no reason recorded (_no_reason). Under a window other than the due date,
+    each says when its window ended. Slice 28: a PM still open on a device held now, due on or after the day its hold began, is a
+    FINDING saying it is held (`held`: _held_since), since its device may not be touched until the incident releases it."""
     gaps = []
-    rows = (late.filter(asset__device_model__risk_class__in=CRITICAL, late_reason="").exclude(source=Source.IMPORTED)
-            .order_by("due_on", "number").values_list("number", "asset__tag", "due_on", "completed_on", "status", "asset__device_model__risk_class"))
-    for number, tag, due_on, completed_on, status, rc in rows:
+    for number, tag, due_on, completed_on, status, rc, asset_id, is_held in rows:
+        since = held.get(asset_id) if is_held else None
+        if is_held and status in OPEN_STATUSES and (since is None or due_on >= since):
+            gaps.append(Gap(FINDING, f"{number} on {tag} is {_n_days((today - due_on).days)} past its due date: {tag} is {_held_words(since)}; "
+                                     "the reason is recorded when the hold is released", url=reverse("web:wo", args=[number]), record=number))
+            continue
         if w.is_default:
             if completed_on:
                 text = f"{number} on {tag} was done {_n_days((completed_on - due_on).days)} late with no reason recorded"
@@ -317,7 +351,7 @@ def _critical_past(today, w: Windows) -> list[dict]:
     devices = list(Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES, device_model__risk_class__in=CRITICAL).filter(_past_due_date(today))
                    .order_by(F("next_pm_on").asc(nulls_last=True), "tag")
                    .values("id", "tag", "status", "next_pm_on", rc=F("device_model__risk_class"), make=F("device_model__manufacturer"),
-                           model=F("device_model__model")))
+                           model=F("device_model__model"), held=F("incident_hold")))
     if devices:
         open_pm: dict = {}
         for asset_id, number in (WorkOrder.objects.filter(type=WoType.PM, status__in=OPEN_STATUSES, asset_id__in=[d["id"] for d in devices])
@@ -340,8 +374,14 @@ def _window_cell(d) -> str | None:
     return f"Ended {_day(d['end'])}" if d["past_window"] else f"On time until {_day(d['end'])}"
 
 
-def _device_gap(d, w: Windows) -> Gap:
+def _device_gap(d, w: Windows, held: dict) -> Gap:
     name = _class_name(d["rc"])
+    if d["held"] and d["past_window"]:  # slice 28: it may not be touched until the incident releases it
+        text = f"{d['tag']} ({name}) is {_n_days(d['days'])} past its PM date ({_day(d['next_pm_on'])})"
+        if not w.is_default:
+            text += f" and its window ended {_day(d['end'])}"
+        text += f": {_held_words(held.get(d['id']))}"
+        return Gap(FINDING, text, url=reverse("web:asset", args=[d["tag"]]), record=d["tag"])
     if d["past_window"]:
         text = f"{d['tag']} ({name}) is {_n_days(d['days'])} past its PM date ({_day(d['next_pm_on'])})"
         if not w.is_default:
@@ -372,6 +412,10 @@ DEFAULT_NOTES = [
     "inspection is never past its PM date, missing or not: its PM schedule starts when the inspection passes.",
     "On-time shares are cut to one decimal, never rounded up, so a class that missed its target never shows reaching it.",
 ]
+# Slice 28: the last note under any window.
+HELD_NOTE = ("A device held as evidence for an incident investigation is not used, repaired, or tested until the incident releases it. "
+             "Past its PM date it is listed as a finding, never a gap, and so is its open PM due since the hold began; releasing the hold "
+             "records why that PM was late. A PM already late when the device was held is a gap like any other.")
 
 
 def _window_notes(w: Windows) -> list[str]:
@@ -437,8 +481,11 @@ def build(period: Period, user) -> Section:
         past_hint += f"; {totals['inside']} more past their PM date, still inside their window"
     figures.append(Figure(past_label, totals["past"], hint=past_hint))
 
-    gaps = _no_reason_gaps(late, today, w)
-    gaps += [_device_gap(d, w) for d in past if d["gap"]]
+    no_reason = _no_reason(late)
+    held_ids = {row[6] for row in no_reason if row[7]} | {d["id"] for d in past if d["held"]}
+    held = _held_since(held_ids) if held_ids else {}  # slice 28: one query, only when a device listed is held
+    gaps = _no_reason_gaps(no_reason, today, w, held)
+    gaps += [_device_gap(d, w, held) for d in past if d["gap"]]
     for c in classes:
         if c["rc"] not in CRITICAL and c["due"] and not c["meets"]:
             # No url: no one record is behind a class's share (its misses are listed in "PMs not on time").
@@ -475,7 +522,8 @@ def build(period: Period, user) -> Section:
         past_columns = ["Device", "Model", "Risk class", "Status", "Next PM", "Days past", "Open PM work order"]
         past_links = {0: DEVICE, 6: WORK_ORDER}
     move_rows = [[m["number"], tags.get(m["asset_id"], ""), m["old"], m["new"], m["on"], m["by"]] for m in moves]
-    past_rows = [[d["tag"], f"{d['make']} {d['model']}", RiskClass(d["rc"]).label, AssetStatus(d["status"]).label, d["next_pm_on"], d["days"],
+    past_rows = [[d["tag"], f"{d['make']} {d['model']}", RiskClass(d["rc"]).label, HELD_LABEL if d["held"] else AssetStatus(d["status"]).label,
+                  d["next_pm_on"], d["days"],
                   *([_window_cell(d)] if windowed else []), d["open_pm"]] for d in past]
 
     tables = [
@@ -508,7 +556,7 @@ def build(period: Period, user) -> Section:
         figures=figures,
         gaps=gaps,
         tables=tables,
-        notes=_window_notes(w) if windowed else list(DEFAULT_NOTES),
+        notes=[*(_window_notes(w) if windowed else DEFAULT_NOTES), HELD_NOTE],
     )
 
 

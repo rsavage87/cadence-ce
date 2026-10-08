@@ -1,41 +1,48 @@
 """
 Notifications to staff (slice 20): who wants which emails, and choosing them. The daily digest and contract reminders (part D) live in
 apps/notifications/daily.py and only read preferences through preferences_for and wants; the assignment emails are
-apps/notifications/assignments.py.
+apps/notifications/assignments.py; slice 28's incident emails are apps/incidents/notify.py.
 
 Choosing is self-service, on the account menu's Notifications page and at /api/v1/notification-preferences/: a user only ever sets their
 own, and the emails always go to their own account's address. The page is for people who see the whole facility and can view work
 orders (`refusal`): a scoped role (apps.workorders.scoping: a vendor's company, a requester's unit) is never offered it, since every one
 of these emails is about the facility's work. Contract reminders are offered only to someone with Contracts Edit, who can act on them
-(`offered`); without it they are never sent, whatever was saved, and cannot be turned on.
+(`offered`); without it they are never sent, whatever was saved, and cannot be turned on. Slice 28: incident emails (an incident that
+may need a report to the FDA or the manufacturer, and its due date nearing) are offered the same way, only to someone with Incidents
+Approve, who decides whether one was reportable; the page shows their switch only to them.
 
-Until someone first saves, preferences_for gives the model's defaults (assignments on, digest off, contract reminders on); the first
-save creates their row. Turning an email off always works.
+Until someone first saves, preferences_for gives the model's defaults (assignments on, digest off, contract reminders on, incident
+emails on); the first save creates their row. Turning an email off always works.
 """
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 
 from apps.accounts.models import Level, Module
+from apps.incidents import permissions as inc_perms
 from apps.tenants.context import get_current_tenant
 from apps.workorders.scoping import is_scoped
 
 from .models import NotificationPreference
 
-KINDS = ("assignments", "daily_digest", "contract_reminders")
+KINDS = ("assignments", "daily_digest", "contract_reminders", "incidents")
 # Each kind as the Notifications page and the toast name it, and what it sends.
 LABELS = {
     "assignments": "Work orders assigned to me",
     "daily_digest": "Daily digest",
     "contract_reminders": "Contract reminders",
+    "incidents": "Incident report deadlines",
 }
-SHORT = {"assignments": "Assignment emails", "daily_digest": "Daily digest", "contract_reminders": "Contract reminders"}
+SHORT = {"assignments": "Assignment emails", "daily_digest": "Daily digest", "contract_reminders": "Contract reminders",
+         "incidents": "Incident emails"}
 CONTRACTS_LEVEL = Level.EDIT  # contract reminders ask the reader to renew or let a contract end: Contracts Edit acts on that
 WORK_LEVEL = Level.VIEW  # assignment emails and the digest are about work orders: Work orders View opens them
+INCIDENTS_LEVEL = inc_perms.DECIDE_LEVEL  # incident emails ask the reader to decide and report (slice 28): Incidents Approve does that
 # Why a kind is not offered: whoever gets an email can always choose it, so each kind is offered exactly to those it may be sent to.
 NOT_OFFERED = {
     "assignments": "Work order emails go to people who can view work orders (Work orders View).",
     "daily_digest": "Work order emails go to people who can view work orders (Work orders View).",
     "contract_reminders": "Contract reminders go to people who can edit contracts (Contracts Edit).",
+    "incidents": "Incident emails go to people who decide whether an incident is reportable (Incidents Approve).",
 }
 
 
@@ -46,8 +53,8 @@ def preferences_for(user) -> NotificationPreference:
 
 
 def wants(user, kind: str) -> bool:
-    """Whether `user` gets the emails of `kind` (a field of NotificationPreference: assignments, daily_digest, contract_reminders):
-    their choice, and only while they can receive email at all (active, an address)."""
+    """Whether `user` gets the emails of `kind` (a field of NotificationPreference: assignments, daily_digest, contract_reminders,
+    incidents): their choice, and only while they can receive email at all (active, an address)."""
     if kind not in KINDS:
         raise ValueError(kind)
     if not user.is_active or not user.email:
@@ -66,7 +73,8 @@ def refusal(user) -> str | None:
     if is_scoped(user):
         return "Your role sees only part of the facility, and these emails are about the whole facility's work."
     if not any(offered(user, kind) for kind in KINDS):
-        return "These emails are about work orders (Work orders View) and service contracts (Contracts Edit), and your role has neither."
+        return ("These emails are about work orders (Work orders View), service contracts (Contracts Edit), and device incidents "
+                "(Incidents Approve), and your role has none of these.")
     return None
 
 
@@ -76,18 +84,21 @@ def can_choose(user) -> bool:
 
 
 def offered(user, kind: str) -> bool:
-    """Whether `user` is offered the emails of `kind`: contract reminders need Contracts Edit, the work order emails Work orders View.
-    The daily jobs send each kind only to those it is offered to (apps.notifications.daily), so whoever gets one can turn it off."""
+    """Whether `user` is offered the emails of `kind`: contract reminders need Contracts Edit, incident emails Incidents Approve (slice
+    28), the work order emails Work orders View. Each kind goes only to those it is offered to (apps.notifications.daily,
+    apps.incidents.notify), so whoever gets one can turn it off."""
     if kind not in KINDS:
         raise ValueError(kind)
     if kind == "contract_reminders":
         return user.has_level(Module.CONTRACTS, CONTRACTS_LEVEL)
+    if kind == "incidents":
+        return user.has_level(inc_perms.MODULE, INCIDENTS_LEVEL)
     return user.has_level(Module.WORKORDERS, WORK_LEVEL)
 
 
 def shown(user, prefs: NotificationPreference | None = None) -> dict:
-    """What `user` gets, kind by kind, as the page's switches and the API show it: their choice, and contract reminders off for someone
-    who is not offered them, whatever was saved."""
+    """What `user` gets, kind by kind, as the page's switches and the API show it: their choice, and a kind off for someone who is not
+    offered it (contract reminders, incident emails), whatever was saved."""
     prefs = prefs or preferences_for(user)
     return {kind: bool(getattr(prefs, kind)) and offered(user, kind) for kind in KINDS}
 

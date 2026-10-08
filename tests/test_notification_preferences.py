@@ -1,7 +1,8 @@
 """Slice 20, part C: choosing the emails (apps.notifications.services, the account menu's Notifications page, and
 /api/v1/notification-preferences/).
 
-Defaults until the first save (assignments on, the digest off, contract reminders on), the first save creates the row and later ones
+Defaults until the first save (assignments on, the digest off, contract reminders on; slice 28's incident emails on, offered at
+Incidents Approve: tests/test_incidents_notify.py), the first save creates the row and later ones
 change only what changed, each kind offered exactly to those it may be sent to (contract reminders with Contracts Edit, the work order
 emails with Work orders View; a kind not offered is shown off and disabled with its reason, and turning it on refused), so someone with
 Contracts Edit and no Work orders View chooses their contract reminders here too; where the emails go (or that there is no address),
@@ -26,7 +27,7 @@ from apps.tenants.context import tenant_context
 URL = "/account/notifications/"
 API = "/api/v1/notification-preferences/"
 HX = {"HTTP_HX_REQUEST": "true", "HTTP_HX_TARGET": "ntf-form"}
-DEFAULTS = {"assignments": True, "daily_digest": False, "contract_reminders": True}
+DEFAULTS = {"assignments": True, "daily_digest": False, "contract_reminders": True, "incidents": True}
 PART_OF = "part of this facility"  # ModulePermission's refusal of a scoped user
 DIGEST_CAVEAT = "The digest lists work assigned to you as a technician"  # the digest's row, for someone without a technician profile
 
@@ -81,14 +82,14 @@ def test_defaults_until_the_first_save_then_only_what_changed(ctx, make_user):
     assert not NotificationPreference.objects.exists()
     prefs = ns.preferences_for(tech)
     assert prefs._state.adding and {k: getattr(prefs, k) for k in ns.KINDS} == DEFAULTS
-    assert ns.shown(tech) == {**DEFAULTS, "contract_reminders": False}  # Contracts View only: never sent, whatever is saved
+    assert ns.shown(tech) == {**DEFAULTS, "contract_reminders": False, "incidents": False}  # Contracts View, Incidents Edit: never sent
     ns.set_preferences(tech, daily_digest=True)
     assert saved(tech) == {**DEFAULTS, "daily_digest": True}
     row = NotificationPreference.objects.get()
     stamp = row.updated_at
     assert ns.set_preferences(tech, daily_digest=True).updated_at == stamp  # nothing changes: no save
     ns.set_preferences(tech, assignments=False)
-    assert saved(tech) == {"assignments": False, "daily_digest": True, "contract_reminders": True} and NotificationPreference.objects.count() == 1
+    assert saved(tech) == {**DEFAULTS, "assignments": False, "daily_digest": True} and NotificationPreference.objects.count() == 1
 
 
 def test_wants_reads_the_choice_and_needs_an_active_account_with_an_address(ctx, make_user):
@@ -216,7 +217,7 @@ def test_a_post_without_htmx_saves_and_comes_back(client, ctx, person):
     user = person("manager")
     r = client.post(URL, {"contract_reminders": "0", "daily_digest": "1"})
     assert r.status_code == 302 and r["Location"] == URL
-    assert saved(user) == {"assignments": True, "daily_digest": True, "contract_reminders": False}
+    assert saved(user) == {**DEFAULTS, "daily_digest": True, "contract_reminders": False}
 
 
 def test_the_account_menu_offers_it_to_those_it_is_for(client, ctx, tenant, person):
@@ -255,7 +256,7 @@ def test_contracts_edit_without_work_orders_view_chooses_contract_reminders(clie
     opens with the reminders offered and the work order emails disabled with their reason."""
     user = custom_user(tenant, custom_role("contracts-only", {"contracts": Level.EDIT}))
     assert [k for k in ns.KINDS if ns.offered(user, k)] == ["contract_reminders"]
-    assert ns.shown(user) == {"assignments": False, "daily_digest": False, "contract_reminders": True}
+    assert ns.shown(user) == {"assignments": False, "daily_digest": False, "contract_reminders": True, "incidents": False}
     client.force_login(user)
     r = client.get(URL)
     body = r.content.decode()
@@ -279,7 +280,7 @@ def test_contracts_edit_without_work_orders_view_chooses_contract_reminders(clie
         ns.set_preferences(user, daily_digest=True)
     assert e.value.message_dict == {"daily_digest": [ns.NOT_OFFERED["daily_digest"]]}
     ns.set_preferences(user, contract_reminders=True, assignments=False)
-    assert saved(user) == {"assignments": True, "daily_digest": False, "contract_reminders": True}
+    assert saved(user) == DEFAULTS
 
 
 def test_someone_not_of_the_facility_is_told_so(client, ctx, tenant):
@@ -304,11 +305,12 @@ def put(client, body, **extra):
 
 def test_the_api_reads_and_sets_your_own(client, ctx, person):
     user = person("technician")
-    shown = {"email": user.email, "assignments": True, "daily_digest": False, "contract_reminders": False, "contract_reminders_offered": False}
+    shown = {"email": user.email, "assignments": True, "daily_digest": False, "contract_reminders": False, "incidents": False,
+             "contract_reminders_offered": False, "incidents_offered": False}
     assert client.get(API).json() == shown
     r = put(client, {"daily_digest": True, "assignments": "false"})
     assert r.status_code == 200 and r.json() == {**shown, "daily_digest": True, "assignments": False}
-    assert saved(user) == {"assignments": False, "daily_digest": True, "contract_reminders": True}
+    assert saved(user) == {**DEFAULTS, "assignments": False, "daily_digest": True}
     again = put(client, client.get(API).json())  # what GET showed, sent back as is
     assert again.status_code == 200 and again.json() == r.json() and saved(user)["contract_reminders"] is True
 
@@ -316,20 +318,20 @@ def test_the_api_reads_and_sets_your_own(client, ctx, person):
 def test_the_api_with_contracts_edit_and_a_token(client, ctx, make_user):
     manager = make_user("manager")
     token = {"HTTP_AUTHORIZATION": f"Token {Token.objects.create(user=manager).key}"}
-    assert client.get(API, **token).json() == {"email": "", **DEFAULTS, "contract_reminders_offered": True}
+    assert client.get(API, **token).json() == {"email": "", **DEFAULTS, "contract_reminders_offered": True, "incidents_offered": True}
     r = put(client, {"contract_reminders": False}, **token)
     assert r.status_code == 200 and r.json()["contract_reminders"] is False and saved(manager)["contract_reminders"] is False
 
 
 @pytest.mark.parametrize("body, errors", [
-    ({"pager": True}, {"detail": "Unknown fields: pager. Set any of assignments, daily_digest, contract_reminders: true or false."}),
+    ({"pager": True}, {"detail": "Unknown fields: pager. Set any of assignments, daily_digest, contract_reminders, incidents: true or false."}),
     ({"assignments": "maybe"}, {"assignments": ["Send true or false."]}),
     ({"assignments": None}, {"assignments": ["Send true or false."]}),
     ({"assignments": 1}, {"assignments": ["Send true or false."]}),
     ({"email": "someone@else.example", "assignments": False}, {"email": ["email is shown, not set here: send it as GET shows it, or leave it out."]}),
     ({"contract_reminders_offered": True}, {"contract_reminders_offered": [
         "contract_reminders_offered is shown, not set here: send it as GET shows it, or leave it out."]}),
-    ({}, {"detail": "Send any of assignments, daily_digest, contract_reminders: true or false."}),
+    ({}, {"detail": "Send any of assignments, daily_digest, contract_reminders, incidents: true or false."}),
     ({"contract_reminders": True}, {"contract_reminders": [ns.NOT_OFFERED["contract_reminders"]]}),
 ])
 def test_the_api_refuses_bad_bodies(client, ctx, person, body, errors):
@@ -358,7 +360,8 @@ def test_the_api_refuses_scoped_users(client, ctx, person, slug, fields):
 def test_the_api_for_contracts_edit_without_work_orders_view(client, ctx, tenant):
     user = custom_user(tenant, custom_role("contracts-only", {"contracts": Level.EDIT}))
     client.force_login(user)
-    shown = {"email": user.email, "assignments": False, "daily_digest": False, "contract_reminders": True, "contract_reminders_offered": True}
+    shown = {"email": user.email, "assignments": False, "daily_digest": False, "contract_reminders": True, "incidents": False,
+             "contract_reminders_offered": True, "incidents_offered": False}
     assert client.get(API).json() == shown
     r = put(client, {"contract_reminders": False})
     assert r.status_code == 200 and r.json() == {**shown, "contract_reminders": False} and saved(user)["contract_reminders"] is False
@@ -394,7 +397,7 @@ def test_choosing_under_row_level_security(client, ctx, person, other_tenant, ma
     r = put(client, {"daily_digest": True, "contract_reminders": False})
     assert r.status_code == 200 and r.json()["daily_digest"] is True
     assert client.get(API).json() == {"email": user.email, "assignments": False, "daily_digest": True, "contract_reminders": False,
-                                      "contract_reminders_offered": True}
+                                      "incidents": True, "contract_reminders_offered": True, "incidents_offered": True}
     with tenant_context(other_tenant):
         assert not NotificationPreference.unscoped.exists()  # unscoped: the policy hides the other facility's row
-    assert saved(user) == {"assignments": False, "daily_digest": True, "contract_reminders": False}
+    assert saved(user) == {**DEFAULTS, "assignments": False, "daily_digest": True, "contract_reminders": False}
