@@ -147,7 +147,7 @@ def test_new_work_order_and_the_api_show_the_refusal(client, signed_in, today, p
 def test_a_temporary_devices_inspection_is_done_to_the_temporary_checklist(today, pump_model):
     steps = [text for text, _m in inspections.TEMPORARY_CHECKLIST]
     assert steps[:len(inspections.INCOMING_CHECKLIST)] == [text for text, _m in inspections.INCOMING_CHECKLIST]
-    assert steps[len(inspections.INCOMING_CHECKLIST):] == ["Owner's PM label current (its due date recorded)", "Checked for open recalls on this model"]
+    assert steps[len(inspections.INCOMING_CHECKLIST):] == ["Owner's PM label current (its due date recorded)"]
     t = temporary(pump_model)
     wo = inspections.open_inspection(t)
     assert procedure_for(wo) is inspections.TEMPORARY_INCOMING and checklist_of(procedure_for(wo)) == inspections.TEMPORARY_CHECKLIST
@@ -211,7 +211,7 @@ def test_a_pass_is_refused_while_the_owners_pm_date_is_past(today, pump_model, t
         complete_work_order(wo, inspection_result=PASSED)
     assert errors_of(e) == {"inspection_result": words, "resolution": "Record the checklist, or say what was checked."}
     with pytest.raises(ValidationError) as e:  # a failed step answers first: Passed is wrong whatever the date
-        complete_work_order(wo, inspection_result=PASSED, results=results("pass", "fail", "pass", "pass", "pass", "pass", "pass"))
+        complete_work_order(wo, inspection_result=PASSED, results=results("pass", "fail", "pass", "pass", "pass", "pass"))
     assert errors_of(e) == {"inspection_result": "Step 2 failed. A device that fails a check fails its incoming inspection: choose Failed."}
     wo.refresh_from_db()
     t.refresh_from_db()
@@ -238,7 +238,7 @@ def test_a_fail_is_recorded_whatever_the_owners_pm_date(today, pump_model, techs
     wo = inspections.open_inspection(t)
     assign(wo, technician=techs["dana"])
     done = complete_work_order(wo, inspection_result=FAILED, resolution="Owner's PM label out of date",
-                               results=results("pass", "pass", "pass", "pass", "pass", "fail", "pass"))
+                               results=results("pass", "pass", "pass", "pass", "pass", "fail"))
     t.refresh_from_db()
     assert done.reinspection_opened and done.reinspection.type == WoType.INSPECTION and done.reinspection.assigned_to == techs["dana"]
     assert t.awaiting_inspection and t.status == AssetStatus.OUT_OF_SERVICE

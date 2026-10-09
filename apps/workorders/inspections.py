@@ -50,9 +50,8 @@ INCOMING_CHECKLIST = [
 # recorded on the device (Asset.owner_pm_due_on; a pass is refused while that date is past: owner_pm_refusal), and the model's open
 # recalls in Cadence (the Recalls screen) are checked. Steps in this order, the incoming checklist's first (the build spec's words).
 TEMPORARY_CHECKLIST = [
-    *INCOMING_CHECKLIST,
+    *INCOMING_CHECKLIST,  # its recall step covers the rental's model (merge fix: no second recall step)
     ("Owner's PM label current (its due date recorded)", None),
-    ("Checked for open recalls on this model", None),
 ]
 DONE_STATUSES = (WoStatus.COMPLETED, WoStatus.CLOSED)
 # The device's history reason use_before_inspection writes (equipment.services); uses_before reads it back.
