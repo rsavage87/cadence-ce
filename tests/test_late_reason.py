@@ -14,6 +14,7 @@ import pytest
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from pg_helpers import as_app_role, needs_postgres
+from repair_fixtures import CHECKED
 
 from apps.core.history import record_history
 from apps.equipment.models import Asset, Department, DeviceModel, RiskClass
@@ -115,7 +116,7 @@ def test_a_refused_reason_is_reported_with_the_rest_and_nothing_is_saved(vent, m
     assign(repair, technician=techs["dana"])
     change_status(repair, WoStatus.IN_PROGRESS)
     with pytest.raises(ValidationError) as e:
-        completion.complete_work_order(repair, resolution="Replaced the display", late_reason=LateReason.STAFFING, today=today)
+        completion.complete_work_order(repair, resolution="Replaced the display", late_reason=LateReason.STAFFING, today=today, **CHECKED)
     assert e.value.message_dict == {"late_reason": ["Only a PM records why it was late."]}
     for wo in (on_time, late, repair):
         wo.refresh_from_db()

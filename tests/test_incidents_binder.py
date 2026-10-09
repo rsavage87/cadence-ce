@@ -16,7 +16,7 @@ from django.db import connection
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
-from incident_fixtures import make_incident
+from incident_fixtures import investigated, make_incident
 from pg_helpers import as_app_role, needs_postgres
 from survey_helpers import gaps_of, period, rows_of
 
@@ -32,7 +32,7 @@ from apps.tenants.context import tenant_context
 from apps.tenants.models import Tenant
 from apps.web import views_survey
 from apps.workorders.models import Priority, Source, WorkOrder, WoStatus, WoType
-from apps.workorders.services import change_status, create_work_order
+from apps.workorders.services import create_work_order
 
 DAY = timedelta(days=1)
 SECRET = "Jane Roe bed 4 canary"  # what a requester typed: never in the binder
@@ -183,10 +183,7 @@ def test_a_released_and_closed_incident_through_the_services(today, vent):
     """The services' own rows: recorded with a hold, investigated, decided, released, closed; listed with its holds released and
     no gap."""
     i = inc.record_incident(asset=vent, outcome=Outcome.NO_HARM, affected=Affected.PATIENT, event_reference="SE-10", today=today)
-    wo = i.work_order
-
-    change_status(wo, WoStatus.IN_PROGRESS)
-    change_status(wo, WoStatus.COMPLETED)
+    investigated(i.work_order)  # slice 30: checked, so it may return to use
     inc.record_finding(i, Finding.MET_SPECS)
     inc.release(i.holds.get(), Release.RETURN_TO_USE, today=today)
     inc.close(i, today=today)

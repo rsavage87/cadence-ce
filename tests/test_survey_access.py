@@ -17,6 +17,7 @@ from datetime import timedelta
 import pytest
 from csvutil import csv_text
 from django.utils import timezone
+from repair_fixtures import CHECKED
 from survey_helpers import fake_section, fake_sections
 
 from apps.accounts.models import DataScope, Level, Module, Role, User, create_default_roles
@@ -160,7 +161,7 @@ def planted(ctx, dept, vent_model, pump_model, techs, pump_recall):
     assign(repair, technician=techs["dana"])
     add_note(repair, MARKER)
     change_status(repair, WoStatus.IN_PROGRESS)
-    complete_work_order(repair, resolution=MARKER)
+    complete_work_order(repair, resolution=MARKER, **CHECKED)
     create_work_order(asset=new, type=WoType.INSPECTION, priority=Priority.NORMAL, **texts)
     assert WorkOrder.objects.filter(problem=MARKER).count() >= 4 and Asset.objects.filter(notes=MARKER).count() == 3
     return {"today": today}

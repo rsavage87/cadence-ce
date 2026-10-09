@@ -14,7 +14,9 @@
    Slice 26: an incoming inspection shows its checklist like a PM (the incoming checklist when the model's procedure has none; every
    step or none), its result (Passed / Failed, each saying what it does to the device; optional when the device is not waiting for
    its inspection), and a waiting device's "If it fails" (shown once Failed is chosen): the re-inspection, and the tag-out of a device
-   put in use before its inspection.{% endcomment %}
+   put in use before its inspection.
+   Slice 30: a repair asks how it ended ("After the repair": checked and ready for use, checked by the vendor with their report's
+   number on vendor service, not returned to use) and shows the checks after repair, sent only with checked and ready for use.{% endcomment %}
 <div class="modal-h wc-h"><h2>Complete {{ wo.number }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
 {% if blocker %}
 <div class="form"><div class="full note">{{ blocker }}</div></div>
@@ -27,8 +29,19 @@
     {% if starting %}<p class="full hint wc-start">Not started yet: completing it records it as started and completed today.</p>{% endif %}
     {% if owner_pm_refusal %}<div class="full note warn wc-owner-pm" role="status">{{ owner_pm_refusal }} Until then this inspection cannot pass (the device's Change details records the date).</div>{% endif %}
     {% if form.non_field_errors %}<div class="full"><span class="err">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    {% if is_repair %}
+    <div class="full wc-repair">
+      <div class="wc-label" id="wc-repair-label">After the repair</div>
+      <div class="radio wc-results{% if repair_options|length == 2 %} wc-results-2{% endif %}" role="radiogroup" aria-labelledby="wc-repair-label">
+        {% for opt in repair_options %}<label><input type="radio" name="repair_check" value="{{ opt.value }}"{% if opt.checked %} checked{% endif %}{% if form.first_error == "repair_check" and forloop.first %} autofocus{% endif %}><span>{{ opt.label }}<small>{{ opt.hint }}</small></span></label>{% endfor %}
+      </div>
+      {% if form.repair_check.errors %}<span class="err">{{ form.repair_check.errors|striptags }}</span>{% endif %}
+      {% if offer_vendor_report %}<label class="wc-reference">The vendor's service report or field service order number, with Checked by the vendor{{ form.checks_reference }}{% if form.checks_reference.errors %}<span class="err">{{ form.checks_reference.errors|striptags }}</span>{% endif %}</label>{% endif %}
+      <p class="hint">Checked: ready for use records the checks below. Not returned to use keeps {{ asset.tag }} out of service.</p>
+    </div>
+    {% endif %}
   </div>
-  {% if is_pm or is_inspection %}
+  {% if is_pm or is_inspection or is_repair %}
   <div class="wc-sec">
     {% if has_checklist %}
     <div class="wc-head"><span class="hint">Checklist{% if procedure %}: {% if procedure.code %}<b>{{ procedure.code }}</b> · {% endif %}{{ procedure.name }}{% endif %}</span>

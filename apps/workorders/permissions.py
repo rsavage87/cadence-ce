@@ -64,3 +64,9 @@ def can_set_late_reason(user, wo) -> bool:
     """Record or change why `wo` (a PM that missed its due date: apps.pm.services.missed_pms) was late. Scoped users only on what they
     can see (the caller narrows through apps.workorders.scoping, as for every move)."""
     return user.has_level(MODULE, late_reason_level(wo.status))
+
+
+def can_keep_open(user) -> bool:
+    """Record failed checks after a repair on the repair, which stays open and may hold the device out (slice 30: completion.keep_open):
+    Edit, as completing it."""
+    return user.has_level(MODULE, transition_level(WoStatus.IN_PROGRESS, WoStatus.COMPLETED))

@@ -40,7 +40,7 @@ from apps.core.models import Sequence
 from apps.core.workdays import add_work_days, work_days_between
 from apps.equipment.models import Asset, AssetStatus
 from apps.equipment.services import RETURNED_LABEL, status_label
-from apps.workorders.models import OPEN_STATUSES, LateReason, Priority, WorkOrder, WoStatus, WoType
+from apps.workorders.models import OPEN_STATUSES, LateReason, Priority, RepairCheck, WorkOrder, WoStatus, WoType
 
 from . import notify
 from . import permissions as perms
@@ -68,6 +68,7 @@ from .models import (
 )
 
 REPORT_WORK_DAYS = 10  # 803.30: no more than 10 work days after the day the facility became aware
+CHECKED = (RepairCheck.PASSED, RepairCheck.VENDOR_REPORT)  # slice 30: an investigation whose device may return to use
 SOON_WORK_DAYS = 3  # the nav badge turns hot, and the reminder goes out, with this many work days left
 HELD_WORDS = "Held by Clinical Engineering: do not use, repair, or test it."  # for readers without Incidents View (no number)
 INVESTIGATION_PROBLEM = "Investigation of a reported incident: device held as evidence"  # an opened work order's problem (no details)
@@ -879,6 +880,9 @@ def _release_refusal(incident, hold, kind: str, today: date) -> str:
                     "kept out of service.")
         if wo.status not in (WoStatus.COMPLETED, WoStatus.CLOSED):
             return f"Complete investigation {wo.number} before {tag} returns to use."
+        if wo.repair_check not in CHECKED:  # slice 30: its checks after repair recorded (not returned to use, or none before slice 30)
+            return (f"Reopen investigation {wo.number} and complete it with its checks after repair, or release {tag} kept out of "
+                    "service.")
     if _has_clock(incident) and incident.reportable is None:
         return f"Decide whether {incident.number} was reportable before {tag} returns to use."
     missing = reports_missing(incident)
@@ -902,12 +906,14 @@ def _release_refusal(incident, hold, kind: str, today: date) -> str:
 def release(hold, release, *, by=None, today=None) -> IncidentHold:
     """End a hold (Incidents Approve): Release.return_to_use (also Equipment Edit), keep_out, or kept_by_manufacturer. Return to use
     is refused while the device is with the manufacturer; for the suspect device until the investigation work order is completed or
-    closed; on an incident with a clock until it is decided and, when reportable, the required reports are recorded; and when the
-    device's next PM date has passed (release it kept out, do the PM, then return it from its drawer), or, slice 29, a temporary
-    device's owner's PM date (Asset.owner_pm_due_on: the owner does it, or its new date is recorded). The device goes in service only
-    when no other open incident holds it, it is not awaiting its incoming inspection, and no repair holds it (the message names what
-    does); while another incident holds it the flag stays and the status does not change. The device's PMs that missed their due date
-    while it was held, with no late reason, get LateReason.INCIDENT_HOLD.
+    closed, and (slice 30) with its checks after repair: checked and ready for use, or checked by the vendor (CHECKED; not returned to
+    use, or a completion from before slice 30, is reopened and completed with them, or the device released kept out); on an incident
+    with a clock until it is decided and, when reportable, the required reports are recorded; and when the device's next PM date has
+    passed (release it kept out, do the PM, then return it from its drawer), or, slice 29, a temporary device's owner's PM date
+    (Asset.owner_pm_due_on: the owner does it, or its new date is recorded). The device goes in service only when no other open
+    incident holds it, it is not awaiting its incoming inspection, and no repair holds it (the message names what does); while another
+    incident holds it the flag stays and the status does not change. The device's PMs that missed their due date while it was held,
+    with no late reason, get LateReason.INCIDENT_HOLD.
 
     The release succeeds when the device stays out: release_note(hold) has the words. keep_out is refused while the device is with
     the manufacturer, and kept_by_manufacturer unless it is there (803.32 asks for the day it was sent). Refusals keyed "release".

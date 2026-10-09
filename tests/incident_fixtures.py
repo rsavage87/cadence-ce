@@ -48,3 +48,24 @@ def held_incident(asset, **kwargs) -> Incident:
 
 def days_ago(n: int):
     return timezone.localdate() - timedelta(days=n)
+
+
+def investigated(wo, *, today=None, **completion):
+    """Slice 30: the investigation `wo` done as the screens do it, so its device may return to use: assigned when nobody has it (a bench
+    technician without an account: nobody is emailed), started when it is not, and completed with its checks after repair (checked
+    and ready for use: repair_fixtures.CHECKED, unless `completion` says otherwise) through completion.complete_work_order. `wo` is
+    read again."""
+    from repair_fixtures import CHECKED
+
+    from apps.credentials.models import Technician
+    from apps.workorders.completion import complete_work_order
+    from apps.workorders.models import WoStatus
+    from apps.workorders.services import assign, change_status
+
+    if wo.assigned_to_id is None and not wo.vendor_service:
+        assign(wo, technician=Technician.objects.get_or_create(name="Bench Technician")[0])
+    if wo.status == WoStatus.OPEN:
+        change_status(wo, WoStatus.IN_PROGRESS, as_of=today)
+    complete_work_order(wo, **{"resolution": "Bench tested per the service manual", **CHECKED, **completion}, today=today)
+    wo.refresh_from_db()
+    return wo

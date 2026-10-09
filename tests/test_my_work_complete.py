@@ -12,6 +12,7 @@ import pytest
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from pg_helpers import as_app_role, needs_postgres
+from repair_fixtures import CHECKED
 
 from apps.credentials.models import Technician
 from apps.pm.models import PmProcedure
@@ -209,7 +210,7 @@ def test_vendor_hours_are_the_vendors_time(procedure, vent):
 def test_a_repairs_hours_come_with_its_completion(ctx, vent, techs):
     repair = open_wo(vent, type=WoType.REPAIR, tech=techs["dana"], problem="Alarm")
     change_status(repair, WoStatus.IN_PROGRESS)
-    done = complete_work_order(repair, resolution="Replaced the flow sensor", hours="0.75")
+    done = complete_work_order(repair, resolution="Replaced the flow sensor", hours="0.75", **CHECKED)
     assert done.labor.hours == Decimal("0.75") and repair.status == WoStatus.COMPLETED
 
 

@@ -16,13 +16,18 @@ Slice 26: an incoming inspection (is_inspection) takes its checklist like a PM (
 (inspection_result, InspectionResult: required while the device waits for it, optional otherwise; the service says so). A failed
 one's tag-out (a device put in use before its inspection) is taken from the post only when the modal showed it; otherwise its
 default (on), which the service applies only to a device in use.
+
+Slice 30: a repair (is_repair) takes how it ended (repair_check, RepairCheck: text, completion checks the value and which outcomes the
+user may choose) and, for checked and ready for use, the post-repair checklist's steps (completion.procedure_for); the vendor's
+service report number (checks_reference) goes to the service only with checked by the vendor, and the steps only with checked and
+ready for use, so values left on screen under another choice are never sent.
 """
 import re
 
 from django import forms
 
 from apps.workorders import completion
-from apps.workorders.models import InspectionResult, LateReason, PmResult
+from apps.workorders.models import InspectionResult, LateReason, PmResult, RepairCheck
 
 RESOLUTION_PLACEHOLDER = "What was found and done. No patient information."
 PM_RESOLUTION_PLACEHOLDER = "Optional when the PM passed. What was found, repaired, or failed. No patient information."
@@ -38,6 +43,7 @@ STEP_CHOICES = [(completion.PASS, "Pass"), (completion.FAIL, "Fail"), (completio
 # The fields after the checklist, in the modal's order: a form sent back with errors focuses the first one on screen. Slice 25: the
 # late reason comes first (late_first) or last (focus_first_error).
 LAYOUT_TAIL = ("pm_result", "inspection_result", "resolution", "open_repair", "hours")
+LAYOUT_REPAIR = ("repair_check", "checks_reference")  # slice 30: a repair's outcome comes before its checklist
 LATE_BLANK = "Not recorded"
 LATE_KEEP = "Keep the reason recorded: {label}"
 # What a step records reads as a number when it names a limit or a unit ("leakage µA, limit 100", "Ω", "mmHg"). Anything else
@@ -69,6 +75,10 @@ class CompleteForm(forms.Form):
     pm_result = forms.CharField(required=False)
     # Slice 26: text, not a choice field: completion checks the value (a refusal keyed inspection_result, in its words)
     inspection_result = forms.CharField(required=False)
+    # Slice 30: a repair's outcome (RepairCheck) and the vendor's service report number; text, completion checks them
+    repair_check = forms.CharField(required=False)
+    checks_reference = forms.CharField(required=False, widget=forms.TextInput(attrs={"maxlength": completion.REFERENCE_MAX, "autocomplete": "off",
+                                                                                    "placeholder": "e.g. FSO-118204"}))
     open_repair = forms.BooleanField(required=False, initial=True)
     tag_out = forms.BooleanField(required=False, initial=True)
     signature = forms.CharField(required=False, widget=forms.HiddenInput)
@@ -80,17 +90,20 @@ class CompleteForm(forms.Form):
     late_reason = forms.CharField(required=False, widget=forms.Select(attrs={"aria-describedby": "wc-late-hint"}))
 
     def __init__(self, *args, steps=(), is_pm=False, is_inspection=False, kept_pass=False, offer_open_repair=False, offer_tag_out=False,
-                 offer_hours=False, offer_late_reason=False, late_first=False, late_recorded="", **kwargs):
+                 offer_hours=False, offer_late_reason=False, late_first=False, late_recorded="", is_repair=False, **kwargs):
         """`steps`: the checklist the modal shows, as completion.checklist_of gives it. The two offers say whether the failed-PM
         options are on screen: an option that is not offered is not taken from the post (a new repair is opened; no tag-out).
         `offer_hours`: the Hours box is on screen; without it no hours are taken from the post. `offer_late_reason` (slice 25): the
         "Why was it late?" select is on screen (before the result when `late_first`); `late_recorded` names the reason already on
         record, which its blank choice keeps. Slice 26: `is_inspection`, an incoming inspection (its result instead of a PM's, and a
         failed one's tag-out under `offer_tag_out`); `kept_pass`, one that passed and whose device no longer waits (it stays
-        passed: Passed is chosen to begin with)."""
+        passed: Passed is chosen to begin with). Slice 30: `is_repair`, a repair (its outcome, and its checks after it as `steps`)."""
         kwargs.setdefault("auto_id", "wc-%s")
         super().__init__(*args, **kwargs)
         self.steps, self.is_pm, self.is_inspection = list(steps), is_pm, is_inspection and not is_pm
+        self.is_repair = is_repair and not (is_pm or is_inspection)
+        if not self.is_repair:
+            del self.fields["repair_check"], self.fields["checks_reference"]
         if not self.is_inspection:
             del self.fields["inspection_result"]
         elif kept_pass:
@@ -112,7 +125,7 @@ class CompleteForm(forms.Form):
         attrs = self.fields["resolution"].widget.attrs
         attrs["placeholder"] = (PM_RESOLUTION_PLACEHOLDER if is_pm else INSPECTION_RESOLUTION_PLACEHOLDER if self.is_inspection
                                 else RESOLUTION_PLACEHOLDER)
-        if not (is_pm or self.is_inspection):  # a PM's or an inspection's checklist comes first
+        if not (is_pm or self.is_inspection or self.is_repair):  # a PM's or an inspection's checklist, or a repair's outcome, comes first
             attrs["autofocus"] = True
 
     @classmethod
@@ -156,6 +169,13 @@ class CompleteForm(forms.Form):
         chosen = self._value("pm_result")
         return [{"value": value, "label": label, "hint": hint, "checked": value == chosen} for value, label, hint in RESULT_CHOICES]
 
+    def repair_options(self, outcomes=(), hints: dict | None = None) -> list[dict]:
+        """A repair's outcomes (slice 30): `outcomes` (completion.repair_outcomes: the ones this user may choose), each with its label and
+        the line `hints` gives it (the view's: what it does to this device)."""
+        chosen = self._value("repair_check") if self.is_repair else ""
+        return [{"value": value, "label": RepairCheck(value).label, "hint": (hints or {}).get(value, ""), "checked": value == chosen}
+                for value in outcomes]
+
     def inspection_options(self, hints: dict | None = None) -> list[dict]:
         """An inspection's result choices (slice 26), each with the line `hints` gives it (the view's: what it does to this device)."""
         chosen = self._value("inspection_result") if self.is_inspection else ""
@@ -184,6 +204,11 @@ class CompleteForm(forms.Form):
             # (on) takes a device that went into use meanwhile out of use when the inspection fails.
             kwargs.update(inspection_result=d["inspection_result"], results=results,
                           tag_out=d["tag_out"] if self.offer_tag_out and d["shown_tag_out"] else True)
+        elif self.is_repair:
+            # Slice 30: the steps with checked and ready for use only, the report number with checked by the vendor only
+            outcome = d["repair_check"].strip()
+            kwargs.update(repair_check=outcome, results=results if outcome == RepairCheck.PASSED else None,
+                          checks_reference=d["checks_reference"] if outcome == RepairCheck.VENDOR_REPORT else "")
         return kwargs
 
     def add_service_errors(self, error):
@@ -200,7 +225,8 @@ class CompleteForm(forms.Form):
     def focus_first_error(self):
         """Sent back with errors: htmx focuses the [autofocus] element it swaps in, so the template marks the first one."""
         late = ("late_reason",)
-        names = ["checklist", *(f"{kind}_{n}" for n in range(1, len(self.steps) + 1) for kind in ("step", "reading")),
+        names = [*(LAYOUT_REPAIR if self.is_repair else ()), "checklist",
+                 *(f"{kind}_{n}" for n in range(1, len(self.steps) + 1) for kind in ("step", "reading")),
                  *(late if self.late_first else ()), *LAYOUT_TAIL, *(() if self.late_first else late)]
         self.first_error = next((name for name in names if name in self.errors), "")
         if self.first_error in self.fields:

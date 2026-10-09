@@ -8,6 +8,7 @@ from datetime import date, timedelta
 import pytest
 from django.core.exceptions import ValidationError
 from django.test import Client
+from repair_fixtures import checked_post
 from test_rls_paths import rls  # noqa: F401
 
 from apps.equipment.models import Asset, Department, DeviceModel, RiskClass
@@ -302,7 +303,7 @@ def test_the_done_notice_from_the_web_ui(client, signed_in, email_on, vent, mail
     assign(sr.work_order, technician=Technician.objects.create(name="Dana Whitfield"))  # completing needs someone who did the work
     with django_capture_on_commit_callbacks(execute=True):
         assert client.post(f"/work-orders/{sr.work_order.number}/status/", {"to": "in_progress"}, **HX).status_code == 200
-        r = client.post(f"/work-orders/{sr.work_order.number}/complete/", {"resolution": "Replaced the flow sensor"}, **HX)  # Mark completed
+        r = client.post(f"/work-orders/{sr.work_order.number}/complete/", checked_post(resolution="Replaced the flow sensor"), **HX)  # Mark completed
         assert r.status_code == 200
     assert len(mailoutbox) == 1
     m, today = mailoutbox[0], date.today()

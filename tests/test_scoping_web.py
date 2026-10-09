@@ -12,6 +12,7 @@ from datetime import date, timedelta
 import pytest
 from django.urls import URLPattern, URLResolver, get_resolver, reverse
 from django.utils import timezone
+from repair_fixtures import checked_post
 
 from apps.accounts.models import DataScope, Level, Module, Role, create_default_roles
 from apps.equipment.models import Asset, Department, DeviceModel
@@ -226,7 +227,7 @@ def test_a_vendor_works_their_own_companys_work_order(client, make_user, world):
     assert client.post(f"{base}/notes/", {"text": "On site"}, **HX).status_code == 200
     assert client.post(f"{base}/labor/", {"worked_on": date.today().isoformat(), "hours": "2"}, **HX)["HX-Retarget"] == "#drawer"
     assert client.post(f"{base}/parts/", {"description": "Flow sensor", "quantity": "1", "unit_cost": "120"}, **HX)["HX-Retarget"] == "#drawer"
-    r = client.post(f"{base}/complete/", {"resolution": "Replaced the flow sensor"}, **HX)
+    r = client.post(f"{base}/complete/", checked_post(resolution="Replaced the flow sensor"), **HX)  # slice 30: the steps, as a vendor
     w.refresh_from_db()
     assert r.status_code == 200 and w.status == WoStatus.COMPLETED and w.notes.count() == 1 and w.labor_lines.count() == 1
     assert client.get(f"/print/work-orders/{w.number}/").status_code == 200

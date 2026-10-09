@@ -10,6 +10,7 @@ from datetime import date, timedelta
 import pytest
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.utils import timezone
+from incident_fixtures import investigated
 from incoming_fixtures import waiting_device
 from pg_helpers import as_app_role, needs_postgres
 
@@ -59,10 +60,9 @@ def role_user(make_user, slug, levels):
 
 
 def done(wo):
-    """The investigation completed as the screens do it: started, then completed."""
-    change_status(wo, WoStatus.IN_PROGRESS)
-    change_status(wo, WoStatus.COMPLETED)
-    wo.refresh_from_db()
+    """The investigation completed as the screens do it: assigned when nobody has it, started, then completed with its checks after
+    repair (slice 30: checked and ready for use, so its device may return to use)."""
+    investigated(wo)
 
 
 def refused(field, write, *args, match=None, **kwargs):

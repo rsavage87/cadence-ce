@@ -26,6 +26,11 @@ Slice 29, a temporary device (a rental, vendor loaner, or demo unit: equipment.s
 create_work_order refuses a PM on one, keyed "type" (no_pm_message), and completing a PM never sets a temporary device's next PM (no
 door opens one; _on_completed keeps it so). Every other type is opened as for our devices: repairs, recalls (vendor service named for
 its owner: apps.recalls.services), its incoming inspection (inspections.TEMPORARY_INCOMING), an incident's investigation.
+
+Slice 30, checks after a repair (apps.workorders.repair_checks, completion.complete_work_order): a repair completed as not returned to
+use (RepairCheck.NOT_RETURNED) never returns its device (returns_device, _on_completed's rule); one completed as checked, or with the
+vendor's report, returns it as a repair always has. While a repair holds the device out (holding_repairs, or a device in repair with an
+open repair) the device's status never goes in service or on loan by hand (equipment.services.repair_hold_message).
 """
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -47,6 +52,7 @@ from .models import (
     InspectionResult,
     LateReason,
     Priority,
+    RepairCheck,
     ServiceRequest,
     Source,
     Urgency,
@@ -294,16 +300,25 @@ def _on_completed(wo: WorkOrder, as_of, by=None):
         from apps.equipment.services import pass_incoming_inspection
 
         pass_incoming_inspection(asset, wo, by=by, on=as_of)
-    elif wo.type == WoType.REPAIR and (asset.status == AssetStatus.IN_REPAIR or (asset.status == AssetStatus.OUT_OF_SERVICE and wo.tagged_out)):
-        # Back in service only when this repair is why it was out: tagged out with the request (the portal's checkbox), or marked in
-        # repair. A device out of service for another reason (quarantined by hand) stays out until someone returns it from its
-        # drawer, and one waiting for its incoming inspection (slice 26) until the inspection passes. And only when no other open
-        # repair holds it out too (a second tagged-out request, or the repair a failed PM opened: apps.workorders.completion): the
-        # last of them returns it. Slice 28: never a device held as evidence (the investigation's own completion included): only the
-        # incident's release returns it.
-        if not holding_repairs(asset, exclude=wo).exists() and not _still_waiting(asset) and not _still_held(asset):
-            asset.status = AssetStatus.IN_SERVICE
-            asset.save(update_fields=["status", "updated_at"])
+    elif wo.type == WoType.REPAIR and returns_device(wo):
+        asset.status = AssetStatus.IN_SERVICE
+        asset.save(update_fields=["status", "updated_at"])
+
+
+def returns_device(wo: WorkOrder) -> bool:
+    """Whether completing the repair `wo` now puts its device back in service (_on_completed; completion's status note reads it first).
+    Back in service only when this repair is why it was out: tagged out with the request (the portal's checkbox), or marked in repair.
+    A device out of service for another reason (quarantined by hand) stays out until someone returns it from its drawer, and one waiting
+    for its incoming inspection (slice 26) until the inspection passes. And only when no other open repair holds it out too (a second
+    tagged-out request, or the repair a failed PM opened: apps.workorders.completion): the last of them returns it. Slice 28: never a
+    device held as evidence (the investigation's own completion included): only the incident's release returns it. Slice 30: never
+    after a repair completed as not returned to use (RepairCheck.NOT_RETURNED): reopening it and completing it as checked does."""
+    if wo.type != WoType.REPAIR or wo.repair_check == RepairCheck.NOT_RETURNED:
+        return False
+    asset = wo.asset
+    if not (asset.status == AssetStatus.IN_REPAIR or (asset.status == AssetStatus.OUT_OF_SERVICE and wo.tagged_out)):
+        return False
+    return not holding_repairs(asset, exclude=wo).exists() and not _still_waiting(asset) and not _still_held(asset)
 
 
 @transaction.atomic

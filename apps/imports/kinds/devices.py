@@ -17,9 +17,10 @@ and the device still comes in. A status change the rules refuse (retiring a devi
 changes stay. Retiring, reinstating, and the CMS mark need Equipment Approve, as on the screen. A device retired without a day it
 can use is retired as of today, and the row says so: the AEM evidence counts it in use until then. Slice 26: a device here that is
 waiting for its incoming inspection keeps no next PM (the row's is left out with update_asset's words, naming the inspection) and
-does not go in service or on loan from the file (the note gives set_status's words): its inspection's pass puts it in use. Slice 28:
-a device held as evidence for an incident investigation keeps its status whatever the file says, with a note in its own words
-(HELD_NOTE); the row's other changes still go in.
+does not go in service or on loan from the file (the note gives set_status's words): its inspection's pass puts it in use. Slice 30:
+nor does a device an open repair holds out of use (the note names the repair, whose completion with its checks after repair returns
+it). Slice 28: a device held as evidence for an incident investigation keeps its status whatever the file says, with a note in its own
+words (HELD_NOTE); the row's other changes still go in.
 
 Slice 29, temporary equipment (rentals, vendor loaners, demo units, maintained by their owner): the import adds only devices of ours.
 "Loaner" (and "rental", "demo") is no longer read as a status: it can mean one of ours lent out or a vendor's unit, which is added
@@ -344,6 +345,9 @@ class DevicesImporter(Importer):
             elif asset.awaiting_inspection and status in eq.HOLD:
                 # Slice 26: a new device waiting for its incoming inspection goes in use when it passes; set_status says which one.
                 result.warn(f"Status kept: {e.messages[0]}")
+            elif status in eq.HOLD and eq.holding_repair(asset) is not None:
+                # Slice 30: an open repair holds it out of use; completing that repair with its checks after repair returns it
+                result.warn(f"Status kept: {eq.repair_hold_message(asset)}")
             elif status in eq.STATUS_CHANGES.get(asset.status, ()):
                 result.warn("Status kept: the device has open work orders; complete or cancel them, then retire it")
             else:

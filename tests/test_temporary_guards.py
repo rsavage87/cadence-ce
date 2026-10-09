@@ -21,6 +21,7 @@ from decimal import Decimal
 import pytest
 from django.core.exceptions import ValidationError
 from django.utils import timezone
+from incident_fixtures import investigated
 
 from apps.credentials.models import Credential
 from apps.equipment import services as eq
@@ -351,9 +352,7 @@ def test_the_api_batch_names_the_owner(client, signed_in, pump_recall, mixed, te
 
 def _investigated(asset):
     incident = inc.record_incident(asset=asset, outcome=Outcome.NO_HARM, affected=Affected.NONE)
-    wo = incident.work_order
-    change_status(wo, WoStatus.IN_PROGRESS)
-    change_status(wo, WoStatus.COMPLETED)
+    investigated(incident.work_order)  # slice 30: completed with its checks after repair
     return incident, incident.holds.get()
 
 

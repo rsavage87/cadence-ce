@@ -12,6 +12,7 @@ import pytest
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.utils import timezone
 from incoming_fixtures import INCOMING_ALL_PASS, failed_device, in_use_device, passed_device, waiting_device
+from repair_fixtures import CHECKED
 
 from apps.accounts.models import Level, Module, Role, User
 from apps.equipment import permissions as eq_perms
@@ -259,7 +260,7 @@ def test_a_tagged_out_portal_repair_never_puts_a_waiting_device_in_service(ctx, 
     repair = sr.work_order
     assign(repair, technician=techs["dana"])
     change_status(repair, WoStatus.IN_PROGRESS)
-    complete_work_order(repair, resolution="Replaced the display")
+    complete_work_order(repair, resolution="Replaced the display", **CHECKED)
     assert_invariant(a)
     assert a.status == S.OUT_OF_SERVICE and a.awaiting_inspection
     # Then the inspection passes: nothing holds it any more, it goes in service.
@@ -281,7 +282,7 @@ def test_a_pass_while_a_repair_holds_the_device_waits_for_the_repair(ctx, today,
     assert (a.status, a.awaiting_inspection, a.next_pm_on) == (S.OUT_OF_SERVICE, False, add_months(today, vent_model.pm_interval_months))
     assert done.passed and done.device_changed
     change_status(repair, WoStatus.IN_PROGRESS)
-    complete_work_order(repair, resolution="Replaced the display")
+    complete_work_order(repair, resolution="Replaced the display", **CHECKED)
     a.refresh_from_db()
     assert a.status == S.IN_SERVICE  # the last thing holding it out was the repair
 
@@ -295,7 +296,7 @@ def test_an_imported_open_repair_never_puts_a_waiting_device_in_service(ctx, tod
     repair = import_work_order(asset=a, legacy_number="OLD-77", type=WoType.REPAIR, status=WoStatus.IN_PROGRESS, opened_on=today,
                                technician=techs["dana"], today=today).work_order
     assert repair.tagged_out
-    complete_work_order(repair, resolution="Replaced the power supply")
+    complete_work_order(repair, resolution="Replaced the power supply", **CHECKED)
     assert_invariant(a)
     assert a.status == S.OUT_OF_SERVICE
 
@@ -309,7 +310,7 @@ def test_a_failed_pms_repair_never_puts_a_waiting_device_in_service(ctx, today, 
     repair = create_work_order(asset=a, type=WoType.REPAIR, priority="high", problem=f"PM {pm.number} failed", tag_out=True, follow_up_of=pm,
                                assigned_to=techs["dana"])
     change_status(repair, WoStatus.IN_PROGRESS)
-    complete_work_order(repair, resolution="Replaced the line cord")
+    complete_work_order(repair, resolution="Replaced the line cord", **CHECKED)
     assert_invariant(a)
     assert a.status == S.OUT_OF_SERVICE
 

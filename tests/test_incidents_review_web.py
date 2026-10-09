@@ -12,6 +12,7 @@ from datetime import timedelta
 
 import pytest
 from django.utils import timezone
+from incident_fixtures import investigated
 
 from apps.accounts.models import Level, Module, Role
 from apps.core.workdays import add_work_days
@@ -21,7 +22,7 @@ from apps.incidents.models import Affected, Basis, DecidedBy, Finding, Outcome, 
 from apps.pm.services import WeekAssignment
 from apps.web.views_pm_week import assigned_message
 from apps.workorders.models import Priority, WorkOrder, WoStatus, WoType
-from apps.workorders.services import change_status, create_work_order
+from apps.workorders.services import create_work_order
 
 HX = {"HTTP_HX_REQUEST": "true"}
 
@@ -211,9 +212,8 @@ def test_a_held_devices_assigned_pm_is_not_on_its_technicians_round(client, sign
 @pytest.mark.parametrize("how", [Release.KEEP_OUT, Release.RETURN_TO_USE])
 def test_releasing_a_hold_tells_the_work_order_screens(client, sign_in, vent, today, how):
     i = record(vent, outcome=Outcome.NO_HARM, affected=Affected.NONE)
-    if how == Release.RETURN_TO_USE:  # the investigation done first (started, then completed, as the screens do it)
-        change_status(i.work_order, WoStatus.IN_PROGRESS)
-        change_status(i.work_order, WoStatus.COMPLETED)
+    if how == Release.RETURN_TO_USE:  # the investigation done first (slice 30: completed with its checks after repair)
+        investigated(i.work_order)
     hold = i.holds.get()
     sign_in("manager")
     r = client.post(f"/incidents/{i.number}/holds/{hold.pk}/release/", {"release": how}, **HX)
