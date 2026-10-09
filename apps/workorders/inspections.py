@@ -19,6 +19,10 @@ The read helpers:
 - waiting_for_inspector(): open incoming inspections on waiting devices that nobody has (the Work orders page's note for managers).
 - INCOMING: the incoming checklist as a procedure, what completion.procedure_for gives an inspection whose model's PM procedure has
   no steps (or that has no procedure).
+- TEMPORARY_INCOMING (slice 29): the checklist of a rental's, vendor loaner's, or demo unit's incoming inspection, whatever its model's
+  procedure (its owner maintains it: CE inspects it before first use, and never does the owner's PM).
+- owner_pm_refusal(asset, today): why a temporary device's inspection cannot pass now (its owner's PM date is past), for completion
+  and the screens.
 """
 from __future__ import annotations
 
@@ -41,6 +45,15 @@ INCOMING_CHECKLIST = [
     ("Checked for open recalls and software updates", None),
     ("Tagged and labeled", None),
 ]
+# Slice 29: a temporary device's incoming inspection (a rental, vendor loaner, or demo unit; equipment.services.owner_maintains): the
+# incoming checklist, plus the two checks that are CE's on a device its owner maintains: the owner's PM label is current and its date is
+# recorded on the device (Asset.owner_pm_due_on; a pass is refused while that date is past: owner_pm_refusal), and the model's open
+# recalls in Cadence (the Recalls screen) are checked. Steps in this order, the incoming checklist's first (the build spec's words).
+TEMPORARY_CHECKLIST = [
+    *INCOMING_CHECKLIST,
+    ("Owner's PM label current (its due date recorded)", None),
+    ("Checked for open recalls on this model", None),
+]
 DONE_STATUSES = (WoStatus.COMPLETED, WoStatus.CLOSED)
 # The device's history reason use_before_inspection writes (equipment.services); uses_before reads it back.
 USE_BEFORE_PREFIX = "In use before its incoming inspection: "
@@ -57,13 +70,32 @@ class IncomingChecklist:
     revision: str = ""
     checklist: tuple = tuple({"text": text, "measure": measure} for text, measure in INCOMING_CHECKLIST)
     is_incoming: bool = True
+    temporary: bool = False  # slice 29: TEMPORARY_INCOMING, the checklist of a device its owner maintains
 
 
 INCOMING = IncomingChecklist()
+TEMPORARY_INCOMING = IncomingChecklist(name="Incoming inspection checklist for a rental, loaner, or demo unit",
+                                       checklist=tuple({"text": text, "measure": measure} for text, measure in TEMPORARY_CHECKLIST),
+                                       temporary=True)
 
 
 def is_incoming_checklist(procedure) -> bool:
+    """INCOMING or TEMPORARY_INCOMING: a checklist in a procedure's shape, never a procedure on file (no code to print)."""
     return isinstance(procedure, IncomingChecklist)
+
+
+def owner_pm_refusal(asset, today: date) -> str:
+    """Why a temporary device's incoming inspection cannot pass on `today` (slice 29), or "": its owner's PM date, from the owner's
+    sticker (Asset.owner_pm_due_on), is recorded and past. The owner does the PM, or the date on their new sticker is recorded
+    (equipment.services.update_temporary); until then the device is not put in use. completion.complete_work_order refuses the pass
+    with these words, keyed inspection_result; a screen may say them up front. Reads the copy given: the completion's, read after its
+    locks."""
+    from apps.equipment.services import owner_maintains  # equipment.services imports this app inside its functions; keep it one way
+
+    due = asset.owner_pm_due_on if owner_maintains(asset) else None
+    if due is None or due >= today:
+        return ""
+    return f"The owner's PM was due {_day(due)}: have the owner do it, or record its new date."
 
 
 @dataclass
@@ -136,14 +168,17 @@ def open_for(asset, *, by=None, today: date | None = None, opened_on: date | Non
              problem: str = INCOMING_PROBLEM, follow_up_of: WorkOrder | None = None, priority: str = Priority.NORMAL) -> WorkOrder:
     """Open an incoming inspection work order on `asset`, unassigned (the caller assigns it through services.take or assign, which
     write the history and the email). Opened on `opened_on` (Add device's added day) or today, due INSPECTION_DUE_DAYS later unless
-    `due_on` says. Estimated hours: the model's PM procedure's, else 1. Goes through services.create_work_order, so a device waiting
-    for its inspection never gets a second one open (other than the failed inspection a re-inspection follows: `follow_up_of`)."""
+    `due_on` says. Estimated hours follow the checklist it is done to (completion.inspection_procedure): the model's PM procedure's
+    when that is the checklist, else 1 (the incoming checklist; slice 29, a temporary device's, whatever its model's procedure). Goes
+    through services.create_work_order, so a device waiting for its inspection never gets a second one open (other than the failed
+    inspection a re-inspection follows: `follow_up_of`)."""
     from . import services  # services imports this module
+    from .completion import inspection_procedure  # completion imports this module
 
     today = today or timezone.localdate()
     opened_on = opened_on or today
-    procedure = asset.device_model.pm_procedure
-    hours = procedure.estimated_hours if procedure is not None else 1
+    procedure = inspection_procedure(asset)
+    hours = 1 if is_incoming_checklist(procedure) else procedure.estimated_hours
     return services.create_work_order(asset=asset, type=WoType.INSPECTION, priority=priority, problem=problem, opened_on=opened_on,
                                       due_on=due_on or opened_on + timedelta(days=INSPECTION_DUE_DAYS), created_by=by,
                                       estimated_hours=hours, follow_up_of=follow_up_of)

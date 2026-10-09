@@ -103,7 +103,7 @@ def set_status(match: AlertMatch, to_status: str, by=None, note: str = "", today
 
 class RecallBatch(NamedTuple):
     created: int
-    unassigned: int  # of the created ones, how many found no credentialed technician
+    unassigned: int  # of the created ones, how many were left with nobody (no credentialed technician; slice 29: never vendor service)
 
 
 def recall_work_orders(match: AlertMatch):
@@ -115,8 +115,13 @@ def recall_work_orders(match: AlertMatch):
 def create_recall_work_orders(match: AlertMatch, by=None, today: date | None = None) -> RecallBatch:
     """One high-priority recall work order per active device that has none for this alert yet (a completed one still
     counts: the device was done; only a cancelled one is redone), assigned to the first credentialed technician when
-    there is one. Moves the match to in progress."""
+    there is one. Moves the match to in progress.
+
+    Slice 29: a temporary device's (a rental, vendor loaner, or demo unit: equipment.services.owner_maintains) goes to vendor service
+    named for its owner (equipment.services.service_vendor), never to an in-house technician: the owner corrects their own device.
+    Recalls count every device on site, ours or not."""
     from apps.credentials.services import qualified_technicians
+    from apps.equipment.services import owner_maintains, service_vendor
     from apps.workorders.services import assign, create_work_order
 
     today = today or timezone.localdate()
@@ -135,7 +140,7 @@ def create_recall_work_orders(match: AlertMatch, by=None, today: date | None = N
     # Qualification depends only on the device model, which every affected device shares: rank the technicians once.
     qualified = qualified_technicians(assets[0], today)
     technician = qualified[0][0] if qualified else None
-    created = 0
+    created = unassigned = 0
     with assignments.batch():  # the technician hears once, listing every recall work order, not once per device
         for asset in assets:
             if asset.id in covered:
@@ -143,12 +148,16 @@ def create_recall_work_orders(match: AlertMatch, by=None, today: date | None = N
             wo = create_work_order(asset=asset, type=WoType.RECALL, priority=Priority.HIGH, problem=problem, requester="Recall coordinator",
                                    source=Source.RECALL, opened_on=today, due_on=today + timedelta(days=RECALL_DUE_DAYS), created_by=by,
                                    estimated_hours=RECALL_ESTIMATED_HOURS, alert=alert)
-            if technician is not None:
-                assign(wo, technician=technician, by=by)
             created += 1
+            if owner_maintains(asset):
+                assign(wo, vendor_name=service_vendor(asset), by=by)
+            elif technician is not None:
+                assign(wo, technician=technician, by=by)
+            else:
+                unassigned += 1
     if match.status != S.IN_PROGRESS:
         set_status(match, S.IN_PROGRESS, by=by, today=today)
-    return RecallBatch(created, 0 if technician is not None else created)
+    return RecallBatch(created, unassigned)
 
 
 def unassigned_recall_work_orders(match: AlertMatch) -> int:

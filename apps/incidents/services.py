@@ -874,10 +874,17 @@ def _release_refusal(incident, hold, kind: str, today: date) -> str:
     missing = reports_missing(incident)
     if missing:
         return f"Record the report to {_and([RECIPIENT_WORDS[r] for r in missing])} before {tag} returns to use."
-    next_pm_on = Asset.objects.filter(pk=hold.asset_id).values_list("next_pm_on", flat=True).first()
-    if next_pm_on is not None and next_pm_on < today:
-        return (f"{tag}'s PM was due {_fmt(next_pm_on)}: release it kept out of service, do the PM, then return it to service from its "
-                "drawer.")
+    from apps.equipment.services import owner_maintains  # equipment.services imports apps inside its functions; keep it one way
+
+    device = Asset.objects.only("pk", "next_pm_on", "ownership", "owner_pm_due_on").get(pk=hold.asset_id)
+    if device.next_pm_on is not None and device.next_pm_on < today:
+        return (f"{tag}'s PM was due {_fmt(device.next_pm_on)}: release it kept out of service, do the PM, then return it to service from "
+                "its drawer.")
+    # Slice 29: a temporary device has no PM of ours; its owner's PM date (from the owner's sticker) is the one it must not be past
+    owner_pm = device.owner_pm_due_on if owner_maintains(device) else None
+    if owner_pm is not None and owner_pm < today:
+        return (f"{tag}'s owner's PM was due {_fmt(owner_pm)}: release it kept out of service, have the owner do the PM or record its new "
+                "date, then return it to service from its drawer.")
     return ""
 
 
@@ -886,7 +893,8 @@ def release(hold, release, *, by=None, today=None) -> IncidentHold:
     """End a hold (Incidents Approve): Release.return_to_use (also Equipment Edit), keep_out, or kept_by_manufacturer. Return to use
     is refused while the device is with the manufacturer; for the suspect device until the investigation work order is completed or
     closed; on an incident with a clock until it is decided and, when reportable, the required reports are recorded; and when the
-    device's next PM date has passed (release it kept out, do the PM, then return it from its drawer). The device goes in service only
+    device's next PM date has passed (release it kept out, do the PM, then return it from its drawer), or, slice 29, a temporary
+    device's owner's PM date (Asset.owner_pm_due_on: the owner does it, or its new date is recorded). The device goes in service only
     when no other open incident holds it, it is not awaiting its incoming inspection, and no repair holds it (the message names what
     does); while another incident holds it the flag stays and the status does not change. The device's PMs that missed their due date
     while it was held, with no late reason, get LateReason.INCIDENT_HOLD.

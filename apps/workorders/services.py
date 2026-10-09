@@ -21,6 +21,11 @@ it. change_status refuses to start or complete any of its work orders but the in
 included, never returns a held device to service: only the incident's release does. Everything else stays allowed: opening work
 orders (PM generation included), assigning and taking them, notes, labor and parts, waiting on parts, and cancelling. History imported
 from another system (apps.workorders.legacy) is written in its final state without change_status, so a hold never refuses it.
+
+Slice 29, a temporary device (a rental, vendor loaner, or demo unit: equipment.services.owner_maintains): its owner maintains it, so
+create_work_order refuses a PM on one, keyed "type" (no_pm_message), and completing a PM never sets a temporary device's next PM (no
+door opens one; _on_completed keeps it so). Every other type is opened as for our devices: repairs, recalls (vendor service named for
+its owner: apps.recalls.services), its incoming inspection (inspections.TEMPORARY_INCOMING), an incident's investigation.
 """
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -77,11 +82,27 @@ def _check_waiting_device(asset, type, follow_up_of=None) -> None:
             raise ValidationError({"type": f"{asset.tag} already has its incoming inspection open: {first.number}."})
 
 
+def no_pm_message(asset) -> str:
+    """Why a temporary device gets no PM work order (slice 29): create_work_order's refusal, keyed "type"; an edit that would put a
+    PM on one can say the same."""
+    return f"{asset.tag} is a {asset.get_ownership_display().lower()}: its owner maintains it, so it gets no PM work orders here."
+
+
+def _check_owner_maintained(asset, type) -> None:
+    """Slice 29: no PM work order on a device its owner maintains (equipment.services.owner_maintains)."""
+    from apps.equipment.services import owner_maintains  # equipment.services imports this app inside its functions; keep it one way
+
+    if type == WoType.PM and owner_maintains(asset):
+        raise ValidationError({"type": no_pm_message(asset)})
+
+
 @transaction.atomic
 def create_work_order(*, asset, type, priority, problem, requester="", source=Source.MANUAL, assigned_to=None, vendor_service=False,
                       vendor_name="", opened_on=None, due_on=None, created_by=None, tag_out=False, **extra) -> WorkOrder:
     """Open a work order. Slice 26: refused, keyed "type", for a PM on a device waiting for its incoming inspection, and for a second
-    open incoming inspection on one (_check_waiting_device)."""
+    open incoming inspection on one (_check_waiting_device). Slice 29: refused, keyed "type", for a PM on a temporary device
+    (_check_owner_maintained)."""
+    _check_owner_maintained(asset, type)
     _check_waiting_device(asset, type, extra.get("follow_up_of"))
     opened_on = opened_on or timezone.localdate()
     due_on = due_on or opened_on + timedelta(days=DUE_DAYS[priority])
@@ -254,11 +275,15 @@ def next_pm_after(wo: WorkOrder, asset, done_on: date, w=None) -> date:
 
 
 def _on_completed(wo: WorkOrder, as_of, by=None):
+    from apps.equipment.services import owner_maintains  # equipment.services imports this module in its functions; keep it one way
+
     asset = wo.asset
     if wo.type == WoType.PM:
         asset.last_pm_on = as_of
         fields = ["last_pm_on", "updated_at"]
-        if not asset.awaiting_inspection:  # slice 26: a waiting device's PM clock starts at its pass (and no door opens a PM on one)
+        # Slice 26: a waiting device's PM clock starts at its pass (and no door opens a PM on one). Slice 29: a temporary device has no
+        # PM clock of ours (no door opens a PM on one either; its owner's PM date is what Cadence keeps).
+        if not asset.awaiting_inspection and not owner_maintains(asset):
             # Slice 27: from the due date for a PM done late but inside its window (pm_schedule_anchor), else from the day it was done
             asset.next_pm_on = next_pm_after(wo, asset, as_of)
             fields.append("next_pm_on")
