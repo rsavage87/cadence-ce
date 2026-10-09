@@ -225,7 +225,11 @@ HIDE = {
 LABELS = {
     "equipment.asset": {"serial": "Serial number", "installed_on": "Installed", "warranty_end": "Warranty ends", "last_pm_on": "Last PM",
                         "next_pm_on": "Next PM", "awaiting_inspection": "Waiting for incoming inspection",
-                        "incident_hold": "Held for an incident investigation"},
+                        "incident_hold": "Held for an incident investigation", "ownership": "Whose", "owner": "Owner",
+                        "owner_reference": "Agreement, PO, or RMA number", "arrived_on": "Arrived", "due_back_on": "Due back",
+                        "owner_pm_due_on": "Owner's PM due", "returned_on": "Returned to owner", "kept_on": "Kept by the facility",
+                        "stands_in_for": "Vendor loaner for", "return_cleaning": "Cleaning when returned",
+                        "return_data": "Patient data when returned"},
     "equipment.devicemodel": {"oem_pm_interval_months": "OEM PM interval", "aem_interval_months": "AEM interval", "expected_life_years": "Expected life",
                               "list_cost": "List price", "pm_procedure": "PM procedure", "risk_function": "Risk: clinical function",
                               "risk_physical": "Risk: physical risk of failure", "risk_maintenance": "Risk: maintenance requirement",

@@ -28,7 +28,8 @@ def test_each_device_lands_in_its_most_urgent_bucket(ctx, dept, vent_model, pump
     assert _buckets() == {"RET": FleetBucket.RETIRED, "OOS": FleetBucket.OUT_OF_SERVICE, "REP": FleetBucket.IN_REPAIR, "RCL": FleetBucket.OPEN_RECALL,
                           "OVD": FleetBucket.PM_OVERDUE, "DUE": FleetBucket.PM_DUE, "OK": FleetBucket.COMPLIANT}
     counts = fleet_bucket_counts()
-    assert sum(counts.values()) == 7 and all(n == 1 for n in counts.values())
+    slice29 = (FleetBucket.TEMPORARY, FleetBucket.RETURNED)  # no rental, vendor loaner, or demo unit here (slice 29)
+    assert sum(counts.values()) == 7 and all(n == 1 for b, n in counts.items() if b not in slice29) and not any(counts[b] for b in slice29)
 
 
 def test_closed_recall_no_longer_puts_devices_in_the_recall_bucket(ctx, dept, pump_model, pump_recall):

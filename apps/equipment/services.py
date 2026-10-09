@@ -17,7 +17,19 @@ from django.utils import timezone
 from apps.recalls.models import AlertMatch
 
 from . import permissions
-from .models import TAG_VALIDATOR, AddedAs, Asset, AssetStatus, Department, DeviceModel, RiskClass, SupportType, UseBeforeInspection
+from .models import (
+    TAG_VALIDATOR,
+    TEMPORARY,
+    AddedAs,
+    Asset,
+    AssetStatus,
+    Department,
+    DeviceModel,
+    Ownership,
+    RiskClass,
+    SupportType,
+    UseBeforeInspection,
+)
 
 PM_DUE_SOON_DAYS = 30
 
@@ -29,7 +41,31 @@ class FleetBucket(models.TextChoices):
     OPEN_RECALL = "open_recall", "Open recall, action needed"
     IN_REPAIR = "in_repair", "In repair"
     OUT_OF_SERVICE = "out_of_service", "Out of service"
+    TEMPORARY = "temporary", "Owner maintains"  # slice 29: a rental, vendor loaner, or demo unit on site (no PM of ours)
     RETIRED = "retired", "Retired"
+    RETURNED = "returned", "Returned to owner"  # slice 29: a temporary device that went back (status retired)
+
+
+# Slice 29, the counting rule: figures about CE's maintenance program and the facility's own fleet (PM compliance, AEM evidence, COSR,
+# replacement planning, the support rows, uptime, MTBF, the PM library's counts, the Overview's active devices) count our devices only;
+# figures about CE's work and safety (work orders, MTTR, technicians, spend, recalls, incidents) count every device. A rental, vendor
+# loaner, or demo unit is maintained by its owner.
+OWNED = Q(ownership=Ownership.OWNED)
+WORK_ORDER_OWNED = Q(asset__ownership=Ownership.OWNED)
+
+
+def owner_maintains(asset) -> bool:
+    """A temporary device (slice 29): no next PM and no PM work orders; its owner's PM date (owner_pm_due_on) is what Cadence knows."""
+    return getattr(asset, "ownership", Ownership.OWNED) != Ownership.OWNED
+
+
+def service_vendor(asset) -> str:
+    """Who a work order's vendor service names for `asset`: a temporary device's owner (slice 29), else its contract's vendor, else
+    "<manufacturer> field service" (workorders.scoping matches a vendor account's company against it). Was web.forms.vendor_name_for;
+    the screens and the API share it."""
+    if owner_maintains(asset) and asset.owner:
+        return asset.owner
+    return asset.contract.vendor if asset.contract_id else f"{asset.device_model.manufacturer} field service"
 
 
 class SupportFilter(models.TextChoices):
@@ -45,11 +81,14 @@ RISK_RANK = Case(*[When(device_model__risk_class=r, then=Value(i)) for i, r in e
 
 def with_bucket(qs, today: date):
     recall = Exists(AlertMatch.objects.filter(device_model_id=OuterRef("device_model_id"), status=AlertMatch.Status.NEEDS_ACTION))
+    temporary = ~OWNED
     return qs.annotate(bucket=Case(
+        When(Q(status=AssetStatus.RETIRED) & temporary, then=Value(FleetBucket.RETURNED)),
         When(status=AssetStatus.RETIRED, then=Value(FleetBucket.RETIRED)),
         When(status=AssetStatus.OUT_OF_SERVICE, then=Value(FleetBucket.OUT_OF_SERVICE)),
         When(status=AssetStatus.IN_REPAIR, then=Value(FleetBucket.IN_REPAIR)),
         When(recall, then=Value(FleetBucket.OPEN_RECALL)),
+        When(temporary, then=Value(FleetBucket.TEMPORARY)),  # slice 29: never PM due or overdue (its owner maintains it)
         When(next_pm_on__lt=today, then=Value(FleetBucket.PM_OVERDUE)),
         When(next_pm_on__lte=today + timedelta(days=PM_DUE_SOON_DAYS), then=Value(FleetBucket.PM_DUE)),
         default=Value(FleetBucket.COMPLIANT),
@@ -179,6 +218,7 @@ def asset_service_summary(asset, today: date | None = None, work_orders=None) ->
 INCOMING_WAITING = "waiting"  # create_asset's incoming_inspection (slice 26)
 AWAITING_LABEL = "Awaiting inspection"
 HELD_LABEL = "Held for incident"  # slice 28: a device held as evidence (Asset.incident_hold); it wins over AWAITING_LABEL
+RETURNED_LABEL = "Returned to owner"  # slice 29: a temporary device that went back (status retired, ownership not ours)
 HELD_REASON = "Held for an incident investigation"  # the device's history (Equipment View): never the incident's number
 RELEASED_REASON = "Hold released"
 NEW_DEVICE_STATUSES = (AssetStatus.IN_SERVICE, AssetStatus.OUT_OF_SERVICE)  # a new device is in use, or waiting for incoming inspection
@@ -592,7 +632,9 @@ def rename_department(department: Department, name: str) -> Department:
 def create_asset(*, tag, device_model, department, serial="", room="", installed_on=None, acquisition_cost=None, warranty_end=None, condition=3,
                  last_pm_on=None, next_pm_on=None, notes="", status=AssetStatus.IN_SERVICE, by=None, today: date | None = None,
                  added_on: date | None = None, added_as: str = AddedAs.NEW, incoming_inspection: str = "",
-                 inspection_due: date | None = None) -> Asset:
+                 inspection_due: date | None = None, ownership: str = Ownership.OWNED, owner: str = "", owner_reference: str = "",
+                 arrived_on: date | None = None, due_back_on: date | None = None, owner_pm_due_on: date | None = None,
+                 stands_in_for=None) -> Asset:
     """Add a device. Its first PM is `next_pm_on` when given, else first_pm_due(); its acquisition cost defaults to the model's list
     cost. Tags are unique in the facility in any letter case and can never change afterwards (they are on the sticker and in URLs).
     `added_on` dates the history's "added" row on an earlier day: the importer (apps.imports.kinds.devices) adds a device retired
@@ -601,8 +643,17 @@ def create_asset(*, tag, device_model, department, serial="", room="", installed
     here (entered after the fact), or imported (the importer's). `incoming_inspection` (slice 26): "" adds the device in the status
     given (the API's and the importer's way); "waiting" adds a new device out of service, awaiting its incoming inspection, with no
     next PM (its PM clock starts when it passes) and an Incoming inspection work order opened with it (on the added day, due
-    `inspection_due` or INSPECTION_DUE_DAYS later), unassigned: the caller assigns it (Add device: take or assign)."""
+    `inspection_due` or INSPECTION_DUE_DAYS later), unassigned: the caller assigns it (Add device: take or assign).
+
+    Slice 29: `ownership` other than ours adds a temporary device (add_temporary_device checks its stay: owner, reference, dates,
+    stands_in_for, and calls this): acquisition cost 0, installed on the day it arrived, no last or next PM whatever the intake (its
+    owner maintains it), support "Owner maintains"."""
     today = today or timezone.localdate()
+    if ownership not in Ownership.values:
+        raise ValidationError({"ownership": "Choose whose the device is."})
+    temporary = ownership != Ownership.OWNED
+    if temporary:
+        acquisition_cost, installed_on, last_pm_on, next_pm_on = Decimal("0"), arrived_on, None, None
     if added_as not in AddedAs.values:
         raise ValidationError({"added_as": "Say whether the device is new, already in use here, or imported."})
     if incoming_inspection not in ("", INCOMING_WAITING):
@@ -641,11 +692,15 @@ def create_asset(*, tag, device_model, department, serial="", room="", installed
     _check_next_pm(next_pm_on, today)
     if Asset.objects.filter(tag__iexact=tag).exists():
         raise ValidationError({"tag": f"{tag} is already on another device."})
+    no_pm = waiting or temporary  # slice 26: its PM clock starts at the pass; slice 29: its owner maintains it
     asset = Asset(tag=tag, device_model=device_model, department=department, serial=_clean_text(serial, 80), room=_clean_text(room, 40),
                   installed_on=installed_on, acquisition_cost=acquisition_cost, warranty_end=warranty_end, condition=condition,
                   last_pm_on=last_pm_on, status=status, notes=(notes or "").strip(), added_as=added_as, awaiting_inspection=waiting,
-                  next_pm_on=None if waiting else (next_pm_on or first_pm_due(device_model, installed_on=installed_on, last_pm_on=last_pm_on,
-                                                                              today=today)))
+                  next_pm_on=None if no_pm else (next_pm_on or first_pm_due(device_model, installed_on=installed_on, last_pm_on=last_pm_on,
+                                                                             today=today)),
+                  ownership=ownership, owner=_clean_text(owner, 120) if temporary else "", owner_reference=(owner_reference or "").strip() if temporary else "",
+                  arrived_on=arrived_on if temporary else None, due_back_on=due_back_on if temporary else None,
+                  owner_pm_due_on=owner_pm_due_on if temporary else None, stands_in_for=stands_in_for if temporary else None)
     asset._change_reason = "Added, waiting for its incoming inspection" if waiting else "Added"
     _save_on(asset, added_on)
     if waiting:
@@ -657,9 +712,12 @@ def create_asset(*, tag, device_model, department, serial="", room="", installed
 
 def status_label(asset) -> str:
     """The device's status as every screen, CSV, and the API words it (slice 26): "Awaiting inspection" for a device out of service
-    waiting for its incoming inspection, else its status. Slice 28: "Held for incident" for a device held as evidence, first."""
+    waiting for its incoming inspection, else its status. Slice 28: "Held for incident" for a device held as evidence, first. Slice 29:
+    "Returned to owner" for a temporary device that went back (never "Retired")."""
     if getattr(asset, "incident_hold", False):
         return HELD_LABEL
+    if asset.status == AssetStatus.RETIRED and owner_maintains(asset):
+        return RETURNED_LABEL
     if asset.awaiting_inspection and asset.status == AssetStatus.OUT_OF_SERVICE:
         return AWAITING_LABEL
     return asset.get_status_display()
@@ -1024,3 +1082,57 @@ def clear_incident_hold(asset: Asset, *, to_status: str | None = None, by=None) 
         fresh.save()
     caller.refresh_from_db()
     return caller
+
+
+# --- temporary equipment (slice 29) ----------------------------------------------------------------------------------------------
+#
+# Rentals, vendor loaners, and demo or evaluation units (Asset.ownership not ours): on the inventory while on site, inspected before
+# first use (slice 26's incoming inspection, on the TEMPORARY_INCOMING checklist), maintained by their owner (no next PM, no PM work
+# orders; the owner's PM date from its sticker), and gone by Return to owner (status retired, read "Returned to owner"). One device
+# record per arrival: a unit that comes back later is entered again (matching_returned warns). Wave 1 fills these in; the signatures
+# and rules are fixed.
+
+TEMPORARY_KINDS = TEMPORARY
+REFERENCE_MAX = Asset._meta.get_field("owner_reference").max_length
+
+
+def matching_returned(device_model, serial: str):
+    """Returned temporary devices of this facility with this model and serial (any letter case): the unit was here before. Add rental
+    or loaner warns with them; it never refuses (each arrival is its own record)."""
+    serial = (serial or "").strip()
+    if not serial:
+        return Asset.objects.none()
+    return Asset.objects.filter(device_model=device_model, serial__iexact=serial, status=AssetStatus.RETIRED).exclude(OWNED).order_by("-returned_on")
+
+
+def add_temporary_device(*, tag, device_model, department, kind, owner, serial, owner_reference="", arrived_on=None, due_back_on=None,
+                         owner_pm_due_on=None, stands_in_for=None, room="", added_as=AddedAs.NEW, incoming_inspection=INCOMING_WAITING,
+                         inspection_due=None, by=None, today=None) -> Asset:
+    """Add a rental, vendor loaner, or demo unit (Equipment Edit). `kind` in TEMPORARY_KINDS; `owner` (the company) and `serial` (the
+    unit) required; `owner_reference` a token (OWNER_REFERENCE_VALIDATOR); arrived_on <= today (default today; required for EXISTING,
+    the day it came); due_back_on >= arrived_on; owner_pm_due_on any day (a past one is recorded: the incoming inspection then refuses a
+    pass until the owner does the PM); stands_in_for an owned, not retired device of this facility, only for a vendor loaner. added_as
+    NEW waits for its incoming inspection (incoming_inspection "waiting") or is inspected now ("": the screen opens the inspection),
+    EXISTING was already on site when entered (no inspection; counted, never a gap). Then create_asset. Refusals keyed by field."""
+    raise NotImplementedError
+
+
+def update_temporary(asset, *, by=None, today=None, **fields) -> Asset:
+    """Change a temporary device's stay (Equipment Edit): owner, owner_reference, due_back_on, owner_pm_due_on, stands_in_for. On the
+    locked row; refused for a device returned or kept. Each change in its history ("Stay changed")."""
+    raise NotImplementedError
+
+
+def return_to_owner(asset, *, cleaning, data, on=None, by=None, today=None) -> Asset:
+    """A temporary device goes back to its owner (Equipment Edit): status retired (read "Returned to owner"), returned_on (`on`,
+    from arrived_on to today, default today), `cleaning` (ReturnCleaning) and `data` (ReturnData) recorded. Refused while held for an
+    incident (slice 28) and while other work is open (named in words, as retiring refuses it: set_status's retire body, shared); an
+    open incoming inspection is cancelled. History "Returned to its owner"."""
+    raise NotImplementedError
+
+
+def keep_temporary_device(asset, *, acquisition_cost, next_pm_on=None, warranty_end=None, by=None, today=None) -> Asset:
+    """The facility keeps (buys) a temporary device (Equipment Approve): on site, its incoming inspection passed (or EXISTING), not
+    held, not missing. It becomes ours: kept_on today, acquisition cost (required), next PM (default today: the facility's acceptance
+    PM), warranty end, support recomputed. History "Kept by the facility"."""
+    raise NotImplementedError

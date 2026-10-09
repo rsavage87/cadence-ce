@@ -566,8 +566,11 @@ def test_forms_cover_what_the_services_take(ctx):
     assert set(MODEL_FIELDS) == params
     # added_on: the importer's. added_as (slice 25) and incoming_inspection (slice 26): Add device's choice of how the device arrives (intake)
     # sets them; inspection_due is that choice's field of the same name
+    # Slice 29: ownership and a temporary device's stay are Add rental or loaner's (forms_temporary, add_temporary_device), never Add device's
     create = set(inspect.signature(eq.create_asset).parameters) - {"by", "today", "device_model", "department", "added_on", "added_as",
-                                                                     "incoming_inspection", "inspection_due"}
+                                                                     "incoming_inspection", "inspection_due", "ownership", "owner",
+                                                                     "owner_reference", "arrived_on", "due_back_on", "owner_pm_due_on",
+                                                                     "stands_in_for"}
     assert create <= set(NewDeviceForm.base_fields) and "inspection_due" in NewDeviceForm.base_fields
 
 

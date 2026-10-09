@@ -9,7 +9,7 @@ from django import forms
 
 from apps.credentials.services import qualification, ranked_technicians
 from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, RiskClass
-from apps.equipment.services import ACTIVE_STATUS_FILTER, SORTS, AssetFilters, FleetBucket, SupportFilter
+from apps.equipment.services import ACTIVE_STATUS_FILTER, SORTS, AssetFilters, FleetBucket, SupportFilter, service_vendor
 from apps.workorders.models import Priority, WoStatus, WoType
 from apps.workorders.services import UNASSIGNED, WorkOrderFilters
 
@@ -86,7 +86,8 @@ def technician_choices(asset) -> list[tuple[str, str]]:
 
 
 def vendor_name_for(asset) -> str:
-    return asset.contract.vendor if asset.contract_id else f"{asset.device_model.manufacturer} field service"
+    """Who a work order's vendor service names (slice 29: equipment.services.service_vendor, a temporary device's owner first)."""
+    return service_vendor(asset)
 
 
 class NewWorkOrderForm(forms.Form):

@@ -26,6 +26,35 @@ class SupportType(models.TextChoices):
     IN_HOUSE = "in_house", "In-house"
     OEM_CONTRACT = "oem_contract", "OEM contract"
     THIRD_PARTY = "third_party", "Third-party"
+    OWNER = "owner", "Owner maintains"  # slice 29: a rental, vendor loaner, or demo unit (Asset.ownership not owned)
+
+
+class Ownership(models.TextChoices):
+    """Whose a device is (slice 29). Ours is everything on CE's PM program (owned, leased, or placed); the others are on site for a
+    while, maintained by their owner (no next PM, no PM work orders; Cadence records the owner's PM date from its sticker), and leave
+    by Return to owner (status retired, read "Returned to owner"). One device record per arrival: a unit that comes back later is
+    entered again. Set by create_asset; changes only by equipment.services.keep_temporary_device (bought: ours)."""
+    OWNED = "owned", "Ours"
+    RENTAL = "rental", "Rental"
+    LOANER = "loaner", "Vendor loaner"
+    DEMO = "demo", "Demo or evaluation unit"
+
+
+TEMPORARY = (Ownership.RENTAL, Ownership.LOANER, Ownership.DEMO)
+
+
+class ReturnCleaning(models.TextChoices):
+    """How a temporary device left (slice 29): OSHA 29 CFR 1910.1030(d)(2)(xiv), equipment that may be contaminated is decontaminated
+    before shipping, or its contaminated parts labeled."""
+    DECONTAMINATED = "decontaminated", "Cleaned and decontaminated"
+    LABELED = "labeled", "Parts still contaminated are labeled"
+
+
+class ReturnData(models.TextChoices):
+    """Patient data on a temporary device when it left (slice 29): HIPAA 45 CFR 164.310(d)(2)(ii)."""
+    CLEARED = "cleared", "Patient data cleared"
+    NONE_STORED = "none_stored", "Stores no patient data"
+    NOT_APPLICABLE = "not_applicable", "Not applicable"
 
 
 class AddedAs(models.TextChoices):
@@ -47,6 +76,10 @@ class UseBeforeInspection(models.TextChoices):
 
 # Tags appear in URLs (/equipment/<tag>/), so no whitespace or slashes; forms, the API, and the importer all check this.
 TAG_VALIDATOR = RegexValidator(r"^[^\s/]+$", "Asset tags cannot contain spaces or slashes.")
+# Slice 29: a temporary device's agreement, PO, or RMA number. A token (no spaces): specialty beds are rented for one patient, and a
+# free-text box there invites a name or a room (CLAUDE.md non-negotiable 6).
+OWNER_REFERENCE_VALIDATOR = RegexValidator(r"^[A-Za-z0-9][A-Za-z0-9._/#-]*$",
+                                           "Enter the agreement, PO, or RMA number as the owner's paperwork shows it, without spaces.")
 
 
 class Department(TenantModel):
@@ -146,6 +179,21 @@ class Asset(TenantModel):
     # set_incident_hold / clear_incident_hold, on the locked row. While it is set nobody uses, repairs, or tests the device: set_status
     # refuses every move, and no work order but the incident's investigation starts or completes (workorders.services.change_status).
     incident_hold = models.BooleanField(default=False, editable=False, help_text="Held as evidence for an incident investigation")
+    # Slice 29: whose it is, and a temporary device's stay (one per device record). Written only by create_asset and the temporary
+    # services in equipment.services (add_temporary_device, update_temporary, return_to_owner, keep_temporary_device).
+    ownership = models.CharField(max_length=10, choices=Ownership.choices, default=Ownership.OWNED, editable=False)
+    owner = models.CharField(max_length=120, blank=True, editable=False, help_text="The company that owns a temporary device")
+    owner_reference = models.CharField(max_length=40, blank=True, editable=False, validators=[OWNER_REFERENCE_VALIDATOR],
+                                       help_text="The rental agreement, PO, or RMA number (never a patient's name or record number)")
+    arrived_on = models.DateField(null=True, blank=True, editable=False)
+    due_back_on = models.DateField(null=True, blank=True, editable=False)
+    owner_pm_due_on = models.DateField(null=True, blank=True, editable=False, help_text="The owner's PM date, from its sticker")
+    returned_on = models.DateField(null=True, blank=True, editable=False)
+    kept_on = models.DateField(null=True, blank=True, editable=False, help_text="The facility kept (bought) it: ours from that day")
+    stands_in_for = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True, editable=False, related_name="loaners",
+                                      help_text="The device of ours a vendor loaner stands in for")
+    return_cleaning = models.CharField(max_length=20, choices=ReturnCleaning.choices, blank=True, editable=False)
+    return_data = models.CharField(max_length=20, choices=ReturnData.choices, blank=True, editable=False)
     history = HistoricalRecords()
 
     class Meta:
@@ -157,9 +205,17 @@ class Asset(TenantModel):
         return f"{self.tag} · {self.device_model.description}"
 
     def save(self, *args, **kwargs):
-        # Support type always follows the contract, so it cannot drift.
-        self.support_type = self.contract.support_type if self.contract_id else SupportType.IN_HOUSE
+        # Support type always follows the contract, so it cannot drift; a temporary device's owner maintains it (slice 29).
+        if self.ownership != Ownership.OWNED:
+            self.support_type = SupportType.OWNER
+        else:
+            self.support_type = self.contract.support_type if self.contract_id else SupportType.IN_HOUSE
         super().save(*args, **kwargs)
+
+    @property
+    def temporary(self) -> bool:
+        """A rental, vendor loaner, or demo unit: its owner maintains it (slice 29)."""
+        return self.ownership != Ownership.OWNED
 
     @property
     def is_active(self) -> bool:
