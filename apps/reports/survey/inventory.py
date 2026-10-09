@@ -184,7 +184,11 @@ def _temporary_gaps(devices: list[dict], today) -> list[Gap]:
         risk = "life support" if rc == RiskClass.LIFE_SUPPORT else f"{_class(rc).lower()} risk"
         what = f"{tag} ({d['make']} {d['model']}, {risk}, {whose})"
         due, url = d["owner_pm_due_on"], reverse("web:asset", args=[tag])
-        if due is not None and due < today:
+        if d.get("incident_hold") and due is not None and due < today:
+            # Review fix, slice 28's rule: a device held as evidence is not in use and cannot go back; its lapsed PM is explained
+            gaps.append(Gap(FINDING, f"{what} is held as evidence for an incident investigation, not in use, with its owner's PM past due "
+                                     f"since {_day(due)}: its incident releases it.", url, tag))
+        elif due is not None and due < today:
             gaps.append(Gap(GAP, f"{what} is on site with its owner's PM past due since {_day(due)}: record the date on the owner's new PM "
                                  "sticker, or return it to its owner.", url, tag))
         elif due is None:

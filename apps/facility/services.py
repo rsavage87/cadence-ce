@@ -485,8 +485,12 @@ RISK_BANDS = [("16 and above", RiskClass.LIFE_SUPPORT), ("12 to 15", RiskClass.H
 
 
 def risk_summary() -> list[dict]:
-    """The score bands with the active devices in each class (a device's class comes from its model)."""
-    counts = dict(Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES).order_by().values_list("device_model__risk_class").annotate(n=Count("id")))
+    """The score bands with the active devices in each class (a device's class comes from its model). Ours only (slice 29 review fix:
+    a rental, vendor loaner, or demo unit is its owner's; the survey binder's inventory counts the same)."""
+    from apps.equipment.services import OWNED
+
+    counts = dict(Asset.objects.filter(OWNED, status__in=Asset.ACTIVE_STATUSES).order_by().values_list("device_model__risk_class")
+                  .annotate(n=Count("id")))
     return [{"band": band, "risk": rc.value, "label": rc.label, "devices": counts.get(rc.value, 0)} for band, rc in RISK_BANDS]
 
 

@@ -192,8 +192,6 @@ def return_blockers(asset) -> dict:
     refusal = stay_refusal(asset)
     if not refusal and asset.incident_hold:
         refusal = eq.held_message(asset)
-    elif not refusal and asset.status == AssetStatus.MISSING:
-        refusal = f"{asset.tag} is missing: mark it found before it goes back to its owner."
     open_wos = list(asset.work_orders.filter(status__in=OPEN_STATUSES).order_by("number")) if not refusal else []
     blocking = [w for w in open_wos if not (w.type in CANCELLABLE and w.status in CANCELLABLE_STATUSES)]
     return {"refusal": refusal, "blocking": blocking, "cancels": [w for w in open_wos if w not in blocking]}

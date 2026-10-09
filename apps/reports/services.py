@@ -25,7 +25,7 @@ from django.utils import timezone
 
 from apps.contracts.models import Contract
 from apps.equipment.models import Asset, AssetStatus, Ownership, RiskClass
-from apps.equipment.services import OWNED, fleet_bucket_counts
+from apps.equipment.services import OWNED, fleet_bucket_counts, loaner_back_q
 from apps.facility.services import get_settings, kpi_targets
 from apps.pm.dates import month_bounds
 from apps.pm.services import overdue_assets, pm_on_time_rate, pm_on_time_series, pm_pending
@@ -214,7 +214,6 @@ def attention_items(today: date | None = None, *, w=None) -> list[dict]:
 
 
 ATTENTION_TEMPORARY_LIMIT = 5  # slice 29: lines of each kind below (past due back; a loaner whose device is back)
-LOANER_BACK = (AssetStatus.IN_SERVICE, AssetStatus.RETIRED)  # the device of ours a loaner stands in for no longer needs it
 
 
 def _short(d: date) -> str:
@@ -232,7 +231,7 @@ def temporary_attention(today: date) -> list[dict]:
         items.append(_item("warn", f"{a.tag} · {a.device_model.description}",
                            f"{a.get_ownership_display()} from {a.owner} · {a.department} · due back {_short(a.due_back_on)}",
                            f"Past due back {(today - a.due_back_on).days} d", asset=a.tag))
-    back = (on_site.filter(ownership=Ownership.LOANER, stands_in_for__status__in=LOANER_BACK, stands_in_for__incident_hold=False)
+    back = (on_site.filter(loaner_back_q(), ownership=Ownership.LOANER, stands_in_for__incident_hold=False)
             .select_related("stands_in_for").order_by("tag"))
     for a in back[:ATTENTION_TEMPORARY_LIMIT]:
         ours = a.stands_in_for

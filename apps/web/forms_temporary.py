@@ -18,7 +18,7 @@ from django import forms
 from django.utils import timezone
 
 from apps.contracts.models import Contract
-from apps.equipment.models import AddedAs, Asset, DeviceModel, Ownership, ReturnCleaning, ReturnData
+from apps.equipment.models import AddedAs, Asset, AssetStatus, DeviceModel, Ownership, ReturnCleaning, ReturnData
 from apps.equipment.services import INCOMING_WAITING, OWNED, OWNER_MAX, REFERENCE_MAX, TEMPORARY_KINDS
 from apps.workorders.inspections import INSPECTION_DUE_DAYS
 
@@ -238,6 +238,11 @@ class ReturnForm(ServiceErrors, forms.Form):
         self.fields["on"].widget.attrs["max"] = today.isoformat()
         if asset.arrived_on:
             self.fields["on"].widget.attrs["min"] = asset.arrived_on.isoformat()
+        # Review fix: a missing unit leaves only as not in hand (lost, settled with its owner); one in hand never as that
+        missing = asset.status == AssetStatus.MISSING
+        self.fields["cleaning"].choices = [(v, label) for v, label in ReturnCleaning.choices if (v == ReturnCleaning.NOT_IN_HAND) == missing]
+        if missing:
+            self.fields["cleaning"].initial = ReturnCleaning.NOT_IN_HAND
 
 
 class KeepForm(ServiceErrors, forms.Form):

@@ -435,7 +435,8 @@ def test_a_held_or_missing_device_is_refused_up_front(client, signed_in, today, 
     a = on_site(pump_model, dept)
     eq.set_status(a, S.MISSING)
     signed_in("technician")
-    assert f"{a.tag} is missing: mark it found before it goes back to its owner." in client.get(f"/equipment/{a.tag}/return/", **HX).content.decode()
+    body = client.get(f"/equipment/{a.tag}/return/", **HX).content.decode()  # review fix: a missing unit leaves as not in hand only
+    assert "Not in hand: lost, settled with its owner" in body and "Cleaned and decontaminated" not in body
     signed_in("director")
     assert f"{a.tag} is missing: mark it found before keeping it." in client.get(f"/equipment/{a.tag}/keep/", **HX).content.decode()
 

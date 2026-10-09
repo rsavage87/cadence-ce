@@ -44,7 +44,7 @@ from django.db.models.functions import Lower
 from django.utils import timezone
 
 from apps.credentials.models import Technician
-from apps.equipment.models import AssetStatus
+from apps.equipment.models import AssetStatus, Ownership
 from apps.tenants.context import get_current_tenant
 
 from . import costs as lines
@@ -67,6 +67,7 @@ CENT = Decimal("0.01")
 CANCELLED = "Cancelled in the previous system: not imported"
 OPEN_PM = "Open PMs come from each device's next PM date: not imported"
 RETIRED = "An open work order on a retired device: not imported"
+OWNER_PM = "A rental, vendor loaner, or demo unit is maintained by its owner: its PM history is not imported"  # slice 29 review fix
 ALREADY = "This number is already on a work order here"
 ESTIMATED = "Labor cost estimated at today's rate"
 NO_HOURS = "Labor cost without hours: imported as outside service"
@@ -148,6 +149,8 @@ def _validate(*, tenant, asset, number, type, priority, status, opened_on, due_o
     is_open = status in OPEN_STATUSES
     if is_open and type == WoType.PM:
         _refuse(OPEN_PM)
+    if type == WoType.PM and asset.ownership != Ownership.OWNED:  # slice 29: no PM of ours, open or done, ever counts on a temporary device
+        _refuse(OWNER_PM)
     if is_open and asset.status == AssetStatus.RETIRED:
         _refuse(RETIRED)
     if opened_on is None:

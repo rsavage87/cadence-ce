@@ -319,7 +319,9 @@ def test_the_returns_refusals(ctx, today, pump_model, dept, pump, make_user):
     eq.set_status(a, S.MISSING, today=today)
     with pytest.raises(ValidationError) as e:
         eq.return_to_owner(a, cleaning=ReturnCleaning.LABELED, data=ReturnData.CLEARED, today=today)
-    assert e.value.messages == ["T-0002 is missing: mark it found before it goes back to its owner."]
+    # review fix: a missing unit leaves only as not in hand (lost, settled with its owner)
+    assert e.value.message_dict == {"cleaning": ["T-0002 is missing: mark it found before it goes back to its owner, or return it as not in hand "
+                                                 "(lost, settled with its owner)."]}
     eq.set_status(a, S.IN_SERVICE, today=today)
     eq.set_incident_hold(a)
     with pytest.raises(ValidationError) as e:

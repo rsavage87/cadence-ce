@@ -31,7 +31,7 @@ from django.utils import timezone
 
 from apps.equipment import permissions as eq_perms
 from apps.equipment.models import Asset, AssetStatus, Ownership, RiskClass
-from apps.equipment.services import OWNED, USE_BEFORE_FROM, owner_maintains, status_label
+from apps.equipment.services import OWNED, USE_BEFORE_FROM, loaner_device_back, owner_maintains, status_label
 from apps.pm.dates import add_months
 from apps.pm.models import AemDecision, AemStatus
 from apps.pm.schedule import DEFAULT_PM_HOURS, planned_technicians
@@ -301,7 +301,6 @@ def incident_box(asset, user) -> dict:
 
 # --- the device drawer's temporary equipment parts (slice 29) ----------------------------------------------------------------------
 
-BACK = (AssetStatus.IN_SERVICE, AssetStatus.RETIRED)  # a vendor loaner's device of ours is back in use, or gone: the loaner goes back
 OUT = (AssetStatus.IN_REPAIR, AssetStatus.OUT_OF_SERVICE, AssetStatus.MISSING)  # a device of ours a vendor loaner may stand in for
 
 
@@ -322,7 +321,7 @@ def _temporary_part(asset, user, today: date, scoped: bool, handle: bool) -> dic
         if device is not None:
             visible = scoping.can_see_asset(user, device)
             stands = {"tag": device.tag if visible else "", "visible": visible, "status": status_label(device).lower() if visible else "",
-                      "back": visible and not returned and device.status in BACK, "back_words": _back_words(device) if visible else ""}
+                      "back": visible and not returned and loaner_device_back(device), "back_words": _back_words(device) if visible else ""}
     end = asset.returned_on if returned and asset.returned_on else today
     due, pm = asset.due_back_on, asset.owner_pm_due_on
     return {
@@ -351,7 +350,7 @@ def _ours_part(asset, user, scoped: bool, handle: bool) -> dict | None:
                for a in Asset.objects.filter(stands_in_for=asset).exclude(OWNED).exclude(status=AssetStatus.RETIRED).order_by("arrived_on", "tag")
                .only("tag", "owner", "ownership", "status", "due_back_on", "arrived_on", "department_id", "device_model_id")]
     loaners = [it for it in loaners if it["visible"]]
-    back = asset.status in BACK
+    back = bool(loaners) and loaner_device_back(asset)
     offer = False
     if handle and not loaners and asset.status != AssetStatus.RETIRED and not asset.awaiting_inspection:
         offer = asset.status in OUT or WorkOrder.objects.filter(asset=asset, type=WoType.REPAIR, status__in=OPEN_STATUSES, vendor_service=True).exists()

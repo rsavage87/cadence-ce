@@ -87,6 +87,13 @@ def asset_status_chip(device_or_status):
     return _chip(AWAITING_CSS if label == AWAITING_LABEL else ASSET_STATUS_CSS.get(device_or_status.status, "neutral"), label)
 
 
+@register.filter
+def status_words(device) -> str:
+    """A device's status in words, as every screen says it (equipment.services.status_label: "Returned to owner" for a rental gone back,
+    "Held for incident", "Awaiting inspection")."""
+    return status_label(device)
+
+
 @register.simple_tag
 def wo_status_chip(status):
     return _chip(WO_STATUS_CSS.get(status, "neutral"), WoStatus(status).label)

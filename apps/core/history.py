@@ -272,7 +272,7 @@ LABELS = {
 
 # How a value reads, per model and field (see _kind_text); the rest read by their field's type (_plain_text).
 KINDS = {
-    "equipment.asset": {"acquisition_cost": "money", "condition": "of_5"},
+    "equipment.asset": {"acquisition_cost": "money", "condition": "of_5", "status": "asset_status"},
     "equipment.devicemodel": {"oem_pm_interval_months": "months", "aem_interval_months": "months", "expected_life_years": "years",
                               "list_cost": "money", "risk_function": "of_10", "risk_physical": "of_5", "risk_maintenance": "of_5",
                               "risk_incidents": "of_2"},
@@ -511,7 +511,20 @@ def _kind_text(kind: str, value, rec) -> str:
         from apps.facility.services import zone_label
 
         return zone_label(value)
+    if kind == "asset_status":
+        return _asset_status_text(value, rec)
     raise ValueError(kind)
+
+
+def _asset_status_text(value, rec):
+    """A device's status as it reads in its history: a rental, vendor loaner, or demo unit gone back (retired, not ours on the same
+    historical row) reads "Returned to owner", never "Retired" (slice 29 review fix); None leaves every other status to the plain text."""
+    from apps.equipment.models import AssetStatus, Ownership
+    from apps.equipment.services import RETURNED_LABEL
+
+    if value == AssetStatus.RETIRED and rec is not None and getattr(rec, "ownership", Ownership.OWNED) != Ownership.OWNED:
+        return RETURNED_LABEL
+    return None
 
 
 def _plain_text(f, value, names: _Names) -> str:

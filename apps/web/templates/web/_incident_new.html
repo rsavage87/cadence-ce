@@ -20,7 +20,7 @@
         <input id="inc-asset-q" name="asset_q" autocomplete="off" autofocus placeholder="Scan or type the asset tag, serial, or model"
                hx-get="{% url 'web:incident_devices' %}" hx-trigger="input changed delay:250ms" hx-target="#inc-sugg" hx-include="this">
       {% endif %}
-      {% if asset %}<span class="hint" id="inc-asset-hint">{{ asset.device_model }} · {{ asset.department }}{% if asset.serial %} · SN {{ asset.serial }}{% endif %} · {{ asset.get_status_display }}</span>{% endif %}
+      {% if asset %}<span class="hint" id="inc-asset-hint">{{ asset.device_model }} · {{ asset.department }}{% if asset.serial %} · SN {{ asset.serial }}{% endif %} · {{ asset|status_words }}</span>{% endif %}
       <div class="sugg" id="inc-sugg"></div>
       {% if form.asset.errors %}<span class="err" role="alert">{{ form.asset.errors|striptags }}</span>{% endif %}
     </label>

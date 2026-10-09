@@ -1182,6 +1182,27 @@ def _kind(asset) -> str:
     return f"a {Ownership(asset.ownership).label.lower()}"
 
 
+# A device of ours a vendor loaner stands in for is back (the loaner can go) once it is in service or retired with no vendor repair still
+# open on it (review fix: a repair sent to the vendor that leaves the device in service is the loaner's very reason to be here).
+LOANER_BACK_STATUSES = (AssetStatus.IN_SERVICE, AssetStatus.RETIRED)
+
+
+def _open_vendor_repair():
+    from apps.workorders.models import OPEN_STATUSES, WorkOrder, WoType
+
+    return WorkOrder.objects.filter(type=WoType.REPAIR, status__in=OPEN_STATUSES, vendor_service=True)
+
+
+def loaner_device_back(device) -> bool:
+    """Whether the device of ours a vendor loaner stands in for is back: in service or retired, no vendor repair open on it."""
+    return device.status in LOANER_BACK_STATUSES and not _open_vendor_repair().filter(asset_id=device.pk).exists()
+
+
+def loaner_back_q(prefix: str = "stands_in_for") -> Q:
+    """loaner_device_back as a condition on loaners (their `prefix` device), for lists that read many at once."""
+    return Q(**{f"{prefix}__status__in": LOANER_BACK_STATUSES}) & ~Exists(_open_vendor_repair().filter(asset_id=OuterRef(f"{prefix}_id")))
+
+
 def matching_returned(device_model, serial: str):
     """Returned temporary devices of this facility with this model and serial (any letter case): the unit was here before. Add rental
     or loaner warns with them; it never refuses (each arrival is its own record)."""
@@ -1369,7 +1390,9 @@ def return_to_owner(asset, *, cleaning, data, on=None, by=None, today=None) -> A
 
     On the device's row as it is, locked (_locked_row: its open work orders, then its row). Refused in words for a device of ours
     (kept or never temporary: retire it instead), one already returned, and one missing (found first: the return records how it was
-    cleaned and what happened to its data, which nobody can say of a unit not in hand). `on` before the day it arrived or after today
+    cleaned and what happened to its data, which nobody can say of a unit not in hand). Review fix: a unit lost for good (stolen, settled
+    with its owner) leaves as missing with cleaning NOT_IN_HAND, the one choice for a missing unit and refused for one in hand, so a lost
+    rental never stays on the inventory and in the figures. `on` before the day it arrived or after today
     is refused, keyed "on"; a cleaning or data choice not listed is keyed by its name. The history row is dated now (returned_on holds
     the day: a backdated row would sort before changes made since). Returns the caller's device, read again."""
     today = today or timezone.localdate()
@@ -1391,8 +1414,11 @@ def return_to_owner(asset, *, cleaning, data, on=None, by=None, today=None) -> A
         raise ValidationError(refusal)
     if fresh.incident_hold:  # slice 28: only its incident releases it
         raise ValidationError(held_message(fresh))
-    if fresh.status == AssetStatus.MISSING:
-        raise ValidationError(f"{fresh.tag} is missing: mark it found before it goes back to its owner.")
+    if fresh.status == AssetStatus.MISSING and cleaning != ReturnCleaning.NOT_IN_HAND:
+        raise ValidationError({"cleaning": f"{fresh.tag} is missing: mark it found before it goes back to its owner, or return it as not in "
+                                           "hand (lost, settled with its owner)."})
+    if fresh.status != AssetStatus.MISSING and cleaning == ReturnCleaning.NOT_IN_HAND:
+        raise ValidationError({"cleaning": f"{fresh.tag} is here: say how it was cleaned before it left."})
     if fresh.arrived_on and on < fresh.arrived_on:
         raise ValidationError({"on": f"It cannot go back before it arrived ({_day(fresh.arrived_on)})."})
     fresh.returned_on, fresh.return_cleaning, fresh.return_data = on, cleaning, data

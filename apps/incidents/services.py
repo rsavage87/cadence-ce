@@ -39,6 +39,7 @@ from django.utils import timezone
 from apps.core.models import Sequence
 from apps.core.workdays import add_work_days, work_days_between
 from apps.equipment.models import Asset, AssetStatus
+from apps.equipment.services import RETURNED_LABEL, status_label
 from apps.workorders.models import OPEN_STATUSES, LateReason, Priority, WorkOrder, WoStatus, WoType
 
 from . import notify
@@ -284,6 +285,14 @@ def _locked(incident) -> Incident:
     return Incident.objects.select_for_update().get(pk=incident.pk)
 
 
+def _state_words(device) -> str:
+    """Why a device cannot be held, in words: "is missing", "is retired", or for a rental gone back "was returned to its owner"
+    (slice 29: never "retired")."""
+    if status_label(device) == RETURNED_LABEL:
+        return "was returned to its owner"
+    return f"is {status_label(device).lower()}"
+
+
 def _check_open(incident) -> None:
     if incident.status == Status.CLOSED:
         raise ValidationError(f"{incident.number} is closed: reopen it first.")
@@ -396,7 +405,7 @@ def _hold(incident, asset, *, by, today: date) -> IncidentHold:
         raise ValidationError({"asset": f"{incident.number} already holds {asset.tag}."})
     device = _locked_row(asset)  # its open inspections, then its row: the status it has now
     if device.status in (AssetStatus.MISSING, AssetStatus.RETIRED):
-        raise ValidationError({"asset": f"{device.tag} is {device.get_status_display().lower()}: it cannot be held."})
+        raise ValidationError({"asset": f"{device.tag} {_state_words(device)}: it cannot be held."})
     hold = existing or IncidentHold(tenant=incident.tenant, incident=incident, asset=device)
     hold.held_on, hold.status_before = today, device.status
     hold.sent_on = hold.back_on = hold.released_on = hold.released_by = None
@@ -522,9 +531,10 @@ def record_incident(*, asset, occurred_on=None, aware_on=None, outcome, affected
                           "affected": affected, "event_reference": event_reference, "accessories": accessories, "event_log": event_log})
     errors = _facts_errors(facts, today)
     if hold:
-        status = Asset.objects.filter(pk=asset.pk).values_list("status", flat=True).first()
-        if status in (AssetStatus.MISSING, AssetStatus.RETIRED):
-            errors["hold"] = f"{asset.tag} is {AssetStatus(status).label.lower()}: record the incident without holding it."
+        device = Asset.objects.filter(pk=asset.pk).first()
+        if device is not None and device.status in (AssetStatus.MISSING, AssetStatus.RETIRED):
+            # status_label: a rental gone back reads "returned to owner", never "retired" (slice 29 review fix)
+            errors["hold"] = f"{asset.tag} {_state_words(device)}: record the incident without holding it."
     if errors:
         raise ValidationError(errors)
     yy = facts["occurred_on"].year % 100

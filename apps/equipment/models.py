@@ -48,6 +48,7 @@ class ReturnCleaning(models.TextChoices):
     before shipping, or its contaminated parts labeled."""
     DECONTAMINATED = "decontaminated", "Cleaned and decontaminated"
     LABELED = "labeled", "Parts still contaminated are labeled"
+    NOT_IN_HAND = "not_in_hand", "Not in hand: lost, settled with its owner"  # slice 29 review fix: the one way a missing unit leaves
 
 
 class ReturnData(models.TextChoices):
