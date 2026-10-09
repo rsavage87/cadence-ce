@@ -20,13 +20,16 @@ default (on), which the service applies only to a device in use.
 Slice 30: a repair (is_repair) takes how it ended (repair_check, RepairCheck: text, completion checks the value and which outcomes the
 user may choose) and, for checked and ready for use, the post-repair checklist's steps (completion.procedure_for); the vendor's
 service report number (checks_reference) goes to the service only with checked by the vendor, and the steps only with checked and
-ready for use, so values left on screen under another choice are never sent.
+ready for use, so values left on screen under another choice are never sent. Wave 2: the outcome chosen to begin with
+(`repair_default`: checked and ready for use, unless the vendor's report is offered), the steps never N/A (repair_checks.NEVER_NA: no
+N/A choice, rows()' never_na), and "If a check fails" (keep_open_kwargs, for completion.keep_open: the steps as typed and `hold`, the
+hold-out box, ticked by default and taken from the post only when the modal showed it: shown_hold).
 """
 import re
 
 from django import forms
 
-from apps.workorders import completion
+from apps.workorders import completion, repair_checks
 from apps.workorders.models import InspectionResult, LateReason, PmResult, RepairCheck
 
 RESOLUTION_PLACEHOLDER = "What was found and done. No patient information."
@@ -81,6 +84,9 @@ class CompleteForm(forms.Form):
                                                                                     "placeholder": "e.g. FSO-118204"}))
     open_repair = forms.BooleanField(required=False, initial=True)
     tag_out = forms.BooleanField(required=False, initial=True)
+    # Slice 30, "If a check fails" on a repair: keep it open holding the device out (completion.keep_open's hold), ticked by default
+    hold = forms.BooleanField(required=False, initial=True)
+    shown_hold = forms.CharField(required=False)
     signature = forms.CharField(required=False, widget=forms.HiddenInput)
     # Which failed-PM options were on screen when the modal was filled in (the template posts these next to each checkbox): the
     # device can change while the modal is open, and an option not shown was never declined.
@@ -90,20 +96,24 @@ class CompleteForm(forms.Form):
     late_reason = forms.CharField(required=False, widget=forms.Select(attrs={"aria-describedby": "wc-late-hint"}))
 
     def __init__(self, *args, steps=(), is_pm=False, is_inspection=False, kept_pass=False, offer_open_repair=False, offer_tag_out=False,
-                 offer_hours=False, offer_late_reason=False, late_first=False, late_recorded="", is_repair=False, **kwargs):
+                 offer_hours=False, offer_late_reason=False, late_first=False, late_recorded="", is_repair=False, repair_default="",
+                 **kwargs):
         """`steps`: the checklist the modal shows, as completion.checklist_of gives it. The two offers say whether the failed-PM
         options are on screen: an option that is not offered is not taken from the post (a new repair is opened; no tag-out).
         `offer_hours`: the Hours box is on screen; without it no hours are taken from the post. `offer_late_reason` (slice 25): the
         "Why was it late?" select is on screen (before the result when `late_first`); `late_recorded` names the reason already on
         record, which its blank choice keeps. Slice 26: `is_inspection`, an incoming inspection (its result instead of a PM's, and a
         failed one's tag-out under `offer_tag_out`); `kept_pass`, one that passed and whose device no longer waits (it stays
-        passed: Passed is chosen to begin with). Slice 30: `is_repair`, a repair (its outcome, and its checks after it as `steps`)."""
+        passed: Passed is chosen to begin with). Slice 30: `is_repair`, a repair (its outcome, and its checks after it as `steps`);
+        `repair_default`, the outcome chosen to begin with ("" for none)."""
         kwargs.setdefault("auto_id", "wc-%s")
         super().__init__(*args, **kwargs)
         self.steps, self.is_pm, self.is_inspection = list(steps), is_pm, is_inspection and not is_pm
         self.is_repair = is_repair and not (is_pm or is_inspection)
         if not self.is_repair:
-            del self.fields["repair_check"], self.fields["checks_reference"]
+            del self.fields["repair_check"], self.fields["checks_reference"], self.fields["hold"], self.fields["shown_hold"]
+        elif repair_default:
+            self.fields["repair_check"].initial = repair_default
         if not self.is_inspection:
             del self.fields["inspection_result"]
         elif kept_pass:
@@ -134,8 +144,10 @@ class CompleteForm(forms.Form):
         `fill`: "Mark the rest pass" without saving anything."""
         form = cls(**kwargs)
         initial = {name: params.get(name, "") for name in form.fields
-                   if name not in ("open_repair", "tag_out", "signature", "shown_open_repair", "shown_tag_out")}
+                   if name not in ("open_repair", "tag_out", "signature", "shown_open_repair", "shown_tag_out", "hold", "shown_hold")}
         initial.update(open_repair="open_repair" in params, tag_out="tag_out" in params)
+        if "hold" in form.fields and params.get("shown_hold"):  # slice 30: the hold-out box as it was on screen (else its default, on)
+            initial["hold"] = "hold" in params
         if params.get("signature"):  # the checklist the values were typed against, so a revision since is still caught on save
             initial["signature"] = params["signature"]
         if fill in dict(STEP_CHOICES):
@@ -158,6 +170,7 @@ class CompleteForm(forms.Form):
         for n, (text, measure) in enumerate(self.steps, 1):
             shown = "" if measure in (None, True) else str(measure)
             out.append({"n": n, "text": text, "measured": measure is not None, "measure": shown,
+                        "never_na": self.is_repair and n - 1 in repair_checks.NEVER_NA,  # slice 30: no N/A choice on these
                         "prompt": shown if shown.lower().startswith("record ") else f"Record {shown}" if shown else "",
                         "numeric": reads_number(measure), "value": self._value(f"step_{n}"), "reading": self._value(f"reading_{n}"),
                         "error": " ".join(self.errors.get(f"step_{n}", [])) if self.is_bound else "",
@@ -210,6 +223,14 @@ class CompleteForm(forms.Form):
             kwargs.update(repair_check=outcome, results=results if outcome == RepairCheck.PASSED else None,
                           checks_reference=d["checks_reference"] if outcome == RepairCheck.VENDOR_REPORT else "")
         return kwargs
+
+    def keep_open_kwargs(self) -> dict:
+        """completion.keep_open's arguments (slice 30, "If a check fails"): the steps as typed (one left blank was not done), the
+        signature, and the hold, taken from the post only when its box was on screen (else its default, on)."""
+        d = self.cleaned_data
+        return {"results": [{"result": d[f"step_{n}"], "reading": d[f"reading_{n}"]} for n in range(1, len(self.steps) + 1)],
+                "signature": d["signature"] or completion.checklist_signature(self.steps),
+                "hold": d["hold"] if d["shown_hold"] else True}
 
     def add_service_errors(self, error):
         """Show a service's ValidationError on the fields it names; the checklist's and anything else at the top of its section."""

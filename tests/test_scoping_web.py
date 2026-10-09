@@ -44,7 +44,8 @@ ADMITS_SCOPED = {"overview", "password_change", "search", "asset_search", "equip
                  "facility_switch", "facility_join", "all_facilities",
                  "my_work",  # slice 24: a vendor's own company's work, through apps.workorders.my_work
                  "wo_waiting",  # slice 24: Waiting on parts with a note, on a work order in the share (get_wo)
-                 "wo_late_reason"}  # slice 25: why a PM was late, on a work order in the share (get_wo; tests/test_late_reason.py)
+                 "wo_late_reason",  # slice 25: why a PM was late, on a work order in the share (get_wo; tests/test_late_reason.py)
+                 "wo_keep_open"}  # slice 30: a repair kept open after a failed check, in the share (get_wo; tests/test_repair_checks_web.py)
 SIGNED_OUT = {"login", "logout", "password_reset", "password_reset_sent", "password_reset_complete", "password_reset_confirm", "invite_accept"}
 
 

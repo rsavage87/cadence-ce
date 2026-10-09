@@ -52,22 +52,33 @@ rental checklist (inspections.TEMPORARY_INCOMING, the incoming checklist with th
 says its PMs start (its owner maintains it); and while its owner's PM date has passed (inspections.owner_pm_refusal, completion's
 refusal of Passed) the modal says so before anything is filled in, and Passed's hint says it waits for the owner's PM.
 
-Slice 30, checks after a repair (apps.workorders.repair_checks): a repair's modal asks how it ended ("After the repair":
-completion.repair_outcomes, checked by the vendor only on vendor service for a user who sees the whole facility),
-each choice saying what it does to the device (_repair_hints), the vendor's service report number, and the post-repair checklist
-(completion.procedure_for), which the form sends only with checked and ready for use. The toast says it (completion.repair_note).
+Slice 30, checks after a repair (apps.workorders.repair_checks; CMS A-0724, NFPA 99, IEC 62353). The repair's modal is path-first:
+"After the repair" (completion.repair_outcomes) as radio cards above everything else, each saying what it does to this device
+(_repair_hints: back in service; stays out until another repair is done; stays held until its incident is released; stays waiting for
+its incoming inspection; out of service, to be retired or returned to its owner). Checked: ready for use is chosen to begin with unless
+the vendor's report is offered (vendor service, for a user who sees the whole facility), whose number box shows with that choice. The
+checks after repair (completion.procedure_for) show only with Checked (CSS :has; all of it without :has support), with Mark the rest
+pass, the number pad on the readings, and no N/A on the visual and function checks (repair_checks.NEVER_NA). A step marked Fail shows
+"If a check fails": Keep the repair open (wo_keep_open, completion.keep_open: the failed checks as a note on the repair, and with the
+hold box, ticked by default, the device held out) instead of completing it; completing it as checked with a failed step is refused at
+the step. The toast says what moved (completion.repair_note; not returned to use on a device that was in use says it was tagged out
+of service). From My work both answer without the drawer. results_context's "repair" kind is the drawer's "Checks after repair": the
+outcome, who checked (repair_checks.checked_by) and when, the steps and readings, the vendor's report number, or not returned to use;
+a reopened repair says what was recorded, and one completed with no outcome (before slice 30, or imported) says none was.
 """
+import copy
 
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.http import HttpResponse
+from django.http import Http404, HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import render
 from django.utils import timezone
 from django_htmx.http import reswap, retarget, trigger_client_event
 
 from apps.equipment.models import AssetStatus
-from apps.equipment.services import owner_maintains
+from apps.equipment.services import owner_maintains, status_label
+from apps.incidents import services as inc_services
 from apps.pm.windows import windows
-from apps.workorders import completion, costs, inspections, scoping
+from apps.workorders import completion, costs, inspections, repair_checks, scoping
 from apps.workorders import permissions as wo_perms
 from apps.workorders import services as wo_services
 from apps.workorders.models import OPEN_STATUSES, InspectionResult, PmResult, RepairCheck, ServiceRequest, Source, WoStatus, WoType
@@ -82,6 +93,12 @@ from .views_print import inspector
 MODAL = "web/_wo_complete.html"
 RESULT_CSS = {PmResult.PASS: "ok", PmResult.PASS_MINOR_REPAIR: "warn", PmResult.FAIL: "crit",
               InspectionResult.PASSED: "ok", InspectionResult.FAILED: "crit"}  # slice 26: the two sets of values never overlap
+# Slice 30: a repair's outcome in the drawer (RepairCheck's values never overlap a PM's or an inspection's either)
+REPAIR_CSS = {RepairCheck.PASSED: "ok", RepairCheck.VENDOR_REPORT: "ok", RepairCheck.NOT_RETURNED: "warn"}
+NO_REPAIR_CHECK = "No checks after repair were recorded with this repair"  # completed before slice 30
+IMPORTED_NO_CHECK = "Imported from the previous system: no checks after repair recorded here"
+REVISIONS = (completion.REVISED, completion.REPAIR_REVISED)  # the checklist errors that show the steps as they are now, unanswered
+NEVER_NA_WORDS = "steps " + " and ".join(str(i + 1) for i in repair_checks.NEVER_NA)  # "steps 1 and 5"
 STEP_CSS = {completion.PASS: "ok", completion.FAIL: "crit", completion.NA: "neutral"}
 NO_RESULT = "No result recorded"  # an inspection of a device that was not waiting, completed with its checklist and no result
 FROM_MY_WORK = "my_work"  # the modal opened from a My work card: ?from=my_work, then a hidden field the form posts
@@ -104,24 +121,32 @@ def results_context(request, wo) -> dict:
     """Under "pm_record", so nothing collides with the drawer's own keys. One query for a PM's follow-ups, one for a repair's PM.
     Only the ones in the user's share (apps.workorders.scoping): a link out of it would be a 404, and its number is not theirs.
     Slice 26: an incoming inspection's result (or, on one of a device that was not waiting, its checklist without one), who inspected
-    it and when, and its re-inspection; a work order opened from another names it by that one's type (a failed PM or inspection)."""
-    is_pm, is_inspection = wo.type == WoType.PM, wo.type == WoType.INSPECTION
+    it and when, and its re-inspection; a work order opened from another names it by that one's type (a failed PM or inspection).
+    Slice 30: a repair's checks after it (kind "repair"): its outcome, who checked (repair_checks.checked_by: the vendor on vendor
+    service, else the technician assigned) and when, the steps as recorded or the vendor's report number; `unrecorded` words a repair
+    completed with no outcome (before slice 30, or imported)."""
+    is_pm, is_inspection, is_repair = wo.type == WoType.PM, wo.type == WoType.INSPECTION, wo.type == WoType.REPAIR
     follow_up_of = wo.follow_up_of if wo.follow_up_of_id else None
-    result = wo.inspection_result if is_inspection else wo.pm_result if is_pm else ""
+    result = wo.inspection_result if is_inspection else wo.pm_result if is_pm else wo.repair_check if is_repair else ""
     recorded = bool(result) or (is_inspection and bool(wo.checklist_results))
     done = wo.status in completion.DONE_STATUSES
     steps = completion.recorded_steps(wo) if recorded and done else []
     for s in steps:
         s["css"] = STEP_CSS.get(s["result"], "neutral")
-    label = (wo.get_inspection_result_display() or NO_RESULT) if is_inspection else wo.get_pm_result_display() if is_pm else ""
+    label = ((wo.get_inspection_result_display() or NO_RESULT) if is_inspection else wo.get_pm_result_display() if is_pm
+             else wo.get_repair_check_display() if is_repair else "")
     return {"pm_record": {
-        "kind": "inspection" if is_inspection else "pm" if is_pm else "",
+        "kind": "inspection" if is_inspection else "pm" if is_pm else "repair" if is_repair else "",
         "show": recorded and done,
         "reopened": recorded and wo.status in OPEN_STATUSES,
         # The inspection whose pass ended the device's wait: completing it again keeps it passed (completion's rule)
         "kept_pass": is_inspection and recorded and inspections.pass_cleared_flag(wo),
-        "label": label if recorded else "", "css": RESULT_CSS.get(result, "neutral"),
-        "inspector": inspector(wo) if is_inspection and recorded else "",
+        "label": label if recorded else "", "css": REPAIR_CSS.get(result, "neutral") if is_repair else RESULT_CSS.get(result, "neutral"),
+        "inspector": inspector(wo) if (is_inspection or is_repair) and recorded else "",
+        # Slice 30: a repair completed with no outcome says so (imported ones apart)
+        "unrecorded": ((IMPORTED_NO_CHECK if wo.source == Source.IMPORTED else NO_REPAIR_CHECK)
+                       if is_repair and done and not recorded else ""),
+        "words": completion.REPAIR_CHECK_WORDS.get(result, "") if is_repair else "",  # "checked and ready for use"
         "steps": steps,
         "follow_ups": list(scoping.work_orders(request.user, wo.follow_ups.order_by("opened_on", "number"))) if is_pm or is_inspection else [],
         "follow_up_of": follow_up_of if follow_up_of is not None and scoping.can_see_work_order(request.user, follow_up_of) else None,
@@ -183,21 +208,90 @@ def _inspection_offers(wo, user, today=None) -> dict:
 
 def _repair_offers(wo, user) -> dict:
     """A repair's outcomes as the modal offers them (slice 30): those `user` may choose (completion.repair_outcomes), each with what it
-    does to the device (_repair_hints)."""
+    does to the device (_repair_hints); the one chosen to begin with (checked and ready for use, unless the vendor's report is offered:
+    then the user chooses); and "If a check fails" (_keep_offer)."""
+    outcomes = completion.repair_outcomes(wo, user)
+    vendor = RepairCheck.VENDOR_REPORT in outcomes
     return {"own_repair": None, "other_repair": None, "offer_open_repair": False, "offer_tag_out": False,
-            "repair_outcomes": completion.repair_outcomes(wo, user), "offer_vendor_report": completion.vendor_report_allowed(wo, user),
-            "repair_hints": _repair_hints(wo)}
+            "repair_outcomes": outcomes, "offer_vendor_report": vendor, "repair_default": "" if vendor else RepairCheck.PASSED,
+            "repair_hints": _repair_hints(wo, user), **_keep_offer(wo, user)}
 
 
-def _repair_hints(wo) -> dict:
-    """What each outcome does to this repair's device (slice 30): back in service when this repair is what holds it out
-    (wo_services.returns_device), else it stays as it is; not returned to use keeps it out."""
-    asset = wo.asset
-    back = wo_services.returns_device(wo)
-    stays = "goes back into service" if back else f"stays {asset.get_status_display().lower()}"
-    return {RepairCheck.PASSED: f"Every check recorded, none failed; {asset.tag} {stays}",
-            RepairCheck.VENDOR_REPORT: f"Their service report's number; {asset.tag} {stays}",
-            RepairCheck.NOT_RETURNED: f"Beyond repair, to be retired, or going back; {asset.tag} stays out of service"}
+def _held_words(asset, user) -> str:
+    """A device held as evidence (slice 28), as a hint says it to `user`: the incident's number only for Incidents View
+    (incidents.services.hold_words). "" when it is not held."""
+    words = inc_services.hold_words(asset, user)
+    if words is None:
+        return ""
+    if words["number"]:
+        return f"{asset.tag} stays held until incident {words['number']} is released"
+    return f"{asset.tag} stays held by Clinical Engineering"
+
+
+def _checked_effect(wo, user) -> str:
+    """What completing the repair as checked (or with the vendor's report) does to its device: back in service when this repair is what
+    holds it out and nothing else does (workorders.services.returns_device, asked as if it were checked now: a reopened repair may still
+    read not returned to use), else why it stays as it is."""
+    asset, tag = wo.asset, wo.asset.tag
+    probe = copy.copy(wo)
+    probe.repair_check = RepairCheck.PASSED
+    if wo_services.returns_device(probe):
+        return f"{tag} goes back into service"
+    held = _held_words(asset, user)
+    if held:
+        return held
+    if asset.awaiting_inspection:
+        return f"{tag} stays waiting for its incoming inspection"
+    other = wo_services.holding_repairs(asset, exclude=wo).order_by("opened_on", "number").first()
+    if other is not None:
+        number = _number(user, other)
+        return f"{tag} stays out until {number} is done" if number else f"{tag} stays out until its other open repair is done"
+    if asset.status == AssetStatus.OUT_OF_SERVICE:  # taken out by hand: back from its drawer
+        return f"{tag} stays out of service until it is returned from its drawer"
+    return f"{tag} stays {status_label(asset).lower()}"
+
+
+def _not_returned_effect(wo, user) -> str:
+    """What not returned to use does to the device: out of service (completion.KEEP_OUT_FROM moves it), to be retired, or, a rental's,
+    vendor loaner's, or demo unit's, returned to its owner; a device held as evidence stays as its hold keeps it."""
+    asset, tag = wo.asset, wo.asset.tag
+    held = _held_words(asset, user)
+    if held:
+        return held
+    then = "return it to its owner" if owner_maintains(asset) else "retire it"
+    if asset.status in completion.KEEP_OUT_FROM:
+        return f"{tag} goes out of service: {then}"
+    if asset.status == AssetStatus.OUT_OF_SERVICE:
+        return f"{tag} stays out of service: {then}"
+    return f"{tag} stays {status_label(asset).lower()}"
+
+
+def _repair_hints(wo, user) -> dict:
+    """What each outcome does to this repair's device (slice 30), under each choice."""
+    checked = _checked_effect(wo, user)
+    return {RepairCheck.PASSED: f"Every check recorded, none failed; {checked}",
+            RepairCheck.VENDOR_REPORT: f"Their service report's number, no steps; {checked}",
+            RepairCheck.NOT_RETURNED: f"Beyond repair, to be retired, or going back; {_not_returned_effect(wo, user)}"}
+
+
+def _keep_offer(wo, user) -> dict:
+    """"If a check fails" (slice 30): keeping the repair open with its failed checks recorded (completion.keep_open, Work orders Edit:
+    wo_perms.can_keep_open), and the hold-out box when holding changes something: a device in use is tagged out; one in repair, out of
+    service, or anywhere else is held out by this repair (marked tagged out, so only its completion as checked returns it). A repair
+    that already holds a device not in use offers no box (`hold_words` says so)."""
+    asset, tag = wo.asset, wo.asset.tag
+    offer = {"offer_keep_open": wo_perms.can_keep_open(user), "offer_hold": True, "hold_words": ""}
+    if asset.status in completion.IN_USE:
+        offer["hold_words"] = f"Tag {tag} out of service until the repair is checked"
+    elif wo.tagged_out:
+        offer.update(offer_hold=False, hold_words=f"{wo.number} already holds {tag} out of use until it is completed as checked.")
+    elif asset.status == AssetStatus.IN_REPAIR:
+        offer["hold_words"] = f"Hold {tag} out of use until the repair is checked (it stays in repair meanwhile)"
+    elif asset.status == AssetStatus.OUT_OF_SERVICE:
+        offer["hold_words"] = f"Keep {tag} out of service until the repair is checked"
+    else:
+        offer["hold_words"] = f"Hold {tag} out of use until the repair is checked"
+    return offer
 
 
 def _inspection_hints(wo, existing) -> dict:
@@ -256,7 +350,7 @@ def _form_kwargs(wo, steps, offers, hours, late) -> dict:
             "offer_hours": hours["offer_hours"], "offer_late_reason": offer is not None, "late_first": bool(offer and offer["prominent"]),
             "late_recorded": offer["recorded"] if offer else "",
             "is_inspection": wo.type == WoType.INSPECTION, "kept_pass": offers.get("kept_pass", False),  # slice 26
-            "is_repair": wo.type == WoType.REPAIR}  # slice 30
+            "is_repair": wo.type == WoType.REPAIR, "repair_default": offers.get("repair_default", "")}  # slice 30
 
 
 def _late(request, wo, today) -> dict:
@@ -315,6 +409,7 @@ def _modal(request, wo, form=None, *, steps=(), offers=None, hours=None, late=No
         "is_repair": wo.type == WoType.REPAIR,
         "repair_options": (form.repair_options((offers or {}).get("repair_outcomes", ()), (offers or {}).get("repair_hints"))
                            if form is not None and wo.type == WoType.REPAIR else []),
+        "never_na_words": NEVER_NA_WORDS,
         "has_checklist": bool(steps), "step_choices": STEP_CHOICES, "reading_max": completion.READING_MAX, **(offers or {}),
         **_follow_up(wo),
         "requester_emailed": _requester_email(wo),
@@ -377,7 +472,10 @@ def _message(request, wo, done, late_given: bool = False) -> str:
     if wo.type == WoType.INSPECTION:
         return _inspection_message(request, wo, done) + logged
     if wo.type == WoType.REPAIR and wo.repair_check:  # slice 30: "Checked after repair; CE-10241 back in service"
-        return f"{wo.number} completed: {completion.repair_note(wo, done)}{logged}"
+        note = completion.repair_note(wo, done)
+        if wo.repair_check == RepairCheck.NOT_RETURNED and done.tagged_out:  # it was in use: say what moved
+            note = f"{wo.get_repair_check_display()}: {wo.asset.tag} tagged out of service"
+        return f"{wo.number} completed: {note}{logged}"
     if wo.type != WoType.PM:
         return f"{wo.number} completed{logged}"
     note = completion.result_note(wo.pm_result, done)
@@ -407,6 +505,47 @@ def _saved(request, wo, done, late_given: bool = False):
     return trigger_client_event(response, "modal-close", {}, after="settle")
 
 
+def _kept_message(wo, kept) -> str:
+    """keep_open's toast (slice 30): the repair stays open with its failed checks, and what the hold did to the device."""
+    tag = wo.asset.tag
+    message = f"{wo.number} kept open: failed checks recorded"
+    if kept.tagged_out:
+        return f"{message}; {tag} tagged out of service"
+    if kept.held:
+        return f"{message}; {tag} held out of use until it is checked"
+    return message
+
+
+def _kept(request, wo, kept):
+    """A repair kept open after a failed check (slice 30): answered as a save is (_saved), the drawer with the note in its timeline, or
+    from My work nothing swapped; devices-changed when the device went out of service."""
+    response = reswap(HttpResponse(), "none") if from_my_work(request) else retarget(_render_wo_drawer(request, wo), "#drawer")
+    for event in ("wo-changed", *(("devices-changed",) if kept.tagged_out else ())):
+        trigger_client_event(response, event, {})
+    toast(response, _kept_message(wo, kept))
+    return trigger_client_event(response, "modal-close", {}, after="settle")
+
+
+def _setup(request, wo, today) -> tuple:
+    """The modal's parts for `wo` today: its checklist's steps, the offers, the hours box, the late reason, and the form's kwargs."""
+    steps = completion.checklist_of(completion.procedure_for(wo))
+    offers = _offers(wo, request.user, today)
+    hours = _hours(request, wo)
+    late = _late(request, wo, today)  # slice 25
+    return steps, offers, hours, late, _form_kwargs(wo, steps, offers, hours, late)
+
+
+def _refused(request, number, form, today, steps, offers, hours, late, kwargs):
+    """The modal again after a refusal, with what was typed and the errors where they belong. The work order as it is now: a refusal for
+    its state (completed meanwhile) re-renders as the blocker. A checklist revised while the modal was open shows its steps anew
+    (_revised); any other checklist error keeps the steps as they were typed (slice 30: "No check failed" after Keep open)."""
+    wo = get_wo(request, number)
+    reason = completion.blocker(wo, today, request.user)
+    if not reason and any(m in REVISIONS for m in form.errors.get("checklist", [])):
+        form = _revised(form, kwargs)
+    return _modal(request, wo, None if reason else form, steps=steps, offers=offers, hours=hours, late=late, reason=reason)
+
+
 @web_view(wo_perms.MODULE, wo_perms.RECORD_LEVEL, scoped=True)
 def wo_complete(request, number):
     # A work order is completed from in progress, and (slice 24) a PM from open, started as it is completed by someone who may also
@@ -417,11 +556,7 @@ def wo_complete(request, number):
     reason = completion.blocker(wo, today, request.user)
     if reason:
         return _modal(request, wo, reason=reason)
-    steps = completion.checklist_of(completion.procedure_for(wo))
-    offers = _offers(wo, request.user, today)
-    hours = _hours(request, wo)
-    late = _late(request, wo, today)  # slice 25
-    kwargs = _form_kwargs(wo, steps, offers, hours, late)
+    steps, offers, hours, late, kwargs = _setup(request, wo, today)
     if request.method != "POST":
         form = CompleteForm.filled(request.GET, fill=request.GET.get("fill", ""), **kwargs) if "fill" in request.GET else CompleteForm(**kwargs)
         return _modal(request, wo, form, steps=steps, offers=offers, hours=hours, late=late)
@@ -433,9 +568,33 @@ def wo_complete(request, number):
         except ValidationError as e:
             form.add_service_errors(e)
     if done is None:
-        wo = get_wo(request, number)  # as it is now: a refusal for its state (completed meanwhile) re-renders as the blocker
-        reason = completion.blocker(wo, today, request.user)
-        if not reason and "checklist" in form.errors:
-            form = _revised(form, kwargs)
-        return _modal(request, wo, None if reason else form, steps=steps, offers=offers, hours=hours, late=late, reason=reason)
+        return _refused(request, number, form, today, steps, offers, hours, late, kwargs)
     return _saved(request, wo, done, late_given=bool(form.offer_late_reason and form.cleaned_data.get("late_reason")))  # the service refreshed wo
+
+
+@web_view(wo_perms.MODULE, wo_perms.RECORD_LEVEL, scoped=True)
+def wo_keep_open(request, number):
+    """"If a check fails" (slice 30): the completion modal's Keep the repair open posts here with the steps as typed. The failed checks
+    are recorded on the repair, which stays open, and with the hold box the device is held out (completion.keep_open). Work orders Edit,
+    as completing (wo_perms.can_keep_open); a repair only (another type is a 404); a refusal re-renders the modal as completing does."""
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    _require(wo_perms.can_keep_open(request.user))
+    wo = get_wo(request, number)
+    if wo.type != WoType.REPAIR:
+        raise Http404
+    today = timezone.localdate()
+    reason = completion.blocker(wo, today, request.user)
+    if reason:
+        return _modal(request, wo, reason=reason)
+    steps, offers, hours, late, kwargs = _setup(request, wo, today)
+    form = CompleteForm(request.POST, **kwargs)
+    kept = None
+    if form.is_valid():
+        try:
+            kept = completion.keep_open(wo, by=request.user, today=today, **form.keep_open_kwargs())
+        except ValidationError as e:
+            form.add_service_errors(e)
+    if kept is None:
+        return _refused(request, number, form, today, steps, offers, hours, late, kwargs)
+    return _kept(request, wo, kept)  # the service refreshed wo
