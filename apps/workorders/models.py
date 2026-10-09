@@ -8,6 +8,7 @@ from django.utils import timezone
 from simple_history.models import HistoricalRecords
 
 from apps.core.models import Sequence, TenantModel
+from apps.core.validators import reference_token
 
 
 class WoType(models.TextChoices):
@@ -58,6 +59,15 @@ class InspectionResult(models.TextChoices):
     re-inspection open."""
     PASSED = "passed", "Passed"
     FAILED = "failed", "Failed"
+
+
+class RepairCheck(models.TextChoices):
+    """How a repair ended (slice 30): the checks after it, before its device went back into use (CMS A-0724, the Joint Commission's
+    checks after a major repair, NFPA 99, IEC 62353). Written only by completion.complete_work_order; blank on a repair completed
+    before slice 30 or imported (counted, never a gap)."""
+    PASSED = "passed", "Checked: ready for use"
+    VENDOR_REPORT = "vendor_report", "Checked by the vendor"
+    NOT_RETURNED = "not_returned", "Not returned to use"
 
 
 class LateReason(models.TextChoices):
@@ -126,6 +136,12 @@ class WorkOrder(TenantModel):
     late_reason = models.CharField("why late", max_length=30, choices=LateReason.choices, blank=True, editable=False)
     # Slice 26: an incoming inspection's result, written only by completion.complete_work_order (the API keeps it read-only).
     inspection_result = models.CharField(max_length=10, choices=InspectionResult.choices, blank=True, editable=False)
+    # Slice 30: a repair's checks after it (RepairCheck; its steps in checklist_results), and the vendor's service report number when
+    # the vendor did them. Written only by completion.complete_work_order (the API keeps both read-only).
+    repair_check = models.CharField("checks after repair", max_length=20, choices=RepairCheck.choices, blank=True, editable=False)
+    checks_reference = models.CharField("vendor's service report", max_length=40, blank=True, editable=False,
+                                        validators=[reference_token("Enter the vendor's service report or field service order number as it is "
+                                                                    "printed, without spaces.")])
     history = HistoricalRecords()
 
     class Meta:

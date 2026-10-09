@@ -27,6 +27,7 @@ from apps.facility.services import asset_request_url, get_settings
 from apps.workorders import completion, inspections, scoping
 from apps.workorders import services as wo_services
 from apps.workorders.models import OPEN_STATUSES, LaborLine, PartLine, WorkOrder, WoType
+from apps.workorders.repair_checks import checked_by
 
 from .decorators import web_view
 from .forms import asset_filter_options, equipment_assets, parse_asset_filters
@@ -117,11 +118,9 @@ def checklist_steps(procedure) -> list[dict]:
 
 
 def inspector(wo) -> str:
-    """Who did an incoming inspection (slice 26; the print and the drawer's results say so): the vendor for vendor service (their
-    field engineer or physicist), else the technician assigned."""
-    if wo.vendor_service:
-        return wo.vendor_name or "Vendor"
-    return wo.assigned_to.name if wo.assigned_to_id else ""
+    """Who did an incoming inspection (slice 26) or a repair's checks (slice 30): workorders.repair_checks.checked_by (the vendor for
+    vendor service, else the technician assigned), which the binder reads too."""
+    return checked_by(wo)
 
 
 @web_view(Module.WORKORDERS, Level.VIEW, scoped=True)

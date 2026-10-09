@@ -4,6 +4,7 @@ from django.utils import timezone
 from simple_history.models import HistoricalRecords
 
 from apps.core.models import TenantModel
+from apps.core.validators import reference_token
 
 
 class RiskClass(models.TextChoices):
@@ -79,8 +80,7 @@ class UseBeforeInspection(models.TextChoices):
 TAG_VALIDATOR = RegexValidator(r"^[^\s/]+$", "Asset tags cannot contain spaces or slashes.")
 # Slice 29: a temporary device's agreement, PO, or RMA number. A token (no spaces): specialty beds are rented for one patient, and a
 # free-text box there invites a name or a room (CLAUDE.md non-negotiable 6).
-OWNER_REFERENCE_VALIDATOR = RegexValidator(r"^[A-Za-z0-9][A-Za-z0-9._/#-]*$",
-                                           "Enter the agreement, PO, or RMA number as the owner's paperwork shows it, without spaces.")
+OWNER_REFERENCE_VALIDATOR = reference_token("Enter the agreement, PO, or RMA number as the owner's paperwork shows it, without spaces.")
 
 
 class Department(TenantModel):
