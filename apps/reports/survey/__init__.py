@@ -2,7 +2,7 @@
 The survey binder (slice 25, beyond the mock): the evidence a Joint Commission, CMS, or DNV surveyor asks a Clinical Engineering
 department for, read from the records Cadence already keeps, for a period, with what is missing listed and linked.
 
-One module per section (program, inventory, maintenance, aem, inspections, recalls, incidents, staff), each with `build(period, user) ->
+One module per section (program, inventory, maintenance, aem, inspections, repairs, recalls, incidents, staff), each with `build(period, user) ->
 Section`, registered in SECTIONS in the order the binder prints them. Each section needs Reports View plus its own areas' View
 (apps.reports.permissions.SURVEY_NEEDS); `binder()` builds the sections a reader may see and names the ones left out.
 
@@ -211,7 +211,9 @@ class Binder:
 # whole program.
 NOT_COVERED = [
     "The facility's written medical equipment management plan and its annual evaluation",
-    "Checks done after a repair before the device went back into use (Cadence records the repair, not those checks)",
+    # Slice 30 keeps the checks after a repair work order (the Checks after repair section); these it does not.
+    "Checks after a recall action or software upgrade; devices returned to service by hand without a repair work order; calibration of "
+    "electrical safety analyzers; a medical physicist's evaluation of imaging equipment after a major repair",
     # Slice 28 keeps CE's part of device incidents (the Device incidents section); the rest is the facility's own MDR program.
     "The facility's written MDR procedures, its annual report (Form FDA 3419), and the deliberations and report copies in its own event "
     "files; incidents involving equipment not in Cadence (disposables, implants, patients' own devices)",
@@ -225,7 +227,7 @@ NOT_COVERED = [
 
 
 def _sections():
-    from . import aem, incidents, inspections, inventory, maintenance, program, recalls, staff
+    from . import aem, incidents, inspections, inventory, maintenance, program, recalls, repairs, staff
 
     return [
         ("program", "Program and policies", program.build),
@@ -233,6 +235,7 @@ def _sections():
         ("maintenance", "Scheduled maintenance (PM) completion", maintenance.build),
         ("aem", "Alternate equipment maintenance (AEM)", aem.build),
         ("inspections", "Incoming inspection before first use", inspections.build),
+        (repairs.KEY, repairs.TITLE, repairs.build),  # slice 30
         ("recalls", "Recalls and safety alerts", recalls.build),
         ("incidents", "Device incidents", incidents.build),  # slice 28
         ("staff", "Technician qualifications", staff.build),

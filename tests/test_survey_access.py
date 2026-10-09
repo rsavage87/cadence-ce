@@ -3,7 +3,7 @@ Who sees the survey binder (slice 25, part E), and what it never shows.
 
 Access: Reports View opens the binder, and each section needs its own areas' View (apps.reports.permissions.survey_refusal), asked the
 same way by the page, the section CSVs, the gaps CSV, the print, and the API, so none is the weaker door. Per default role: the
-director and the CE manager see all seven sections; a technician and Finance and quality six (Technician qualifications needs Users
+director and the CE manager see all nine sections; a technician and Finance and quality eight (Technician qualifications needs Users
 and access View); a clinical requester and a vendor technician are refused everywhere (no Reports, and scoped: the binder covers the
 whole facility), as is a scoped custom role with Full everywhere. A link naming another facility answers with web_view's switch page.
 
@@ -31,7 +31,7 @@ from apps.workorders.models import Priority, WorkOrder, WoStatus, WoType
 from apps.workorders.services import add_note, assign, change_status, create_service_request, create_work_order
 
 HX = {"HTTP_HX_REQUEST": "true"}
-ALL = ["program", "inventory", "maintenance", "aem", "inspections", "recalls", "incidents", "staff"]  # slice 28: incidents
+ALL = ["program", "inventory", "maintenance", "aem", "inspections", "repairs", "recalls", "incidents", "staff"]  # slice 28: incidents; 30: repairs
 SEES = {"director": ALL, "manager": ALL, "technician": [k for k in ALL if k != "staff"], "analyst": [k for k in ALL if k != "staff"]}
 STAFF_REFUSAL = "Needs Users and access View, which your role does not have."
 
