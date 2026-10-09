@@ -26,6 +26,12 @@ known yet for a patient, held with its accessories kept and its log saved, the i
 report due OPEN_INCIDENT_LEFT work days from the seed's today. A closed one, two months back: a vital signs monitor, no harm, the
 investigation done (the device met its specifications), decided not serious by risk management, returned to use, closed. Neither
 emails anyone (apps.incidents.notify.quiet()), and each one's history is dated the days it happened.
+
+Slice 29: Riverside has four rentals, vendor loaners, and demo units (TEMPORARY_DEVICES), added through apps.equipment.services as Add
+rental or loaner adds them and inspected on the rental checklist: a rental bed with its owner's PM date recorded; a vendor loaner pump
+standing in for one of ours out for vendor repair (it arrived before the recall batch, so its recall work order went to its owner as
+vendor service); a demo monitor entered after it was dropped off on the unit, past its due back date with no owner's PM date (the
+Overview's attention list and one survey binder check); and a rental ventilator returned to its owner after a surge.
 """
 import random
 from datetime import date, datetime, time, timedelta
@@ -43,7 +49,18 @@ from apps.core.workdays import is_work_day
 from apps.credentials.models import Credential, Scope, Technician
 from apps.credentials.services import qualified_technicians, renew_credential
 from apps.equipment import services as equipment
-from apps.equipment.models import AddedAs, Asset, AssetStatus, Department, DeviceModel, RiskClass, UseBeforeInspection
+from apps.equipment.models import (
+    AddedAs,
+    Asset,
+    AssetStatus,
+    Department,
+    DeviceModel,
+    Ownership,
+    ReturnCleaning,
+    ReturnData,
+    RiskClass,
+    UseBeforeInspection,
+)
 from apps.facility.models import PmWindow
 from apps.facility.services import labor_rates, update_settings
 from apps.incidents import notify as incident_notify
@@ -59,7 +76,7 @@ from apps.recalls.services import create_recall_work_orders, set_status
 from apps.tenants.context import tenant_context, zone_of
 from apps.tenants.models import Tenant
 from apps.workorders import inspections
-from apps.workorders.completion import complete_work_order
+from apps.workorders.completion import checklist_of, complete_work_order, inspection_procedure
 from apps.workorders.models import (
     OPEN_STATUSES,
     InspectionResult,
@@ -223,6 +240,21 @@ CLOSED_INCIDENT_RESOLUTION = ("Bench tested per the service manual: NIBP and SpO
                               "safety all within specification. No device fault found.")
 INCIDENT_CLEAR_DAYS = 30  # an incident's device has no PM due within this many days of the seed's today (none is missed while held)
 
+# Slice 29, Riverside's rentals, vendor loaners, and demo units (_temporary_devices), oldest first: tag (a temporary sticker's range),
+# model, department, whose, owner, the owner's reference, arrived days ago, due back (days from the seed's today; None: no date), the
+# owner's PM date (days from today; None: not recorded), and where it stands. Fictional companies but for the manufacturers.
+RENTAL_COMPANY = "Summit Medical Rentals"
+TEMPORARY_DEVICES = [
+    ("T-0098", "Hamilton-G5", "ICU", Ownership.RENTAL, RENTAL_COMPANY, "SMR-RA-55120", 70, -35, 60, "returned"),  # a surge ventilator, back
+    ("T-0101", "Centrella", "Med/Surg 4E", Ownership.RENTAL, RENTAL_COMPANY, "SMR-RA-56204", 8, 20, 150, "rental"),  # owner's PM recorded
+    ("T-0102", "Alaris 8015 PCU", "ICU", Ownership.LOANER, "BD", "RMA-448812", 6, None, 240, "loaner"),  # for a pump of ours at BD
+    ("T-0103", "Connex Spot", "Telemetry 5", Ownership.DEMO, "Welch Allyn", "EVAL-2026-031", 40, -12, None, "demo"),  # past due back
+]
+LOANER_REPAIR_DAYS_AGO = 7  # the pump of ours went out for vendor repair (tagged out) the day before its loaner came
+LOANER_REPAIR_PROBLEM = "Occlusion alarm with no occlusion"
+DEMO_ENTERED_DAYS_AGO = 33  # the demo unit was dropped off on the unit by the vendor's rep; CE entered it a week later, already in use
+TEMPORARY_LEAKAGE = "18 µA"
+
 
 def _noon(day: date) -> datetime:
     """Noon of `day` in the current time zone (the facility's, inside tenant_context): a backdated timestamp's moment."""
@@ -350,6 +382,9 @@ class Command(BaseCommand):
                         change_status(wo, "closed", as_of=done)
             # facility settings as the mock shows them: a shop hotline on the portal and a monthly repair budget
             update_settings(portal_hotline="ext. 4400", repair_budget_monthly=Decimal("52000"))
+            # Slice 29: the rentals, loaner, and demo unit, before the recalls: the loaner pump was on site when the pumps' recall batch
+            # was opened, so its recall work order goes to its owner
+            self._temporary_devices(today, depts)
             # recalls that match the fleet, in every disposition the screen shows
             # Alerts are global (shared by every tenant), so a second demo tenant reuses the same notice.
             for external_id, days_ago, cls, mfr, product, terms, model, title, action, status_, closed_days_ago, note in ALERTS:
@@ -382,7 +417,7 @@ class Command(BaseCommand):
             assign_week(today=today)
             self._late_reasons(today)
             self._incidents(today, domain)
-        devices = len(assets) + len(NEW_DEVICES)
+        devices = len(assets) + len(NEW_DEVICES) + len(TEMPORARY_DEVICES)
         self.stdout.write(self.style.SUCCESS(f"Seeded {tenant.name}: {devices} devices, {len(techs)} technicians. Sign in as {kim} / DemoPass-2026"))
         self._north_campus(tenant, opts)
 
@@ -650,6 +685,68 @@ class Command(BaseCommand):
         complete_work_order(wo, inspection_result=result, results=results, resolution=resolution, today=day)
         change_status(wo, "closed", as_of=day)
         wo.refresh_from_db()
+        return wo
+
+    @staticmethod
+    def _temporary_devices(today: date, depts: dict) -> None:
+        """Riverside's rentals, vendor loaners, and demo units (slice 29: TEMPORARY_DEVICES), through equipment.services as Add rental
+        or loaner records them, each dated the day it came (its history's first row and created_at):
+        - returned: a rental ventilator for a surge, inspected the day it came, returned to its owner on its due back day (cleaned and
+          decontaminated, patient data cleared). Off the inventory; "Returned to owner" wherever its status shows.
+        - rental: a rental bed inspected the day it came, its owner's PM date recorded from the sticker, due back in a few weeks.
+        - loaner: a vendor loaner pump standing in for a pump of ours out for vendor repair (_out_for_vendor_repair), inspected the day
+          it came, its owner's PM date recorded, no due back date (it goes back when ours does).
+        - demo: a demo monitor the vendor's rep dropped off on the unit, entered by CE a week later as already on site (no incoming
+          inspection: counted, never a gap), past its due back date, no owner's PM date recorded (the binder's check)."""
+        for tag, model, dept, kind, owner, reference, arrived_ago, due_back, owner_pm, stage in TEMPORARY_DEVICES:
+            dm = DeviceModel.objects.get(model=model)
+            arrived = today - timedelta(days=arrived_ago)
+            stay = {"tag": tag, "device_model": dm, "department": depts[dept], "kind": kind, "owner": owner, "owner_reference": reference,
+                    "serial": f"{dm.manufacturer[:2].upper()}{tag[2:]}7731", "room": "2", "arrived_on": arrived,
+                    "due_back_on": today + timedelta(days=due_back) if due_back is not None else None,
+                    "owner_pm_due_on": today + timedelta(days=owner_pm) if owner_pm is not None else None}
+            if stage == "loaner":
+                stay["stands_in_for"] = Command._out_for_vendor_repair(dm, today)
+            if stage == "demo":
+                added = today - timedelta(days=DEMO_ENTERED_DAYS_AGO)
+                asset = equipment.add_temporary_device(**stay, added_as=AddedAs.EXISTING, today=added)
+            else:  # new to the facility: waiting for its incoming inspection, opened the day it came, and inspected that day
+                added = arrived
+                asset = equipment.add_temporary_device(**stay, today=added)
+                Command._inspect_temporary(asset, arrived)
+            Asset.history.filter(id=asset.pk, history_type="+").update(history_date=_noon(added))
+            if stage == "returned":
+                equipment.return_to_owner(asset, cleaning=ReturnCleaning.DECONTAMINATED, data=ReturnData.CLEARED, on=asset.due_back_on,
+                                          today=today)
+                Asset.history.filter(id=asset.pk, history_change_reason=equipment.RETURNED_REASON).update(history_date=_noon(asset.due_back_on))
+            # The day it came, after the row's last save (a save writes back the created_at it holds).
+            Asset.objects.filter(pk=asset.pk).update(created_at=_noon(added))
+
+    @staticmethod
+    def _out_for_vendor_repair(device_model, today: date) -> Asset:
+        """The pump of ours a vendor loaner stands in for: the last of the model in service by tag (the recall batch completes the first
+        ones), tagged out with a repair LOANER_REPAIR_DAYS_AGO dispatched to its manufacturer's field service (equipment.services
+        .service_vendor, as the screens name it) and under way."""
+        pump = Asset.objects.filter(device_model=device_model, status=AssetStatus.IN_SERVICE, ownership=Ownership.OWNED).order_by("-tag").first()
+        opened = today - timedelta(days=LOANER_REPAIR_DAYS_AGO)
+        wo = create_work_order(asset=pump, type=WoType.REPAIR, priority=Priority.NORMAL, problem=LOANER_REPAIR_PROBLEM, requester="Unit staff",
+                               opened_on=opened, tag_out=True)
+        assign(wo, vendor_name=equipment.service_vendor(pump))
+        change_status(wo, "in_progress", as_of=opened)
+        pump.refresh_from_db()
+        return pump
+
+    @staticmethod
+    def _inspect_temporary(asset, day: date) -> WorkOrder:
+        """Pass a temporary device's open incoming inspection on `day`, on the checklist it is done to (the rental checklist,
+        completion.inspection_procedure), every step passed with its leakage reading, by a technician credentialed for the device
+        that day; in one visit, then closed."""
+        wo = inspections.open_inspection(asset)
+        assign(wo, technician=qualified_technicians(asset, day)[0][0])
+        results = [{"result": "pass", "reading": TEMPORARY_LEAKAGE if measure else ""}
+                   for _text, measure in checklist_of(inspection_procedure(asset))]
+        complete_work_order(wo, inspection_result=InspectionResult.PASSED, results=results, today=day)
+        change_status(wo, "closed", as_of=day)
         return wo
 
     @staticmethod

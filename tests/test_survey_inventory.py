@@ -177,7 +177,8 @@ def _queries(year) -> int:
         s = inventory.build(year, None)
         for t in s.tables:
             list(t.rows())
-    assert s.gaps and all(t.count != 0 for t in s.tables if t.key != "risk_changes")
+    # slice 29's temporary table has its own fixed-count test (tests/test_temporary_binder.py)
+    assert s.gaps and all(t.count != 0 for t in s.tables if t.key not in ("risk_changes", "temporary"))
     return len(q.captured_queries)
 
 

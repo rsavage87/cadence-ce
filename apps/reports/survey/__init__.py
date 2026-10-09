@@ -216,7 +216,10 @@ NOT_COVERED = [
     "The facility's written MDR procedures, its annual report (Form FDA 3419), and the deliberations and report copies in its own event "
     "files; incidents involving equipment not in Cadence (disposables, implants, patients' own devices)",
     "Training of the clinical staff who use the equipment",
-    "Rental, loaner, and vendor-owned equipment not entered in Cadence",
+    # Slice 29: rentals, vendor loaners, and demo units entered in Cadence are in the inventory and incoming inspection sections.
+    "Rental, loaner, and vendor-owned equipment never entered in Cadence",
+    "Patients' own equipment",
+    "Loaner surgical instrument sets",
     "The competence of contracted vendor staff",
 ]
 

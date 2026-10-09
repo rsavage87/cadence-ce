@@ -10,16 +10,22 @@ KPI math for the Overview. Definitions match the mock so the demo and the produc
 - MTTR: mean turnaround of repairs completed in the period.
 - Cost of service ratio: trailing-6-month service cost annualized, plus active contract
   costs, over the fleet's acquisition value.
+
+Slice 29, the counting rule (equipment.services.OWNED / WORK_ORDER_OWNED): figures about CE's maintenance program and the facility's
+own fleet count our devices only: the active-devices tile, uptime (its downtime and its device-days), and the cost of service ratio
+(the service cost and the acquisition value). A rental, vendor loaner, or demo unit is its owner's to maintain. Figures about CE's
+work count every device: open, overdue, and awaiting-parts work, MTTR, repair spend, recalls. The attention list adds temporary
+devices past their due back date and vendor loaners whose device of ours is back.
 """
 from datetime import date, timedelta
 
-from django.db.models import Count, DecimalField, Q, Sum
+from django.db.models import Count, DecimalField, F, Q, Sum
 from django.db.models.functions import Coalesce, TruncMonth
 from django.utils import timezone
 
 from apps.contracts.models import Contract
-from apps.equipment.models import Asset, AssetStatus, RiskClass
-from apps.equipment.services import fleet_bucket_counts
+from apps.equipment.models import Asset, AssetStatus, Ownership, RiskClass
+from apps.equipment.services import OWNED, fleet_bucket_counts
 from apps.facility.services import get_settings, kpi_targets
 from apps.pm.dates import month_bounds
 from apps.pm.services import overdue_assets, pm_on_time_rate, pm_on_time_series, pm_pending
@@ -59,7 +65,7 @@ def overview_kpis(year: int, month: int, today: date | None = None, *, w=None) -
     as_of = today if current else end
     days = as_of.day if current else end.day
 
-    active = Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES)
+    active = Asset.objects.filter(OWNED, status__in=Asset.ACTIVE_STATUSES)  # slice 29: the facility's own fleet
     active_count = active.count()
     acquisition = float(sum(a.acquisition_cost for a in active.only("acquisition_cost")))
 
@@ -71,11 +77,13 @@ def overview_kpis(year: int, month: int, today: date | None = None, *, w=None) -
     pm = _pm_figure(start, end, today, w)  # read on today: a past month counts the PM due on its last day too
     pm_ls = _pm_figure(start, end, today, w, life_support_only=True)
 
-    repairs = list(WorkOrder.objects.filter(type=WoType.REPAIR, completed_on__gte=start, completed_on__lte=as_of).prefetch_related("labor_lines", "part_lines"))
+    repairs = list(WorkOrder.objects.filter(type=WoType.REPAIR, completed_on__gte=start, completed_on__lte=as_of)
+                   .annotate(asset_ownership=F("asset__ownership")).prefetch_related("labor_lines", "part_lines"))
     turnaround = [w.turnaround_days for w in repairs]
-    mttr = sum(turnaround) / len(turnaround) if turnaround else 0.0
+    mttr = sum(turnaround) / len(turnaround) if turnaround else 0.0  # CE's work: every device's repairs, as the spend
     spend = sum(w.total_cost() for w in repairs)
-    downtime = sum(w.downtime_days for w in repairs)
+    # Slice 29: uptime is the facility's own fleet's (active_count is ours), so only our devices' repairs take days from it
+    downtime = sum(w.downtime_days for w in repairs if w.asset_ownership == Ownership.OWNED)
     uptime = 100.0 - (downtime / (active_count * days) * 100 if active_count and days else 0.0)
 
     cost = cost_of_service(today, acquisition)
@@ -100,20 +108,24 @@ def cost_of_service(today: date, acquisition: float | None = None) -> dict:
     """The annualized service cost behind the cost-of-service ratio: work orders completed in the trailing 182 days
     (in-house, and vendor time and materials) scaled to a year, plus the annual cost of contracts that have not ended,
     over the acquisition value of the active fleet. The Overview tile and the cost reports share this. Two grouped
-    queries and two aggregates, whatever the fleet size: no work order is instantiated."""
+    queries and two aggregates, whatever the fleet size: no work order is instantiated.
+
+    Slice 29: our devices only, on both sides of the ratio (equipment.services.OWNED): the work on a rental, vendor loaner, or demo
+    unit is left out of the service cost, as the device is out of the acquisition value (and no contract covers one)."""
     if acquisition is None:
-        acquisition = float(Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES).aggregate(s=Sum("acquisition_cost"))["s"] or 0)
+        acquisition = float(Asset.objects.filter(OWNED, status__in=Asset.ACTIVE_STATUSES).aggregate(s=Sum("acquisition_cost"))["s"] or 0)
     since = today - timedelta(days=TRAILING_DAYS)
     money = DecimalField(max_digits=14, decimal_places=2)
     by_vendor = {False: 0.0, True: 0.0}
     # Labor by the line: a line with a technician is in-house time, one without is the vendor's (apps.workorders.costs), whatever the
     # work order's assignment says now. Parts by the work order.
     amount = LABOR_AMOUNT  # each line to the cent (apps.workorders.models)
-    labor = LaborLine.objects.filter(work_order__completed_on__gte=since, work_order__completed_on__lte=today).aggregate(
+    ours = {"work_order__asset__ownership": Ownership.OWNED}  # slice 29: WORK_ORDER_OWNED, from the line
+    labor = LaborLine.objects.filter(work_order__completed_on__gte=since, work_order__completed_on__lte=today, **ours).aggregate(
         in_house=Sum(amount, filter=Q(technician__isnull=False), output_field=money), vendor=Sum(amount, filter=Q(technician__isnull=True), output_field=money))
     by_vendor[False] += float(labor["in_house"] or 0)
     by_vendor[True] += float(labor["vendor"] or 0)
-    parts = (PartLine.objects.filter(work_order__completed_on__gte=since, work_order__completed_on__lte=today)
+    parts = (PartLine.objects.filter(work_order__completed_on__gte=since, work_order__completed_on__lte=today, **ours)
              .order_by().values("work_order__vendor_service").annotate(v=Sum(PART_AMOUNT, output_field=money)))
     for row in parts:
         by_vendor[bool(row["work_order__vendor_service"])] += float(row["v"] or 0)
@@ -152,7 +164,8 @@ def _pm_overdue(a, today: date, w) -> str:
 def attention_items(today: date | None = None, *, w=None) -> list[dict]:
     """The Overview's "Needs attention" list, in the mock's order. Each item carries one link key: asset, wo, contract, or recall.
     Devices past their PM due date are listed by the due date (the schedule: what to do next); slice 27, under a PM window other than
-    the due date (`w`, read when not given), their lines also say where the window stands."""
+    the due date (`w`, read when not given), their lines also say where the window stands. Slice 29: the temporary devices to act on
+    (temporary_attention) follow the contracts."""
     today = today or timezone.localdate()
     pm_windows = window_of(w)  # not `w`: the loops below name work orders w
     items = []
@@ -175,6 +188,7 @@ def attention_items(today: date | None = None, *, w=None) -> list[dict]:
     for c in ending.annotate(devices=covered).order_by("end_on"):
         items.append(_item("warn", f"{c.reference} · {c.vendor} ends {c.end_on:%b} {c.end_on.day}", f"{c.devices} devices · {c.get_coverage_display()}",
                            f"{(c.end_on - today).days} d left", contract=str(c.id)))
+    items += temporary_attention(today)  # slice 29: after the contracts, the other devices someone else is paid for
 
     wo_related = ("asset", "asset__device_model", "asset__department")
     portal = list(unassigned_portal_requests().select_related(*wo_related).order_by(PRIORITY_RANK, "opened_on"))
@@ -196,6 +210,35 @@ def attention_items(today: date | None = None, *, w=None) -> list[dict]:
     for w in WorkOrder.objects.filter(status=WoStatus.AWAITING_PARTS, opened_on__lt=stale).select_related(*wo_related).order_by("opened_on"):
         items.append(_item("warn", f"{w.number} · {w.asset.device_model.description}, {w.asset.department}", "Awaiting parts",
                            f"{(today - w.opened_on).days} d open", wo=w.number))
+    return items
+
+
+ATTENTION_TEMPORARY_LIMIT = 5  # slice 29: lines of each kind below (past due back; a loaner whose device is back)
+LOANER_BACK = (AssetStatus.IN_SERVICE, AssetStatus.RETIRED)  # the device of ours a loaner stands in for no longer needs it
+
+
+def _short(d: date) -> str:
+    return f"{d:%b} {d.day}"
+
+
+def temporary_attention(today: date) -> list[dict]:
+    """Slice 29, the attention list's temporary devices (rentals, vendor loaners, demo units still on site), each a warn line opening
+    the device: those past their due back date, longest overdue first, then the vendor loaners whose device of ours is back in service
+    or retired (return the loaner), by tag; ATTENTION_TEMPORARY_LIMIT of each at most. Never the owner's reference. Two queries."""
+    on_site = (Asset.objects.exclude(OWNED).exclude(status=AssetStatus.RETIRED)
+               .select_related("device_model", "department"))
+    items = []
+    for a in on_site.filter(due_back_on__lt=today).order_by("due_back_on", "tag")[:ATTENTION_TEMPORARY_LIMIT]:
+        items.append(_item("warn", f"{a.tag} · {a.device_model.description}",
+                           f"{a.get_ownership_display()} from {a.owner} · {a.department} · due back {_short(a.due_back_on)}",
+                           f"Past due back {(today - a.due_back_on).days} d", asset=a.tag))
+    back = (on_site.filter(ownership=Ownership.LOANER, stands_in_for__status__in=LOANER_BACK, stands_in_for__incident_hold=False)
+            .select_related("stands_in_for").order_by("tag"))
+    for a in back[:ATTENTION_TEMPORARY_LIMIT]:
+        ours = a.stands_in_for
+        state = "retired" if ours.status == AssetStatus.RETIRED else "back in service"
+        items.append(_item("warn", f"{a.tag} · {a.device_model.description}", f"Vendor loaner from {a.owner} for {ours.tag}, which is {state}",
+                           "Return the loaner", asset=a.tag))
     return items
 
 

@@ -10,6 +10,11 @@ category and support-model breakdowns add up to the fleet-wide total exactly.
 Everything aggregates in the database (one query per line type or grouping) and finishes in Python, so a large fleet
 renders without touching each work order; services.cost_of_service, which the fleet-wide figures come from, works the
 same way (two grouped queries and two aggregates).
+
+Slice 29, the counting rule (equipment.services.OWNED): the cost of service ratio and contract vs in-house are about the facility's own
+fleet, so their devices, acquisition values, and service costs are our devices' only (a rental, vendor loaner, or demo unit is its
+owner's to maintain, has no acquisition value of ours, and is never on a contract). The repair spend trend is CE's spend, on every
+device.
 """
 from datetime import date, timedelta
 
@@ -17,7 +22,8 @@ from django.db.models import Case, CharField, Count, DecimalField, Expression, F
 from django.db.models.functions import TruncMonth
 
 from apps.contracts.models import Contract, ContractType
-from apps.equipment.models import Asset, SupportType
+from apps.equipment.models import Asset, Ownership, SupportType
+from apps.equipment.services import OWNED
 from apps.pm.dates import month_bounds
 from apps.reports.services import ANNUALIZE, TRAILING_DAYS, _shift_month, cost_of_service
 from apps.workorders.models import LABOR_AMOUNT, PART_AMOUNT, LaborLine, PartLine, WoType
@@ -33,10 +39,11 @@ _PARTS = Sum(PART_AMOUNT, output_field=_MONEY)
 def _completed_cost_by(group: str | Expression, today: date, since: date, wo_type: str | None = None) -> dict:
     """Labor plus parts of work orders completed in [since, today], summed per value of `group`: a lookup from the line's
     work order (e.g. "asset__device_model__category") or an expression over the line (e.g. _live_support("work_order__asset__", today)).
-    Two queries, one per line type, whatever the fleet size."""
+    Our devices' work orders only (slice 29). Two queries, one per line type, whatever the fleet size."""
     totals: dict = {}
     for model, expr in ((LaborLine, _LABOR), (PartLine, _PARTS)):
-        qs = model.objects.filter(work_order__completed_on__gte=since, work_order__completed_on__lte=today)
+        qs = model.objects.filter(work_order__completed_on__gte=since, work_order__completed_on__lte=today,
+                                  work_order__asset__ownership=Ownership.OWNED)
         if wo_type:
             qs = qs.filter(work_order__type=wo_type)
         if isinstance(group, str):
@@ -49,8 +56,9 @@ def _completed_cost_by(group: str | Expression, today: date, since: date, wo_typ
 
 
 def _active_by(group: str) -> dict:
-    """{group value: (devices, acquisition value)} over the active fleet."""
-    rows = Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES).order_by().values(group).annotate(n=Count("id"), acq=Sum("acquisition_cost"))
+    """{group value: (devices, acquisition value)} over the active fleet (ours: slice 29)."""
+    rows = (Asset.objects.filter(OWNED, status__in=Asset.ACTIVE_STATUSES).order_by().values(group)
+            .annotate(n=Count("id"), acq=Sum("acquisition_cost")))
     return {row[group]: (row["n"], float(row["acq"] or 0)) for row in rows}
 
 
@@ -61,7 +69,7 @@ def _contract_cost_by_category(today: date) -> tuple[dict, float]:
     Contract.cost_share_for), rolled up by category. Money on contracts that cover no active devices, or only devices
     with no acquisition cost, cannot be attributed to a category and comes back as the second value."""
     annual = {c.id: float(c.annual_cost) for c in Contract.objects.filter(end_on__gte=today).only("id", "annual_cost")}
-    covered = (Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES, contract_id__in=list(annual)).order_by()
+    covered = (Asset.objects.filter(OWNED, status__in=Asset.ACTIVE_STATUSES, contract_id__in=list(annual)).order_by()
                .values("contract_id", "device_model__category").annotate(acq=Sum("acquisition_cost")))
     by_contract: dict = {}
     for row in covered:
@@ -151,7 +159,7 @@ def report_contract(today: date) -> dict:
     since = today - timedelta(days=TRAILING_DAYS)
     fleet_by_support: dict = {}
     ended_devices = 0
-    active = Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES).annotate(live=_live_support("", today))
+    active = Asset.objects.filter(OWNED, status__in=Asset.ACTIVE_STATUSES).annotate(live=_live_support("", today))  # slice 29: ours
     for row in active.order_by().values("live").annotate(n=Count("id"), acq=Sum("acquisition_cost")):
         st = _LIVE_TO_SUPPORT[row["live"]]
         devices, acquisition = fleet_by_support.get(st, (0, 0.0))

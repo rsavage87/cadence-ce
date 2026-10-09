@@ -225,13 +225,15 @@ def test_device_columns_read_like_the_device(world):
     assert by(run("devices", first), "Tag", "CE-10001") == {
         "Tag": "CE-10001", "Serial": "HM-1", "Device": "ICU ventilator", "Manufacturer": "Hamilton Medical", "Model": "Hamilton-G5",
         "Category": "Ventilators", "Department": "ICU", "Room": "12", "Status": "In service", "Risk class": "Life support",
+        "Whose": "Ours",  # slice 29
         "Support": "OEM contract", "Contract": "SC-1", "Contract vendor": "Hamilton Medical", "Contract ends": d(6, 30, 2027),
         "Installed": d(8, 18, 2024), "Age (years)": pytest.approx((TODAY - d(8, 18, 2024)).days / 365.25), "Acquisition cost": 38000.0,
-        "Condition (1 to 5)": 4, "Warranty ends": d(1, 31, 2027), "Last PM": d(9, 29)}
+        "Condition (1 to 5)": 4, "Warranty ends": d(1, 31, 2027)}
     rows = {r["Tag"]: r for r in table(run("devices", ["tag", *second]))}
     # The vent: pm4 open; r1 is the one repair opened in 12 months (cx was cancelled, `old` is older); r1 and pm1 completed in them.
-    assert rows["CE-10001"] == {"Tag": "CE-10001", "Next PM": d(3, 29, 2027), "PM interval (months)": 6, "On the manufacturer's schedule (CMS)": False,
-                                "Open work orders": 1, "Repairs, last 12 months": 1, "Service cost, last 12 months": 275.97}
+    assert rows["CE-10001"] == {"Tag": "CE-10001", "Last PM": d(9, 29), "Next PM": d(3, 29, 2027), "PM interval (months)": 6,
+                                "On the manufacturer's schedule (CMS)": False, "Open work orders": 1, "Repairs, last 12 months": 1,
+                                "Service cost, last 12 months": 275.97}
     assert rows["CE-10002"]["PM interval (months)"] == 18 and rows["CE-10002"]["Open work orders"] == 2  # r2 in progress, pm3 open
     assert rows["CE-10002"]["Service cost, last 12 months"] == 0.0  # r2 is not completed; pm2 had no lines
     assert rows["CE-10003"]["Next PM"] is None and rows["CE-10003"]["Open work orders"] == 0
