@@ -559,7 +559,7 @@ def test_the_csv_carries_whose_and_the_stay(client, signed_in, today, mixed, pum
     by_tag = {r[0]: dict(zip(rows[0], r)) for r in rows[1:]}
     assert {k: by_tag["T-2"][k] for k in ("Whose", "Owner", "Reference", "Arrived", "Due back", "Status", "Support", "Fleet state")} == {
         "Whose": "Demo or evaluation unit", "Owner": "Mindray", "Reference": "RA-2026-0042", "Arrived": (today - timedelta(days=10)).isoformat(),
-        "Due back": (today - timedelta(days=2)).isoformat(), "Status": "In service", "Support": "Owner maintains", "Fleet state": "Owner maintains"}
+        "Due back": (today - timedelta(days=2)).isoformat(), "Status": "In service", "Support": "Owner maintains", "Fleet state": "Temporary on site"}
     assert by_tag["T-3"]["Status"] == "Returned to owner" and by_tag["T-3"]["Fleet state"] == "Returned to owner"
     assert {k: by_tag[pump.tag][k] for k in ("Whose", "Owner", "Reference", "Arrived", "Due back")} == {
         "Whose": "Ours", "Owner": "", "Reference": "", "Arrived": "", "Due back": ""}

@@ -44,7 +44,7 @@ class FleetBucket(models.TextChoices):
     OPEN_RECALL = "open_recall", "Open recall, action needed"
     IN_REPAIR = "in_repair", "In repair"
     OUT_OF_SERVICE = "out_of_service", "Out of service"
-    TEMPORARY = "temporary", "Owner maintains"  # slice 29: a rental, vendor loaner, or demo unit on site (no PM of ours)
+    TEMPORARY = "temporary", "Temporary on site"  # slice 29: a rental, vendor loaner, or demo unit on site (its owner maintains it)
     RETIRED = "retired", "Retired"
     RETURNED = "returned", "Returned to owner"  # slice 29: a temporary device that went back (status retired)
 

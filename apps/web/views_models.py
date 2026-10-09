@@ -62,7 +62,8 @@ def program_tab(request, dm, today: date | None = None) -> dict:
     do. One key, because a model drawer opened directly renders over the PM schedule, whose context it would otherwise shadow."""
     today = today or timezone.localdate()
     user = request.user
-    active = (Asset.objects.filter(device_model=dm, status__in=Asset.ACTIVE_STATUSES).select_related("department")
+    # Slice 29: the devices on CE's PM program, ours only (a rental, vendor loaner, or demo unit is its owner's: equipment.services.OWNED)
+    active = (Asset.objects.filter(eq.OWNED, device_model=dm, status__in=Asset.ACTIVE_STATUSES).select_related("department")
               .order_by(F("next_pm_on").asc(nulls_last=True), "tag"))
     shown = list(active[:DEVICES_SHOWN])
     active_count = len(shown) if len(shown) < DEVICES_SHOWN else active.count()
@@ -80,7 +81,7 @@ def program_tab(request, dm, today: date | None = None) -> dict:
                      # CMS: imaging, radiologic, and medical laser equipment keep the manufacturer's schedule (slice 18)
                      "oem_required": dm.oem_schedule_required},
         "devices": {"shown": shown, "active": active_count, "more": max(active_count - len(shown), 0),
-                    "retired": Asset.objects.filter(device_model=dm, status=AssetStatus.RETIRED).count()},
+                    "retired": Asset.objects.filter(eq.OWNED, device_model=dm, status=AssetStatus.RETIRED).count()},
         "can_view_asset": user.has_level(Module.EQUIPMENT, Level.VIEW),
         "can_edit_model": eq_perms.can_edit_model(user), "can_set_risk": eq_perms.can_set_risk(user),
     }}
