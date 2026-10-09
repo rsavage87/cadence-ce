@@ -429,11 +429,14 @@ class WorkOrderViewSet(TenantViewSet):
             # As the drawer's Mark completed: the resolution, and for a PM its result and one {"result", "reading"} per checklist step.
             # Slice 26: an incoming inspection likewise, with inspection_result ("passed" or "failed"; required while its device waits
             # for it, when only a pass puts the device in service) and, optionally, its checklist's results (all of them or none).
+            # Slice 30: a repair with repair_check ("passed" with the post-repair checklist's results, "vendor_report" with
+            # checks_reference, the vendor's service report number, or "not_returned"), by completion's rules.
             from apps.workorders.completion import complete_work_order
 
             d = request.data
             kwargs = {"resolution": d.get("resolution", ""), "pm_result": d.get("pm_result", ""), "results": d.get("results"),
                       "inspection_result": d.get("inspection_result", ""),
+                      "repair_check": d.get("repair_check", ""), "checks_reference": d.get("checks_reference", ""),
                       "late_reason": d.get("late_reason")}  # slice 25: why a PM completed after its due date was late, optional
             for flag in ("open_repair", "tag_out"):
                 if flag in d:

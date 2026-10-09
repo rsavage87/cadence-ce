@@ -19,6 +19,7 @@ from django.db import OperationalError, connection
 from django.utils import timezone
 from incident_fixtures import make_incident
 from pg_helpers import needs_postgres
+from repair_fixtures import CHECKED
 
 from apps.accounts.models import Level, Module, Role
 from apps.core.models import Sequence
@@ -461,8 +462,8 @@ def test_two_completions_on_one_device_take_turns(tenant, vent, techs, monkeypat
         change_status(wo, WoStatus.IN_PROGRESS)
     pause = pause_at(monkeypatch, completion, "blocker")
     errors = race(tenant, pause,
-                  lambda: complete_work_order(WorkOrder.objects.get(pk=higher.pk), resolution="Replaced the flow sensor"),
-                  lambda: complete_work_order(WorkOrder.objects.get(pk=lower.pk), resolution="Reseated the cable"))
+                  lambda: complete_work_order(WorkOrder.objects.get(pk=higher.pk), resolution="Replaced the flow sensor", **CHECKED),
+                  lambda: complete_work_order(WorkOrder.objects.get(pk=lower.pk), resolution="Reseated the cable", **CHECKED))
     assert errors == {}
     assert set(WorkOrder.objects.filter(pk__in=[lower.pk, higher.pk]).values_list("status", flat=True)) == {WoStatus.COMPLETED}
 

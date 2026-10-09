@@ -11,7 +11,9 @@ from decimal import Decimal, InvalidOperation
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import models, transaction
-from django.db.models import Case, Count, Exists, F, OuterRef, Q, Value, When
+from django.db.models import Case, Count, Exists, F, OuterRef, Q, Subquery, Value, When
+from django.db.models.functions import Coalesce
+from django.db.models.lookups import Exact
 from django.utils import timezone
 
 from apps.recalls.models import AlertMatch
@@ -834,7 +836,11 @@ def set_status(asset: Asset, to_status: str, *, by=None, note: str = "", today: 
     - Retiring it (a new device going back to the vendor) cancels its open incoming inspections as it cancels open PMs.
     Slice 29, a temporary device (a rental, vendor loaner, or demo unit): never retired (it leaves by return_to_owner, which records
     how it was cleaned and what happened to patient data), never reinstated once returned (a unit that comes back is added again),
-    and never lent out (it is not ours to lend): refused in words pointing to Return to owner (temporary_status_refusal)."""
+    and never lent out (it is not ours to lend): refused in words pointing to Return to owner (temporary_status_refusal).
+    Slice 30, checks after a repair: never in service or on loan (HOLD) while a repair holds the device out (an open repair that tagged
+    it out: workorders.services.holding_repairs; or, for a device in repair, any open repair): refused in words naming it
+    (repair_hold_message). Completing that repair with its checks after repair returns the device. A device tagged out by hand with no
+    repair work order is not held this way."""
     today = today or timezone.localdate()
     if to_status not in AssetStatus.values:
         raise ValidationError("Choose a device status.")
@@ -848,6 +854,10 @@ def set_status(asset: Asset, to_status: str, *, by=None, note: str = "", today: 
         raise ValidationError(f"{asset.tag} cannot go from {asset.get_status_display().lower()} to {AssetStatus(to_status).label.lower()}.")
     if asset.awaiting_inspection and to_status in HOLD:
         raise ValidationError(hold_message(asset))
+    if to_status in HOLD:  # slice 30: a repair holding it out is completed with its checks after repair, which returns it
+        held_by_repair = repair_hold_message(asset)
+        if held_by_repair:
+            raise ValidationError(held_by_repair)
     if changed_on is not None and changed_on > today:
         raise ValidationError({"changed_on": "The status cannot change on a day after today."})
     if changed_on is not None and asset.installed_on and changed_on < asset.installed_on:
@@ -928,6 +938,29 @@ def hold_message(asset: Asset) -> str:
     return f"{asset.tag} is waiting for its incoming inspection ({wo.number}): it goes into service when that inspection passes."
 
 
+def holding_repair(asset: Asset):
+    """The open repair holding the device out of use (slice 30), or None: the first, by opened date and number, of its open repairs that
+    tagged it out (workorders.services.holding_repairs); for a device in repair, else its first open repair."""
+    from apps.workorders.models import OPEN_STATUSES, WorkOrder, WoType
+    from apps.workorders.services import holding_repairs
+
+    wo = holding_repairs(asset).order_by("opened_on", "number").first()
+    if wo is None and asset.status == AssetStatus.IN_REPAIR:
+        wo = WorkOrder.objects.filter(asset=asset, type=WoType.REPAIR, status__in=OPEN_STATUSES).order_by("opened_on", "number").first()
+    return wo
+
+
+def repair_hold_message(asset: Asset) -> str:
+    """Why the device does not go in service or on loan by hand (slice 30): a repair holds it out (holding_repair), named, to be completed
+    with its checks after repair (which returns the device). "" when none does: set_status's refusal and status_actions' rule."""
+    wo = holding_repair(asset)
+    if wo is None:
+        return ""
+    if asset.status == AssetStatus.IN_REPAIR:
+        return f"{asset.tag} is in repair ({wo.number}). Complete {wo.number} with its checks after repair."
+    return f"{asset.tag} is held out of use by repair {wo.number}. Complete {wo.number} with its checks after repair."
+
+
 def held_message(asset: Asset) -> str:
     """Why a device held as evidence does not change status (slice 28): set_status's refusal. No incident number: the reader may not
     see incidents (Equipment Edit is enough to try)."""
@@ -950,7 +983,8 @@ def status_actions(asset: Asset, user) -> list[dict]:
     """The status buttons the drawer shows this user for this device: [{to, label, style, confirm}], most likely first. Slice 26: for
     a device waiting for its incoming inspection never In service or On loan (HOLD), and Found / Reinstate bring it back out of
     service (AWAITING_ONLY, offered for no other device). Putting it in use before its inspection is not a status button: the drawer
-    offers it on its own (permissions.can_use_before_inspection, use_before_inspection)."""
+    offers it on its own (permissions.can_use_before_inspection, use_before_inspection). Slice 30: never In service or On loan while a
+    repair holds it out (holding_repair: its completion with the checks after repair returns it)."""
     from . import permissions as perms
 
     if asset.incident_hold:  # slice 28: held as evidence, released only from its incident
@@ -960,6 +994,9 @@ def status_actions(asset: Asset, user) -> list[dict]:
         return []
     level = user.level_for(perms.MODULE)  # once, not once per button
     awaiting = asset.awaiting_inspection
+    # Slice 30: never In service or On loan while a repair holds it out (set_status's refusal); read only when one would be offered
+    offers_use = not awaiting and STATUS_CHANGES.get(asset.status, set()) & set(HOLD)
+    repair_held = bool(offers_use) and holding_repair(asset) is not None
     # A device in use is most likely being tagged out; one that is not is most likely coming back (the mock's single button).
     in_use = asset.status in (AssetStatus.IN_SERVICE, AssetStatus.ON_LOAN)
     order = ([AssetStatus.OUT_OF_SERVICE, AssetStatus.IN_SERVICE] if in_use else [AssetStatus.IN_SERVICE, AssetStatus.OUT_OF_SERVICE]) + [
@@ -968,7 +1005,7 @@ def status_actions(asset: Asset, user) -> list[dict]:
     for to in order:
         if to not in STATUS_CHANGES.get(asset.status, set()) or level < perms.status_level(asset.status, to):
             continue
-        if (awaiting and to in HOLD) or (not awaiting and (asset.status, to) in AWAITING_ONLY):
+        if (awaiting and to in HOLD) or (not awaiting and (asset.status, to) in AWAITING_ONLY) or (repair_held and to in HOLD):
             continue
         if temporary and to in (AssetStatus.RETIRED, AssetStatus.ON_LOAN):  # slice 29: Return to owner instead; not ours to lend
             continue
@@ -1184,6 +1221,8 @@ def _kind(asset) -> str:
 
 # A device of ours a vendor loaner stands in for is back (the loaner can go) once it is in service or retired with no vendor repair still
 # open on it (review fix: a repair sent to the vendor that leaves the device in service is the loaner's very reason to be here).
+# Slice 30: and, unless it was retired, its last repair did not end as not returned to use (a device put back in service by hand after
+# that is not back: its checks after repair were never recorded).
 LOANER_BACK_STATUSES = (AssetStatus.IN_SERVICE, AssetStatus.RETIRED)
 
 
@@ -1193,14 +1232,33 @@ def _open_vendor_repair():
     return WorkOrder.objects.filter(type=WoType.REPAIR, status__in=OPEN_STATUSES, vendor_service=True)
 
 
+def _last_repairs():
+    """Completed or closed repairs, the last first (slice 30: a device's last repair is the first of these on it)."""
+    from apps.workorders.models import WorkOrder, WoStatus, WoType
+
+    return (WorkOrder.objects.filter(type=WoType.REPAIR, status__in=(WoStatus.COMPLETED, WoStatus.CLOSED))
+            .order_by("-completed_on", "-number"))
+
+
 def loaner_device_back(device) -> bool:
-    """Whether the device of ours a vendor loaner stands in for is back: in service or retired, no vendor repair open on it."""
-    return device.status in LOANER_BACK_STATUSES and not _open_vendor_repair().filter(asset_id=device.pk).exists()
+    """Whether the device of ours a vendor loaner stands in for is back: in service or retired, no vendor repair open on it, and (slice
+    30) unless retired, its last repair not ended as not returned to use."""
+    from apps.workorders.models import RepairCheck
+
+    if device.status not in LOANER_BACK_STATUSES or _open_vendor_repair().filter(asset_id=device.pk).exists():
+        return False
+    if device.status == AssetStatus.RETIRED:
+        return True
+    return _last_repairs().filter(asset_id=device.pk).values_list("repair_check", flat=True).first() != RepairCheck.NOT_RETURNED
 
 
 def loaner_back_q(prefix: str = "stands_in_for") -> Q:
     """loaner_device_back as a condition on loaners (their `prefix` device), for lists that read many at once."""
-    return Q(**{f"{prefix}__status__in": LOANER_BACK_STATUSES}) & ~Exists(_open_vendor_repair().filter(asset_id=OuterRef(f"{prefix}_id")))
+    from apps.workorders.models import RepairCheck
+
+    last = Coalesce(Subquery(_last_repairs().filter(asset_id=OuterRef(f"{prefix}_id")).values("repair_check")[:1]), Value(""))
+    return (Q(**{f"{prefix}__status__in": LOANER_BACK_STATUSES}) & ~Exists(_open_vendor_repair().filter(asset_id=OuterRef(f"{prefix}_id")))
+            & (Q(**{f"{prefix}__status": AssetStatus.RETIRED}) | ~Q(Exact(last, RepairCheck.NOT_RETURNED))))
 
 
 def matching_returned(device_model, serial: str):

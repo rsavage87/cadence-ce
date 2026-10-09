@@ -2,6 +2,7 @@
 from datetime import date, timedelta
 
 import pytest
+from repair_fixtures import CHECKED, checked_post
 
 from apps.accounts.models import create_default_roles
 from apps.equipment.models import Asset, Department, DeviceModel
@@ -162,7 +163,7 @@ def test_technician_moves_work_but_cannot_close_it(client, signed_in, wo, techs)
     r = client.post(f"/work-orders/{wo.number}/status/", {"to": "completed"}, **HX)
     wo.refresh_from_db()
     assert wo.status == WoStatus.IN_PROGRESS and "Complete WO-" in r["HX-Trigger"] and "with Mark completed" in r["HX-Trigger"]
-    client.post(f"/work-orders/{wo.number}/complete/", {"resolution": "Replaced the flow sensor; tested OK"}, **HX)
+    client.post(f"/work-orders/{wo.number}/complete/", checked_post(resolution="Replaced the flow sensor; tested OK"), **HX)
     wo.refresh_from_db()
     assert wo.status == WoStatus.COMPLETED and wo.completed_on == date.today() and wo.resolution == "Replaced the flow sensor; tested OK"
     assert client.post(f"/work-orders/{wo.number}/status/", {"to": "closed"}, **HX).status_code == 403
@@ -173,7 +174,7 @@ def test_manager_closes_work(client, signed_in, wo, techs):
     signed_in("manager")
     assign(wo, technician=techs["dana"])
     client.post(f"/work-orders/{wo.number}/status/", {"to": "in_progress"}, **HX)
-    client.post(f"/work-orders/{wo.number}/complete/", {"resolution": "Replaced the flow sensor"}, **HX)
+    client.post(f"/work-orders/{wo.number}/complete/", checked_post(resolution="Replaced the flow sensor"), **HX)
     client.post(f"/work-orders/{wo.number}/status/", {"to": "closed"}, **HX)
     wo.refresh_from_db()
     assert wo.status == WoStatus.CLOSED
@@ -271,10 +272,11 @@ def test_api_applies_the_same_close_and_assign_rules(client, signed_in, wo, tech
     assert client.post(f"/api/v1/work-orders/{wo.id}/assign/", {"technician": str(techs["dana"].id)}).status_code == 403
     assign(wo, technician=techs["dana"])
     assert client.post(f"/api/v1/work-orders/{wo.id}/transition/", {"status": "in_progress"}).status_code == 200
-    # Completing takes the resolution, as the drawer's Mark completed does (apps.workorders.completion).
+    # Completing takes the resolution, as the drawer's Mark completed does (apps.workorders.completion); slice 30, a repair's checks
     r = client.post(f"/api/v1/work-orders/{wo.id}/transition/", {"status": "completed"})
-    assert r.status_code == 400 and "resolution" in r.json()
-    r = client.post(f"/api/v1/work-orders/{wo.id}/transition/", {"status": "completed", "resolution": "Replaced the flow sensor"})
+    assert r.status_code == 400 and {"resolution", "repair_check"} <= set(r.json())
+    r = client.post(f"/api/v1/work-orders/{wo.id}/transition/", {"status": "completed", "resolution": "Replaced the flow sensor", **CHECKED},
+                    content_type="application/json")
     assert r.status_code == 200 and r.json()["resolution"] == "Replaced the flow sensor" and r.json()["status"] == "completed"
     assert client.post(f"/api/v1/work-orders/{wo.id}/transition/", {"status": "closed"}).status_code == 403
     signed_in("manager")

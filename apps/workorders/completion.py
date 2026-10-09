@@ -82,13 +82,34 @@ procedure (inspection_procedure), and it never has a PM (services.create_work_or
 its owner's PM date is recorded and past (inspections.owner_pm_refusal: the owner does the PM, or its new date is recorded); Failed,
 or no result where none is required, is not. A kept pass (a reopened inspection whose pass ended the wait) is never refused: it moves
 nothing, and Failed is refused there.
+
+Slice 30, checks after a repair (apps.workorders.repair_checks; CMS A-0724, NFPA 99, IEC 62353): every repair records how it ended,
+repair_check (RepairCheck), keyed repair_check when missing or not one of the outcomes the user may choose (repair_outcomes):
+- passed ("Checked: ready for use"): the standard post-repair checklist (procedure_for gives repair_checks.POST_REPAIR, never the
+  model's PM procedure), every step recorded as for a PM (pass, fail, or N/A; a reading on a measured step that passed or failed; the
+  signature checked; none recorded is one error, keyed checklist), never N/A on repair_checks.NEVER_NA (keyed step_<n>), and no step
+  failed (keyed step_<n>: a failed check means it is not ready for use: keep_open, or not returned). The device goes back as a
+  repaired one always has (services._on_completed: a tagged-out repair, or a device in repair, the last repair holding it).
+- vendor_report ("Checked by the vendor"): only on vendor service, and only for a user who sees the whole facility (a scoped vendor
+  account completing its own repair records the steps); checks_reference, the vendor's service report or field service order number
+  (a token: apps.core.validators), is required, and no steps are taken (keyed checklist). The device goes back as for passed.
+- not_returned ("Not returned to use": beyond repair, to be retired, back to its owner, kept by the manufacturer): no steps (keyed
+  checklist). The repair is marked tagged out and a device in use or in repair moves out of service through equipment.services
+  .set_status (a device held as evidence stays as its hold keeps it); services._on_completed never returns it, and reopening the
+  repair and completing it as passed later does.
+A repair's resolution stays required (what was found and done): no default. checks_reference with any other outcome, repair_check or
+checks_reference on another type, and results on a type other than a PM, an inspection, or a repair are refused. The steps are stored
+in checklist_results (passed only), the outcome in repair_check, the report number in checks_reference; the status history says it:
+"Checked after repair; CE-10241 back in service", "Checked by the vendor, report FSO-123", "Not returned to use: CE-10241 stays out of
+service". keep_open records failed checks on a repair that stays open (a note in the failed PM's format) and, with hold, holds the
+device out (IEC 62353 6.2: equipment that fails is marked unsafe until put right).
 """
 import hashlib
 import json
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.utils import timezone
 
@@ -98,7 +119,7 @@ from apps.pm.procedures import step_parts
 from apps.pm.windows import window_of
 from apps.tenants.context import get_current_tenant
 
-from . import costs, inspections, services
+from . import costs, inspections, repair_checks, services
 from . import permissions as wo_perms
 from .models import (
     ALLOWED_TRANSITIONS,
@@ -108,7 +129,9 @@ from .models import (
     LateReason,
     PmResult,
     Priority,
+    RepairCheck,
     WorkOrder,
+    WorkOrderNote,
     WorkOrderStatusHistory,
     WoStatus,
     WoType,
@@ -143,6 +166,16 @@ class Completion:
     reinspection: WorkOrder | None = None  # slice 26: the re-inspection a failed incoming inspection opened, or the open one it reused
     reinspection_opened: bool = False  # ...opened by this completion (else it was already open)
     passed: bool = False  # slice 26: the device stopped waiting for its incoming inspection with this completion (its pass)
+    returned: bool = False  # slice 30: a repair's device went back in service with this completion (checked, or the vendor's report)
+
+
+@dataclass
+class KeptOpen:
+    """What keep_open did (slice 30): the note it wrote on the repair, and whether the device went out of service with it."""
+    work_order: WorkOrder
+    note: WorkOrderNote
+    held: bool = False  # the repair now holds the device out (marked tagged out)
+    tagged_out: bool = False  # the device was in use and is now out of service
 
 
 # --- reading -------------------------------------------------------------------------------------------------------------------
@@ -150,11 +183,14 @@ class Completion:
 def procedure_for(wo: WorkOrder):
     """The procedure a PM work order is done to: its device's model's PM procedure, as it is now (or None). Slice 26: an incoming
     inspection's is inspection_procedure(its device), so checklist_of(procedure_for(wo)) is an inspection's checklist as it is a PM's.
-    None for other types."""
+    Slice 30: a repair's checks after it are the standard post-repair checklist (repair_checks.POST_REPAIR), never its model's PM
+    procedure (a PM done on a repair never credits the PM). None for other types."""
     if wo.type == WoType.PM:
         return wo.asset.device_model.pm_procedure
     if wo.type == WoType.INSPECTION:
         return inspection_procedure(wo.asset)
+    if wo.type == WoType.REPAIR:
+        return repair_checks.POST_REPAIR
     return None
 
 
@@ -344,8 +380,12 @@ def _steps(steps, results, errors: dict, optional: bool = False) -> list[dict]:
             errors[f"reading_{n}"] = f"Step {n}: record the reading."
         out.append({"text": text, "measure": measure, "result": result, "reading": reading})
     if not any(k.startswith(("step_", "reading_")) for k in errors) and all(s["result"] == NA for s in out):
-        errors["checklist"] = "Every step is marked N/A. Mark the steps that were done as pass or fail."
+        errors["checklist"] = ALL_NA
     return out
+
+
+ALL_NA = "Every step is marked N/A. Mark the steps that were done as pass or fail."
+REVISED = "The procedure's checklist was revised while this was open. Check the steps again."
 
 
 def _failed(snapshot: list[dict]) -> list[int]:
@@ -425,6 +465,220 @@ def _check_result(wo, pm_result: str, snapshot: list[dict], has_checklist: bool,
         errors["pm_result"] = "Mark the step that failed, or choose another result."
     elif pm_result == PmResult.FAIL and not has_checklist and not resolution and "resolution" not in errors:
         errors["resolution"] = "Say what failed."
+
+
+# --- checks after a repair (slice 30) ------------------------------------------------------------------------------------------
+
+# The outcomes in words, in the order the modal shows them (repair_outcomes)
+REPAIR_CHECK_WORDS = {RepairCheck.PASSED: "checked and ready for use", RepairCheck.VENDOR_REPORT: "checked by the vendor",
+                      RepairCheck.NOT_RETURNED: "not returned to use"}
+REFERENCE_MAX = WorkOrder._meta.get_field("checks_reference").max_length
+# A failed step on a repair completed as checked and ready for use (keyed step_<n>)
+FAILED_CHECK = ("A failed check means it is not ready for use: keep the repair open and hold the device out, or complete it as not "
+                "returned to use.")
+NO_CHECKS = "Record each check after the repair: pass, fail, or N/A (steps 1 and 5 are never N/A)."
+REPAIR_REVISED = "The checks after repair were revised while this was open. Check the steps again."
+REPAIR_RESULTS_ONLY = "Only a PM, an incoming inspection, or a repair records checklist results."
+REPAIR_CHECK_ONLY = "Only a repair records its checks after repair."
+REFERENCE_ONLY = "Only a repair checked by the vendor records the vendor's service report number."
+KEEP_OPEN_PERMISSION = "Recording failed checks after a repair needs Work orders Edit."
+# Where not returned to use takes the device from: in use, or in repair (the repair is over). keep_open's hold takes it only from in
+# use (IN_USE): a device in repair stays in repair, its repair still open. Out of service already, missing, or retired: nothing to move
+# (the repair, marked tagged out, holds it).
+KEEP_OUT_FROM = (AssetStatus.IN_SERVICE, AssetStatus.ON_LOAN, AssetStatus.IN_REPAIR)
+
+
+def vendor_report_allowed(wo: WorkOrder, user=None) -> bool:
+    """Whether `user` may complete the repair `wo` as checked by the vendor (slice 30): on vendor service only, and only for a user who
+    sees the whole facility (no user: services and commands). A scoped vendor account completing its own repair records the steps; the
+    vendor's report number is what CE records on the vendor's behalf."""
+    if wo.type != WoType.REPAIR or not wo.vendor_service:
+        return False
+    if user is None:
+        return True
+    from .scoping import is_scoped  # scoping imports the models; keep this module importable on its own
+
+    return not is_scoped(user)
+
+
+def repair_outcomes(wo: WorkOrder, user=None) -> list[str]:
+    """The outcomes (RepairCheck values) `user` may complete the repair `wo` with, in the modal's order; [] for any other type."""
+    if wo.type != WoType.REPAIR:
+        return []
+    return [RepairCheck.PASSED, *([RepairCheck.VENDOR_REPORT] if vendor_report_allowed(wo, user) else []), RepairCheck.NOT_RETURNED]
+
+
+def _or(words: list[str]) -> str:
+    """"a or b", "a, b, or c"."""
+    if len(words) <= 2:
+        return " or ".join(words)
+    return ", ".join(words[:-1]) + f", or {words[-1]}"
+
+
+def _check_repair(wo: WorkOrder, repair_check: str, steps, results, signature, by, errors: dict) -> list[dict]:
+    """A repair's checks after it against the outcome chosen (slice 30, the module's rules): the steps as recorded for passed, else [].
+    Errors keyed repair_check, checklist, step_<n>, and reading_<n>."""
+    allowed = repair_outcomes(wo, by)
+    if results is not None and not isinstance(results, (list, tuple)):  # the API passes what it was sent: a 400, never a 500
+        errors["checklist"] = "Send the checklist as a list: one {result, reading} per step."
+        results = None
+    answered = any(_answered(r) for r in results or [])
+    if repair_check not in RepairCheck.values:
+        choices = _or([REPAIR_CHECK_WORDS[c] for c in allowed])
+        errors["repair_check"] = f"Choose how the repair ended: {choices}." if not repair_check else f"Choose {choices}."
+        return []
+    if repair_check not in allowed:  # checked by the vendor, where it is not offered
+        if not wo.vendor_service:
+            errors["repair_check"] = (f"{wo.number} was not done by vendor service. Record the checks after the repair, or choose not "
+                                      "returned to use.")
+        else:
+            errors["repair_check"] = ("Record the checks after the repair step by step. Checked by the vendor is for the facility's CE "
+                                      "staff, recording the vendor's service report.")
+        return []
+    if repair_check != RepairCheck.PASSED:
+        if answered and "checklist" not in errors:
+            errors["checklist"] = ("The vendor's service report is the record of their checks: send no checklist with checked by the vendor."
+                                   if repair_check == RepairCheck.VENDOR_REPORT else
+                                   "A device not returned to use records no checks: send no checklist with not returned to use.")
+        return []
+    if "checklist" in errors:
+        return []
+    if signature is not None and signature != checklist_signature(steps):
+        errors["checklist"] = REPAIR_REVISED
+        return []
+    if not answered:
+        errors["checklist"] = NO_CHECKS
+        return []
+    snapshot = _steps(steps, results, errors)
+    if len(snapshot) != len(steps):
+        return snapshot  # the wrong number of results: _steps said so
+    never = [i + 1 for i in repair_checks.NEVER_NA if snapshot[i]["result"] == NA]
+    for n in never:
+        errors.setdefault(f"step_{n}", f"Step {n} is never N/A after a repair: mark it pass or fail.")
+    if never and errors.get("checklist") == ALL_NA:
+        del errors["checklist"]  # the steps never N/A say it
+    for n in _failed(snapshot):
+        errors.setdefault(f"step_{n}", FAILED_CHECK)
+    return snapshot
+
+
+def _reference(value, repair_check: str, errors: dict) -> str:
+    """The vendor's service report number (slice 30): required with checked by the vendor, a token (apps.core.validators) of at most
+    REFERENCE_MAX characters; refused, keyed checks_reference, with another outcome. "" when it is not kept."""
+    text = str(value if value is not None else "").strip()
+    if repair_check != RepairCheck.VENDOR_REPORT:
+        if text and repair_check in RepairCheck.values:  # no outcome yet: repair_check's error says what to fix
+            errors["checks_reference"] = REFERENCE_ONLY
+        return ""
+    if not text:
+        errors["checks_reference"] = "Enter the vendor's service report or field service order number."
+    elif len(text) > REFERENCE_MAX:
+        errors["checks_reference"] = f"Keep the report number to {REFERENCE_MAX} characters."
+    else:
+        try:
+            for validator in WorkOrder._meta.get_field("checks_reference").validators:
+                validator(text)
+        except ValidationError as e:
+            errors["checks_reference"] = " ".join(e.messages)
+    return text
+
+
+def _hold_out(repair: WorkOrder, asset, by, why: str, *, moves=KEEP_OUT_FROM, save: bool = True) -> bool:
+    """Hold the device out on `repair` (slice 30: not returned to use, or keep_open's hold): the repair marked tagged out (completing it
+    as checked later returns the device, as for a repair opened with the tag-out), and a device whose status is in `moves` (in use or
+    in repair; keep_open: in use) moved out of service through equipment's status rules, with `why` in its history. Never a device held
+    as evidence: its hold keeps it out, and only its incident releases it (set_status refuses it). True when the device was in use and
+    is now out of service. The device's open work orders are locked already (services.lock_work), so its row is read in order. `save`
+    False: the caller saves the repair (a completion: change_status saves the whole row)."""
+    from apps.equipment.services import set_status  # equipment.services imports this app inside its functions; keep it one way
+
+    if not repair.tagged_out:
+        repair.tagged_out = True
+        if save:
+            repair.save(update_fields=["tagged_out", "updated_at"])
+    asset.refresh_from_db(fields=["status", "incident_hold"])
+    if asset.status not in moves or asset.incident_hold:
+        return False
+    in_use = asset.status in IN_USE
+    set_status(asset, AssetStatus.OUT_OF_SERVICE, by=by, note=why)
+    asset.__dict__.pop("_change_reason", None)
+    return in_use
+
+
+def repair_note(wo: WorkOrder, done: Completion) -> str:
+    """A repair's completion in the status history, and the toast's wording (slice 30): "Checked after repair; CE-10241 back in
+    service", "Checked by the vendor, report FSO-123", "Not returned to use: CE-10241 stays out of service". "" for a repair completed
+    with no outcome (before slice 30)."""
+    tag = wo.asset.tag
+    back = f"; {tag} back in service" if done.returned else ""
+    if wo.repair_check == RepairCheck.PASSED:
+        return f"Checked after repair{back}"
+    if wo.repair_check == RepairCheck.VENDOR_REPORT:
+        return f"Checked by the vendor, report {wo.checks_reference}{back}"
+    if wo.repair_check == RepairCheck.NOT_RETURNED:
+        status = wo.asset.status
+        stays = "out of service" if status == AssetStatus.OUT_OF_SERVICE or wo.asset.incident_hold else wo.asset.get_status_display().lower()
+        return f"Not returned to use: {tag} stays {stays}"
+    return ""
+
+
+def _kept_steps(steps, results, errors: dict) -> list[dict]:
+    """keep_open's steps: those done as recorded (a step left blank was not done: N/A in the record), at least one answered."""
+    if results is not None and not isinstance(results, (list, tuple)):
+        errors["checklist"] = "Send the checklist as a list: one {result, reading} per step."
+        return []
+    results = list(results or [])
+    if not any(_answered(r) for r in results):
+        errors["checklist"] = "Record the check that failed, with its reading when it has one."
+        return []
+    return _steps(steps, [r if _answered(r) else {"result": NA} for r in results], errors)
+
+
+@transaction.atomic
+def keep_open(wo: WorkOrder, *, results, signature: str | None = None, hold: bool = True, by=None, today: date | None = None) -> KeptOpen:
+    """A repair whose checks after it failed stays open (slice 30): the failed steps and their readings recorded as a note on it ("Checks
+    after repair failed on Oct 9, 2026: 3. Equipment (touch) leakage ... (reading 640 µA)", the failed PM's format) and, with `hold`
+    (default on), the device held out (_hold_out: the repair marked tagged out, a device in use moved out of service, one in repair left
+    in repair; IEC 62353 6.2). `results` as complete_work_order takes them for a repair (a step left blank was not done); refused, keyed checklist,
+    when none failed (complete it as checked instead), and as completing is refused when the repair cannot be completed now (blocker).
+    Work orders Edit for a user given as `by` (PermissionDenied), as completing. Locks as complete_work_order: the device's open work
+    and this one, then the device's row. `wo` is refreshed."""
+    today = today or timezone.localdate()
+    _check_tenant(wo)
+    if by is not None and not wo_perms.can_keep_open(by):
+        raise PermissionDenied(KEEP_OPEN_PERMISSION)
+    services.lock_work(wo.asset_id, wo.pk)
+    locked = WorkOrder.objects.select_for_update().get(pk=wo.pk)
+    if locked.type != WoType.REPAIR:
+        raise ValidationError(f"{locked.number} is not a repair: only a repair records checks after it.")
+    reason = blocker(locked, today, by)
+    if reason:
+        raise ValidationError(reason)
+    steps = checklist_of(repair_checks.POST_REPAIR)
+    errors: dict[str, str] = {}
+    snapshot: list[dict] = []
+    if signature is not None and signature != checklist_signature(steps):
+        errors["checklist"] = REPAIR_REVISED
+    else:
+        snapshot = _kept_steps(steps, results, errors)
+    if not errors and not _failed(snapshot):
+        errors["checklist"] = "No check failed. Complete the repair as checked and ready for use."
+    if errors:
+        raise ValidationError(errors)
+    failed = "; ".join(_failed_lines(snapshot))
+    note = services.add_note(locked, f"Checks after repair failed on {today:%b} {today.day}, {today.year}: {failed}"[:services.NOTE_MAX_LENGTH], by=by)
+    kept = KeptOpen(work_order=locked, note=note)
+    if hold:
+        asset = locked.asset
+        newly_held = not locked.tagged_out
+        kept.held = True
+        kept.tagged_out = _hold_out(locked, asset, by, f"Tagged out: checks after repair {locked.number} failed", moves=IN_USE)
+        if newly_held or kept.tagged_out:
+            held = "tagged out of service" if kept.tagged_out else "held out of service"
+            WorkOrderStatusHistory.objects.create(tenant=locked.tenant, work_order=locked, from_status=locked.status, to_status=locked.status,
+                                                  changed_by=by, note=f"Device {held}: checks after repair failed")
+    wo.refresh_from_db()
+    return kept
 
 
 def _log_hours(wo: WorkOrder, hours, by, today: date, errors: dict) -> LaborLine | None:
@@ -684,16 +938,18 @@ def result_note(result: str, done: Completion) -> str:
 # --- completing ----------------------------------------------------------------------------------------------------------------
 
 @transaction.atomic
-def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str = "", inspection_result: str = "", results=None,
-                        open_repair: bool = True, tag_out: bool | None = None, signature: str | None = None, hours=None, late_reason=None,
-                        by=None, today: date | None = None) -> Completion:
+def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str = "", inspection_result: str = "", repair_check: str = "",
+                        checks_reference: str = "", results=None, open_repair: bool = True, tag_out: bool | None = None,
+                        signature: str | None = None, hours=None, late_reason=None, by=None, today: date | None = None) -> Completion:
     """Complete `wo` with its resolution and, for a PM, its result and checklist results (the module's rules); a PM still open is
     started first (starts_on_completion). `results` is one {"result": "pass" | "fail" | "na", "reading": "..."} per checklist step, in
     order. `hours` (None or blank: none) are logged with it, and `late_reason` (None or blank: none; slice 25) is recorded on a PM
     completed after its due date. Slice 26: an incoming inspection takes `inspection_result` (InspectionResult) and, optionally, its
-    checklist's `results`; `tag_out` also applies to its fail. Raises ValidationError: a plain message when the work order cannot be
-    completed now, else a dict keyed by resolution, pm_result, inspection_result, checklist, step_<n>, reading_<n>, open_repair, hours,
-    and late_reason. `wo` is refreshed from the database afterwards (and its device with it)."""
+    checklist's `results`; `tag_out` also applies to its fail. Slice 30: a repair takes `repair_check` (RepairCheck), the post-repair
+    checklist's `results` for passed, and `checks_reference` for vendor_report. Raises ValidationError: a plain message when the work
+    order cannot be completed now, else a dict keyed by resolution, pm_result, inspection_result, repair_check, checks_reference,
+    checklist, step_<n>, reading_<n>, open_repair, hours, and late_reason. `wo` is refreshed from the database afterwards (and its
+    device with it)."""
     today = today or timezone.localdate()
     _check_tenant(wo)
     # The device's open work orders and this one first, in number order (its open inspections among them: two of its inspections
@@ -706,22 +962,32 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
         raise ValidationError(reason)
     asset = locked.asset
     before = (asset.status, asset.last_pm_on, asset.next_pm_on, asset.awaiting_inspection)
-    is_pm, is_inspection = locked.type == WoType.PM, locked.type == WoType.INSPECTION
+    is_pm, is_inspection, is_repair = locked.type == WoType.PM, locked.type == WoType.INSPECTION, locked.type == WoType.REPAIR
     procedure = procedure_for(locked)
     steps = checklist_of(procedure)
     pm_result = str(pm_result or "").strip()
     inspection_result = str(inspection_result or "").strip()
+    repair_check = str(repair_check or "").strip()
 
     errors: dict[str, str] = {}
     text = _resolution(resolution, errors)
     snapshot: list[dict] = []
-    if not (is_pm or is_inspection):
-        if results:
-            errors["pm_result"] = "Only a PM or an incoming inspection records checklist results."
-    elif signature is not None and signature != checklist_signature(steps):
-        errors["checklist"] = "The procedure's checklist was revised while this was open. Check the steps again."
+    reference = ""
+    if is_repair:  # slice 30: the checks after it, by the outcome chosen
+        snapshot = _check_repair(locked, repair_check, steps, results, signature, by, errors)
+        reference = _reference(checks_reference, repair_check, errors)
     else:
-        snapshot = _steps(steps, results, errors, optional=is_inspection)
+        if repair_check:
+            errors["repair_check"] = REPAIR_CHECK_ONLY
+        if str(checks_reference if checks_reference is not None else "").strip():
+            errors["checks_reference"] = REFERENCE_ONLY
+        if not (is_pm or is_inspection):
+            if results:
+                errors["pm_result"] = REPAIR_RESULTS_ONLY
+        elif signature is not None and signature != checklist_signature(steps):
+            errors["checklist"] = REVISED
+        else:
+            snapshot = _steps(steps, results, errors, optional=is_inspection)
     # Slice 26: the inspection whose pass ended the device's wait stays passed when it is completed again (reopened); only that one
     # (inspections.pass_cleared_flag; review fix: a pass that changed nothing may be corrected). A failed step or Failed then gets the
     # one answer: the device is in use, so a failure now is a repair's.
@@ -773,6 +1039,15 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
         locked.checklist_results = snapshot
         text = text or _default_inspection_resolution(inspection_result, procedure, snapshot)
         note = result_note(inspection_result, done)
+    elif is_repair:  # slice 30: saved with the completion (change_status saves the whole row)
+        locked.repair_check, locked.checks_reference, locked.checklist_results = repair_check, reference, snapshot
+        if repair_check == RepairCheck.NOT_RETURNED:
+            # The repair holds the device out (marked tagged out) and services._on_completed never returns it; in use or in repair, it
+            # moves out of service now, through equipment's status rules (the device's open work is locked already: lock_work).
+            done.tagged_out = _hold_out(locked, asset, by, f"Not returned to use after repair {locked.number}", save=False)
+        else:
+            done.returned = services.returns_device(locked)
+        note = repair_note(locked, done)
     locked.resolution = text
     # A passed inspection of a waiting device passes it here (services._on_completed: equipment.services.pass_incoming_inspection).
     services.change_status(locked, WoStatus.COMPLETED, by=by, note=note, as_of=today)

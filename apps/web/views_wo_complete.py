@@ -51,6 +51,11 @@ Slice 29, a rental's, vendor loaner's, or demo unit's incoming inspection (equip
 rental checklist (inspections.TEMPORARY_INCOMING, the incoming checklist with the owner's PM label), and the modal says so; Passed never
 says its PMs start (its owner maintains it); and while its owner's PM date has passed (inspections.owner_pm_refusal, completion's
 refusal of Passed) the modal says so before anything is filled in, and Passed's hint says it waits for the owner's PM.
+
+Slice 30, checks after a repair (apps.workorders.repair_checks): a repair's modal asks how it ended ("After the repair":
+completion.repair_outcomes, checked by the vendor only on vendor service for a user who sees the whole facility),
+each choice saying what it does to the device (_repair_hints), the vendor's service report number, and the post-repair checklist
+(completion.procedure_for), which the form sends only with checked and ready for use. The toast says it (completion.repair_note).
 """
 
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -65,7 +70,7 @@ from apps.pm.windows import windows
 from apps.workorders import completion, costs, inspections, scoping
 from apps.workorders import permissions as wo_perms
 from apps.workorders import services as wo_services
-from apps.workorders.models import OPEN_STATUSES, InspectionResult, PmResult, ServiceRequest, Source, WoStatus, WoType
+from apps.workorders.models import OPEN_STATUSES, InspectionResult, PmResult, RepairCheck, ServiceRequest, Source, WoStatus, WoType
 
 from . import views_wo_late
 from .decorators import web_view
@@ -138,9 +143,11 @@ def _number(user, wo) -> str:
 
 def _offers(wo, user, today) -> dict:
     """A failed PM's options, as the modal offers them: the repair a failure goes to, and whether tagging out applies. Slice 26, an
-    incoming inspection's (_inspection_offers)."""
+    incoming inspection's (_inspection_offers). Slice 30, a repair's outcomes (_repair_offers)."""
     if wo.type == WoType.INSPECTION:
         return _inspection_offers(wo, user, today)
+    if wo.type == WoType.REPAIR:
+        return _repair_offers(wo, user)
     if wo.type != WoType.PM:
         return {"own_repair": None, "other_repair": None, "offer_open_repair": False, "offer_tag_out": False}
     own = completion.own_open_repair(wo)  # the PM's own repair whoever completes it (its number only if in their share: _number)
@@ -172,6 +179,25 @@ def _inspection_offers(wo, user, today=None) -> dict:
             "kept_pass": kept_pass, "owner_pm_refusal": owner_pm,
             "reinspection": existing, "reinspection_number": _number(user, existing), "reinspection_vendor": vendor, "reinspection_tech": tech,
             "reinspection_days": inspections.REINSPECTION_DUE_DAYS, "inspection_hints": hints}
+
+
+def _repair_offers(wo, user) -> dict:
+    """A repair's outcomes as the modal offers them (slice 30): those `user` may choose (completion.repair_outcomes), each with what it
+    does to the device (_repair_hints)."""
+    return {"own_repair": None, "other_repair": None, "offer_open_repair": False, "offer_tag_out": False,
+            "repair_outcomes": completion.repair_outcomes(wo, user), "offer_vendor_report": completion.vendor_report_allowed(wo, user),
+            "repair_hints": _repair_hints(wo)}
+
+
+def _repair_hints(wo) -> dict:
+    """What each outcome does to this repair's device (slice 30): back in service when this repair is what holds it out
+    (wo_services.returns_device), else it stays as it is; not returned to use keeps it out."""
+    asset = wo.asset
+    back = wo_services.returns_device(wo)
+    stays = "goes back into service" if back else f"stays {asset.get_status_display().lower()}"
+    return {RepairCheck.PASSED: f"Every check recorded, none failed; {asset.tag} {stays}",
+            RepairCheck.VENDOR_REPORT: f"Their service report's number; {asset.tag} {stays}",
+            RepairCheck.NOT_RETURNED: f"Beyond repair, to be retired, or going back; {asset.tag} stays out of service"}
 
 
 def _inspection_hints(wo, existing) -> dict:
@@ -229,7 +255,8 @@ def _form_kwargs(wo, steps, offers, hours, late) -> dict:
     return {"steps": steps, "is_pm": wo.type == WoType.PM, "offer_open_repair": offers["offer_open_repair"], "offer_tag_out": offers["offer_tag_out"],
             "offer_hours": hours["offer_hours"], "offer_late_reason": offer is not None, "late_first": bool(offer and offer["prominent"]),
             "late_recorded": offer["recorded"] if offer else "",
-            "is_inspection": wo.type == WoType.INSPECTION, "kept_pass": offers.get("kept_pass", False)}  # slice 26
+            "is_inspection": wo.type == WoType.INSPECTION, "kept_pass": offers.get("kept_pass", False),  # slice 26
+            "is_repair": wo.type == WoType.REPAIR}  # slice 30
 
 
 def _late(request, wo, today) -> dict:
@@ -284,6 +311,10 @@ def _modal(request, wo, form=None, *, steps=(), offers=None, hours=None, late=No
         "is_inspection": is_inspection, "incoming_checklist": inspections.is_incoming_checklist(procedure),
         "rental_checklist": getattr(procedure, "temporary", False),  # slice 29: inspections.TEMPORARY_INCOMING
         "inspection_results": form.inspection_options((offers or {}).get("inspection_hints")) if form is not None and is_inspection else [],
+        # Slice 30: a repair's outcomes and its checks after it
+        "is_repair": wo.type == WoType.REPAIR,
+        "repair_options": (form.repair_options((offers or {}).get("repair_outcomes", ()), (offers or {}).get("repair_hints"))
+                           if form is not None and wo.type == WoType.REPAIR else []),
         "has_checklist": bool(steps), "step_choices": STEP_CHOICES, "reading_max": completion.READING_MAX, **(offers or {}),
         **_follow_up(wo),
         "requester_emailed": _requester_email(wo),
@@ -345,6 +376,8 @@ def _message(request, wo, done, late_given: bool = False) -> str:
     logged = f"; {costs.plain(done.labor.hours)} h logged" if done.labor is not None else ""
     if wo.type == WoType.INSPECTION:
         return _inspection_message(request, wo, done) + logged
+    if wo.type == WoType.REPAIR and wo.repair_check:  # slice 30: "Checked after repair; CE-10241 back in service"
+        return f"{wo.number} completed: {completion.repair_note(wo, done)}{logged}"
     if wo.type != WoType.PM:
         return f"{wo.number} completed{logged}"
     note = completion.result_note(wo.pm_result, done)

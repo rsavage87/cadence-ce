@@ -23,6 +23,7 @@ from apps.workorders import completion, inspections
 from apps.workorders import services as wo_services
 from apps.workorders.completion import checklist_of, checklist_signature, complete_work_order, procedure_for
 from apps.workorders.models import InspectionResult, PmResult, WorkOrder, WorkOrderNote, WoStatus, WoType
+from apps.workorders.repair_checks import POST_REPAIR
 from apps.workorders.services import assign, change_status, create_work_order
 
 S = AssetStatus
@@ -66,7 +67,7 @@ def test_an_inspection_uses_the_models_procedure_else_the_incoming_checklist(ctx
     wo = WorkOrder.objects.get(pk=wo.pk)
     assert procedure_for(wo) == proc and checklist_of(procedure_for(wo)) == checklist_of(proc)
     repair = create_work_order(asset=a, type=WoType.REPAIR, priority="normal", problem="Dented")
-    assert procedure_for(repair) is None
+    assert procedure_for(repair) is POST_REPAIR  # slice 30: a repair's checks after it, never the model's procedure
 
 
 def test_the_incoming_checklist_is_recorded_with_its_leakage_reading(ctx, today, vent_model, techs):

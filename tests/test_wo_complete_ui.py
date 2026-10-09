@@ -5,6 +5,7 @@ import json
 from datetime import date
 
 import pytest
+from repair_fixtures import CHECKED, checked_post
 
 from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel
 from apps.pm.models import PmProcedure
@@ -90,7 +91,7 @@ def test_roles_with_work_orders_edit_open_and_post_it(client, signed_in, repair,
         user.company = "Hamilton Medical"
         user.save()
     assert client.get(url(repair), **HX).status_code == 200
-    r = client.post(url(repair), {"resolution": "Replaced the flow sensor"}, **HX)
+    r = client.post(url(repair), checked_post(resolution="Replaced the flow sensor"), **HX)  # slice 30: its checks after repair
     repair.refresh_from_db()
     assert r.status_code == 200 and repair.status == WoStatus.COMPLETED and r["HX-Retarget"] == "#drawer"
 
@@ -149,11 +150,15 @@ def test_a_pm_shows_its_checklist_result_choices_and_failure_options(client, sig
     assert "Mark the rest pass" in body and 'hx-vals=\'{"fill": "pass"}\'' in body
 
 
-def test_a_repair_shows_only_its_resolution(client, signed_in, repair):
+def test_a_repair_shows_how_it_ended_its_checks_after_repair_and_its_resolution(client, signed_in, repair):
+    """Slice 30: a repair asks how it ended and shows the post-repair checklist (never the model's PM procedure), then its resolution,
+    which stays required; nothing of a PM's."""
     signed_in("technician")
     body = client.get(url(repair), **HX).content.decode()
-    assert 'placeholder="What was found and done. No patient information."' in body and "autofocus" in body
-    assert "pm_result" not in body and "step_1" not in body and "If the PM failed" not in body
+    assert 'placeholder="What was found and done. No patient information."' in body
+    assert "After the repair" in body and 'name="repair_check" value="passed"' in body and 'name="repair_check" value="not_returned"' in body
+    assert 'name="step_7"' in body and 'name="step_8"' not in body and "Checks after repair" in body
+    assert "pm_result" not in body and "If the PM failed" not in body
 
 
 def test_a_pm_without_a_procedure_asks_for_the_resolution(client, signed_in, vent, techs):
@@ -295,12 +300,13 @@ def test_a_failure_recorded_on_the_open_repair(client, signed_in, pm, vent, tech
 
 def test_a_repair_answers_with_its_resolution(client, signed_in, repair):
     signed_in("technician")
-    r = client.post(url(repair), {"resolution": "Replaced the flow sensor"}, **HX)
+    r = client.post(url(repair), checked_post(resolution="Replaced the flow sensor"), **HX)
     events = triggers(r)
-    assert events["toast"]["value"] == f"{repair.number} completed" and "devices-changed" not in events  # nothing on the device moved
+    # slice 30: the toast says its checks; nothing on the device moved (it stayed in service)
+    assert events["toast"]["value"] == f"{repair.number} completed: Checked after repair" and "devices-changed" not in events
     body = r.content.decode()
     assert "<h3>Resolution</h3>" in body and "Replaced the flow sensor" in body and "PM result" not in body
-    error = client.post(url(started(repair.asset, type=WoType.REPAIR, tech=repair.assigned_to)), {"resolution": "  "}, **HX).content.decode()
+    error = client.post(url(started(repair.asset, type=WoType.REPAIR, tech=repair.assigned_to)), checked_post(resolution="  "), **HX).content.decode()
     assert "Say what was found and done." in error
 
 
@@ -308,9 +314,10 @@ def test_a_tagged_out_repair_returns_the_device_and_refreshes_the_devices(client
     wo = create_work_order(asset=vent, type="repair", priority="critical", problem="Dead", tag_out=True, assigned_to=techs["dana"])
     change_status(wo, WoStatus.IN_PROGRESS)
     signed_in("technician")
-    r = client.post(url(wo), {"resolution": "Replaced the power supply"}, **HX)
+    r = client.post(url(wo), checked_post(resolution="Replaced the power supply"), **HX)
     vent.refresh_from_db()
     assert vent.status == AssetStatus.IN_SERVICE and "devices-changed" in triggers(r)
+    assert triggers(r)["toast"]["value"] == f"{wo.number} completed: Checked after repair; CE-10001 back in service"
 
 
 def test_a_portal_request_says_its_done_email_carries_no_resolution(client, signed_in, ctx, vent, techs):
@@ -445,11 +452,11 @@ def test_a_failed_pm_holds_a_device_already_out_until_its_own_repair_is_done(pro
     follow_up = done.follow_up
     assert follow_up.tagged_out and not done.tagged_out  # held, not newly tagged out: it was out already
     change_status(portal, WoStatus.IN_PROGRESS)
-    complete_work_order(portal, resolution="Replaced the alarm speaker")
+    complete_work_order(portal, resolution="Replaced the alarm speaker", **CHECKED)
     vent.refresh_from_db()
     assert vent.status == AssetStatus.OUT_OF_SERVICE  # the PM's repair still holds it
     change_status(follow_up, WoStatus.IN_PROGRESS)
-    complete_work_order(follow_up, resolution="Replaced the leaking power supply; leakage 40 µA")
+    complete_work_order(follow_up, resolution="Replaced the leaking power supply; leakage 40 µA", **CHECKED)
     vent.refresh_from_db()
     assert vent.status == AssetStatus.IN_SERVICE  # the last hold returns it
 

@@ -4,6 +4,7 @@ from datetime import date
 from decimal import Decimal
 
 import pytest
+from repair_fixtures import CHECKED
 
 from apps.pm.models import PmProcedure
 from apps.workorders.models import PmResult, WoStatus, WoType
@@ -74,7 +75,7 @@ def closed_repair(ctx, vent, pump, techs):
     assign(wo, technician=techs["dana"])
     change_status(wo, WoStatus.IN_PROGRESS)
     costs.add_part(wo, description="Latch", quantity=1, unit_cost=Decimal("40"), by=None)
-    complete_work_order(wo, resolution="Replaced latch")
+    complete_work_order(wo, resolution="Replaced latch", **CHECKED)
     change_status(wo, WoStatus.CLOSED)
     return wo
 

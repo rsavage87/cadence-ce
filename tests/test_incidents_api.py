@@ -14,6 +14,7 @@ from django.db import connection
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from pg_helpers import as_app_role, needs_postgres
+from repair_fixtures import CHECKED
 from rest_framework.authtoken.models import Token
 
 from apps.accounts.models import DataScope, Level, Module, Role, User, create_default_roles
@@ -116,11 +117,12 @@ def custom_role(slug, levels, scope=""):
 
 
 def finish(client, techs, incident):
-    """The investigation done over the API, as a technician does it: assigned (a manager's), started, completed."""
+    """The investigation done over the API, as a technician does it: assigned (a manager's), started, completed with its checks after
+    repair (slice 30: checked and ready for use, so the device may return to use)."""
     wo = WorkOrder.objects.get(pk=incident["work_order"])
     assign(wo, technician=techs["dana"])
     ok(post(client, f"{API}work-orders/{wo.pk}/transition/", {"status": WoStatus.IN_PROGRESS}))
-    ok(post(client, f"{API}work-orders/{wo.pk}/transition/", {"status": WoStatus.COMPLETED, "resolution": "No fault found"}))
+    ok(post(client, f"{API}work-orders/{wo.pk}/transition/", {"status": WoStatus.COMPLETED, "resolution": "No fault found", **CHECKED}))
 
 
 # --- recording -------------------------------------------------------------------------------------------------------------------

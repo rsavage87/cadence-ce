@@ -19,6 +19,7 @@ from django.utils import timezone
 from incident_fixtures import held_incident, make_incident
 from incoming_fixtures import INCOMING_ALL_PASS, waiting_device
 from pg_helpers import as_app_role, needs_postgres
+from repair_fixtures import CHECKED, checked_post
 
 from apps.credentials.models import Technician
 from apps.equipment import services as eq
@@ -100,7 +101,7 @@ def test_no_work_but_the_investigation_starts_or_completes_on_a_held_device(vent
 def test_a_completed_work_order_is_not_reopened_while_the_device_is_held(vent, techs):
     wo = work(vent, tech=techs["dana"])
     change_status(wo, WoStatus.IN_PROGRESS)
-    complete_work_order(wo, resolution="Replaced the flow sensor")
+    complete_work_order(wo, resolution="Replaced the flow sensor", **CHECKED)
     held_incident(vent)
     with pytest.raises(ValidationError, match=HELD):
         change_status(wo, WoStatus.IN_PROGRESS)  # reopening is work on the device too
@@ -114,7 +115,7 @@ def test_the_investigation_starts_and_completes_and_leaves_the_device_held_and_o
     assert hold_blocker(investigation) == ""
     assign(investigation, technician=techs["dana"])
     change_status(investigation, WoStatus.IN_PROGRESS)
-    done = complete_work_order(investigation, resolution="Tested to the manufacturer's specification; no fault found")
+    done = complete_work_order(investigation, resolution="Tested to the manufacturer's specification; no fault found", **CHECKED)
     vent.refresh_from_db()
     assert investigation.status == WoStatus.COMPLETED and not done.device_changed
     assert vent.incident_hold and vent.status == AssetStatus.OUT_OF_SERVICE  # only the incident's release returns it
@@ -198,7 +199,7 @@ def test_the_drawers_start_and_mark_completed_refuse_held_work(client, vent, tec
     assert repair.status == pm.status == WoStatus.OPEN
     assign(incident.work_order, technician=techs["dana"])
     client.post(f"/work-orders/{incident.work_order.number}/status/", {"to": "in_progress"}, **HX)
-    client.post(f"/work-orders/{incident.work_order.number}/complete/", {"resolution": "No fault found"}, **HX)
+    client.post(f"/work-orders/{incident.work_order.number}/complete/", checked_post(resolution="No fault found"), **HX)
     incident.work_order.refresh_from_db()
     assert incident.work_order.status == WoStatus.COMPLETED
 
@@ -219,7 +220,8 @@ def test_the_apis_transition_refuses_held_work_and_moves_the_investigation(clien
     assign(investigation, technician=techs["dana"])
     r = post_json(client, f"{API}work-orders/{investigation.pk}/transition/", {"status": "in_progress"})
     assert r.status_code == 200
-    r = post_json(client, f"{API}work-orders/{investigation.pk}/transition/", {"status": "completed", "resolution": "No fault found"})
+    r = post_json(client, f"{API}work-orders/{investigation.pk}/transition/", {"status": "completed", "resolution": "No fault found",
+                                                                               **CHECKED})
     assert r.status_code == 200 and r.json()["status"] == WoStatus.COMPLETED
     vent.refresh_from_db()
     assert vent.incident_hold and vent.status == AssetStatus.OUT_OF_SERVICE
@@ -407,7 +409,7 @@ def test_a_repair_completed_while_its_device_is_being_held_waits_for_the_hold_an
 
     def complete():
         time.sleep(0.5)  # the hold takes the device's row first
-        complete_work_order(WorkOrder.objects.get(pk=repair.pk), resolution="Replaced the flow sensor")
+        complete_work_order(WorkOrder.objects.get(pk=repair.pk), resolution="Replaced the flow sensor", **CHECKED)
 
     threads = [threading.Thread(target=run, args=(call,)) for call in (hold, complete)]
     for t in threads:
@@ -453,6 +455,6 @@ def test_the_guard_reads_the_hold_under_the_policies(vent, techs):
         change_status(repair, WoStatus.IN_PROGRESS)
     assert with_held(WorkOrder.objects.filter(asset=vent)).filter(held=True).get() == repair
     change_status(incident.work_order, WoStatus.IN_PROGRESS)
-    complete_work_order(incident.work_order, resolution="No fault found")
+    complete_work_order(incident.work_order, resolution="No fault found", **CHECKED)
     vent.refresh_from_db()
     assert vent.incident_hold and vent.status == AssetStatus.OUT_OF_SERVICE

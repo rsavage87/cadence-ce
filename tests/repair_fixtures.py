@@ -7,9 +7,12 @@ the keyword arguments complete_work_order takes for a repair checked and ready f
   not N/A (the protective earth in ohms, the leakages in microamps).
 - CHECKED: complete_work_order(wo, resolution=..., **CHECKED) completes a repair as passed, every step passing.
 - checked_repair(**extra): CHECKED with more keyword arguments.
+- checked_post(**extra): the completion modal's fields (a web POST to /work-orders/<n>/complete/) for a repair checked and ready for
+  use, every step passing, with the checklist's signature; `extra` adds or replaces fields (resolution, hours, from, ...).
 """
+from apps.workorders.completion import checklist_of, checklist_signature
 from apps.workorders.models import RepairCheck
-from apps.workorders.repair_checks import POST_REPAIR_CHECKLIST
+from apps.workorders.repair_checks import POST_REPAIR, POST_REPAIR_CHECKLIST
 
 READINGS = {"Record Ω": "0.12 Ω", "Record leakage µA": "45 µA"}
 
@@ -26,3 +29,10 @@ CHECKED = {"repair_check": RepairCheck.PASSED, "results": POST_REPAIR_ALL_PASS}
 
 def checked_repair(**extra) -> dict:
     return {**CHECKED, **extra}
+
+
+def checked_post(*values, **extra) -> dict:
+    data = {"repair_check": RepairCheck.PASSED, "signature": checklist_signature(checklist_of(POST_REPAIR))}
+    for n, step in enumerate(post_repair_results(*values), 1):
+        data[f"step_{n}"], data[f"reading_{n}"] = step["result"], step["reading"]
+    return {**data, **extra}

@@ -32,6 +32,12 @@ rental or loaner adds them and inspected on the rental checklist: a rental bed w
 standing in for one of ours out for vendor repair (it arrived before the recall batch, so its recall work order went to its owner as
 vendor service); a demo monitor entered after it was dropped off on the unit, past its due back date with no owner's PM date (the
 Overview's attention list and one survey binder check); and a rental ventilator returned to its owner after a surge.
+
+Slice 30: every repair the demo completes records its checks after repair (apps.workorders.repair_checks) through
+completion.complete_work_order: checked and ready for use with every step passed (POST_REPAIR_RESULTS, a constant list that draws
+nothing from the demo's generators, so every later draw is as before), but for the patient monitor's closed vendor repair, checked by
+the vendor with their service report's number (VENDOR_REPORT_NUMBER), and one smart bed found beyond repair (NOT_RETURNED_*): not
+returned to use, then retired. The closed incident's investigation is checked before its release returns the monitor to use.
 """
 import random
 from datetime import date, datetime, time, timedelta
@@ -85,12 +91,14 @@ from apps.workorders.models import (
     PartLine,
     PmResult,
     Priority,
+    RepairCheck,
     ServiceRequest,
     Source,
     Urgency,
     WorkOrder,
     WoType,
 )
+from apps.workorders.repair_checks import POST_REPAIR_CHECKLIST
 from apps.workorders.services import assign, change_status, create_service_request, create_work_order, set_late_reason
 
 MODELS = [
@@ -255,6 +263,23 @@ LOANER_REPAIR_PROBLEM = "Occlusion alarm with no occlusion"
 DEMO_ENTERED_DAYS_AGO = 33  # the demo unit was dropped off on the unit by the vendor's rep; CE entered it a week later, already in use
 TEMPORARY_LEAKAGE = "18 µA"
 
+# Slice 30, checks after a repair (apps.workorders.repair_checks). Every step passed, the electrical steps with their readings (by
+# step: protective earth, equipment leakage, applied-part leakage). A constant: it draws nothing, so the demo's later draws stay as
+# they were.
+POST_REPAIR_READINGS = {1: "0.08 Ω", 2: "38 µA", 3: "12 µA"}
+POST_REPAIR_RESULTS = [{"result": "pass", "reading": POST_REPAIR_READINGS.get(i, "") if measure else ""}
+                       for i, (_text, measure) in enumerate(POST_REPAIR_CHECKLIST)]
+CHECKED = {"repair_check": RepairCheck.PASSED, "results": POST_REPAIR_RESULTS}
+VENDOR_REPORT_NUMBER = "FSR-26-118204"  # the patient monitor's closed vendor repair: Philips's field service report
+# The smart bed found beyond repair: not returned to use, then retired. The first bed of ours by tag in service with no open work, no
+# work since NOT_RETURNED_OPENED_DAYS_AGO, and no PM due within INCIDENT_CLEAR_DAYS (so retiring it cancels no PM work order).
+NOT_RETURNED_MODEL = "Centrella"
+NOT_RETURNED_OPENED_DAYS_AGO, NOT_RETURNED_DONE_DAYS_AGO = 20, 18
+NOT_RETURNED_PROBLEM = "Bed will not raise or lower"
+NOT_RETURNED_RESOLUTION = ("Lift actuator seized and the base frame cracked at a weld. Beyond economical repair: not returned to use, "
+                           "recommended for retirement.")
+NOT_RETURNED_RETIRED = "Beyond economical repair"
+
 
 def _noon(day: date) -> datetime:
     """Noon of `day` in the current time zone (the facility's, inside tenant_context): a backdated timestamp's moment."""
@@ -374,7 +399,7 @@ class Command(BaseCommand):
                     if done <= today - timedelta(days=1):
                         change_status(wo, "in_progress", as_of=d)
                         if not is_pm:
-                            complete_work_order(wo, resolution=outcomes.choice(REPAIR_RESOLUTIONS), today=done)
+                            complete_work_order(wo, resolution=outcomes.choice(REPAIR_RESOLUTIONS), today=done, **CHECKED)
                         elif failed_pm is None and day <= -FAIL_BEFORE_DAYS and self._can_fail(a):
                             failed_pm = self._failed_pm(wo, done)
                         else:
@@ -417,6 +442,7 @@ class Command(BaseCommand):
             assign_week(today=today)
             self._late_reasons(today)
             self._incidents(today, domain)
+            self._not_returned(today)
         devices = len(assets) + len(NEW_DEVICES) + len(TEMPORARY_DEVICES)
         self.stdout.write(self.style.SUCCESS(f"Seeded {tenant.name}: {devices} devices, {len(techs)} technicians. Sign in as {kim} / DemoPass-2026"))
         self._north_campus(tenant, opts)
@@ -493,7 +519,7 @@ class Command(BaseCommand):
                     if is_pm:
                         self._completed_pm(wo, done, outcomes)
                     else:
-                        complete_work_order(wo, resolution=outcomes.choice(REPAIR_RESOLUTIONS), today=done)
+                        complete_work_order(wo, resolution=outcomes.choice(REPAIR_RESOLUTIONS), today=done, **CHECKED)
                     change_status(wo, "closed", as_of=done)
         devices = sum(n for _model, n in NORTH_FLEET)
         self.stdout.write(self.style.SUCCESS(f"Seeded {north.name}: {devices} devices, {len(techs)} technicians. {kim.email} directs it too: "
@@ -577,7 +603,7 @@ class Command(BaseCommand):
         wo = incident.work_order
         assign(wo, technician=technician)
         change_status(wo, "in_progress", as_of=on["started"])
-        complete_work_order(wo, resolution=CLOSED_INCIDENT_RESOLUTION, today=on["completed"])
+        complete_work_order(wo, resolution=CLOSED_INCIDENT_RESOLUTION, today=on["completed"], **CHECKED)  # checked: it may return to use
         change_status(wo, "closed", as_of=on["completed"])
         incident_services.record_finding(incident, Finding.MET_SPECS, by=technician.user)
         incident_services.decide(incident, outcome=Outcome.NO_HARM, basis=Basis.NOT_SERIOUS, decided_on=on["decided"],
@@ -612,6 +638,25 @@ class Command(BaseCommand):
         Command._dated(incident, {"Recorded": occurred, "Held": occurred})
 
     @staticmethod
+    def _not_returned(today: date) -> None:
+        """Slice 30: a smart bed found beyond repair. Its repair, by a technician credentialed for it, completed as not returned to use
+        (the bed out of service), closed, and the bed retired. The bed's history is the seed's day like the rest of the fleet's (its
+        "Added" row too, so the rows read in order)."""
+        opened = today - timedelta(days=NOT_RETURNED_OPENED_DAYS_AGO)
+        done = today - timedelta(days=NOT_RETURNED_DONE_DAYS_AGO)
+        busy = WorkOrder.objects.filter(Q(status__in=OPEN_STATUSES) | Q(opened_on__gte=opened - timedelta(days=1))
+                                        | Q(completed_on__gte=opened - timedelta(days=1))).values("asset_id")
+        bed = (Asset.objects.filter(device_model__model=NOT_RETURNED_MODEL, ownership=Ownership.OWNED, status=AssetStatus.IN_SERVICE,
+                                    next_pm_on__gt=today + timedelta(days=INCIDENT_CLEAR_DAYS))
+               .exclude(pk__in=busy).order_by("tag").first())
+        wo = create_work_order(asset=bed, type=WoType.REPAIR, priority=Priority.NORMAL, problem=NOT_RETURNED_PROBLEM, requester="Unit staff",
+                               opened_on=opened, assigned_to=qualified_technicians(bed, opened)[0][0])
+        change_status(wo, "in_progress", as_of=opened)
+        complete_work_order(wo, resolution=NOT_RETURNED_RESOLUTION, repair_check=RepairCheck.NOT_RETURNED, today=done)
+        change_status(wo, "closed", as_of=done)
+        equipment.set_status(Asset.objects.get(pk=bed.pk), AssetStatus.RETIRED, note=NOT_RETURNED_RETIRED, today=today)
+
+    @staticmethod
     def _credential_lapse(today: date) -> None:
         """One credential that lapsed and was renewed, with a repair done during the lapse (the binder's staff section reads
         credentials as they stood each day, from their history). The credential was entered expired (the technicians above); its
@@ -626,7 +671,7 @@ class Command(BaseCommand):
                                opened_on=opened, assigned_to=technician)
         change_status(wo, "in_progress", as_of=opened)
         LaborLine.objects.create(work_order=wo, technician=technician, worked_on=done, hours=Decimal("1.25"), rate=82)
-        complete_work_order(wo, resolution=LAPSE_RESOLUTION, today=done)
+        complete_work_order(wo, resolution=LAPSE_RESOLUTION, today=done, **CHECKED)
         change_status(wo, "closed", as_of=done)
         renewed = today - timedelta(days=LAPSE_RENEWED_DAYS_AGO)
         renew_credential(credential, today=renewed)
@@ -776,7 +821,7 @@ class Command(BaseCommand):
             credentialed = qualified_technicians(repair.asset, done)
             assign(repair, technician=credentialed[0][0] if credentialed else wo.assigned_to)
         change_status(repair, "in_progress", as_of=done)
-        complete_work_order(repair, resolution=FAIL_REPAIR, today=done + timedelta(days=2))
+        complete_work_order(repair, resolution=FAIL_REPAIR, today=done + timedelta(days=2), **CHECKED)
         change_status(repair, "closed", as_of=done + timedelta(days=2))
         return wo
 
@@ -798,7 +843,8 @@ class Command(BaseCommand):
             if state == "closed":
                 done = opened + timedelta(days=3)
                 LaborLine.objects.create(work_order=wo, worked_on=done, hours=Decimal("2.5"), rate=labor_rates()["vendor"], description="Vendor service")
-                complete_work_order(wo, resolution=VENDOR_RESOLUTION, today=done)
+                complete_work_order(wo, resolution=VENDOR_RESOLUTION, repair_check=RepairCheck.VENDOR_REPORT,
+                                    checks_reference=VENDOR_REPORT_NUMBER, today=done)
                 change_status(wo, "closed", as_of=done)
 
     def _approved_aem(self, domain: str, today: date) -> None:

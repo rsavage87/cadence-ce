@@ -8,6 +8,7 @@ from io import StringIO
 import pytest
 from django.core.exceptions import ValidationError
 from django.core.management import call_command
+from repair_fixtures import CHECKED
 
 from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, RiskClass
 from apps.facility import services as fs
@@ -19,7 +20,7 @@ from apps.tenants.models import Tenant
 from apps.workorders import completion
 from apps.workorders import services as wo_services
 from apps.workorders.completion import checklist_signature, complete_work_order
-from apps.workorders.models import PmResult, Priority, Source, WorkOrder, WorkOrderNote, WoStatus, WoType
+from apps.workorders.models import PmResult, Priority, RepairCheck, Source, WorkOrder, WorkOrderNote, WoStatus, WoType
 from apps.workorders.services import assign, change_status, create_service_request, create_work_order
 
 TODAY = date.today()
@@ -66,17 +67,17 @@ def test_only_a_work_order_in_progress_is_completed(ctx, vent, techs):
     wo = create_work_order(asset=vent, type="repair", priority="high", problem="Alarm")
     assign(wo, technician=techs["dana"])
     with pytest.raises(ValidationError, match="has not been started"):
-        complete_work_order(wo, resolution="Fixed")
+        complete_work_order(wo, resolution="Fixed", **CHECKED)
     change_status(wo, WoStatus.AWAITING_PARTS)
     with pytest.raises(ValidationError, match="waiting on parts"):
-        complete_work_order(wo, resolution="Fixed")
+        complete_work_order(wo, resolution="Fixed", **CHECKED)
     change_status(wo, WoStatus.IN_PROGRESS)
-    complete_work_order(wo, resolution="Fixed")
+    complete_work_order(wo, resolution="Fixed", **CHECKED)
     with pytest.raises(ValidationError, match="already completed"):
-        complete_work_order(wo, resolution="Fixed again")
+        complete_work_order(wo, resolution="Fixed again", **CHECKED)
     change_status(wo, WoStatus.CLOSED)
     with pytest.raises(ValidationError, match="is closed"):
-        complete_work_order(wo, resolution="Fixed")
+        complete_work_order(wo, resolution="Fixed", **CHECKED)
     cancelled = create_work_order(asset=vent, type="repair", priority="high", problem="Alarm")
     change_status(cancelled, WoStatus.CANCELLED)
     assert completion.blocker(cancelled) == f"{cancelled.number} was cancelled."
@@ -86,16 +87,16 @@ def test_only_a_work_order_in_progress_is_completed(ctx, vent, techs):
 def test_an_unassigned_work_order_is_not_completed(ctx, vent):
     wo = started(vent, type=WoType.REPAIR)
     with pytest.raises(ValidationError, match="is not assigned"):
-        complete_work_order(wo, resolution="Fixed")
+        complete_work_order(wo, resolution="Fixed", **CHECKED)
     assign(wo, vendor_name="Hamilton Service")  # a vendor counts
-    assert complete_work_order(wo, resolution="Vendor replaced the blower").work_order.status == WoStatus.COMPLETED
+    assert complete_work_order(wo, resolution="Vendor replaced the blower", **CHECKED).work_order.status == WoStatus.COMPLETED
 
 
 def test_never_completed_before_it_was_opened(ctx, vent, techs):
     wo = started(vent, type=WoType.REPAIR, tech=techs["dana"], opened=TODAY - timedelta(days=3))
     with pytest.raises(ValidationError, match="before it was opened"):
-        complete_work_order(wo, resolution="Fixed", today=TODAY - timedelta(days=4))
-    done = complete_work_order(wo, resolution="Fixed", today=TODAY - timedelta(days=3))
+        complete_work_order(wo, resolution="Fixed", today=TODAY - timedelta(days=4), **CHECKED)
+    done = complete_work_order(wo, resolution="Fixed", today=TODAY - timedelta(days=3), **CHECKED)
     assert done.work_order.completed_on == TODAY - timedelta(days=3) and wo.completed_on == TODAY - timedelta(days=3)
 
 
@@ -107,7 +108,7 @@ def test_another_facilitys_work_order_is_refused(ctx, tenant, other_tenant, tech
         wo = create_work_order(asset=theirs, type="repair", priority="normal", problem="Alarm", assigned_to=None, vendor_service=True, vendor_name="GE")
         change_status(wo, WoStatus.IN_PROGRESS)
     with pytest.raises(ValidationError, match="from this facility"):
-        complete_work_order(wo, resolution="Fixed")
+        complete_work_order(wo, resolution="Fixed", **CHECKED)
     with tenant_context(other_tenant):
         wo.refresh_from_db()
         assert wo.status == WoStatus.IN_PROGRESS and wo.resolution == ""
@@ -122,13 +123,15 @@ def test_a_repair_needs_its_resolution_trimmed_and_within_the_limit(ctx, vent, t
                          ("x" * (completion.RESOLUTION_MAX + 1), "Keep the resolution to 1000 characters"),
                          ("Replaced \x00 sensor", "invisible control character")):
         with pytest.raises(ValidationError) as e:
-            complete_work_order(wo, resolution=bad)
-        assert message in errors_of(e)["resolution"]
+            complete_work_order(wo, resolution=bad, **CHECKED)
+        assert errors_of(e) == {"resolution": errors_of(e)["resolution"]} and message in errors_of(e)["resolution"]
     wo.refresh_from_db()
     assert wo.status == WoStatus.IN_PROGRESS
-    complete_work_order(wo, resolution="  Replaced the flow sensor.\r\nVerified per OEM procedure.  ")
-    assert wo.resolution == "Replaced the flow sensor.\nVerified per OEM procedure." and wo.pm_result == "" and wo.checklist_results == []
-    assert wo.status_history.last().note == ""  # the resolution is the record; the timeline says the status
+    complete_work_order(wo, resolution="  Replaced the flow sensor.\r\nVerified per OEM procedure.  ", **CHECKED)
+    assert wo.resolution == "Replaced the flow sensor.\nVerified per OEM procedure." and wo.pm_result == ""
+    # slice 30: no default resolution for a repair; its checks after it are recorded beside it, and the timeline says them
+    assert wo.repair_check == RepairCheck.PASSED and len(wo.checklist_results) == 7
+    assert wo.status_history.last().note == "Checked after repair"
 
 
 def test_other_types_need_a_resolution_and_record_no_pm_result(ctx, vent, techs):
@@ -143,7 +146,7 @@ def test_other_types_need_a_resolution_and_record_no_pm_result(ctx, vent, techs)
                 complete_work_order(wo, resolution="Done", results=[{"result": "pass"}])
             assert errors_of(e) == {"checklist": f"Record a result for each of the {len(completion.inspections.INCOMING_CHECKLIST)} steps."}
         else:
-            with pytest.raises(ValidationError, match="Only a PM or an incoming inspection records checklist results"):
+            with pytest.raises(ValidationError, match="Only a PM, an incoming inspection, or a repair records checklist results"):
                 complete_work_order(wo, resolution="Done", results=[{"result": "pass"}])
             with pytest.raises(ValidationError) as e:
                 complete_work_order(wo, resolution="Done", inspection_result="passed")
@@ -157,7 +160,7 @@ def test_a_completed_repair_still_returns_a_tagged_out_device(ctx, vent, techs):
     change_status(wo, WoStatus.IN_PROGRESS)
     vent.refresh_from_db()
     assert vent.status == AssetStatus.OUT_OF_SERVICE
-    done = complete_work_order(wo, resolution="Replaced the power supply")
+    done = complete_work_order(wo, resolution="Replaced the power supply", **CHECKED)
     vent.refresh_from_db()
     assert vent.status == AssetStatus.IN_SERVICE and done.device_changed and not done.tagged_out and done.follow_up is None
 
@@ -328,7 +331,7 @@ def test_a_failed_pm_opens_its_follow_up_repair_and_tags_the_device_out(ctx, ven
     assert list(vent_pm.follow_ups.all()) == [fu]
     # completing the repair returns the device, as a repair opened with the tag-out always has
     change_status(fu, WoStatus.IN_PROGRESS)
-    complete_work_order(fu, resolution="Replaced the line cord; leakage 30 µA", by=tech_user)
+    complete_work_order(fu, resolution="Replaced the line cord; leakage 30 µA", by=tech_user, **CHECKED)
     vent.refresh_from_db()
     assert vent.status == AssetStatus.IN_SERVICE
 
@@ -402,7 +405,7 @@ def test_a_failure_can_be_recorded_on_the_repair_already_open(ctx, vent, vent_pm
     assert vent_pm.resolution == f"PM failed on step 2; recorded on repair {repair.number}."
     assert vent.history.filter(status=AssetStatus.OUT_OF_SERVICE, history_change_reason=f"Tagged out: PM {vent_pm.number} failed").exists()
     change_status(repair, WoStatus.IN_PROGRESS)
-    complete_work_order(repair, resolution="Replaced the leaking seal")
+    complete_work_order(repair, resolution="Replaced the leaking seal", **CHECKED)
     vent.refresh_from_db()
     assert vent.status == AssetStatus.IN_SERVICE
 
@@ -462,7 +465,7 @@ def test_the_portal_done_email_still_goes_out(ctx, vent, techs, mailoutbox, djan
     assign(wo, technician=techs["dana"])
     change_status(wo, WoStatus.IN_PROGRESS)
     with django_capture_on_commit_callbacks(execute=True):
-        complete_work_order(wo, resolution="Replaced the alarm speaker")
+        complete_work_order(wo, resolution="Replaced the alarm speaker", **CHECKED)
     assert len(mailoutbox) == 1 and "is done" in mailoutbox[0].body and "speaker" not in mailoutbox[0].body
 
 
