@@ -33,7 +33,7 @@ from django.urls import reverse
 
 from apps.equipment.models import Asset, AssetStatus, Ownership, RiskClass
 from apps.workorders.models import OPEN_STATUSES, InspectionResult, PmResult, RepairCheck, Source, WorkOrder, WoStatus, WoType
-from apps.workorders.repair_checks import checked_by
+from apps.workorders.repair_checks import checked_by, last_completed_first
 
 from . import CHECK, DEVICE, WORK_ORDER, Figure, Gap, Period, Section, Table
 
@@ -92,11 +92,11 @@ def _rows(repairs):
 
 
 def _not_returned_devices() -> list[dict]:
-    """The devices whose last completed repair (by completed day, then number: equipment.services' order) ended not returned to use,
+    """The devices whose last completed repair (repair_checks.last_completed_first: by the moment it was completed) ended not returned to use,
     with that repair's number and day, whether a check was done since (a PM that did not fail, or a passed incoming inspection,
     completed on or after that day), and whether a repair is open on it now. One query, among the devices with such a repair."""
-    last = (WorkOrder.objects.filter(asset_id=OuterRef("pk"), type=WoType.REPAIR, status__in=DONE, completed_on__isnull=False)
-            .order_by("-completed_on", "-number"))
+    last = last_completed_first(WorkOrder.objects.filter(asset_id=OuterRef("pk"), type=WoType.REPAIR, status__in=DONE,
+                                                         completed_on__isnull=False))
     since = (WorkOrder.objects.filter(asset_id=OuterRef("pk"), status__in=DONE, completed_on__gte=OuterRef("last_on"))
              .filter((Q(type=WoType.PM) & ~Q(pm_result=PmResult.FAIL)) | Q(type=WoType.INSPECTION, inspection_result=InspectionResult.PASSED)))
     open_repair = WorkOrder.objects.filter(asset_id=OuterRef("pk"), type=WoType.REPAIR, status__in=OPEN_STATUSES)

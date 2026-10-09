@@ -31,7 +31,7 @@ from django.utils import timezone
 
 from apps.equipment import permissions as eq_perms
 from apps.equipment.models import Asset, AssetStatus, Ownership, RiskClass
-from apps.equipment.services import OWNED, USE_BEFORE_FROM, loaner_device_back, owner_maintains, status_label
+from apps.equipment.services import OWNED, USE_BEFORE_FROM, loaner_device_back, owner_maintains, repair_hold_message, status_label
 from apps.pm.dates import add_months
 from apps.pm.models import AemDecision, AemStatus
 from apps.pm.schedule import DEFAULT_PM_HOURS, planned_technicians
@@ -281,9 +281,10 @@ def incoming_banner(asset, user) -> dict | None:
     scoped = scoping.is_scoped(user)
     return {"lines": [_parts(line, numbers) for line in b.lines], "tone": "warn" if b.failed_on or b.in_use else "",
             "offer_open": b.offer_open and not scoped and user.has_level(wo_perms.MODULE, wo_perms.CREATE_LEVEL),
-            # slice 28: never for a device held as evidence (equipment.services.use_before_inspection refuses it: nobody uses it)
+            # slice 28: never for a device held as evidence (equipment.services.use_before_inspection refuses it: nobody uses it);
+            # slice 30 review fix: never while a repair holds it out (its checks failed, or it was tagged out)
             "use_before": (asset.status in USE_BEFORE_FROM and not asset.incident_hold and not scoped
-                           and eq_perms.can_use_before_inspection(user))}
+                           and eq_perms.can_use_before_inspection(user) and not repair_hold_message(asset))}
 
 
 # --- the device drawer's incident parts (slice 28) -------------------------------------------------------------------------------

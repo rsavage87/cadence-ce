@@ -8,7 +8,7 @@
   <div class="sec wr-repair"><h3>Checks after repair <span>{% if r.steps %}{{ r.steps|length }} step{{ r.steps|length|pluralize }} as recorded {{ wo.completed_on|date:"M j, Y" }}{% elif wo.repair_check == "vendor_report" %}the vendor's service report{% else %}none: not returned to use{% endif %}</span></h3>
     <div class="chips" style="margin-bottom:8px"><span class="chip {{ r.css }}">{{ r.label }}</span></div>
     {% if wo.repair_check == "not_returned" %}
-    <div class="note">{{ asset.tag }} did not go back into use after this repair{% if wo.completed_on %}, completed {{ wo.completed_on|date:"M j, Y" }}{% endif %}. Reopening it and completing it as checked returns it.</div>
+    <div class="note">{{ asset.tag }} did not go back into use after this repair{% if wo.completed_on %}, completed {{ wo.completed_on|date:"M j, Y" }}{% endif %}.{% if r.reopen_returns %} Reopening it and completing it as checked returns it.{% endif %}</div>{# review fix: only when it would #}
     {% else %}
     {% if r.inspector %}<p class="wr-by">Checked by {{ r.inspector }}{% if wo.completed_on %} on {{ wo.completed_on|date:"M j, Y" }}{% endif %}{% if wo.repair_check == "vendor_report" %} · service report <b class="mono">{{ wo.checks_reference }}</b>{% endif %}</p>{% endif %}
     {% if r.steps %}

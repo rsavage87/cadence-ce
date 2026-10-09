@@ -147,6 +147,9 @@ def results_context(request, wo) -> dict:
         "unrecorded": ((IMPORTED_NO_CHECK if wo.source == Source.IMPORTED else NO_REPAIR_CHECK)
                        if is_repair and done and not recorded else ""),
         "words": completion.REPAIR_CHECK_WORDS.get(result, "") if is_repair else "",  # "checked and ready for use"
+        # Review fix: a repair not returned to use says reopening it returns the device only when completing it as checked would
+        # (services.returns_device asked as if checked now: never a device retired, back in use, held, waiting, or held by another repair)
+        "reopen_returns": is_repair and result == RepairCheck.NOT_RETURNED and _returns_if_checked(wo),
         "steps": steps,
         "follow_ups": list(scoping.work_orders(request.user, wo.follow_ups.order_by("opened_on", "number"))) if is_pm or is_inspection else [],
         "follow_up_of": follow_up_of if follow_up_of is not None and scoping.can_see_work_order(request.user, follow_up_of) else None,
@@ -228,14 +231,19 @@ def _held_words(asset, user) -> str:
     return f"{asset.tag} stays held by Clinical Engineering"
 
 
+def _returns_if_checked(wo) -> bool:
+    """Whether completing the repair as checked now would put its device back in service (services.returns_device on a copy)."""
+    probe = copy.copy(wo)
+    probe.repair_check = RepairCheck.PASSED
+    return wo_services.returns_device(probe)
+
+
 def _checked_effect(wo, user) -> str:
     """What completing the repair as checked (or with the vendor's report) does to its device: back in service when this repair is what
     holds it out and nothing else does (workorders.services.returns_device, asked as if it were checked now: a reopened repair may still
     read not returned to use), else why it stays as it is."""
     asset, tag = wo.asset, wo.asset.tag
-    probe = copy.copy(wo)
-    probe.repair_check = RepairCheck.PASSED
-    if wo_services.returns_device(probe):
+    if _returns_if_checked(wo):
         return f"{tag} goes back into service"
     held = _held_words(asset, user)
     if held:

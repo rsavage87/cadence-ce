@@ -266,6 +266,9 @@ def _use_before_blocker(asset) -> str:
     Slice 28: a device held as evidence first (equipment.services.held_message: no incident number)."""
     if asset.incident_hold:
         return eq.held_message(asset)
+    held_by_repair = eq.repair_hold_message(asset)  # slice 30 review fix: a repair holding it out comes first
+    if held_by_repair:
+        return held_by_repair
     if not asset.awaiting_inspection:
         return f"{asset.tag} is not waiting for an incoming inspection."
     if asset.status not in eq.USE_BEFORE_FROM:

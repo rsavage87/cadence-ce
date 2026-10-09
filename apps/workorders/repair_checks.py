@@ -57,6 +57,19 @@ def is_post_repair_checklist(procedure) -> bool:
     return isinstance(procedure, RepairChecklist)
 
 
+def last_completed_first(qs):
+    """Work orders `qs`, the one completed last first: by the day completed, then by the moment its completion was recorded (the status
+    history's completed row), the number last (review fix: two repairs completed the same day are told apart by when, never by
+    number). For "a device's last repair" (the binder's repairs section, equipment.services.loaner_device_back)."""
+    from django.db.models import F, OuterRef, Subquery
+
+    from .models import WorkOrderStatusHistory, WoStatus
+
+    done_at = (WorkOrderStatusHistory.objects.filter(work_order=OuterRef("pk"), to_status=WoStatus.COMPLETED)
+               .order_by("-created_at").values("created_at")[:1])
+    return qs.annotate(done_at=Subquery(done_at)).order_by("-completed_on", F("done_at").desc(nulls_last=True), "-number")
+
+
 def checked_by(wo) -> str:
     """Who did a repair's checks, or an incoming inspection (the print, the drawer's results, the binder): the vendor on vendor service
     (their field engineer), else the technician assigned; never whoever completed it from the desk (IEC 62353 6.1 names the tester)."""

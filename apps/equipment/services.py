@@ -1060,6 +1060,9 @@ def use_before_inspection(asset: Asset, reason: str, *, by=None, today: date | N
     fresh = Asset.objects.select_for_update().get(pk=asset.pk)
     if fresh.incident_hold:  # slice 28: held as evidence, so nobody uses it
         raise ValidationError(held_message(fresh))
+    held_by_repair = repair_hold_message(fresh)  # slice 30 review fix: a repair holding it out (its checks failed, or it was tagged out)
+    if held_by_repair:
+        raise ValidationError(held_by_repair)
     if not fresh.awaiting_inspection:
         raise ValidationError(f"{fresh.tag} is not waiting for an incoming inspection.")
     if fresh.status not in USE_BEFORE_FROM:
@@ -1235,9 +1238,9 @@ def _open_vendor_repair():
 def _last_repairs():
     """Completed or closed repairs, the last first (slice 30: a device's last repair is the first of these on it)."""
     from apps.workorders.models import WorkOrder, WoStatus, WoType
+    from apps.workorders.repair_checks import last_completed_first
 
-    return (WorkOrder.objects.filter(type=WoType.REPAIR, status__in=(WoStatus.COMPLETED, WoStatus.CLOSED))
-            .order_by("-completed_on", "-number"))
+    return last_completed_first(WorkOrder.objects.filter(type=WoType.REPAIR, status__in=(WoStatus.COMPLETED, WoStatus.CLOSED)))
 
 
 def loaner_device_back(device) -> bool:

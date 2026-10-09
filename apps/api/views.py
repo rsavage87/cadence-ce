@@ -395,6 +395,7 @@ class WorkOrderViewSet(TenantViewSet):
                                                   "with status completed and repair_check."]})
         changed = [f for f, v in d.items() if v != getattr(wo, f)]
         self._check_investigation_change(wo, changed)
+        self._check_repair_hold_change(wo, changed)
         if changed and wo.status not in OPEN_STATUSES:
             raise DRFValidationError({"detail": f"{wo.number} is {wo.get_status_display().lower()}: what it records stays as it is. Reopen it first."})
         self._check_inspection_change(wo, d)
@@ -421,6 +422,25 @@ class WorkOrderViewSet(TenantViewSet):
                  "type": f"it stays a {wo.get_type_display().lower()}"}
         raise DRFValidationError({f: [f"{wo.number} is the investigation of {which}: {stays[f]}. Open the work order you need with POST "
                                       "/api/v1/work-orders/."] for f in fields})
+
+    @staticmethod
+    def _check_repair_hold_change(wo, changed):
+        """Slice 30 review fix: a repair's tag-out is set when it is opened (a tagged-out request), by a failed PM, or by a failed check
+        after repair (completion.keep_open), never by an edit; and an open repair holding its device out of use (tagged out, or its
+        device in repair) stays a repair on that device until it is completed with its checks after repair, or as not returned to
+        use. An edit that dropped the tag-out, made it another type, or moved it would end the hold, and the device could go back into
+        use by hand with no checks. Refused keyed by field."""
+        if "tagged_out" in changed:
+            raise DRFValidationError({"tagged_out": ["A tag-out is set when the request is opened or when a check fails, and ends when "
+                                                     "the repair is completed: POST /api/v1/work-orders/{id}/transition/."]})
+        fields = [f for f in ("asset", "type") if f in changed]
+        if not fields or wo.type != WoType.REPAIR or wo.status not in OPEN_STATUSES:
+            return
+        if not (wo.tagged_out or wo.asset.status == AssetStatus.IN_REPAIR):
+            return
+        stays = {"asset": f"it stays with {wo.asset.tag}", "type": "it stays a repair"}
+        raise DRFValidationError({f: [f"{wo.number} holds {wo.asset.tag} out of use: {stays[f]} until it is completed with its checks "
+                                      "after repair, or as not returned to use."] for f in fields})
 
     @staticmethod
     def _check_inspection_change(wo, d):
