@@ -1,12 +1,12 @@
 # Build plan
 
 The mock (`cadence-ce-cmms-mock.html`) is the spec. Each slice below is shippable on its own and ends with green tests.
-Slices 0 to 28 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
+Slices 0 to 29 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
 export and print, devices are added and changed in the product, reports and request confirmations go out by email, each
 device model's PM program (risk score, procedure, AEM interval) is kept in the product, and the work itself (time, parts,
 what was done, a PM's results) is recorded on the work order; vendors and clinical requesters see only their own share; facilities
 build their own reports, and a label opens its device with Scan tag; the API covers what the screens do, by session or token; every record's changes and every access change can be read back;
-staff get the emails they choose about their own work; each facility works on its own clock; one person signs in once to every facility they work at; a facility brings its records over from the CMMS it is leaving; technicians work from their phones on My work; a survey binder gathers the evidence surveyors ask for; new equipment is inspected before its first use; each facility says when a PM counts as on time; and a device suspected in a death or serious injury is held as evidence and reported on the Safe Medical Devices Act's clock. What each slice deferred is noted in its row and below.
+staff get the emails they choose about their own work; each facility works on its own clock; one person signs in once to every facility they work at; a facility brings its records over from the CMMS it is leaving; technicians work from their phones on My work; a survey binder gathers the evidence surveyors ask for; new equipment is inspected before its first use; each facility says when a PM counts as on time; a device suspected in a death or serious injury is held as evidence and reported on the Safe Medical Devices Act's clock; and rentals, vendor loaners, and demo units are on the inventory while on site, inspected before use, and returned to their owners. What each slice deferred is noted in its row and below.
 
 | # | Slice | Mock screen(s) | Code | Status |
 |---|-------|----------------|------|--------|
@@ -39,6 +39,7 @@ staff get the emails they choose about their own work; each facility works on it
 | 26 | Incoming inspections | (none: Add device, the device drawer, Mark completed for an inspection) | `equipment` + `workorders` + `reports` + `web` + `api` | done (a temporary-equipment kind for loaners and rentals, and bulk new devices through the importer, deferred) |
 | 27 | PM completion window | (none: Settings, PM on-time window; every on-time figure) | `facility` + `pm` + `reports` + `workorders` + `web` + `api` | done (an interval-scaled window and judging each PM by the window in force on its due date deferred) |
 | 28 | Device incidents | (none: Incidents; the device and work order drawers' hold; Record incident) | new `incidents` + `core` + `accounts` + `equipment` + `workorders` + `pm` + `reports` + `notifications` + `web` + `api` | done (the annual report (Form 3419), voluntary reports, a custody log, 3500A prefill, and a printable event file deferred) |
+| 29 | Loaners and rentals | (none: Equipment, Add rental or loaner; the device drawer's temporary section) | `equipment` + `workorders` + `contracts` + `recalls` + `incidents` + `reports` + `pm` + `imports` + `web` + `api` | done (one record per arrival; Arrived again, a CE-maintained rental, accepting the owner's delivery check, API writes, and rental cost deferred) |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.
@@ -424,3 +425,22 @@ The mock's export and print buttons work since slice 11, Add device since slice 
   order before any one of them, before the work order numbering, and before the device's row; an investigation's device and type never
   change through the API; a held device's PM tab and route sheets say it waits for the incident's release; the API's incident links name
   their facility; a report date left out keeps what the locked row has.
+- Loaners and rentals (slice 29, beyond the mock; slice 26 deferred it and the binder listed it as not covered): equipment on site that
+  the facility does not own (rentals, vendor loaners, demo or evaluation units) is on the inventory while here (CMS's inventory and its
+  incoming date, the Joint Commission's initial check, DNV PE.7's rental equipment). `Asset.ownership` and one stay per device record
+  (owner, an agreement, PO, or RMA number as a token, arrived, due back, the owner's PM date from its sticker, stands in for); one record
+  per arrival, an earlier stay of the same unit named by model and serial. The owner maintains it: no next PM, no PM work orders,
+  SupportType "Owner maintains", repairs and recall actions as vendor service named for the owner (`service_vendor`), an incoming
+  inspection on a short rental checklist that is never passed while the owner's PM date is past (unless it was already on site when
+  entered). Return to owner records cleaning (OSHA bloodborne pathogens) and patient data (HIPAA disposal), and the device is retired,
+  read "Returned to owner"; Keep it (Approve) makes it ours with a price and a first PM (AEM evidence counts it from that day). The
+  counting rule (`equipment.services.OWNED`): CE's program and fleet figures (PM compliance, AEM, COSR, uptime, MTBF, replacement, the
+  support rows, the PM library) count ours only; work orders, recalls, and incidents count every device. The Overview lists units past
+  due back and loaners whose device is back; the binder lists what is on site, with a gap for an owner's PM date past (or missing on
+  life support and high risk). Deferred: Arrived again (one record across stays), a CE-maintained option for long rentals, accepting the
+  owner's documented delivery check, API writes for temporary devices, rental cost, due-back emails, an ownership column in the devices
+  import, patient-owned equipment, loaner instrument sets. Rules settled in review: the work orders import never brings a PM onto a
+  temporary device (so no PM figure counts one); a returned device reads "Returned to owner" in its history and in every refusal,
+  never "retired"; a lost unit leaves by Return to owner as "not in hand" (the one choice for a missing unit); the risk bands count
+  ours, as the inventory does; a device of ours is back (its loaner can go) only once no vendor repair is open on it
+  (`loaner_device_back`); a held rental whose owner's PM has lapsed is a binder finding explained by its hold, never a gap.

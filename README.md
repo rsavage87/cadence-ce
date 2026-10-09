@@ -208,6 +208,19 @@ work order lists still call a PM past its due date overdue, and a PM finished in
 date, so the schedule never drifts. A change counts every PM by the new window, past months included, is recorded with who made it, and
 the survey binder notes it; the default PM policy lines follow the window, and Settings warns when a line the facility wrote disagrees.
 
+## Loaners and rentals
+Equipment on site that the facility does not own (rentals such as specialty beds or surge pumps, vendor loaners sent while one of ours
+is out for repair, demo or evaluation units) goes on the inventory while it is here: Equipment's "Add rental or loaner" (or "Vendor
+loaner arrived" on the device it stands in for) records whose it is, the owner, the agreement, PO, or RMA number, when it arrived and is
+due back, and the owner's PM date from its sticker. It is inspected before first use like any new device, on a short rental checklist that
+checks the owner's PM label (a unit whose owner's PM is past is not passed), unless it was already on site when entered. Its owner
+maintains it: Cadence opens no PMs on it, a repair or recall work order goes to the owner as vendor service, and it never counts in PM
+compliance, AEM evidence, cost of service, uptime, MTBF, or replacement planning (it does count in work order and recall figures). Return
+to owner records how it was cleaned and what was done about patient data, and the device then reads "Returned to owner"; Keep it (a CE
+manager) makes a bought demo or rental ours, with its price and a first PM. A unit that comes back later is entered again under the tag on
+it then, and Cadence names the earlier record by its serial number. The Overview lists units past their due back date and loaners whose
+device is back; the survey binder's inventory section lists what is on site with each owner's PM date.
+
 ## Device incidents
 When a device in Cadence may have played a part in a patient's or a staff member's death, serious injury, or serious illness, the
 Incidents screen (or Record incident on the device, or on the repair request it was reported as) records it in a few choices: the day

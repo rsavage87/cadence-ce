@@ -121,7 +121,15 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   inspection"), and update_asset and set_status work on the device's row as it is, locked (`_locked_row`), never a caller's older copy;
   slice 28: `incident_hold`, held as evidence by an open incident, written only by `set_incident_hold` / `clear_incident_hold`;
   set_status refuses every move while it is set, status_label reads "Held for incident" first, and `_locked_row` takes the device's open
-  work orders in number order before its row: `workorders.services.lock_work`, the lock order every writer of a device's work keeps),
+  work orders in number order before its row: `workorders.services.lock_work`, the lock order every writer of a device's work keeps;
+  slice 29: `ownership` (`Ownership`: ours, rental, vendor loaner, demo) with a temporary device's stay on its own record (owner,
+  `owner_reference` a token, arrived, due back, the owner's PM date, returned, kept, `stands_in_for`, the return's cleaning and patient
+  data), written only by create_asset and `add_temporary_device` / `update_temporary` / `return_to_owner` (the shared `_retire` body) /
+  `keep_temporary_device` (Approve); its owner maintains it (`owner_maintains`: no next PM, no PM work orders, SupportType.OWNER); a
+  returned one is RETIRED and reads "Returned to owner"; `OWNED` / `WORK_ORDER_OWNED` are the counting rule (CE-program and fleet figures
+  count ours only; work, recalls, and incidents count every device); `service_vendor` names a work order's vendor (a temporary device's
+  owner first); one record per arrival, `matching_returned` finds an earlier stay by model and serial; `loaner_device_back` / `loaner_back_q`
+  the one rule for a loaner's device being back: in service or retired with no vendor repair open),
   CSV importer; `services.py` fleet queries plus adding devices, models, and departments, editing (`update_asset`,
   `update_device_model`, `rename_department`: names unique in any letter case), and status changes
   (`STATUS_CHANGES`; retiring cancels open PMs), risk scoring (`set_risk_score`, `clear_risk_score`, `RISK_SCORE_BANDS`; every model
@@ -155,6 +163,8 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   orders imported from another system (slice 23: `legacy_number`, the previous number, unique per facility; `Source.IMPORTED`; created in
   their final state with backdated status rows, never emailing or changing the device; their lines through costs.py's import-only writers,
   in-house hours that name no technician here as an in-house cost line, never vendor time; imported labor never fills a technician's live day);
+  slice 29: no PM on a temporary device (`no_pm_message`), its incoming inspection on `inspections.TEMPORARY_INCOMING` and refused a
+  pass while its owner's PM date is past (`owner_pm_refusal`), recall batches give its recall work order to its owner;
   slice 28, a device held as evidence (Asset.incident_hold): `change_status` refuses a start or completion (`HOLD_MOVES`) of any of its
   work orders but the investigation of an open incident holding it (by identity: incidents.services.investigation_of), read on the
   device's row locked after its work (`_lock_for_hold`, `lock_work`: a device's open work orders in number order, then its row, the
@@ -217,14 +227,17 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   All facilities (each joined facility's Overview figures read inside it with the person's account there, totals from summed parts);
   slice 25, `survey/` the survey binder (the contract in `__init__.py`: Period, Section, Table with lazy rows, Gap kinds gap / finding /
   check, `binder()`; one module per section: program, inventory, maintenance, aem, inspections, recalls, incidents (slice 28, Incidents
-  View: decisions and reports against the clock; a held device past its PM is a finding, explained), staff; read only, a fixed number
+  View: decisions and reports against the clock; a held device past its PM is a finding, explained), staff (slice 29: inventory lists
+  temporary equipment on site with each owner's PM date: a past one is a gap; the other sections count ours); read only, a fixed number
   of queries, history through `core.history._rows`, never requester text; each section needs Reports View plus its areas' View,
   `permissions.SURVEY_NEEDS` / `survey_refusal`; never in REPORTS, so never emailed)
 - `apps/web` HTMX UI: one views/urls/forms module per screen (`views.py` Overview, Equipment, Work orders; `views_contracts.py`;
   `views_users.py` Users and Roles tabs; `views_account.py` sign-in, password reset and change; `views_invite.py` accepting an invitation; `views_credentials.py`; `views_recalls.py`; `views_reports.py` with the CSV download and `views_custom_reports.py` the custom report builder (with `reports_custom.py`); `views_settings.py`; `views_pm.py` with `pm_panels.py` for its lower panels; `views_pm_week.py` Auto-assign week; `views_wo_costs.py` and `views_wo_complete.py` the work order drawer's labor and parts and its Mark completed; `views_models.py` the device model drawer (PM program tab, Add model, Edit details, risk score) with `views_procedures.py` and `views_aem.py` for its Procedure and AEM tabs; `views_exports.py` the list CSVs; `views_scan.py` Scan tag (with `static/web/scan.js`, the camera where the browser reads codes); `history_tabs.py` the
   History tab or section of the device, work order, contract, and model drawers; `views_change_log.py` Users and access's Change log
   (with its CSV and print); `views_notifications.py` the account menu's Notifications page; `views_facilities.py` the facility switch and
-  an invitation's join page, `views_my_work.py` My work (slice 24: the cards, `wo_waiting`, `from=my_work` answers without the drawer), `views_settings.py`'s `settings_pm_window` the PM on-time window panel (slice 27), `views_incidents.py` Incidents (slice 28, with
+  an invitation's join page, `views_my_work.py` My work (slice 24: the cards, `wo_waiting`, `from=my_work` answers without the drawer), `views_settings.py`'s `settings_pm_window` the PM on-time window panel (slice 27), `views_temporary.py` loaners and rentals (slice 29, with `forms_temporary.py`: Add rental or
+  loaner, the drawer's temporary section (`asset_tabs.temporary_box`), Change details, Return to owner, Keep it, Vendor loaner arrived,
+  Return the loaner; the Equipment "Whose" filter through `forms.equipment_assets`), `views_incidents.py` Incidents (slice 28, with
   `forms_incidents.py`: the list and its CSV, Record incident (from the page, the device drawer, or an open repair's drawer, which it
   adopts), the drawer and its actions; the hold's banner on the device and work order drawers through `asset_tabs.incident_box`, held
   work's chip on My work, "Held" on the PM day panel and Auto-assign week), `views_survey.py` the survey
@@ -275,4 +288,5 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
 - `apps/demo` seed data (Riverside Regional, and Riverside North Campus with Kim linked: the demo shows the facility menu; slice 25: a few
   deliberate survey binder items, such as a late life-support PM with no reason, a new device in service with no incoming inspection, and
   work done during a credential's lapse; slice 28: two device incidents through the services, one closed, one open with its device held
-  and its report due in a few work days)
+  and its report due in a few work days; slice 29: a rental bed, a vendor loaner for a pump out for vendor repair, a demo unit past due
+  back, a returned rental)
