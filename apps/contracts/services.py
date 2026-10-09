@@ -1,7 +1,8 @@
 """
 Contract lifecycle and the Contracts screen queries. Views call these; they never edit contract or
 asset fields directly. Coverage follows the mock: a device is on at most one contract, and its
-support type follows that contract's type (Asset.save keeps it in sync).
+support type follows that contract's type (Asset.save keeps it in sync). Slice 29: a rental, vendor loaner, or demo unit goes on
+no contract (its owner maintains it): add_asset refuses one, and add_model and the drawer's pickers leave them out.
 """
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -13,7 +14,8 @@ from django.db import transaction
 from django.db.models import Count, Exists, OuterRef, Q, Sum
 from django.utils import timezone
 
-from apps.equipment.models import Asset, AssetStatus, DeviceModel
+from apps.equipment.models import Asset, AssetStatus, DeviceModel, Ownership
+from apps.equipment.services import OWNED, owner_maintains
 from apps.pm.dates import add_months
 
 from .models import Contract, ContractType, Coverage
@@ -109,8 +111,22 @@ def delete_contract(contract: Contract) -> int:
     return sum(1 for a in assets if a.status != AssetStatus.RETIRED)
 
 
+def temporary_refusal(asset: Asset) -> str:
+    """Why a temporary device (slice 29: a rental, vendor loaner, or demo unit) goes on no contract of ours, or "" for one of ours: its
+    owner maintains it. A returned one says so, never "retired"."""
+    if not owner_maintains(asset):
+        return ""
+    if asset.status == AssetStatus.RETIRED:
+        return f"{asset.tag} was returned to its owner and cannot be put on a contract."
+    return f"{asset.tag} is a {Ownership(asset.ownership).label.lower()}: its owner maintains it, so it goes on no service contract here."
+
+
 def add_asset(contract: Contract, asset: Asset):
-    """Puts one device on the contract. Returns the contract it left, or None if it was in-house or already here."""
+    """Puts one device on the contract. Returns the contract it left, or None if it was in-house or already here. Slice 29: a
+    temporary device is refused in words (temporary_refusal)."""
+    refusal = temporary_refusal(asset)
+    if refusal:
+        raise ValidationError(refusal)
     if asset.status == AssetStatus.RETIRED:
         raise ValidationError(f"{asset.tag} is retired and cannot be put on a contract.")
     previous = asset.contract if asset.contract_id and asset.contract_id != contract.id else None
@@ -118,10 +134,15 @@ def add_asset(contract: Contract, asset: Asset):
     return previous
 
 
+def model_devices(contract: Contract, device_model: DeviceModel):
+    """The devices add_model puts on the contract: the model's devices of ours in use (any status but retired) that are not on it yet.
+    Slice 29: never a temporary device (its owner maintains it). The API reads them first, to say where each came from."""
+    return Asset.objects.filter(OWNED, device_model=device_model, status__in=Asset.ACTIVE_STATUSES).exclude(contract=contract)
+
+
 def add_model(contract: Contract, device_model: DeviceModel) -> int:
-    """Every active device of the model that is not already on this contract; returns how many moved."""
-    assets = Asset.objects.filter(device_model=device_model, status__in=Asset.ACTIVE_STATUSES).exclude(contract=contract)
-    return contract.add_assets(list(assets))
+    """Every active device of ours of the model that is not already on this contract (model_devices); returns how many moved."""
+    return contract.add_assets(list(model_devices(contract, device_model)))
 
 
 def remove_asset(contract: Contract, asset: Asset):
@@ -174,25 +195,32 @@ def covered_devices(contract: Contract, q: str = "") -> dict:
 
 
 def model_options(contract: Contract):
-    """Device models with active devices not on this contract, annotated with that count (the drawer's "Add all" select)."""
-    elsewhere = Q(assets__status__in=Asset.ACTIVE_STATUSES) & (Q(assets__contract__isnull=True) | ~Q(assets__contract=contract))
+    """Device models with active devices not on this contract, annotated with that count (the drawer's "Add all" select). Slice 29:
+    devices of ours only (model_devices: a rental, vendor loaner, or demo unit goes on no contract)."""
+    elsewhere = (Q(assets__status__in=Asset.ACTIVE_STATUSES) & Q(assets__ownership=Ownership.OWNED)
+                 & (Q(assets__contract__isnull=True) | ~Q(assets__contract=contract)))
     return DeviceModel.objects.annotate(n=Count("assets", filter=elsewhere)).filter(n__gt=0)
 
 
 def pick_devices(contract: Contract, q: str, limit: int = 6):
-    """Device picker for the drawer: active devices by tag, serial, or model that are not already on this contract."""
+    """Device picker for the drawer: active devices of ours (slice 29: never a temporary device) by tag, serial, or model that are not
+    already on this contract."""
     q = (q or "").strip()
     if len(q) < 2:
         return Asset.objects.none()
-    return (Asset.objects.exclude(status=AssetStatus.RETIRED).exclude(contract=contract).select_related("device_model", "department", "contract")
+    return (Asset.objects.filter(OWNED).exclude(status=AssetStatus.RETIRED).exclude(contract=contract)
+            .select_related("device_model", "department", "contract")
             .filter(Q(tag__icontains=q) | Q(serial__icontains=q) | Q(device_model__model__icontains=q) | Q(device_model__description__icontains=q))[:limit])
 
 
 # --- the screen --------------------------------------------------------------------------------------
 
 def contracts_summary(today: date | None = None) -> dict:
+    """The Contracts screen's head: contracts, their annual cost against the fleet's value, and coverage. The fleet is ours in use
+    (slice 29's counting rule, equipment.services.OWNED: a rental, vendor loaner, or demo unit is never covered, so counting it would
+    lower the covered share for equipment the facility does not own)."""
     today = today or timezone.localdate()
-    fleet = Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES)
+    fleet = Asset.objects.filter(OWNED, status__in=Asset.ACTIVE_STATUSES)
     agg = fleet.aggregate(n=Count("id"), value=Sum("acquisition_cost"))
     fleet_n, fleet_value = agg["n"], float(agg["value"] or 0)
     annual = Contract.objects.filter(end_on__gte=today).aggregate(s=Sum("annual_cost"))["s"] or Decimal(0)

@@ -21,6 +21,13 @@ does not go in service or on loan from the file (the note gives set_status's wor
 a device held as evidence for an incident investigation keeps its status whatever the file says, with a note in its own words
 (HELD_NOTE); the row's other changes still go in.
 
+Slice 29, temporary equipment (rentals, vendor loaners, demo units, maintained by their owner): the import adds only devices of ours.
+"Loaner" (and "rental", "demo") is no longer read as a status: it can mean one of ours lent out or a vendor's unit, which is added
+with Add rental or loaner, so the row's status is not read, with a note saying both (TEMPORARY_STATUS_NOTE). A row naming a temporary
+device already here says so (TEMPORARY_NOTE) and never changes whose it is or its stay (no column reaches them); its next PM, last PM,
+and acquisition cost are left out with a note (its owner maintains it), and the file never retires, reinstates, or lends it out
+(TEMPORARY_KEPT_NOTE, RETURNED_KEPT_NOTE); its other columns change as for any device.
+
 The check rolls each chunk back (apps.imports.services), so a model or department a row of an earlier chunk adds is not there when
 a later chunk is checked, though the import, which committed that chunk, finds it and never reads the later row's model cells. The
 check therefore adds it first, quietly, from the row before this chunk that adds it in the import (its notes and values read are
@@ -49,7 +56,7 @@ STATUS_WORDS = {
     **dict.fromkeys(("in service", "in-service", "active", "in use"), AssetStatus.IN_SERVICE),
     "in repair": AssetStatus.IN_REPAIR,  # read as out of service: in Cadence a work order puts a device in repair
     **dict.fromkeys(("out of service", "out-of-service", "oos"), AssetStatus.OUT_OF_SERVICE),
-    **dict.fromkeys(("on loan", "on-loan", "loaner"), AssetStatus.ON_LOAN),
+    **dict.fromkeys(("on loan", "on-loan"), AssetStatus.ON_LOAN),
     "missing": AssetStatus.MISSING,
     **dict.fromkeys(("retired", "disposed", "inactive", "surplus", "salvaged"), AssetStatus.RETIRED),
 }
@@ -57,6 +64,16 @@ STATUSES_SAID = "in service, out of service, on loan, missing, or retired"
 # Slice 28: a device held as evidence keeps its status (equipment.services.set_status refuses every move while it is held). No incident
 # number: whoever imports may not see incidents.
 HELD_NOTE = "Status kept: the device is held as evidence for an incident investigation, and only the incident releases it"
+# Slice 29: statuses other systems write for a unit that may be a vendor's (no longer read as on loan: "loaner" was, slice 23).
+TEMPORARY_WORDS = {"loaner", "loaned", "loaner unit", "vendor loaner", "rental", "rented", "rental unit", "demo", "demo unit", "evaluation",
+                   "evaluation unit", "eval", "trial"}
+TEMPORARY_STATUS_NOTE = ("Status not read: a vendor's loaner, rental, or demo unit is added with Add rental or loaner on the Equipment "
+                         "screen, and one of ours lent out is \"on loan\"")
+TEMPORARY_NOTE = ("A rental, vendor loaner, or demo unit, maintained by its owner: the import never changes whose it is or its stay "
+                  "(Equipment screen)")
+TEMPORARY_KEPT_NOTE = "Status kept: a rental, vendor loaner, or demo unit is never retired or lent out; it leaves by Return to owner"
+RETURNED_KEPT_NOTE = "Status kept: the device was returned to its owner; a unit that is back is added again with Add rental or loaner"
+TEMPORARY_UNUSED = ("next_pm_on", "last_pm_on")  # a temporary device's dates the import never reads (its owner maintains it)
 # Words only: a number ("3", an EM score) means something different in every system, so it is not read.
 RISK_WORDS = {
     **dict.fromkeys(("life support", "life-support", "critical"), RiskClass.LIFE_SUPPORT),
@@ -83,6 +100,18 @@ def _words(value) -> str:
 
 def _lower_first(text: str) -> str:
     return text[:1].lower() + text[1:]
+
+
+def _status_shown(asset) -> str:
+    """The "Devices by status" total's words: a temporary device that went back is "Returned to owner", never "Retired" (slice 29)."""
+    if asset.status == AssetStatus.RETIRED and eq.owner_maintains(asset):
+        return eq.RETURNED_LABEL
+    return asset.get_status_display()
+
+
+def _temporary_kept(asset) -> str:
+    """The note when the file's status for a temporary device is one set_status refuses it (slice 29)."""
+    return RETURNED_KEPT_NOTE if asset.status == AssetStatus.RETIRED else TEMPORARY_KEPT_NOTE
 
 
 def _tag_refused(tag: str) -> bool:
@@ -237,6 +266,9 @@ class DevicesImporter(Importer):
 
     def _change(self, ctx, row, result, later, asset):
         changed = []
+        temporary = eq.owner_maintains(asset)  # slice 29: its owner maintains it
+        if temporary:
+            result.warn(TEMPORARY_NOTE)
         status = self._status(row, result, later, current=asset.status)
         if status and status != asset.status and self._set_status(ctx, asset, status, result):
             changed.append("Status")
@@ -256,10 +288,16 @@ class DevicesImporter(Importer):
         # A retired device has no next PM. The retirement day dates a device the import adds already retired; one here is retired
         # (when the file says so) as of today, after the history it has in Cadence.
         unused = ("retired_on", "next_pm_on") if asset.status == AssetStatus.RETIRED else ("retired_on",)
+        if temporary:  # slice 29: no PM dates or cost of ours, whatever the file says (update_asset would refuse them one by one)
+            unused += TEMPORARY_UNUSED
+            left = [WORDS[name] for key, name in DATES.items() if name in TEMPORARY_UNUSED and (row.get(key) or "").strip()]
+            left += ["Acquisition cost"] if (row.get("cost") or "").strip() else []
+            if left:
+                result.warn(f"{', '.join(left)} left out: its owner maintains it (no PM dates or cost of ours)")
         for name, value in self._dates(row, result, kept=True, unused=unused).items():
             if value is not None and value != getattr(asset, name):
                 fields[name] = value
-        cost = self._cost(row, result, later, kept=True)
+        cost = None if temporary else self._cost(row, result, later, kept=True)
         if cost is not None and cost != asset.acquisition_cost:
             fields["acquisition_cost"] = cost
         if fields:
@@ -275,17 +313,21 @@ class DevicesImporter(Importer):
             result.outcome = result.UPDATE
             if "Next PM" in changed or "Status" in changed:
                 self._count_due(ctx, asset, later)
-        later.total("Devices by status", asset.get_status_display())
+        later.total("Devices by status", _status_shown(asset))
 
     def _set_status(self, ctx, asset, status, result) -> bool:
         """Move a device already here to the file's status through the drawer's rules; a change they refuse is noted and the row's
         other changes stay (set_status is atomic: a refusal rolls back only its own savepoint). Slice 28: a device held as evidence for
         an incident investigation keeps its status, whatever the file says (HELD_NOTE): only its incident releases it. The row is
-        never refused for it."""
+        never refused for it. Slice 29: nor is a temporary device's, which the file never retires, reinstates once returned, or lends
+        out (set_status's refusals: TEMPORARY_KEPT_NOTE, RETURNED_KEPT_NOTE), whatever the importing user's level."""
         if status == AssetStatus.OUT_OF_SERVICE and asset.status == AssetStatus.IN_REPAIR:
             return False  # already out of use, in repair through a work order here
         if Asset.objects.filter(pk=asset.pk, incident_hold=True).exists():  # read now: the chunk's copy may predate the hold
             result.warn(HELD_NOTE)
+            return False
+        if eq.temporary_status_refusal(asset, status):
+            result.warn(_temporary_kept(asset))
             return False
         if not self._may(ctx, eq_perms.status_level(asset.status, status)):
             result.warn("Status kept: retiring or reinstating a device needs Equipment Approve")
@@ -297,6 +339,8 @@ class DevicesImporter(Importer):
             asset.refresh_from_db()
             if asset.incident_hold:  # held a moment ago, after the check above
                 result.warn(HELD_NOTE)
+            elif eq.temporary_status_refusal(asset, status):  # slice 29: as read now
+                result.warn(_temporary_kept(asset))
             elif asset.awaiting_inspection and status in eq.HOLD:
                 # Slice 26: a new device waiting for its incoming inspection goes in use when it passes; set_status says which one.
                 result.warn(f"Status kept: {e.messages[0]}")
@@ -342,13 +386,18 @@ class DevicesImporter(Importer):
 
     def _status(self, row, result, later, *, current):
         """The file's status (a slug), or None for blank or unreadable. "In repair" reads as out of service: in Cadence a work order
-        puts a device in repair."""
+        puts a device in repair. Slice 29: "loaner", "rental", "demo" (TEMPORARY_WORDS) are not read, with a note naming both things
+        they may mean (TEMPORARY_STATUS_NOTE): the import adds only devices of ours."""
         value = row.get("status") or ""
         try:
             status = parse.parse_choice(value, STATUS_WORDS, what="status")
         except parse.Unreadable:
             later.read_as("Status", value, "Not read")
-            result.warn(f"Status not read ({STATUSES_SAID}): {'unchanged' if current else 'added in service'}")
+            outcome = "unchanged" if current else "added in service"
+            if " ".join(value.lower().replace("_", " ").split()) in TEMPORARY_WORDS:
+                result.warn(f"{TEMPORARY_STATUS_NOTE}: {outcome}")
+            else:
+                result.warn(f"Status not read ({STATUSES_SAID}): {outcome}")
             return None
         if status is None:
             return None
