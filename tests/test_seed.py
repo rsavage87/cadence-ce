@@ -29,7 +29,8 @@ def test_seed_demo_builds_the_demo_tenant(db):
         assert rc.group_counts() == {"all": 4, "action": 2, "progress": 1, "closed": 1}
         in_progress = AlertMatch.objects.get(status=AlertMatch.Status.IN_PROGRESS)
         p = rc.progress(in_progress)
-        assert p["total"] == 60 and p["completed"] == 20 and WorkOrder.objects.filter(type=WoType.RECALL, alert=in_progress.alert).count() == 60
+        # 60 pumps of ours and, slice 29, the vendor loaner pump on site when the batch was opened (its work order went to its owner)
+        assert p["total"] == 61 and p["completed"] == 20 and WorkOrder.objects.filter(type=WoType.RECALL, alert=in_progress.alert).count() == 61
         closed = AlertMatch.objects.get(status=AlertMatch.Status.CLOSED)
         assert closed.closed_on == date.today() - timedelta(days=40) and closed.disposition_note.startswith("Gaskets replaced")
         s = get_settings()
@@ -108,11 +109,15 @@ def test_seed_demo_gives_the_survey_binder_a_few_deliberate_items(db):
         new = inspections.build(p, None)
         assert [(g.kind, g.record) for g in new.gaps] == [(FINDING, "CE-11004"), (GAP, "CE-11003")]
         figures = {f.label: f.value for f in new.figures}
-        assert figures["New devices added"] == 4 and figures["Inspected before first use"] == 1 and figures["Waiting: never in service yet"] == 1
+        # slice 29: three of the new devices are temporary (two rentals and the loaner, inspected the day they came); the demo unit was
+        # entered as already on site
+        assert figures["New devices added"] == 7 and figures["Inspected before first use"] == 4 and figures["Waiting: never in service yet"] == 1
         assert figures["In use before its incoming inspection"] == 1 and figures["In service with no incoming inspection passed"] == 1
         assert figures["Failed incoming inspections"] == 1 and figures["Inspected after first use"] == 0
-        assert Asset.objects.filter(added_as=AddedAs.NEW).count() == 4
-        assert [(g.kind, g.record) for g in inventory.build(p, None).gaps] == [(CHECK, "Zoll R Series Plus")]  # the waiting device: no gap
+        assert figures["Entered as already in use"] == 1
+        assert Asset.objects.filter(added_as=AddedAs.NEW).count() == 7 and Asset.objects.filter(added_as=AddedAs.NEW, ownership="owned").count() == 4
+        # the waiting device: no gap; slice 29, the demo unit has no owner's PM date (a medium-risk check)
+        assert [(g.kind, g.record) for g in inventory.build(p, None).gaps] == [(CHECK, "T-0103"), (CHECK, "Zoll R Series Plus")]
         assert [g.record for g in new.gaps + inventory.build(p, None).gaps if g.kind == FINDING] == ["CE-11004"]
         assert all(local_day(m.created_at) == m.alert.published_on for m in AlertMatch.objects.select_related("alert"))
 
@@ -158,17 +163,75 @@ def test_seed_demo_adds_its_new_devices_through_the_incoming_inspection(db):
         [use] = inspections.uses_before([used.pk])[used.pk]
         assert (use.on, use.reason, use.by.username) == (days["CE-11004"], "emergency", "kim@riverside.example")
         assert not in_use.awaiting_inspection and not WorkOrder.objects.filter(asset=in_use).exists()
-        for wo in WorkOrder.objects.filter(type=WoType.INSPECTION, status=WoStatus.CLOSED):
+        # ours (slice 29: the rentals' and the loaner's are done to the rental checklist, test_seed_demo_adds_its_temporary_devices)
+        for wo in WorkOrder.objects.filter(type=WoType.INSPECTION, status=WoStatus.CLOSED, asset__ownership="owned"):
             assert all(s["reading"] for s in wo.checklist_results if s["measure"]) and len(wo.checklist_results) == len(seed_demo.CHECKLIST)
         s = section.build(default_period(today), None)
         rows = {r[0]: r for r in s.table("new_devices").rows()}
-        assert list(rows) == ["CE-11002", "CE-11004", "CE-11003", "CE-11001"]
+        assert [tag for tag in rows if tag.startswith("CE-")] == ["CE-11002", "CE-11004", "CE-11003", "CE-11001"]
         assert rows["CE-11002"][5:12] == [again.number, "Closed", "Passed", again.assigned_to.name, passed_on, passed_on, None]
         assert rows["CE-11001"][4:8] == ["Awaiting inspection", open_.number, "Open", ""]
         assert rows["CE-11004"][11:] == [1, "Emergency clinical need"]
         assert list(s.table("failed").rows()) == [[first.number, "CE-11002", inspected, first.assigned_to.name, again.number, "Closed", passed_on]]
         finding = s.gaps[0].text
         assert finding.startswith("CE-11004 was in use 1 day before its incoming inspection: Emergency clinical need (approved by Kim Alvarez;")
+
+
+def test_seed_demo_adds_its_temporary_devices(db):
+    """Slice 29: a rental bed with its owner's PM date, a vendor loaner pump standing in for one of ours out for vendor repair (on site
+    when the pumps' recall batch was opened, so its recall work order is its owner's), a demo monitor entered as already on site, past
+    its due back date with no owner's PM date, and a rental ventilator returned to its owner; the new ones inspected on the rental
+    checklist the day they came, each dated as it happened, and each where the Overview and the binder say it is."""
+    from django.utils import timezone
+
+    from apps.core.days import local_day
+    from apps.equipment import services as eq
+    from apps.equipment.models import AddedAs, AssetStatus, Ownership, ReturnCleaning, ReturnData, SupportType
+    from apps.reports.services import attention_items, overview_kpis
+    from apps.reports.survey import default_period, inventory
+    from apps.workorders.inspections import TEMPORARY_INCOMING
+    from apps.workorders.models import InspectionResult, WoStatus
+
+    call_command("seed_demo", stdout=StringIO())
+    with tenant_context(Tenant.objects.get(slug="riverside")):
+        today = timezone.localdate()
+        vent, bed, loaner, demo = (Asset.objects.get(tag=t) for t in ("T-0098", "T-0101", "T-0102", "T-0103"))
+        assert [a.ownership for a in (vent, bed, loaner, demo)] == [Ownership.RENTAL, Ownership.RENTAL, Ownership.LOANER, Ownership.DEMO]
+        assert all(a.support_type == SupportType.OWNER and a.next_pm_on is None and a.acquisition_cost == 0 for a in (vent, bed, loaner, demo))
+        assert (vent.status, eq.status_label(vent), vent.returned_on, vent.return_cleaning, vent.return_data) == (
+            AssetStatus.RETIRED, "Returned to owner", today - timedelta(days=35), ReturnCleaning.DECONTAMINATED, ReturnData.CLEARED)
+        assert vent.history.order_by("-history_date", "-history_id").first().history_change_reason == eq.RETURNED_REASON
+        assert local_day(vent.history.order_by("-history_date", "-history_id").first().history_date) == vent.returned_on
+        assert (bed.status, bed.owner_pm_due_on, bed.due_back_on) == (AssetStatus.IN_SERVICE, today + timedelta(days=150), today + timedelta(days=20))
+        for a in (vent, bed, loaner):
+            wo = WorkOrder.objects.get(asset=a, type=WoType.INSPECTION)
+            assert (wo.inspection_result, wo.status, wo.completed_on, wo.opened_on) == (InspectionResult.PASSED, WoStatus.CLOSED, a.arrived_on,
+                                                                                         a.arrived_on)
+            assert len(wo.checklist_results) == len(TEMPORARY_INCOMING.checklist) and wo.assigned_to_id is not None
+            first = a.history.order_by("history_date", "history_id").first()
+            assert (first.history_type, local_day(first.history_date), local_day(a.created_at), a.added_as) == ("+", a.arrived_on, a.arrived_on,
+                                                                                                                 AddedAs.NEW)
+        ours = loaner.stands_in_for
+        assert (ours.ownership, ours.status, loaner.status, loaner.due_back_on) == (Ownership.OWNED, AssetStatus.OUT_OF_SERVICE,
+                                                                                  AssetStatus.IN_SERVICE, None)
+        repair = WorkOrder.objects.get(asset=ours, type=WoType.REPAIR, status=WoStatus.IN_PROGRESS)
+        assert (repair.vendor_service, repair.vendor_name, repair.tagged_out) == (True, "BD field service", True)
+        recall = WorkOrder.objects.get(asset=loaner, type=WoType.RECALL)
+        assert (recall.vendor_service, recall.vendor_name, recall.assigned_to_id, recall.status) == (True, "BD", None, WoStatus.OPEN)
+        assert (demo.added_as, demo.status, demo.owner_pm_due_on, demo.arrived_on) == (AddedAs.EXISTING, AssetStatus.IN_SERVICE, None,
+                                                                                       today - timedelta(days=40))
+        assert demo.due_back_on == today - timedelta(days=12) and not WorkOrder.objects.filter(asset=demo).exists()
+        # the Overview: ours on the active-devices tile; the demo unit past due back on the attention list, the loaner not (ours is out)
+        ours_active = Asset.objects.filter(ownership=Ownership.OWNED, status__in=Asset.ACTIVE_STATUSES).count()
+        assert overview_kpis(today.year, today.month, today)["active_devices"] == ours_active
+        lines = [(i["asset"], i["right"]) for i in attention_items(today) if i.get("asset", "").startswith("T-")]
+        assert lines == [("T-0103", "Past due back 12 d")]
+        # the binder's temporary table: the three on site, by tag
+        s = inventory.build(default_period(today), None)
+        rows = {r[0]: r for r in s.table("temporary").rows()}
+        assert list(rows) == ["T-0101", "T-0102", "T-0103"]
+        assert rows["T-0101"][10:] == [bed.arrived_on, bed.owner_pm_due_on] and rows["T-0103"][10:] == [inventory.ALREADY_ON_SITE, None]
+        assert {f.label: f.value for f in s.figures}["Temporary devices on site"] == 3
 
 
 def test_a_database_seeded_before_slice_22_gets_the_north_campus(db, monkeypatch):

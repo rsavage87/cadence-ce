@@ -26,6 +26,11 @@ A new device retired without ever going into service (returned to the vendor) is
 Queries: six at most whatever the number of devices: how every device added in the period was added (grouped), the ones entered as
 already in use with a recent install date (only when there are any entered so), the new ones, their inspection work orders, their
 history, and their history's uses before inspection.
+
+Slice 29: a rental, vendor loaner, or demo unit added new (it arrived in the period) is a new device like any other here: inspected
+before first use (on its rental checklist, workorders.inspections.TEMPORARY_INCOMING), with the same gaps; one returned to its owner
+without ever going into service counts with "Returned to the vendor". One entered as already on site (EXISTING) is counted, never a
+gap, and never a "was it new?" check: its install date is the day it arrived, which is no sign it was new to the facility.
 """
 from __future__ import annotations
 
@@ -37,8 +42,8 @@ from django.urls import reverse
 
 from apps.core.days import local_day
 from apps.core.history import _person, _rows
-from apps.equipment.models import AddedAs, Asset, AssetStatus, RiskClass
-from apps.equipment.services import AWAITING_LABEL, HELD_LABEL
+from apps.equipment.models import AddedAs, Asset, AssetStatus, Ownership, RiskClass
+from apps.equipment.services import AWAITING_LABEL, HELD_LABEL, OWNED
 from apps.workorders.inspections import uses_before
 from apps.workorders.models import OPEN_STATUSES, InspectionResult, WorkOrder, WoStatus, WoType
 
@@ -131,9 +136,11 @@ def _history(new) -> dict:
 
 def _recent_installs(added, period: Period) -> list[tuple]:
     """[(tag, the day it was added, days from its install date to that day)] for the devices entered as already in use in the period
-    whose install date is at most RECENT_INSTALL_DAYS before the day they were added (or after it). One query."""
+    whose install date is at most RECENT_INSTALL_DAYS before the day they were added (or after it). Ours only, and never one we kept
+    (slice 29: a temporary device's install date is the day it arrived, no sign it was new). One query."""
     out = []
-    rows = (added.filter(added_as=AddedAs.EXISTING, installed_on__gte=period.start - timedelta(days=RECENT_INSTALL_DAYS))
+    rows = (added.filter(OWNED, kept_on__isnull=True, added_as=AddedAs.EXISTING,
+                         installed_on__gte=period.start - timedelta(days=RECENT_INSTALL_DAYS))
             .order_by("created_at", "tag").values_list("tag", "installed_on", "created_at"))
     for tag, installed_on, created_at in rows:
         added_on = local_day(created_at)
@@ -210,7 +217,8 @@ def build(period: Period, user) -> Section:
     recent = _recent_installs(added, period) if how.get(AddedAs.EXISTING) else []
     new = added.filter(added_as=AddedAs.NEW)
     devices = list(new.order_by("created_at", "tag").values("id", "tag", "status", "created_at", "device_model__manufacturer",
-                                                             "device_model__model", "device_model__risk_class"))
+                                                             "device_model__model", "device_model__risk_class", "ownership"))
+    temporary = sum(1 for d in devices if d["ownership"] != Ownership.OWNED)  # slice 29: read as any new device
     inspections = _inspections(new) if devices else {}
     history = _history(new) if devices else {}
     used = uses_before([d["id"] for d in devices]) if devices else {}
@@ -271,8 +279,11 @@ def build(period: Period, user) -> Section:
     existing_hint = "not asked for an incoming inspection"
     if recent:
         existing_hint += f"; {len(recent)} installed within {RECENT_INSTALL_DAYS} days before they were added"
+    new_hint = "added as new to the facility"
+    if temporary:
+        new_hint += f"; {temporary} of them {'a rental, vendor loaner, or demo unit' if temporary == 1 else 'rentals, vendor loaners, or demo units'}"
     figures = [
-        Figure("New devices added", len(devices), "added as new to the facility"),
+        Figure("New devices added", len(devices), new_hint),
         Figure("Inspected before first use", before),
         Figure("Waiting: never in service yet", waiting, f"{waiting_open} with an incoming inspection open"),
         Figure("Returned to the vendor", returned, "retired without ever going into service"),
@@ -300,7 +311,11 @@ def build(period: Period, user) -> Section:
         "service counts as before first use. A failed inspection is listed with its re-inspection, never counted as the inspection.",
         "A device put in use before its incoming inspection, by a manager's exception with its reason, is listed while its inspection is "
         "open and after it passed: when it went into use, why, and who approved it are read from the device's history.",
-        "Returned to the vendor: a new device retired without ever going into service.",
+        "Returned to the vendor: a new device retired without ever going into service (or, for a rental, vendor loaner, or demo unit, "
+        "returned to its owner).",
+        "Rentals, vendor loaners, and demo units that arrived in the period are new devices here like any other, inspected before first "
+        "use on the rental checklist (the incoming checks plus the owner's PM label); one entered after it was already on site is "
+        "counted as entered already in use.",
         "Inspected by: the technician the inspection was assigned to, or the vendor for vendor service.",
         "The status when added and the first day in service are read from the device's history: a device added in service was in use "
         "from the day it was added.",

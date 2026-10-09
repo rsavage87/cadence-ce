@@ -178,7 +178,8 @@ def test_the_api_under_the_policies(client, seeded):
                 "/api/v1/pm/calendar/", "/api/v1/overview/"]:
         r = client.get(url)
         assert r.status_code == 200, (url, r.status_code)
-    assert client.get("/api/v1/assets/").json()["count"] == 200  # the fleet and the four new devices (slices 25 and 26)
+    # the fleet, the four new devices (slices 25 and 26), and the four rentals, loaner, and demo unit (slice 29: one returned)
+    assert client.get("/api/v1/assets/").json()["count"] == 204
 
 
 def test_the_survey_binder_under_the_policies(client, seeded):

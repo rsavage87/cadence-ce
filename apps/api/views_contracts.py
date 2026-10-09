@@ -16,7 +16,8 @@ DELETE /api/v1/contracts/<id>/                    delete_contract: its devices g
                                                   200: {"id", "reference", "uncovered": how many devices in use lost coverage}.
 POST   /api/v1/contracts/<id>/add_assets/         put devices on the contract. Body: {"asset_ids": ["<id>", ...]} (add_asset for each,
                                                   all or none: a retired device refuses the batch) or {"device_model": "<id>"}
-                                                  (add_model: every device of the model in use that is not on it yet). A device on
+                                                  (add_model: every device of ours of the model in use that is not on it yet; never a
+                                                  rental, vendor loaner, or demo unit, which add_asset refuses too). A device on
                                                   another contract moves here (a device is on one contract at most). Contracts Edit.
                                                   200: {"added": how many came onto the contract, "devices": [{"asset_id", "tag",
                                                   "from_contract": the reference it left, or null when it was in-house}],
@@ -164,9 +165,9 @@ class ContractViewSet(TenantViewSet):
         if dm is None:
             raise DRFValidationError({"device_model": ["Choose a device model from this facility."]})
         with transaction.atomic():
-            # The devices add_model takes (in use, not on this contract yet), read first to say where each came from.
-            moving = list(Asset.objects.filter(device_model=dm, status__in=Asset.ACTIVE_STATUSES).exclude(contract=contract)
-                          .select_related("contract").order_by("tag"))
+            # The devices add_model takes (ours in use, not on this contract yet: contracts.services.model_devices, so a rental, vendor
+            # loaner, or demo unit is never reported as moved; slice 29), read first to say where each came from.
+            moving = list(ct.model_devices(contract, dm).select_related("contract").order_by("tag"))
             added = ct.add_model(contract, dm)
         return Response({"added": added, "devices": [_device(a, a.contract) for a in moving], "device_count": contract.covered_assets().count()})
 

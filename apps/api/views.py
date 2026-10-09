@@ -163,7 +163,12 @@ class AssetViewSet(EquipmentWrites, TenantViewSet):
     keyed by that field, rather than ignored. The inspection is then assigned and completed as any work order: POST
     /api/v1/work-orders/{id}/assign/ or take/, then transition to completed with inspection_result (only its pass puts the device in
     service and starts its PMs). An edit of a waiting device takes no next PM (update_asset's refusal, keyed next_pm_on), and the flag
-    (awaiting_inspection) is read-only. POST {id}/use-before-inspection/ puts it in use before the inspection (Equipment Approve)."""
+    (awaiting_inspection) is read-only. POST {id}/use-before-inspection/ puts it in use before the inspection (Equipment Approve).
+
+    Slice 29: a rental's, vendor loaner's, or demo unit's stay is read only here (serializers.AssetSerializer.TEMPORARY_FIELDS: whose,
+    the owner and their reference, arrived, due back, the owner's PM date, returned, kept, and the device of ours a loaner stands in
+    for, hidden from a scoped user outside whose share it is). A device added here is ours; one of another kind is refused, keyed
+    ownership. Its status changes keep set_status's refusals (never retired, reinstated, or lent: Return to owner on the screen)."""
 
     model, module, serializer_class = Asset, "equipment", s.AssetSerializer
     search_fields = ["tag", "serial", "device_model__model", "device_model__manufacturer", "department__name", "contract__reference"]
@@ -385,7 +390,11 @@ class WorkOrderViewSet(TenantViewSet):
         """Slice 26: an edit of an open work order never makes or unmakes an incoming inspection, moves one off or onto a device
         waiting for its incoming inspection, or puts a PM on a waiting device (its PMs start when it passes). Those are opened as their
         own work orders (POST /api/v1/work-orders/, where create_work_order keeps a waiting device to one open inspection and no PM).
-        Refused in words, keyed type or asset."""
+        Refused in words, keyed type or asset.
+
+        Slice 29: nor does it put a PM on a rental, vendor loaner, or demo unit (its owner maintains it): a PM moved onto one, or one of
+        its work orders made a PM, is refused with create_work_order's words (workorders.services.no_pm_message), keyed asset when the
+        device changed, else type."""
         new_type, new_asset = d.get("type", wo.type), d.get("asset", wo.asset)
         type_changed, asset_changed = new_type != wo.type, new_asset.pk != wo.asset_id
         if type_changed and wo.type == WoType.INSPECTION:
@@ -400,6 +409,8 @@ class WorkOrderViewSet(TenantViewSet):
         if asset_changed and wo.type == WoType.INSPECTION and new_asset.awaiting_inspection:
             raise DRFValidationError({"asset": [f"{new_asset.tag} is waiting for its incoming inspection: open that inspection on it with POST "
                                                 "/api/v1/work-orders/ (type inspection) rather than moving another device's here."]})
+        if new_type == WoType.PM and (type_changed or asset_changed) and eq_services.owner_maintains(new_asset):
+            raise DRFValidationError({"asset" if asset_changed else "type": [wo_services.no_pm_message(new_asset)]})
         if new_type == WoType.PM and new_asset.awaiting_inspection and (type_changed or asset_changed):
             raise DRFValidationError({"asset" if asset_changed else "type": [f"{new_asset.tag} is waiting for its incoming inspection: its PMs "
                                                                              "start when it passes its incoming inspection."]})

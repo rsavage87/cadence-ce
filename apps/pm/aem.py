@@ -36,11 +36,11 @@ from datetime import date
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Count, F, Q
 from django.utils import timezone
 
 from apps.core.days import local_day
-from apps.equipment.models import Asset, AssetStatus, DeviceModel, RiskClass
+from apps.equipment.models import Asset, AssetStatus, DeviceModel, Ownership, RiskClass
 
 from .dates import add_months
 from .models import AemDecision, AemStatus
@@ -88,6 +88,13 @@ def _retired_on(asset_ids) -> dict:
     return out
 
 
+def while_ours(day: str = "opened_on") -> Q:
+    """Work orders on our devices, from the day each became ours (slice 29): never a rental's, vendor loaner's, or demo unit's (its
+    owner maintains it), and a device the facility kept (equipment.services.keep_temporary_device) only from its kept_on, by the work
+    order's `day`. The AEM evidence and the survey binder's AEM figures since approval read the model's history through this."""
+    return Q(asset__ownership=Ownership.OWNED) & (Q(asset__kept_on__isnull=True) | Q(**{f"{day}__gte": F("asset__kept_on")}))
+
+
 def evidence(dm: DeviceModel, today: date | None = None, *, w=None) -> dict:
     """The model's failure history over the last AEM_HISTORY_YEARS, from the facility's own records (JSON-ready: ISO dates and
     plain numbers). Every device of the model counts for the time it was in use inside the window: from its install date (or the
@@ -96,7 +103,11 @@ def evidence(dm: DeviceModel, today: date | None = None, *, w=None) -> dict:
     completed within the facility's PM window for the model's class (slice 27, apps.pm.windows: by the due date unless the facility
     chose otherwise; `w`, read when not given), which `pm_window` says in words, so a case's snapshot keeps the rule its figure was
     counted by. enough_history: a device of the model was installed at least AEM_HISTORY_YEARS ago; a model whose devices carry no
-    install date has no history on record."""
+    install date has no history on record.
+
+    Slice 29: our devices only. A rental, vendor loaner, or demo unit of the model is its owner's to maintain, so neither its days
+    nor its work orders are the facility's maintenance history; a device the facility kept counts from the day it was kept (kept_on:
+    its install date here, for its days, the oldest install, and its work orders, while_ours), and not at all on a day before."""
     from apps.recalls.models import AlertMatch
     from apps.recalls.services import DONE_STATUSES
     from apps.workorders.models import WorkOrder, WoStatus, WoType
@@ -104,14 +115,17 @@ def evidence(dm: DeviceModel, today: date | None = None, *, w=None) -> dict:
     today = today or timezone.localdate()
     window = window_of(w).for_class(dm.risk_class)
     since = history_start(today)
-    devices = list(Asset.objects.filter(device_model=dm).values("id", "status", "installed_on", "created_at", "updated_at"))
+    devices = list(Asset.objects.filter(device_model=dm, ownership=Ownership.OWNED)
+                   .values("id", "status", "installed_on", "kept_on", "created_at", "updated_at"))
     retired = _retired_on([d["id"] for d in devices if d["status"] == AssetStatus.RETIRED])
     active = retired_counted = undated = 0
     device_days = 0
     oldest = None
     for d in devices:
+        if d["kept_on"]:
+            d["installed_on"] = d["kept_on"]  # ours from the day it was kept (it arrived as someone else's)
         if d["installed_on"] and d["installed_on"] > today:
-            continue  # installed after the day this evidence is for
+            continue  # installed (or kept) after the day this evidence is for
         end = today
         if d["status"] == AssetStatus.RETIRED:
             end = retired.get(d["id"]) or local_day(d["updated_at"])  # no history row (bulk import): its last change
@@ -131,7 +145,7 @@ def evidence(dm: DeviceModel, today: date | None = None, *, w=None) -> dict:
 
     in_window = {"opened_on__gte": since, "opened_on__lte": today}
     done_in_window = Q(type=WoType.PM, completed_on__gte=since, completed_on__lte=today)
-    counts = WorkOrder.objects.filter(asset__device_model=dm).aggregate(
+    counts = WorkOrder.objects.filter(while_ours(), asset__device_model=dm).aggregate(
         repairs=Count("id", filter=Q(type=WoType.REPAIR, **in_window) & ~Q(status=WoStatus.CANCELLED)),
         pm_completed=Count("id", filter=done_in_window),
         pm_on_time=Count("id", filter=done_in_window & window.on_time_q(due="due_on", completed="completed_on")),

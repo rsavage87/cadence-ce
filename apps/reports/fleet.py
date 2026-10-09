@@ -2,13 +2,18 @@
 Fleet reports (slice 7): PM compliance summary, reliability by model, replacement planning.
 Each function returns {"columns": [...], "rows": [[...]], ...}; see the catalog in services.py for the contract.
 The math follows the mock's repContent; departures are noted inline. Everything here is read-only and tenant-scoped.
+
+Slice 29, the counting rule (equipment.services.OWNED / WORK_ORDER_OWNED): all three are about the facility's own fleet and CE's
+program, so they count our devices and their work orders only. A rental, vendor loaner, or demo unit (its owner maintains it) is never
+in a compliance denominator nor overdue when missing, its repairs are no failures of our models, and it is never up for replacement.
 """
 from datetime import date, timedelta
 from decimal import Decimal
 
 from django.db.models import Count, DecimalField, Q, Sum
 
-from apps.equipment.models import Asset, AssetStatus, DeviceModel, RiskClass
+from apps.equipment.models import Asset, AssetStatus, DeviceModel, Ownership, RiskClass
+from apps.equipment.services import OWNED, WORK_ORDER_OWNED
 from apps.facility.services import compliance_targets, get_settings
 from apps.pm.dates import month_bounds
 from apps.pm.windows import ASSET_RISK, Windows, windows
@@ -23,13 +28,15 @@ REPLACEMENT_MARKUP = 1.05  # list price plus 5%, as the mock estimates
 
 
 def _active_assets():
-    return Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES)
+    """Our devices in use (slice 29: never a temporary device)."""
+    return Asset.objects.filter(OWNED, status__in=Asset.ACTIVE_STATUSES)
 
 
 def _repairs_in_window(today: date):
-    """Repair work orders opened in the trailing 182 days. A cancelled repair was not a failure, so it is left out."""
+    """Repair work orders on our devices opened in the trailing 182 days. A cancelled repair was not a failure, so it is left out."""
     since = today - timedelta(days=TRAILING_DAYS)
-    return WorkOrder.objects.filter(type=WoType.REPAIR, opened_on__gte=since, opened_on__lte=today).exclude(status=WoStatus.CANCELLED), since
+    return (WorkOrder.objects.filter(WORK_ORDER_OWNED, type=WoType.REPAIR, opened_on__gte=since, opened_on__lte=today)
+            .exclude(status=WoStatus.CANCELLED), since)
 
 
 # --- PM compliance summary ---------------------------------------------------------------------------------------
@@ -54,7 +61,7 @@ def report_compliance(today: date) -> dict:
     settings row, no per-class work. A device marked missing stays in the active count and is always overdue (the mock's rule: it can
     never be shown compliant), but for a new device waiting for its incoming inspection (slice 26: it has no PM schedule until the
     inspection passes, so no PM to be overdue, missing or not), and this month's PMs are counted on active devices only, so every
-    column describes the same fleet.
+    column describes the same fleet: ours (slice 29: a temporary device, maintained by its owner, is in no column, missing or not).
 
     Slice 27, the PM completion window (apps.pm.windows): a PM is on time when completed within its class's window, and a device is
     overdue now when its next PM's window has closed (apps.pm.services.assets_past_window's rule), so this report and the survey
@@ -74,7 +81,7 @@ def report_compliance(today: date) -> dict:
     fleet = {row["device_model__risk_class"]: row for row in
              _active_assets().order_by().values("device_model__risk_class").annotate(**device_counts)}
     pms = {row["asset__device_model__risk_class"]: row for row in
-           WorkOrder.objects.filter(type=WoType.PM, due_on__gte=start, due_on__lte=end, asset__status__in=Asset.ACTIVE_STATUSES)
+           WorkOrder.objects.filter(WORK_ORDER_OWNED, type=WoType.PM, due_on__gte=start, due_on__lte=end, asset__status__in=Asset.ACTIVE_STATUSES)
            .exclude(status=WoStatus.CANCELLED).order_by().values("asset__device_model__risk_class").annotate(**pm_counts)}
     # Survey targets by risk class: life support and high at 100%, medium and low at the tenant's PM completion target (Settings).
     targets = compliance_targets(s)
@@ -121,7 +128,7 @@ def report_mtbf(today: date) -> dict:
         money = DecimalField(max_digits=14, decimal_places=2)
         # The same repairs as `done` (type, window, not cancelled, completed), reached from the lines so no work order is instantiated.
         line_filter = {"work_order__type": WoType.REPAIR, "work_order__opened_on__gte": since, "work_order__opened_on__lte": today,
-                       "work_order__completed_on__isnull": False}
+                       "work_order__completed_on__isnull": False, "work_order__asset__ownership": Ownership.OWNED}
         for model, expr in ((LaborLine, Sum(LABOR_AMOUNT, output_field=money)), (PartLine, Sum(PART_AMOUNT, output_field=money))):
             rows = (model.objects.filter(**line_filter).exclude(work_order__status=WoStatus.CANCELLED)
                     .order_by().values("work_order__asset__device_model").annotate(v=expr))

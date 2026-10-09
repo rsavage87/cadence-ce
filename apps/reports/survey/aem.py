@@ -13,6 +13,9 @@ approval on every AEM model at once (one grouped query), and the decisions in th
 
 Slice 27: the evidence's PM window (apps.pm.aem records "pm_window", the rule its "PMs on time" was counted by, in words) is printed
 beside it as recorded, never recounted.
+
+Slice 29: our devices only (a rental, vendor loaner, or demo unit of an AEM model is its owner's to maintain, never on AEM): the active
+devices counted (equipment.services.OWNED) and the work since approval (apps.pm.aem.while_ours: a kept device from the day it was kept).
 """
 from datetime import date
 from decimal import Decimal
@@ -22,7 +25,7 @@ from django.db.models import Count, F, Q
 from django.urls import reverse
 
 from apps.core.history import who
-from apps.equipment.models import Asset, DeviceModel, RiskClass
+from apps.equipment.models import Asset, DeviceModel, Ownership, RiskClass
 from apps.pm import aem
 from apps.pm.models import AemDecision, AemStatus
 from apps.workorders.models import PmResult, WorkOrder, WoStatus, WoType
@@ -66,7 +69,7 @@ def _since_approval() -> dict:
     """{model id: {"repairs", "failed"}} for every model with an approved decision: corrective repairs opened (not cancelled) and
     PMs failed, from the committee's date. One grouped query over all of them (one approved decision per model)."""
     decided = F("asset__device_model__aem_decisions__decided_on")
-    rows = (WorkOrder.objects.filter(asset__device_model__aem_decisions__status=AemStatus.APPROVED,
+    rows = (WorkOrder.objects.filter(aem.while_ours(), asset__device_model__aem_decisions__status=AemStatus.APPROVED,
                                      asset__device_model__aem_decisions__decided_on__isnull=False)
             .order_by().values("asset__device_model")
             .annotate(repairs=Count("id", filter=Q(type=WoType.REPAIR, opened_on__gte=decided) & ~Q(status=WoStatus.CANCELLED)),
@@ -111,8 +114,8 @@ def _events(period: Period) -> list[list]:
 
 
 def build(period: Period, user) -> Section:
-    models = list(DeviceModel.objects.annotate(active=Count("assets", filter=Q(assets__status__in=Asset.ACTIVE_STATUSES)))
-                  .order_by("manufacturer", "model"))
+    ours = Q(assets__status__in=Asset.ACTIVE_STATUSES, assets__ownership=Ownership.OWNED)  # slice 29
+    models = list(DeviceModel.objects.annotate(active=Count("assets", filter=ours)).order_by("manufacturer", "model"))
     on_aem = [dm for dm in models if dm.pm_interval_months != dm.oem_pm_interval_months]
     life_support = [dm for dm in models if dm.risk_class == RiskClass.LIFE_SUPPORT]
     cms = [dm for dm in models if dm.risk_class != RiskClass.LIFE_SUPPORT and dm.oem_schedule_required]  # exclusion()'s order

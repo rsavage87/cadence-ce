@@ -584,4 +584,5 @@ def test_the_demos_scoped_users_see_their_share(db):
         before = (User.objects.filter(tenant=tenant).count(), WorkOrder.objects.filter(vendor_service=True).count())
     call_command("seed_demo", stdout=StringIO())  # still a no-op the second time
     with tenant_context(tenant):
-        assert (User.objects.filter(tenant=tenant).count(), WorkOrder.objects.filter(vendor_service=True).count()) == before == (14, 4)
+        # slice 29: two more vendor services, never Philips's: the pump of ours out at BD, and the loaner pump's recall work order (BD's)
+        assert (User.objects.filter(tenant=tenant).count(), WorkOrder.objects.filter(vendor_service=True).count()) == before == (14, 6)

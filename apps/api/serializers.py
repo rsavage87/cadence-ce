@@ -4,7 +4,7 @@ from rest_framework import serializers
 from apps.contracts.models import Contract
 from apps.credentials.models import Credential, Technician
 from apps.equipment import services as eq_services
-from apps.equipment.models import AddedAs, Asset, Department, DeviceModel
+from apps.equipment.models import AddedAs, Asset, Department, DeviceModel, Ownership
 from apps.recalls.models import Alert, AlertMatch
 from apps.recalls.services import progress as recall_progress
 from apps.workorders import scoping
@@ -53,14 +53,38 @@ def open_inspections(assets, user=None) -> dict:
     return found
 
 
+def _plain(value):
+    """A value sent or shown, for comparing the two: blank and null alike, everything else as text."""
+    return None if value in (None, "") else str(value)
+
+
+def stand_ins(assets, user=None) -> dict:
+    """{device id: (id, tag) of the device of ours it stands in for} for the vendor loaners among `assets` (slice 29), as `user` may
+    see it: a scoped user (apps.workorders.scoping) gets only one inside their share; another reads as none, so a loaner never names a
+    device (or the repair it is out for) a vendor or a unit may not see. One query at most whatever the number of devices; none when
+    no device stands in for one."""
+    wanted = {a.pk: a.stands_in_for_id for a in assets if a.stands_in_for_id}
+    if not wanted:
+        return {}
+    qs = Asset.objects.filter(pk__in=set(wanted.values()))
+    if user is not None and scoping.is_scoped(user):
+        qs = scoping.assets(user, qs)
+    tags = dict(qs.values_list("pk", "tag"))
+    return {pk: (str(ours), tags[ours]) for pk, ours in wanted.items() if ours in tags}
+
+
 class AssetListSerializer(serializers.ListSerializer):
-    """A page of devices: their open incoming inspections read in one go (open_inspections), not once per device."""
+    """A page of devices: their open incoming inspections read in one go (open_inspections), not once per device, and the devices
+    their vendor loaners stand in for (stand_ins, slice 29)."""
 
     def to_representation(self, data):
         items = list(data.all() if isinstance(data, models.manager.BaseManager) else data)
         request = self.context.get("request")
-        found = open_inspections(items, getattr(request, "user", None))
+        user = getattr(request, "user", None)
+        found = open_inspections(items, user)
         self.context["_open_inspections"] = {a.pk: found.get(a.pk) for a in items}
+        shown = stand_ins(items, user)
+        self.context["_stand_ins"] = {a.pk: shown.get(a.pk) for a in items}
         return super().to_representation(items)
 
 
@@ -82,10 +106,21 @@ class AssetSerializer(serializers.ModelSerializer):
 
     Slice 28: incident_hold (read-only), held as evidence for an incident investigation (status_label then reads "Held for incident");
     only apps.incidents.services sets and clears it (POST /api/v1/incidents/, a hold's release). A different value sent is refused
-    rather than dropped; sending back what a GET returned is fine. No incident number here: the devices API is Equipment View's."""
+    rather than dropped; sending back what a GET returned is fine. No incident number here: the devices API is Equipment View's.
+
+    Slice 29, rentals, vendor loaners, and demo units, read only this slice: ownership (Ownership: "owned" for ours) with
+    ownership_label, owner, owner_reference (the agreement, PO, or RMA number), arrived_on, due_back_on, owner_pm_due_on (the owner's PM
+    date), returned_on, kept_on, and stands_in_for (a vendor loaner's device of ours, by id) with stands_in_for_tag, both null for a
+    scoped user outside whose share that device is (stand_ins). A device added through the API is ours; the temporary ones are added
+    and changed on the Equipment screen. A value sent for one of these other than what a GET returns is refused, keyed by the field,
+    rather than dropped (TEMPORARY_FIELDS)."""
 
     HOLD_REFUSAL = ("A device is held as evidence by recording an incident (POST /api/v1/incidents/) and released by the incident "
                     "(POST /api/v1/incidents/{id}/holds/{hold}/release/).")
+    TEMPORARY_FIELDS = ("ownership", "owner", "owner_reference", "arrived_on", "due_back_on", "owner_pm_due_on", "returned_on", "kept_on",
+                        "stands_in_for")
+    TEMPORARY_REFUSAL = ("Rentals, vendor loaners, and demo units are added and changed on the Equipment screen (Add rental or loaner, the "
+                         "device's Change details, Return to owner, Keep it); a device added through the API is the facility's own.")
 
     device_model_detail = DeviceModelSerializer(source="device_model", read_only=True)
     department_name = serializers.CharField(source="department.name", read_only=True)
@@ -102,19 +137,26 @@ class AssetSerializer(serializers.ModelSerializer):
                                                            (eq_services.INCOMING_WAITING, "Waiting for its incoming inspection")],
                                                   required=False, allow_blank=True, write_only=True)
     inspection_due = serializers.DateField(required=False, allow_null=True, write_only=True)
+    # Slice 29: read only (the temporary services are their writers); the model's fields are editable=False
+    ownership_label = serializers.CharField(source="get_ownership_display", read_only=True)
+    stands_in_for = serializers.SerializerMethodField()
+    stands_in_for_tag = serializers.SerializerMethodField()
 
     class Meta:
         model = Asset
         fields = ["id", "tag", "serial", "device_model", "device_model_detail", "department", "department_name", "room", "status", "status_label",
                   "awaiting_inspection", "incident_hold", "open_inspection", "open_inspection_number", "installed_on", "acquisition_cost",
                   "condition", "warranty_end", "support_type", "contract", "contract_reference", "under_contract", "last_pm_on", "next_pm_on",
-                  "notes", "added_as", "added_as_label", "incoming_inspection", "inspection_due", "updated_at"]
-        read_only_fields = ["support_type", "awaiting_inspection", "incident_hold"]
+                  "notes", "added_as", "added_as_label", "incoming_inspection", "inspection_due",
+                  "ownership", "ownership_label", "owner", "owner_reference", "arrived_on", "due_back_on", "owner_pm_due_on", "returned_on",
+                  "kept_on", "stands_in_for", "stands_in_for_tag", "updated_at"]
+        read_only_fields = ["support_type", "awaiting_inspection", "incident_hold", "ownership", "owner", "owner_reference", "arrived_on",
+                            "due_back_on", "owner_pm_due_on", "returned_on", "kept_on"]
         list_serializer_class = AssetListSerializer
 
     def validate(self, attrs):
         """Slice 28: incident_hold is read-only (the incidents' services are its one writer): a value other than the device's is a 400
-        keyed incident_hold, never dropped in silence."""
+        keyed incident_hold, never dropped in silence. Slice 29: so are the temporary fields (TEMPORARY_FIELDS), each keyed by itself."""
         data = self.initial_data if hasattr(self.initial_data, "get") else {}
         if "incident_hold" in data:
             try:
@@ -123,7 +165,37 @@ class AssetSerializer(serializers.ModelSerializer):
                 sent = None
             if sent is not (self.instance.incident_hold if self.instance is not None else False):
                 raise serializers.ValidationError({"incident_hold": [self.HOLD_REFUSAL]})
+        changed = [name for name in self.TEMPORARY_FIELDS if name in data and _plain(data[name]) != _plain(self._temporary_value(name))]
+        if changed:
+            raise serializers.ValidationError({name: [self.TEMPORARY_REFUSAL] for name in changed})
         return attrs
+
+    def _temporary_value(self, name):
+        """What a GET returns for one of TEMPORARY_FIELDS: the device's, or a new device's (ours, no stay)."""
+        obj = self.instance
+        if name == "ownership":
+            return obj.ownership if obj is not None else Ownership.OWNED
+        if name == "stands_in_for":
+            return self.get_stands_in_for(obj) if obj is not None else None
+        value = getattr(obj, name) if obj is not None else None
+        return value.isoformat() if hasattr(value, "isoformat") else value
+
+    def _stand_in(self, obj):
+        """(id, tag) of the device `obj` stands in for, as this request's user may see it, or None: from the page's one read
+        (AssetListSerializer), else read for this device alone, once for both fields."""
+        known = self.context.setdefault("_stand_ins", {})
+        if obj.pk not in known:
+            request = self.context.get("request")
+            known[obj.pk] = stand_ins([obj], getattr(request, "user", None)).get(obj.pk)
+        return known[obj.pk]
+
+    def get_stands_in_for(self, obj):
+        found = self._stand_in(obj)
+        return found[0] if found else None
+
+    def get_stands_in_for_tag(self, obj):
+        found = self._stand_in(obj)
+        return found[1] if found else None
 
     def get_status_label(self, obj) -> str:
         return eq_services.status_label(obj)

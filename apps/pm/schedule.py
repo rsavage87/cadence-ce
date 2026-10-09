@@ -19,7 +19,7 @@ from decimal import Decimal
 
 from django.db.models import Case, Count, Exists, OuterRef, Q, Subquery, Sum, Value, When
 
-from apps.equipment.models import Asset, DeviceModel, RiskClass
+from apps.equipment.models import Asset, DeviceModel, Ownership, RiskClass
 from apps.equipment.services import RISK_RANK
 from apps.workorders.models import OPEN_STATUSES, WorkOrder, WoType
 
@@ -309,9 +309,11 @@ def workload_next_7_days(today: date) -> list[Load]:
 def pm_library() -> list[dict]:
     """Every device model with its PM program: the OEM interval, the interval in force (AEM when approved; never for life
     support, nor for the equipment CMS keeps on the manufacturer's schedule: `oem_required`), and its procedure. Most critical
-    first, then category."""
+    first, then category. Slice 29: `devices` counts our devices in use, the ones on the program (a rental, vendor loaner, or demo
+    unit of the model is maintained by its owner)."""
+    on_program = Q(assets__status__in=Asset.ACTIVE_STATUSES, assets__ownership=Ownership.OWNED)
     models = (DeviceModel.objects.select_related("pm_procedure")
-              .annotate(devices=Count("assets", filter=Q(assets__status__in=Asset.ACTIVE_STATUSES)), rank=RISK_RANK_MODEL)
+              .annotate(devices=Count("assets", filter=on_program), rank=RISK_RANK_MODEL)
               .order_by("rank", "category", "manufacturer", "model"))
     out = []
     for dm in models:

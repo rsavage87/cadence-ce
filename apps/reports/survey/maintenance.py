@@ -36,6 +36,10 @@ incident releases it, so its PM cannot be done. A held life-support or high-risk
 hold began with no reason recorded (releasing the hold records LateReason.INCIDENT_HOLD on it). A PM that was already late when the
 device was held keeps its GAP: the hold does not explain it. The held day is the earliest active hold's (one query, only when a device
 listed is held), and the status column reads "Held for incident" (equipment.services.HELD_LABEL).
+
+Slice 29: the devices past their PM date (the figures and the table) are ours only (equipment.services.OWNED). A rental, vendor loaner,
+or demo unit is maintained by its owner, has no PM of ours to be past, and is never overdue for being missing; the inventory section
+asks for its owner's PM date instead. It never has a PM work order (workorders.services refuses one), so the PMs counted are ours.
 """
 from __future__ import annotations
 
@@ -48,7 +52,7 @@ from django.urls import reverse
 from apps.core.days import local_day
 from apps.core.history import _rows, who
 from apps.equipment.models import Asset, AssetStatus, RiskClass
-from apps.equipment.services import HELD_LABEL
+from apps.equipment.services import HELD_LABEL, OWNED
 from apps.facility.services import compliance_targets, get_settings
 from apps.incidents.models import IncidentHold
 from apps.incidents.models import Status as IncidentStatus
@@ -142,7 +146,7 @@ def _by_class(due, period: Period, w: Windows, targets: dict) -> tuple[list[dict
         counts["after_due"] = Count("id", filter=_after_due_on_time(w))
         devices["inside"] = Count("id", filter=w.inside_window_q(today, date_field="next_pm_on", risk=ASSET_RISK) & Q(status__in=FOUND))
     counted = {row["rc"]: row for row in due.order_by().values(rc=F("asset__device_model__risk_class")).annotate(**counts)}
-    fleet = {row["rc"]: row for row in Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES).order_by()
+    fleet = {row["rc"]: row for row in Asset.objects.filter(OWNED, status__in=Asset.ACTIVE_STATUSES).order_by()
              .values(rc=F("device_model__risk_class")).annotate(**devices)}
     pending = _pending_by_class(period, w)
     classes = []
@@ -348,7 +352,7 @@ def _critical_past(today, w: Windows) -> list[dict]:
     """Life-support and high-risk devices past their PM date today (or marked missing), each with its open PM work order (the earliest
     opened), when its window ends (`end`), and whether it is a gap: past its window, or missing. By the due date every one listed is.
     Two queries."""
-    devices = list(Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES, device_model__risk_class__in=CRITICAL).filter(_past_due_date(today))
+    devices = list(Asset.objects.filter(OWNED, status__in=Asset.ACTIVE_STATUSES, device_model__risk_class__in=CRITICAL).filter(_past_due_date(today))
                    .order_by(F("next_pm_on").asc(nulls_last=True), "tag")
                    .values("id", "tag", "status", "next_pm_on", rc=F("device_model__risk_class"), make=F("device_model__manufacturer"),
                            model=F("device_model__model"), held=F("incident_hold")))

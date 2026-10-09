@@ -30,6 +30,9 @@ The rules:
   first SCREEN_ROWS of them (apps.web.reports_custom).
 - A saved definition that no longer fits the registry (a column dropped in a later release) still runs: unknown parts are skipped
   (_lenient), never a server error.
+- Slice 29, rentals, vendor loaners, and demo units: the devices source's Status reads "Returned to owner" for one that went back
+  (DeviceStatus; Retired is a device of ours retired), its "Whose" column and filter say whose a device is, and its PM interval is
+  empty for one (its owner maintains it). The owner's agreement, PO, or RMA number is never offered: reports are emailed.
 
 Running returns what the standard reports return (apps.reports.services, REPORTS): "columns" (labels) and "rows" (plain values: str,
 int, float, date, bool, None; money as float, as the standard reports return it), plus what the screen needs: "kinds" (for alignment
@@ -64,6 +67,7 @@ from django.db.models import (
     Q,
     Subquery,
     Sum,
+    TextChoices,
     Value,
     When,
 )
@@ -73,7 +77,8 @@ from django.utils.text import slugify
 
 from apps.core.expressions import DayNumber
 from apps.credentials.models import Technician
-from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, RiskClass, SupportType
+from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, Ownership, RiskClass, SupportType
+from apps.equipment.services import OWNED, RETURNED_LABEL
 from apps.pm.dates import month_bounds
 from apps.pm.services import RETIRED_AND_CANCELLED
 from apps.pm.windows import window_of, windows
@@ -151,6 +156,7 @@ class Filter:
     lookup: str
     choices: tuple = ()  # (value, label) for "choice"
     vendor: bool = False  # "technician": also offers "Vendor time" (a line naming no technician)
+    value: object = None  # slice 29: a function of the run's `today` giving the expression a "choice" filters on, in place of `lookup`
 
 
 @dataclass(frozen=True)
@@ -265,6 +271,30 @@ def _pm_interval(today):
                 default=Coalesce("device_model__aem_interval_months", "device_model__oem_pm_interval_months"), output_field=IntegerField())
 
 
+class DeviceStatus(TextChoices):
+    """A device's status as the devices source shows and filters it (slice 29): AssetStatus, but for a rental, vendor loaner, or demo
+    unit that went back to its owner (status retired, not ours), which reads "Returned to owner" (equipment.services.status_label's
+    rule), never "Retired". Retired is a device of ours retired."""
+    IN_SERVICE = AssetStatus.IN_SERVICE.value, AssetStatus.IN_SERVICE.label
+    IN_REPAIR = AssetStatus.IN_REPAIR.value, AssetStatus.IN_REPAIR.label
+    OUT_OF_SERVICE = AssetStatus.OUT_OF_SERVICE.value, AssetStatus.OUT_OF_SERVICE.label
+    ON_LOAN = AssetStatus.ON_LOAN.value, AssetStatus.ON_LOAN.label
+    MISSING = AssetStatus.MISSING.value, AssetStatus.MISSING.label
+    RETIRED = AssetStatus.RETIRED.value, AssetStatus.RETIRED.label
+    RETURNED = "returned", RETURNED_LABEL
+
+
+def _device_status(today):
+    return Case(When(Q(status=AssetStatus.RETIRED) & ~OWNED, then=Value(DeviceStatus.RETURNED.value)), default=F("status"),
+                output_field=CharField())
+
+
+def _pm_interval_ours(today):
+    """_pm_interval for a device of ours; none for a rental, vendor loaner, or demo unit (slice 29: its owner maintains it, on no
+    interval of ours)."""
+    return Case(When(~OWNED, then=_NONE_INT), default=_pm_interval(today), output_field=IntegerField())
+
+
 def _oem_schedule(today):
     """Imaging, radiologic, or medical laser equipment the facility marked: CMS keeps it on the manufacturer's schedule."""
     return Case(When(device_model__oem_schedule_required=True, then=Value(1)), default=Value(0), output_field=IntegerField())
@@ -365,8 +395,10 @@ DEVICES = SourceSpec(
         Column("serial", "Serial", TEXT, "serial"),
         *_device_columns("")[1:],
         Column("room", "Room", TEXT, "room"),
-        Column("status", "Status", TEXT, "status", group=True, choices=AssetStatus),
+        Column("status", "Status", TEXT, _device_status, group=True, choices=DeviceStatus),
         Column("risk_class", "Risk class", TEXT, "device_model__risk_class", group=True, choices=RiskClass),
+        # Slice 29: whose it is (a choice; never the owner's agreement, PO, or RMA number, which stays on the device's screens)
+        Column("ownership", "Whose", TEXT, "ownership", group=True, choices=Ownership),
         Column("support_type", "Support", TEXT, "support_type", group=True, choices=SupportType),
         Column("contract", "Contract", TEXT, "contract__reference", group=True, blank="No contract"),
         Column("contract_vendor", "Contract vendor", TEXT, "contract__vendor", group=True, blank="No contract"),
@@ -378,15 +410,16 @@ DEVICES = SourceSpec(
         Column("warranty_end", "Warranty ends", DATE, "warranty_end", month=True),
         Column("last_pm", "Last PM", DATE, "last_pm_on", month=True),
         Column("next_pm", "Next PM", DATE, "next_pm_on", month=True, blank="Not scheduled"),
-        Column("pm_interval", "PM interval (months)", NUMBER, _pm_interval),
+        Column("pm_interval", "PM interval (months)", NUMBER, _pm_interval_ours),
         Column("oem_schedule", "On the manufacturer's schedule (CMS)", YESNO, _oem_schedule, group=True),
         Column("open_work_orders", "Open work orders", NUMBER, _open_work_orders, agg=SUM),
         Column("repairs_12mo", "Repairs, last 12 months", NUMBER, _repairs_12mo, agg=SUM),
         Column("service_cost_12mo", "Service cost, last 12 months", MONEY, _service_cost_12mo, agg=SUM),
     ),
     filters=(
-        Filter("status", "Status", "choice", "status", _choices(AssetStatus)),
+        Filter("status", "Status", "choice", "status", _choices(DeviceStatus), value=_device_status),
         Filter("risk_class", "Risk class", "choice", "device_model__risk_class", _choices(RiskClass)),
+        Filter("ownership", "Whose", "choice", "ownership", _choices(Ownership)),
         Filter("support_type", "Support", "choice", "support_type", _choices(SupportType)),
         Filter("oem_schedule", "On the manufacturer's schedule (CMS)", "yesno", "device_model__oem_schedule_required", YES_NO),
         *_place_filters(""),
@@ -872,7 +905,11 @@ def _filtered(spec: SourceSpec, filters: dict, today: date, w=None):
                 q |= Q(**{f"{f.lookup}__isnull": True})
             qs = qs.filter(q)
             continue
-        qs = qs.filter(**{f"{f.lookup}__in": values})
+        lookup = f.lookup
+        if f.value is not None:  # slice 29: a value worked out per row (a device's status, "Returned to owner" included)
+            lookup = f"cf_{f.key}"
+            qs = qs.alias(**{lookup: f.value(today)})
+        qs = qs.filter(**{f"{lookup}__in": values})
     return qs
 
 
@@ -921,7 +958,9 @@ def _listed(spec: SourceSpec, d: dict, qs, today: date, limit: int, w=None) -> d
     if d["sort"]:
         c = spec.column(d["sort"].lstrip("-"))
         # Text in any letter case, with blank text read as empty, so blanks sort last as missing values do (and as _grouped sorts them)
-        key = _rank(c.value, c.choices) if c.choices else NullIf(Lower(F(f"cr_{c.key}")), Value("")) if c.kind == TEXT else F(f"cr_{c.key}")
+        # A coded value ranks by its path, or by its annotation when it is worked out per row (slice 29: a device's status)
+        path = c.value if isinstance(c.value, str) else f"cr_{c.key}"
+        key = _rank(path, c.choices) if c.choices else NullIf(Lower(F(f"cr_{c.key}")), Value("")) if c.kind == TEXT else F(f"cr_{c.key}")
         order.append(OrderBy(key, descending=d["sort"].startswith("-"), nulls_last=True))
     raw = qs.annotate(**aliases).order_by(*order, *spec.order, "pk").values_list(*aliases)[:limit]
     rows = [[_plain(c, v) for c, v in zip(cols, r)] for r in raw]
