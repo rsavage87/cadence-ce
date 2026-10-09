@@ -75,6 +75,13 @@ holding it is completed (or started). blocker says so first for any other work o
 services.change_status refuses the start and the completion on the device's locked row. A failed PM's repair (or a failed
 inspection's re-inspection) is opened before the start, so its number is taken before the device's row. Completing the investigation
 leaves the device held and out of service: the incident's release returns it.
+
+Slice 29, a temporary device (a rental, vendor loaner, or demo unit: equipment.services.owner_maintains): its incoming inspection is
+done to inspections.TEMPORARY_INCOMING (the incoming checklist, the owner's PM label, the model's open recalls), never its model's PM
+procedure (inspection_procedure), and it never has a PM (services.create_work_order). Passed is refused, keyed inspection_result, while
+its owner's PM date is recorded and past (inspections.owner_pm_refusal: the owner does the PM, or its new date is recorded); Failed,
+or no result where none is required, is not. A kept pass (a reopened inspection whose pass ended the wait) is never refused: it moves
+nothing, and Failed is refused there.
 """
 import hashlib
 import json
@@ -142,15 +149,26 @@ class Completion:
 
 def procedure_for(wo: WorkOrder):
     """The procedure a PM work order is done to: its device's model's PM procedure, as it is now (or None). Slice 26: an incoming
-    inspection is done to the same procedure when it has steps, else to the incoming checklist (inspections.INCOMING, a stand-in in
-    the procedure's shape with a blank code), so checklist_of(procedure_for(wo)) is an inspection's checklist as it is a PM's. None
-    for other types."""
+    inspection's is inspection_procedure(its device), so checklist_of(procedure_for(wo)) is an inspection's checklist as it is a PM's.
+    None for other types."""
     if wo.type == WoType.PM:
         return wo.asset.device_model.pm_procedure
     if wo.type == WoType.INSPECTION:
-        procedure = wo.asset.device_model.pm_procedure
-        return procedure if checklist_of(procedure) else inspections.INCOMING
+        return inspection_procedure(wo.asset)
     return None
+
+
+def inspection_procedure(asset):
+    """The checklist an incoming inspection of `asset` is done to (slice 26): its model's PM procedure when that has steps, else the
+    incoming checklist (inspections.INCOMING, a stand-in in the procedure's shape with a blank code). Slice 29: a temporary device's is
+    inspections.TEMPORARY_INCOMING whatever its model's procedure (its owner maintains it: CE checks it before first use and never
+    does the owner's PM). inspections.open_for estimates the inspection's hours from it."""
+    from apps.equipment.services import owner_maintains  # equipment.services imports this app inside its functions; keep it one way
+
+    if owner_maintains(asset):
+        return inspections.TEMPORARY_INCOMING
+    procedure = asset.device_model.pm_procedure
+    return procedure if checklist_of(procedure) else inspections.INCOMING
 
 
 def checklist_of(procedure) -> list[tuple[str, str | bool | None]]:
@@ -715,6 +733,10 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
         inspection_result = InspectionResult.PASSED
     _check_result(locked, pm_result, snapshot, bool(steps), text, errors, inspection_result=inspection_result,
                   result_required=asset.awaiting_inspection)
+    if is_inspection and inspection_result == InspectionResult.PASSED and not kept_pass and "inspection_result" not in errors:
+        owner_pm = inspections.owner_pm_refusal(asset, today)  # slice 29: a temporary device whose owner's PM date is past
+        if owner_pm:
+            errors["inspection_result"] = owner_pm
     fail = is_pm and pm_result == PmResult.FAIL
     if fail and not open_repair and own_open_repair(locked) is None and other_open_repair(locked, by) is None:
         errors["open_repair"] = f"{asset.tag} has no open repair work order to record the failure on, so a failed PM opens one."
