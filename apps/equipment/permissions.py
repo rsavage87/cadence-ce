@@ -16,6 +16,11 @@ Approve too: on Add model and Edit details, and in the API. apps.equipment.servi
 Putting a new device in use before its incoming inspection (slice 26, equipment.services.use_before_inspection: an emergency, a
 loaner needed now, a device that arrived on the unit already in use) is an exception to the hold every other door keeps, so it needs
 Approve, the level retiring needs; the service checks it again for any user it is given.
+
+Temporary equipment (slice 29: rentals, vendor loaners, demo units): adding one, changing its stay, and Return to owner are the
+everyday work of Equipment Edit, as adding a device is. Keeping one (the facility buys it: it joins the PM program with a cost and a
+next PM) is a decision about the fleet, so it needs Approve, as retiring does. equipment.services checks both again for a user it is
+given.
 """
 from apps.accounts.models import Level, Module
 
@@ -30,6 +35,8 @@ MODEL_EDIT_LEVEL = Level.EDIT
 RISK_LEVEL = Level.APPROVE
 OEM_SCHEDULE_LEVEL = Level.APPROVE
 USE_BEFORE_INSPECTION_LEVEL = RETIRE_LEVEL  # slice 26
+TEMPORARY_LEVEL = Level.EDIT  # slice 29: add a rental, vendor loaner, or demo unit, change its stay, return it to its owner
+KEEP_LEVEL = RETIRE_LEVEL  # slice 29: the facility keeps (buys) one
 
 
 def can_add(user) -> bool:
@@ -66,3 +73,13 @@ def can_set_oem_schedule(user) -> bool:
 def can_use_before_inspection(user) -> bool:
     """Put a device waiting for its incoming inspection in use before it (slice 26, with a reason)."""
     return user.has_level(MODULE, USE_BEFORE_INSPECTION_LEVEL)
+
+
+def can_handle_temporary(user) -> bool:
+    """Add a rental, vendor loaner, or demo unit, change its stay, or return it to its owner (slice 29)."""
+    return user.has_level(MODULE, TEMPORARY_LEVEL)
+
+
+def can_keep_temporary(user) -> bool:
+    """Keep (buy) a rental, vendor loaner, or demo unit: it becomes ours (slice 29)."""
+    return user.has_level(MODULE, KEEP_LEVEL)

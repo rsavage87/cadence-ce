@@ -8,10 +8,10 @@ here takes the row's values (update_contract), a blank cell or a column not in t
 contract that give it different values are applied in turn, so the last one stays, and the row says so. The contract's notes are
 never imported: they are free text.
 
-The row's device goes on the contract (add_asset). A tag not here, or a retired device, is noted and the contract row still
-imports; a device on another contract that ends later than this one stays there, with a note (the later contract is the one that
-covers it); otherwise it moves. A device listed under two contracts goes by that rule in the file's order, and the later line says
-the device is listed twice. Notes never name the tag: the line does.
+The row's device goes on the contract (add_asset). A tag not here, a retired device, or (slice 29) a rental, vendor loaner, or demo
+unit is noted and the contract row still imports; a device on another contract that ends later than this one stays there, with a
+note (the later contract is the one that covers it); otherwise it moves. A device listed under two contracts goes by that rule in
+the file's order, and the later line says the device is listed twice. Notes never name the tag: the line does.
 
 The check rolls each chunk back (apps.imports.services), so a contract the lines of an earlier chunk add or change, and a device
 they put on one, are as they were when a later chunk is checked; the import, which committed that chunk, finds them changed. The
@@ -27,6 +27,7 @@ from apps.accounts.models import Level, Module
 from apps.contracts import services as contracts
 from apps.contracts.models import Contract, ContractType, Coverage
 from apps.equipment.models import Asset, AssetStatus
+from apps.equipment.services import owner_maintains
 
 from .. import parse
 from ..base import Column, Importer, RowResult, RowSkip
@@ -52,6 +53,8 @@ FIELDS = {"vendor": "vendor", "type": "type", "coverage": "coverage", "start": "
 NEW_NEEDS = ("vendor", "start_on", "end_on")
 COVERED, MOVED = "put on a contract", "moved from another contract"
 LISTED_TWICE = "The device is also under another contract on an earlier line: the one that ends later keeps it"
+# Slice 29: a temporary device goes on no contract (contracts.services.add_asset refuses it); a returned one is never called retired.
+TEMPORARY_NOTE = "The device is a rental, vendor loaner, or demo unit, maintained by its owner: not put on the contract"
 
 
 class ContractsImporter(Importer):
@@ -261,6 +264,9 @@ class ContractsImporter(Importer):
         asset = Asset.objects.select_related("contract").filter(tag__iexact=tag).first()  # tags are unique in any letter case
         if asset is None:
             result.warn("No device with this asset tag here: the contract is imported without it")
+            return None
+        if owner_maintains(asset):  # slice 29: before the retired note (a returned one is never called retired)
+            result.warn(TEMPORARY_NOTE)
             return None
         if asset.status == AssetStatus.RETIRED:
             result.warn("The device is retired: not put on the contract")
