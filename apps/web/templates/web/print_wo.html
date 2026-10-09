@@ -5,7 +5,9 @@
    checklist as recorded (slice 15) instead of boxes. Everything typed by users is escaped as usual.
    Slice 26: an incoming inspection prints like a PM (its checklist, or the incoming checklist when the model's procedure has no steps;
    once completed, its result, who inspected it and when, and its steps as recorded), and a re-inspection names the failed
-   inspection it follows.{% endcomment %}
+   inspection it follows.
+   Slice 30: a repair's "Checks after repair" (views_print.repair_checks_print): blank boxes and lines while it is open (a box per
+   pass, fail, and N/A, none for N/A on the steps never N/A; how it ended; who checked), the record once done.{% endcomment %}
 {% block title %}{{ wo.number }}{% endblock %}
 {% block page_style %}<style>
 @page{size:letter;margin:.5in;@bottom-right{content:"{{ wo.number }} · page " counter(page) " of " counter(pages);font:9px sans-serif;color:#6a7280}}
@@ -31,6 +33,10 @@ tfoot td{font-weight:700;border-top:1px solid var(--ink);border-bottom:0}
 .tl td.w{width:1.5in;white-space:nowrap;color:var(--ink-2)}
 .tl td.who{width:1.4in;color:var(--ink-2)}
 .tl td.t{white-space:pre-line}
+table.rc-steps th.c,table.rc-steps td.c{width:.45in;text-align:center}
+table.rc-steps td.meas{width:1.9in}
+.rc-outcome{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;margin-top:10px}
+.rc-outcome .blank{min-width:1.3in}
 </style>{% endblock %}
 {% block bar_title %}{{ wo.number }} · {{ wo.get_type_display }}{% endblock %}
 {% block content %}
@@ -42,6 +48,7 @@ tfoot td{font-weight:700;border-top:1px solid var(--ink);border-bottom:0}
   <span class="chip">{{ wo.get_status_display }}</span>
   {% if past_due_days %}<span class="chip bad">Past due</span>{% endif %}
   {% if wo.tagged_out %}<span class="chip bad">Tagged out</span>{% endif %}
+  {% if repair_checks.recorded %}<span class="chip{% if wo.repair_check == 'not_returned' %} warn{% endif %}">After the repair: {{ wo.get_repair_check_display }}</span>{% endif %}
   {% if recorded and is_inspection %}{% if wo.inspection_result %}<span class="chip{% if wo.inspection_result == 'failed' %} bad{% endif %}">Inspection result: {{ wo.get_inspection_result_display }}</span>{% endif %}
   {% elif recorded %}<span class="chip{% if wo.pm_result == 'fail' %} bad{% elif wo.pm_result == 'pass_minor_repair' %} warn{% endif %}">PM result: {{ wo.get_pm_result_display }}</span>{% endif %}
 </div>
@@ -176,6 +183,40 @@ tfoot td{font-weight:700;border-top:1px solid var(--ink);border-bottom:0}
 <h2>Resolution</h2>
 <p style="white-space:pre-line">{% if wo.resolution %}{% shown_text wo.resolution %}{% else %}No resolution recorded.{% endif %}</p>
 {% endif %}
+{% with rc=repair_checks %}{% if rc %}
+<section class="rc{% if rc.open %} keep{% endif %}">
+<h2>Checks after repair</h2>
+{% if rc.open %}
+<p class="muted">Before {{ asset.tag }} goes back into use. Write what the safety analyzer reads and tick pass or fail by the facility's plan; an electrical test is N/A when the repair did not touch what it tests. The visual check and the function check are never N/A.</p>
+<table class="steps rc-steps">
+  <thead><tr><th>#</th><th>Check</th><th>Reading</th><th class="c">Pass</th><th class="c">Fail</th><th class="c">N/A</th></tr></thead>
+  <tbody>
+  {% for s in rc.steps %}<tr><td class="n">{{ forloop.counter }}</td><td>{{ s.text }}</td><td class="meas">{% if s.measured %}<span class="blank"></span> {{ s.unit }}{% endif %}</td><td class="c"><span class="box"></span></td><td class="c"><span class="box"></span></td><td class="c">{% if s.never_na %}<span class="muted">—</span>{% else %}<span class="box"></span>{% endif %}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<div class="rc-outcome"><b>After the repair</b>{% for value, label in rc.choices %}<span><span class="box"></span> {{ label }}{% if value == "vendor_report" %}, service report <span class="blank"></span>{% endif %}</span>{% endfor %}</div>
+<div class="sign"><div>Checked by</div><div>Date</div></div>
+{% elif rc.recorded %}
+<p class="pm-result"><b>{{ wo.get_repair_check_display }}</b>{% if wo.repair_check != "not_returned" and rc.checked_by %} · checked by {{ rc.checked_by }}{% endif %}{% if wo.repair_check == "vendor_report" %} · service report <span class="mono">{{ wo.checks_reference }}</span>{% endif %}{% if wo.completed_on %} · completed {{ wo.completed_on|date:"M j, Y" }}{% endif %}</p>
+{% if rc.recorded_steps %}
+<table class="steps recorded">
+  <thead><tr><th>#</th><th>Check</th><th>Result</th><th>Reading</th></tr></thead>
+  <tbody>
+  {% for s in rc.recorded_steps %}<tr{% if s.result == "fail" %} class="failed"{% endif %}><td class="n">{{ s.n }}</td><td>{{ s.text }}</td><td class="res">{{ s.label }}</td><td class="meas">{% if s.reading %}{{ s.reading }}{% elif s.measured %}—{% endif %}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% elif wo.repair_check == "vendor_report" %}
+<p class="muted">The vendor's service report is the record of their checks.</p>
+{% else %}
+<div class="note">{{ asset.tag }} did not go back into use after this repair, so no checks were recorded.</div>
+{% endif %}
+{% else %}
+<div class="note">{% if rc.imported %}Imported from the previous system: no checks after repair recorded here.{% else %}No checks after repair were recorded with this repair.{% endif %}</div>
+{% endif %}
+</section>
+{% endif %}{% endwith %}
 {% endif %}
 
 <h2>Labor</h2>

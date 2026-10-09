@@ -1087,6 +1087,36 @@ td small.tmp-late{color:var(--crit)}
   .tmp-form .form :is(input:not([type="checkbox"]):not([type="radio"]),select){font-size:16px;min-height:44px}
 }
 
+/* Slice 30: checks after a repair (web/_wo_complete.html, _wo_results.html). The completion modal is path-first: "After the repair" as
+   radio cards (side by side, one column on a phone); the vendor's report number shows with Checked by the vendor, the checks after
+   repair with Checked: ready for use, and "If a check fails" once a step is marked Fail (all of them shown without :has support). A
+   step never N/A has no N/A choice: a dash, "Never N/A" on a phone. */
+.wc-repair .radio label span{display:block;min-width:0}
+.wc-reference .hint{font-size:12px}
+.wc-steps td.c .wc-never{color:var(--ink-3)}
+.wc-never-words{display:none}
+.wc-keep{display:grid;gap:8px;margin:10px 0 4px;padding:10px 12px;border:1px solid var(--crit);border-radius:8px;background:var(--crit-soft)}
+.wc-keep .wc-label{margin-bottom:0;color:var(--crit);font-weight:600}
+.wc-keep .check-row{display:flex;flex-direction:row;align-items:center;gap:8px;font-size:12.5px;color:var(--ink)}
+.wc-keep .check-row input{width:auto;margin:0}
+.wc-keep .wc-keep-act{justify-self:start}
+@supports selector(:has(*)){
+  .wc-form .wc-checks,.wc-form .wc-reference,.wc-form .wc-keep{display:none}
+  .wc-form:has(input[name="repair_check"][value="passed"]:checked) .wc-checks{display:block}
+  .wc-form:has(input[name="repair_check"][value="vendor_report"]:checked) .wc-reference{display:flex}
+  .wc-form:has(.wc-steps input[value="fail"]:checked) .wc-keep{display:grid}
+}
+@media (max-width:760px){
+  .wc-steps td.c .wc-never{display:flex;align-items:center;justify-content:center;min-height:44px;border:1px dashed var(--line-2);border-radius:8px;font-size:12px}
+  .wc-steps td.c .wc-never [aria-hidden]{display:none}
+  .wc-never-words{display:inline}
+  .wc-keep .check-row{min-height:44px}
+  .wc-keep .check-row input{width:20px;height:20px}
+  .wc-keep .wc-keep-act{justify-self:stretch;justify-content:center;min-height:44px;font-size:14px}
+}
+/* The drawer's "Checks after repair": the vendor's report number in the Checked by line */
+.wr-repair .wr-by b{font-weight:600}
+
 /* Slice 11: printing app pages */
 /* What the browser prints of an app page (the Overview's Export button calls window.print(); any other screen prints from the
    browser's menu): the page's content on white, in the light theme whatever the screen shows, with chart and chip colours kept.

@@ -1,8 +1,33 @@
 {% load web %}
 {# The work order drawer's PM results (slice 15, part B): the result and the checklist as recorded. Context: views_wo_complete.results_context. #}
 {# Slice 26: an incoming inspection's result, who inspected it and when, its steps, and its re-inspection; "Opened from" by the type of the work order it follows. #}
+{# Slice 30: a repair's "Checks after repair": how it ended, who checked and when, the steps and readings, or the vendor's report number, or not returned to use; a reopened repair says what was recorded, and one completed with no outcome says none was. #}
 {% with r=pm_record %}
+  {% if r.kind == "repair" %}
   {% if r.show %}
+  <div class="sec wr-repair"><h3>Checks after repair <span>{% if r.steps %}{{ r.steps|length }} step{{ r.steps|length|pluralize }} as recorded {{ wo.completed_on|date:"M j, Y" }}{% elif wo.repair_check == "vendor_report" %}the vendor's service report{% else %}none: not returned to use{% endif %}</span></h3>
+    <div class="chips" style="margin-bottom:8px"><span class="chip {{ r.css }}">{{ r.label }}</span></div>
+    {% if wo.repair_check == "not_returned" %}
+    <div class="note">{{ asset.tag }} did not go back into use after this repair{% if wo.completed_on %}, completed {{ wo.completed_on|date:"M j, Y" }}{% endif %}. Reopening it and completing it as checked returns it.</div>
+    {% else %}
+    {% if r.inspector %}<p class="wr-by">Checked by {{ r.inspector }}{% if wo.completed_on %} on {{ wo.completed_on|date:"M j, Y" }}{% endif %}{% if wo.repair_check == "vendor_report" %} · service report <b class="mono">{{ wo.checks_reference }}</b>{% endif %}</p>{% endif %}
+    {% if r.steps %}
+    <div class="tbl-wrap"><table class="mini-tbl">
+      <thead><tr><th>#</th><th>Check</th><th>Result</th><th>Reading</th></tr></thead>
+      <tbody>{% for s in r.steps %}
+        <tr><td class="muted">{{ s.n }}</td><td style="white-space:normal">{{ s.text }}</td><td><span class="chip {{ s.css }}">{{ s.label }}</span></td>
+          <td>{% if s.reading %}{{ s.reading }}{% else %}<span class="muted">—</span>{% endif %}</td></tr>
+      {% endfor %}</tbody>
+    </table></div>
+    {% endif %}
+    {% endif %}
+  </div>
+  {% elif r.reopened %}
+  <div class="sec"><div class="note">Reopened. When last completed this repair was recorded as {{ r.words }}; completing it again records its checks after repair anew.</div></div>
+  {% elif r.unrecorded %}
+  <div class="sec"><div class="note wr-none">{{ r.unrecorded }}.</div></div>
+  {% endif %}
+  {% elif r.show %}
   <div class="sec"><h3>{% if r.kind == "inspection" %}Inspection result{% else %}PM result{% endif %} <span>{% if r.steps %}{{ r.steps|length }} step{{ r.steps|length|pluralize }} as recorded {{ wo.completed_on|date:"M j, Y" }}{% elif r.kind == "inspection" %}no checklist recorded{% else %}no checklist on file when done{% endif %}</span></h3>
     <div class="chips" style="margin-bottom:8px"><span class="chip {{ r.css }}">{{ r.label }}</span></div>
     {% if r.inspector %}<p class="wr-by">Inspected by {{ r.inspector }}{% if wo.completed_on %} on {{ wo.completed_on|date:"M j, Y" }}{% endif %}</p>{% endif %}

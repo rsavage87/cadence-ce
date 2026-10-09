@@ -14,6 +14,11 @@ number is a 404, and a failed PM and its repair name each other only when both a
 Slice 26: an incoming inspection prints like a PM: open, its checklist to tick (completion.procedure_for: the model's PM procedure
 when it has steps, else the incoming checklist); completed, its result, who inspected it and when, and the steps as recorded. A failed
 inspection and its re-inspection name each other ("Opened from: Failed incoming inspection WO-...").
+
+Slice 30: a repair prints its "Checks after repair" (apps.workorders.repair_checks): while it is open, the standard checklist with blank
+boxes to tick and readings to write (no N/A box on the steps never N/A) and how it ended to tick (checked by the vendor, with a line
+for their report's number, only on vendor service); once done, the record: how it ended, who checked and when (checked_by), the steps
+as recorded, or the vendor's report number, or not returned to use; one completed with no outcome says none was recorded.
 """
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -26,8 +31,8 @@ from apps.equipment.models import Asset
 from apps.facility.services import asset_request_url, get_settings
 from apps.workorders import completion, inspections, scoping
 from apps.workorders import services as wo_services
-from apps.workorders.models import OPEN_STATUSES, LaborLine, PartLine, WorkOrder, WoType
-from apps.workorders.repair_checks import checked_by
+from apps.workorders.models import OPEN_STATUSES, LaborLine, PartLine, RepairCheck, Source, WorkOrder, WoType
+from apps.workorders.repair_checks import NEVER_NA, POST_REPAIR, checked_by
 
 from .decorators import web_view
 from .forms import asset_filter_options, equipment_assets, parse_asset_filters
@@ -123,6 +128,27 @@ def inspector(wo) -> str:
     return checked_by(wo)
 
 
+def repair_checks_print(wo) -> dict | None:
+    """A repair's "Checks after repair" on paper (slice 30), or None for another type or a cancelled repair. Open: the steps to tick
+    (`steps`, each with never_na) and how it ended (`offer_vendor`: checked by the vendor only on vendor service). Done: `recorded` (its
+    outcome), who checked, the steps as recorded; else `unrecorded` (completed before slice 30, or imported)."""
+    if wo.type != WoType.REPAIR:
+        return None
+    is_open, done = wo.status in OPEN_STATUSES, wo.status in completion.DONE_STATUSES
+    if not (is_open or done):
+        return None
+    steps = checklist_steps(POST_REPAIR)
+    for i, s in enumerate(steps):
+        s["never_na"] = i in NEVER_NA
+        s["unit"] = s["measure"].removeprefix("Record ")  # "Ω", "leakage µA": next to the line to write on
+    recorded = done and bool(wo.repair_check)
+    return {"open": is_open, "steps": steps if is_open else [], "offer_vendor": wo.vendor_service,
+            "choices": RepairCheck.choices if wo.vendor_service else [c for c in RepairCheck.choices if c[0] != RepairCheck.VENDOR_REPORT],
+            "recorded": recorded, "checked_by": checked_by(wo) if recorded else "",
+            "recorded_steps": completion.recorded_steps(wo) if recorded and wo.repair_check == RepairCheck.PASSED else [],
+            "unrecorded": done and not wo.repair_check, "imported": wo.source == Source.IMPORTED}
+
+
 @web_view(Module.WORKORDERS, Level.VIEW, scoped=True)
 def wo_print(request, number):
     # Scoped like the drawer's lookup (views.get_wo): another tenant's number, or one outside a scoped user's share, is a 404.
@@ -156,6 +182,7 @@ def wo_print(request, number):
         "wo": wo, "asset": wo.asset, "facility": request.tenant.name, "today": today, "is_open": is_open, "is_pm": is_pm,
         "is_inspection": is_inspection, "checked": is_pm or is_inspection, "incoming": incoming,
         "inspector": inspector(wo) if is_inspection else "",
+        "repair_checks": repair_checks_print(wo),  # slice 30
         "past_due_days": (today - wo.due_on).days if is_open and wo.due_on < today else 0,
         # The procedure on file (never the incoming checklist, which is no procedure: no code, source, or revision to print)
         "procedure": None if incoming else procedure, "steps": checklist_steps(procedure),

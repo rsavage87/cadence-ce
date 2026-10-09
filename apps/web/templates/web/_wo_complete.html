@@ -15,14 +15,17 @@
    step or none), its result (Passed / Failed, each saying what it does to the device; optional when the device is not waiting for
    its inspection), and a waiting device's "If it fails" (shown once Failed is chosen): the re-inspection, and the tag-out of a device
    put in use before its inspection.
-   Slice 30: a repair asks how it ended ("After the repair": checked and ready for use, checked by the vendor with their report's
-   number on vendor service, not returned to use) and shows the checks after repair, sent only with checked and ready for use.{% endcomment %}
+   Slice 30: a repair asks how it ended first ("After the repair": radio cards, each saying what it does to the device: checked and
+   ready for use, chosen to begin with unless the vendor's report is offered; checked by the vendor, with their report's number shown
+   once it is chosen; not returned to use), then the checks after repair, shown only with checked and ready for use (CSS :has; all of
+   it without :has support), with no N/A on the steps never N/A, and "If a check fails" once a step is marked Fail: Keep the repair
+   open (views_wo_complete.wo_keep_open) with the hold-out box, ticked by default.{% endcomment %}
 <div class="modal-h wc-h"><h2>Complete {{ wo.number }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
 {% if blocker %}
 <div class="form"><div class="full note">{{ blocker }}</div></div>
 <div class="modal-f wc-foot"><button class="btn" type="button" data-act="close-modal">Close</button></div>
 {% else %}
-<form id="wc-form" class="wc-form" hx-post="{% url 'web:wo_complete' wo.number %}" hx-target="#modal-card" hx-sync="this:drop" hx-disabled-elt="find button[type=submit]" novalidate>
+<form id="wc-form" class="wc-form{% if is_repair %} wc-is-repair{% endif %}" hx-post="{% url 'web:wo_complete' wo.number %}" hx-target="#modal-card" hx-sync="this:drop" hx-disabled-elt="find button[type=submit]" novalidate>
   {{ form.signature }}{% if from_my_work %}<input type="hidden" name="from" value="{{ from_value }}">{% endif %}
   <div class="form">
     <p class="full wc-title"><strong>{{ asset.tag }}</strong> · {{ dm.description }}, {{ dm.manufacturer }} {{ dm.model }}<br><span class="muted">{{ wo.get_type_display }}{% if wo.vendor_service %} · {{ wo.vendor_name|default:"Vendor" }}{% elif wo.assigned_to %} · {{ wo.assigned_to.name }}{% endif %}</span></p>
@@ -36,16 +39,16 @@
         {% for opt in repair_options %}<label><input type="radio" name="repair_check" value="{{ opt.value }}"{% if opt.checked %} checked{% endif %}{% if form.first_error == "repair_check" and forloop.first %} autofocus{% endif %}><span>{{ opt.label }}<small>{{ opt.hint }}</small></span></label>{% endfor %}
       </div>
       {% if form.repair_check.errors %}<span class="err">{{ form.repair_check.errors|striptags }}</span>{% endif %}
-      {% if offer_vendor_report %}<label class="wc-reference">The vendor's service report or field service order number, with Checked by the vendor{{ form.checks_reference }}{% if form.checks_reference.errors %}<span class="err">{{ form.checks_reference.errors|striptags }}</span>{% endif %}</label>{% endif %}
-      <p class="hint">Checked: ready for use records the checks below. Not returned to use keeps {{ asset.tag }} out of service.</p>
     </div>
+    {% if offer_vendor_report %}<label class="full wc-reference">The vendor's service report or field service order number{{ form.checks_reference }}<span class="hint">As printed on the report they left: the report is the record of their checks.</span>{% if form.checks_reference.errors %}<span class="err" id="wc-checks_reference_error">{{ form.checks_reference.errors|striptags }}</span>{% endif %}</label>{% endif %}
     {% endif %}
   </div>
   {% if is_pm or is_inspection or is_repair %}
-  <div class="wc-sec">
+  <div class="wc-sec{% if is_repair %} wc-checks{% endif %}">
     {% if has_checklist %}
-    <div class="wc-head"><span class="hint">Checklist{% if procedure %}: {% if procedure.code %}<b>{{ procedure.code }}</b> · {% endif %}{{ procedure.name }}{% endif %}</span>
+    <div class="wc-head"><span class="hint">{% if is_repair %}<b>Checks after repair</b> · before {{ asset.tag }} goes back into use{% else %}Checklist{% if procedure %}: {% if procedure.code %}<b>{{ procedure.code }}</b> · {% endif %}{{ procedure.name }}{% endif %}{% endif %}</span>
       <button class="btn sm wc-rest" type="button" hx-get="{% url 'web:wo_complete' wo.number %}" hx-vals='{"fill": "pass"}' hx-include="#wc-form" hx-target="#modal-card">Mark the rest pass</button></div>
+    {% if is_repair %}<p class="hint wc-insp-note">Record what the safety analyzer reads, and pass or fail by the facility's plan. An electrical test is N/A when the repair did not touch what it tests; {{ never_na_words }} never are.</p>{% endif %}
     {% if is_inspection %}<p class="hint wc-insp-note">{% if rental_checklist %}{{ asset.tag }} is a {{ asset.get_ownership_display|lower }}: this is the rental checklist, the incoming checklist with the owner's PM label. Its owner maintains it, so never the model's PM procedure. {% elif incoming_checklist %}The model has no PM procedure with steps, so this is the incoming checklist. {% endif %}Record every step, or none and say in the resolution what was checked (a vendor's acceptance report, say).</p>{% endif %}
     {% if form.checklist_errors %}<div class="err" role="alert" style="margin-bottom:6px">{{ form.checklist_errors }}</div>{% endif %}
     <div class="tbl-wrap"><table class="mini-tbl wc-steps">
@@ -55,11 +58,19 @@
         <td class="muted n">{{ r.n }}</td>
         <td class="st">{{ r.text }}{% if r.measure %}<small class="muted">{{ r.prompt }}</small>{% endif %}{% if r.error %}<span class="err">{{ r.error }}</span>{% endif %}
           {% if r.measured %}<input class="rd" type="text" name="reading_{{ r.n }}" value="{{ r.reading }}" maxlength="{{ reading_max }}" autocomplete="off" aria-label="Step {{ r.n }}: reading" placeholder="Reading"{% if r.focus == "reading" %} autofocus{% endif %}{% if r.numeric %} inputmode="decimal"{% endif %}>{% if r.reading_error %}<span class="err">{{ r.reading_error }}</span>{% endif %}{% endif %}</td>
-        {% for value, label in step_choices %}<td class="c"><label class="wc-pick"><input type="radio" name="step_{{ r.n }}" value="{{ value }}" aria-label="Step {{ r.n }}: {{ label }}"{% if r.value == value %} checked{% endif %}{% if r.focus == "step" and forloop.first %} autofocus{% endif %}><span aria-hidden="true">{{ label }}</span></label></td>{% endfor %}
+        {% for value, label in step_choices %}<td class="c">{% if r.never_na and value == "na" %}<span class="wc-never" title="Never N/A after a repair"><span aria-hidden="true">—</span><span class="wc-never-words">Never N/A</span></span>{% else %}<label class="wc-pick"><input type="radio" name="step_{{ r.n }}" value="{{ value }}" aria-label="Step {{ r.n }}: {{ label }}"{% if r.value == value %} checked{% endif %}{% if r.focus == "step" and forloop.first %} autofocus{% endif %}><span aria-hidden="true">{{ label }}</span></label>{% endif %}</td>{% endfor %}
       </tr>
       {% endfor %}
       </tbody>
     </table></div>
+    {% if is_repair and offer_keep_open %}
+    <div class="wc-keep" role="group" aria-labelledby="wc-keep-label">
+      <div class="wc-label" id="wc-keep-label">If a check fails</div>
+      <div class="hint">A failed check means {{ asset.tag }} is not ready for use. Keep {{ wo.number }} open with the failed checks recorded on it, put it right, and check it again; or choose Not returned to use.</div>
+      {% if offer_hold %}<label class="check-row">{{ form.hold }} {{ hold_words }}</label><input type="hidden" name="shown_hold" value="1">{% else %}<div class="hint">{{ hold_words }}</div>{% endif %}
+      <button class="btn sm wc-keep-act" type="button" hx-post="{% url 'web:wo_keep_open' wo.number %}" hx-disabled-elt="this">Keep {{ wo.number }} open</button>
+    </div>
+    {% endif %}
     {% else %}
     <div class="note">{% if procedure %}{{ procedure.code }} has no steps on file{% else %}No PM procedure is on file for this model{% endif %}. Say in the resolution what was checked, and any readings.</div>
     {% if form.checklist_errors %}<div class="err" role="alert" style="margin-top:6px">{{ form.checklist_errors }}</div>{% endif %}
