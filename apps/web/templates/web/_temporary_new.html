@@ -1,0 +1,38 @@
+{% load web %}
+{% comment %}Slice 29: Add rental or loaner (views_temporary.temporary_new, forms_temporary.TemporaryDeviceForm). Whose it is first ("Ours"
+   switches back to Add device), then Add device's tag, model, and department fields, the owner and their reference, the device of ours a
+   vendor loaner stands in for (shown while Vendor loaner is chosen: CSS :has), the dates, and how it arrives (Add device's intake). The
+   warning under the serial (temporary_match) says when the unit was here before; it never blocks. No notes: a stay carries no free text.
+   The form is .dv-form, so Add device's :has rules show the new model's, the new department's, and each intake choice's fields.{% endcomment %}
+<div class="modal-h"><h2>Add rental or loaner</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+<form id="dv-form" class="dv-form tmp-form" hx-post="{% url 'web:temporary_new' %}" hx-target="#modal-card" novalidate>
+<div class="form">
+  {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+  {% if stands_for %}<p class="full hint tmp-for">A vendor loaner standing in for {{ stands_for.tag }} · {{ stands_for.device_model.description }}: its model, department, and room are filled in{% if form.initial.owner %}, and the vendor its repair is with as the owner{% endif %}. Check them against the unit that arrived.</p>{% endif %}
+  <fieldset class="full dv-sub tmp-kind"{% if form.kind.errors %} aria-describedby="dv-kind_error"{% endif %}>
+    <legend>{{ form.kind.label }}</legend>
+    <div class="radio tmp-kind-list">
+      <label for="dv-kind-ours"><input id="dv-kind-ours" type="radio" name="kind" value="owned" hx-get="{% url 'web:asset_new' %}" hx-trigger="change" hx-target="#modal-card" hx-swap="innerHTML"><span>Ours (owned, leased, or placed: on our PM program)<small>CE maintains it: Add device</small></span></label>
+      {% for radio, hint in form.kind_options %}<label for="{{ radio.id_for_label }}">{{ radio.tag }}<span>{{ radio.choice_label }}<small>{{ hint }}</small></span></label>{% endfor %}
+    </div>
+    {% if form.kind.errors %}<span class="err" id="dv-kind_error">{{ form.kind.errors|striptags }}</span>{% endif %}
+  </fieldset>
+  {% include "web/_asset_field.html" with field=form.tag %}
+  {% include "web/_asset_field.html" with field=form.serial %}
+  {% include "web/_asset_field.html" with field=form.device_model cls="full" %}
+  {% include "web/_asset_new_model.html" %}
+  {% include "web/_temporary_match.html" %}
+  {% include "web/_asset_field.html" with field=form.department %}
+  {% include "web/_asset_field.html" with field=form.room %}
+  {% include "web/_asset_field.html" with field=form.new_department cls="full dv-new dv-new-dept" %}
+  {% include "web/_asset_field.html" with field=form.owner %}
+  {% include "web/_asset_field.html" with field=form.owner_reference %}
+  {% include "web/_asset_field.html" with field=form.stands_in_for cls="full tmp-if-loaner" %}
+  {% include "web/_asset_field.html" with field=form.arrived_on %}
+  {% include "web/_asset_field.html" with field=form.due_back_on %}
+  {% include "web/_asset_field.html" with field=form.owner_pm_due_on %}
+  {% include "web/_asset_intake.html" %}
+</div>
+<datalist id="tmp-owners">{% for name in form.owners %}<option value="{{ name }}"></option>{% endfor %}</datalist>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Add rental or loaner</button></div>
+</form>

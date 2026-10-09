@@ -11,6 +11,7 @@ from . import (
                views_my_work,
                views_notifications,
                views_scan,
+               views_temporary,
                views_wo_complete,
                views_wo_costs,
                views_wo_late,
@@ -41,11 +42,18 @@ urlpatterns = [
     path("scan/", views_scan.scan, name="scan"),  # slice 18: Scan tag (not under equipment/: "scan" is not a reserved tag)
     path("equipment/", views.equipment, name="equipment"),
     path("equipment/new/", views_equipment.asset_new, name="asset_new"),  # before the tag route; "new" is a reserved tag
+    # Slice 29: temporary equipment (rentals, vendor loaners, demo units). Under new/, a reserved tag, so no device's address is taken.
+    path("equipment/new/temporary/", views_temporary.temporary_new, name="temporary_new"),
+    path("equipment/new/temporary/match/", views_temporary.temporary_match, name="temporary_match"),  # the serial warning
     path("equipment/<str:tag>/", views.asset_detail, name="asset"),
     path("equipment/<str:tag>/edit/", views_equipment.asset_edit, name="asset_edit"),
     path("equipment/<str:tag>/status/", views_equipment.asset_status, name="asset_status"),
     # slice 26: put a device waiting for its incoming inspection in use before it (Equipment Approve, a reason from a list)
     path("equipment/<str:tag>/use-before-inspection/", views_equipment.asset_use_before, name="asset_use_before"),
+    # slice 29: a stay's Change details and Return to owner (Equipment Edit), Keep it (Equipment Approve)
+    path("equipment/<str:tag>/stay/", views_temporary.temporary_change, name="temporary_change"),
+    path("equipment/<str:tag>/return/", views_temporary.temporary_return, name="temporary_return"),
+    path("equipment/<str:tag>/keep/", views_temporary.temporary_keep, name="temporary_keep"),
     path("work-orders/", views.workorders, name="workorders"),
     path("work-orders/new/", views.wo_new, name="wo_new"),
     path("work-orders/<str:number>/", views.wo_detail, name="wo"),

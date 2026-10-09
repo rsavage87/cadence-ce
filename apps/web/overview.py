@@ -12,16 +12,22 @@ from .templatetags.web import money_k
 
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
-# Strip order and colors from the mock's BUCKETS. Retired devices are listed under the strip, not in it.
+# Strip order and colors from the mock's BUCKETS. Retired devices are listed under the strip, not in it. Slice 29: rentals, vendor
+# loaners, and demo units on site and in use (FleetBucket.TEMPORARY: no PM of ours, so never PM due or overdue) are a segment of their
+# own, "temporary on site"; one returned to its owner (FleetBucket.RETURNED) is in neither the strip nor the retired count.
 STRIP = [(FleetBucket.COMPLIANT, "var(--ok)"), (FleetBucket.PM_DUE, "var(--warn)"), (FleetBucket.PM_OVERDUE, "var(--crit)"),
-         (FleetBucket.OPEN_RECALL, "var(--info)"), (FleetBucket.IN_REPAIR, "var(--violet)"), (FleetBucket.OUT_OF_SERVICE, "var(--ink)")]
+         (FleetBucket.OPEN_RECALL, "var(--info)"), (FleetBucket.IN_REPAIR, "var(--violet)"), (FleetBucket.OUT_OF_SERVICE, "var(--ink)"),
+         (FleetBucket.TEMPORARY, "var(--accent-line)")]
+STRIP_LABELS = {FleetBucket.TEMPORARY: "Temporary on site"}
 
 
 def fleet_strip(buckets: dict) -> dict:
-    active = sum(buckets[b] for b, _ in STRIP)
+    counts = {b: buckets.get(b, 0) for b, _ in STRIP}
+    active = sum(counts.values())
     url = reverse("web:equipment")
-    segments = [{"key": b.value, "label": b.label, "color": color, "n": buckets[b], "pct": buckets[b] / active * 100 if active else 0,
-                 "url": f"{url}?bucket={b.value}"} for b, color in STRIP]
+    segments = [{"key": b.value, "label": STRIP_LABELS.get(b, b.label), "color": color, "n": counts[b], "pct": counts[b] / active * 100 if active else 0,
+                 "url": f"{url}?bucket={b.value}", "optional": b == FleetBucket.TEMPORARY}  # the legend leaves it out at 0
+                for b, color in STRIP]
     return {"active": active, "segments": segments, "retired": buckets[FleetBucket.RETIRED], "retired_url": f"{url}?bucket={FleetBucket.RETIRED.value}"}
 
 

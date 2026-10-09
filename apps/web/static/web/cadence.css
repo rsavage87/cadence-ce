@@ -1052,6 +1052,41 @@ a.sv-card:hover{border-color:var(--line-2);background:var(--surface-2)}
   .inc-form .form :is(input:not([type="checkbox"]):not([type="radio"]),select){font-size:16px;min-height:44px}
 }
 
+/* Slice 29: temporary equipment (rentals, vendor loaners, demo units). The PM sticker's owner's PM date (accent; the overdue style once
+   past), Add rental or loaner's Whose cards (the device of ours a vendor loaner stands in for shows while Vendor loaner is chosen: CSS
+   :has; without :has it simply stays visible, and the server ignores it for any other kind), the serial warning, the drawer's temporary
+   section with its Change details link at the right, the loaner notes, and the Equipment table's past-due line. Theme tokens only. */
+.stk.own{border-color:var(--accent-line);color:var(--accent);background:var(--accent-soft)}
+.tmp-kind .radio input,.tmp-choice .radio input{padding:0;border:0;flex:none;width:auto}
+.tmp-kind .radio label span{display:block;min-width:0}
+.tmp-kind .radio label small{display:block;color:var(--ink-3);font-size:12px;margin-top:2px}
+.tmp-kind-list,.tmp-whose-list{grid-template-columns:1fr 1fr}
+.tmp-whose-list{display:grid;gap:8px}
+.tmp-whose-opt{display:block;text-align:left;font:inherit;font-size:13px;color:var(--ink);background:var(--surface);padding:10px 12px;border:1px solid var(--line-2);border-radius:8px;cursor:pointer}
+.tmp-whose-opt.on{border-color:var(--accent);background:var(--accent-soft);cursor:default}
+.tmp-whose-opt span{display:block}
+.tmp-whose-opt small{display:block;color:var(--ink-3);font-size:12px;margin-top:2px}
+@supports selector(:has(*)){
+  .form .tmp-if-loaner{display:none}
+  .dv-form:has(input[name="kind"][value="loaner"]:checked) .tmp-if-loaner{display:flex}
+}
+.tmp-match:empty{display:none}
+.tmp-match .note{margin:0}
+.tmp-for{margin:0}
+.tmp-sec h3{justify-content:flex-start}
+.tmp-sec h3 .tmp-change{margin-left:auto;font-size:12.5px;font-weight:500}
+.note.tmp-note p{margin:0}
+.note.tmp-note p+p{margin-top:4px}
+.note.tmp-note .link{color:inherit;font-weight:600;text-decoration:underline}
+.note.tmp-blocking p{margin:0}
+.note.tmp-blocking p+p{margin-top:4px}
+.wc-owner-pm{margin:0}
+td small.tmp-late{color:var(--crit)}
+@media (max-width:760px){
+  .tmp-kind-list,.tmp-whose-list{grid-template-columns:1fr}
+  .tmp-form .form :is(input:not([type="checkbox"]):not([type="radio"]),select){font-size:16px;min-height:44px}
+}
+
 /* Slice 11: printing app pages */
 /* What the browser prints of an app page (the Overview's Export button calls window.print(); any other screen prints from the
    browser's menu): the page's content on white, in the light theme whatever the screen shows, with chart and chip colours kept.

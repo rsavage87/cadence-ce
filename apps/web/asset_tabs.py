@@ -14,6 +14,12 @@ slice's files are split by owner. Each runs a fixed number of queries however lo
 Slice 26, incoming inspections: the PM tab's history lists the device's incoming inspections with its PMs (the inspection is its first
 maintenance record, with its result), and a device waiting for its inspection has no upcoming PMs ("After its incoming inspection":
 the pass starts its PM schedule). incoming_banner is what the Overview says about a device still waiting, for one user.
+
+Slice 29, temporary equipment (a rental, vendor loaner, or demo unit: equipment.services.owner_maintains): its owner maintains it, so
+the PM tab shows the owner's PM date from its sticker and the checklist CE inspects it to before first use (inspections
+.TEMPORARY_INCOMING), never projected PMs or the model's procedure; the Costs tab has no replacement outlook (replacement planning is
+about the facility's own devices). temporary_box is what the drawer says about a stay, or, on a device of ours, about the vendor
+loaner standing in for it.
 """
 import re
 from datetime import date
@@ -24,8 +30,8 @@ from django.db.models.functions import Coalesce, ExtractYear
 from django.utils import timezone
 
 from apps.equipment import permissions as eq_perms
-from apps.equipment.models import AssetStatus, RiskClass
-from apps.equipment.services import USE_BEFORE_FROM
+from apps.equipment.models import Asset, AssetStatus, Ownership, RiskClass
+from apps.equipment.services import OWNED, USE_BEFORE_FROM, owner_maintains, status_label
 from apps.pm.dates import add_months
 from apps.pm.models import AemDecision, AemStatus
 from apps.pm.schedule import DEFAULT_PM_HOURS, planned_technicians
@@ -193,8 +199,28 @@ def history_rows(history: list[WorkOrder]) -> list[dict]:
     return rows
 
 
+def _temporary_pm_tab(asset, today: date) -> dict:
+    """The PM tab of a rental, vendor loaner, or demo unit (slice 29): its owner maintains it. The owner's PM date from its sticker
+    (past: the owner does it, or its new date is recorded), the checklist CE inspects it to before first use, and the history (its
+    incoming inspections). Never projected PMs: Cadence schedules none for it."""
+    history = pm_history(asset)
+    rows = history_rows(history[:HISTORY_LIMIT])
+    incoming = sum(1 for w in history if w.type == WoType.INSPECTION)
+    due = asset.owner_pm_due_on
+    returned = asset.status == AssetStatus.RETIRED
+    return {"pm": {
+        "temporary": True, "owner": asset.owner, "returned": returned, "owner_pm_due_on": due,
+        "owner_pm_past": bool(due and due < today and not returned), "owner_pm_days": (due - today).days if due else None,
+        "checklist": inspections.TEMPORARY_INCOMING, "steps": checklist_steps(inspections.TEMPORARY_INCOMING),
+        "history": rows, "history_total": len(history), "history_more": len(history) > HISTORY_LIMIT,
+        "history_pms": len(history) - incoming, "history_inspections": incoming,
+    }}
+
+
 def pm_tab(asset, today: date | None = None) -> dict:
     today = today or timezone.localdate()
+    if owner_maintains(asset):  # slice 29
+        return _temporary_pm_tab(asset, today)
     dm = asset.device_model
     procedure = dm.pm_procedure
     history = pm_history(asset)
@@ -246,6 +272,8 @@ def incoming_banner(asset, user) -> dict | None:
     - use_before: "Put in use before inspection" (Equipment Approve, not scoped), for a device out of service or missing."""
     if not asset.awaiting_inspection:
         return None
+    if asset.status == AssetStatus.RETIRED and owner_maintains(asset):  # slice 29: returned to its owner (the temporary section says so)
+        return None
     if asset.status == AssetStatus.RETIRED:
         return {"lines": [_parts(RETIRED_WAITING, [])], "tone": "", "offer_open": False, "use_before": False}
     b = inspections.banner(asset, user)
@@ -269,6 +297,83 @@ def incident_box(asset, user) -> dict:
     from apps.incidents.services import hold_words
 
     return {"hold": hold_words(asset, user), "record": inc_perms.can_record(user)}
+
+
+# --- the device drawer's temporary equipment parts (slice 29) ----------------------------------------------------------------------
+
+BACK = (AssetStatus.IN_SERVICE, AssetStatus.RETIRED)  # a vendor loaner's device of ours is back in use, or gone: the loaner goes back
+OUT = (AssetStatus.IN_REPAIR, AssetStatus.OUT_OF_SERVICE, AssetStatus.MISSING)  # a device of ours a vendor loaner may stand in for
+
+
+def _back_words(device) -> str:
+    """Why a vendor loaner standing in for `device` (ours) can go back: it is back in service, or it was retired."""
+    return "is back in service" if device.status == AssetStatus.IN_SERVICE else "was retired"
+
+
+def _temporary_part(asset, user, today: date, scoped: bool, handle: bool) -> dict:
+    """A rental's, vendor loaner's, or demo unit's stay as the drawer shows it to `user`. The device of ours a loaner stands in for is
+    named only when the user may see it (apps.workorders.scoping.can_see_asset: a scoped user outside it reads "a device of ours"), and
+    only then is its being back said. The actions: Change details and Return to owner (Equipment Edit), Keep it (Equipment Approve),
+    never for a scoped user or a device already returned."""
+    returned = asset.status == AssetStatus.RETIRED
+    stands = None
+    if asset.stands_in_for_id:
+        device = Asset.objects.filter(pk=asset.stands_in_for_id).only("tag", "status", "ownership", "incident_hold", "awaiting_inspection").first()
+        if device is not None:
+            visible = scoping.can_see_asset(user, device)
+            stands = {"tag": device.tag if visible else "", "visible": visible, "status": status_label(device).lower() if visible else "",
+                      "back": visible and not returned and device.status in BACK, "back_words": _back_words(device) if visible else ""}
+    end = asset.returned_on if returned and asset.returned_on else today
+    due, pm = asset.due_back_on, asset.owner_pm_due_on
+    return {
+        "kind": "temporary", "whose": asset.get_ownership_display(), "owner": asset.owner, "reference": asset.owner_reference,
+        "arrived_on": asset.arrived_on, "days_on_site": (end - asset.arrived_on).days if asset.arrived_on else None,
+        "due_back_on": due, "due_days": (due - today).days if due and not returned else None,
+        "owner_pm_due_on": pm, "owner_pm_past": bool(pm and pm < today and not returned),
+        "loaner": asset.ownership == Ownership.LOANER, "stands_in": stands,
+        "returned": returned, "returned_on": asset.returned_on,
+        "cleaning": asset.get_return_cleaning_display() if asset.return_cleaning else "",
+        "data": asset.get_return_data_display() if asset.return_data else "",
+        "can_change": handle and not returned, "can_return": handle and not returned,
+        # Keep it once it could be kept (equipment.services.keep_temporary_device refuses a device waiting for its incoming inspection,
+        # held for an incident, or missing; its modal says why to anyone who gets there anyway)
+        "can_keep": (not scoped and not returned and not asset.awaiting_inspection and not asset.incident_hold
+                     and asset.status != AssetStatus.MISSING and eq_perms.can_keep_temporary(user)),
+    }
+
+
+def _ours_part(asset, user, scoped: bool, handle: bool) -> dict | None:
+    """What a device of ours says about temporary equipment, or None: the vendor loaners on site standing in for it (each named only
+    when the user may see it) and, once it is back in service or retired, "Return the loaner" (Equipment Edit); "Vendor loaner
+    arrived" (Equipment Edit, the add modal prefilled) while it is out of use or with a vendor repair open and no loaner stands in for
+    it; and, for one the facility kept, where it came from."""
+    loaners = [{"asset": a, "visible": scoping.can_see_asset(user, a)}
+               for a in Asset.objects.filter(stands_in_for=asset).exclude(OWNED).exclude(status=AssetStatus.RETIRED).order_by("arrived_on", "tag")
+               .only("tag", "owner", "ownership", "status", "due_back_on", "arrived_on", "department_id", "device_model_id")]
+    loaners = [it for it in loaners if it["visible"]]
+    back = asset.status in BACK
+    offer = False
+    if handle and not loaners and asset.status != AssetStatus.RETIRED and not asset.awaiting_inspection:
+        offer = asset.status in OUT or WorkOrder.objects.filter(asset=asset, type=WoType.REPAIR, status__in=OPEN_STATUSES, vendor_service=True).exists()
+    kept = {"on": asset.kept_on, "owner": asset.owner, "reference": asset.owner_reference, "arrived_on": asset.arrived_on} if asset.kept_on else None
+    if not loaners and not offer and not kept:
+        return None
+    return {"kind": "ours", "loaners": [it["asset"] for it in loaners], "back": back and bool(loaners),
+            "back_words": _back_words(asset) if back else "", "can_return": handle, "offer_arrived": offer, "kept": kept}
+
+
+def temporary_box(asset, user, today: date | None = None) -> dict | None:
+    """What the device drawer says about temporary equipment for `user` (slice 29), the `temporary_box` tag's: for a rental, vendor
+    loaner, or demo unit its stay (kind "temporary": whose, owner, reference, arrived and days on site, due back and the days left or
+    past, the owner's PM date and whether it has passed, the device of ours a loaner stands in for, a returned one's day, cleaning,
+    and patient data) and its actions; for a device of ours (kind "ours") the loaners standing in for it, or None. One query for a
+    temporary device (its stands-in device), one or two for one of ours."""
+    today = today or timezone.localdate()
+    scoped = scoping.is_scoped(user)
+    handle = not scoped and eq_perms.can_handle_temporary(user)
+    if owner_maintains(asset):
+        return _temporary_part(asset, user, today, scoped, handle)
+    return _ours_part(asset, user, scoped, handle)
 
 
 # --- Costs tab ------------------------------------------------------------------------------------------------------------
@@ -311,7 +416,11 @@ def contract_share(asset) -> float | None:
 
 def replacement_outlook(asset, today: date) -> dict:
     """The Replacement planning report's score for this one device (reports.fleet.replacement_score: age against expected life 50%,
-    repairs in the last six months 30%, condition 20%), with the same inputs the report uses, as a short note. One query."""
+    repairs in the last six months 30%, condition 20%), with the same inputs the report uses, as a short note. One query. Slice 29:
+    none for a rental, vendor loaner, or demo unit (replacement planning is about the facility's own devices; no query)."""
+    if owner_maintains(asset):
+        return {"note": f"Not ours: {asset.owner or 'its owner'} owns and maintains it, so replacement planning leaves it out.", "score_pct": None,
+                "temporary": True}
     if asset.status == AssetStatus.RETIRED:
         return {"note": "Retired. Replacement planning scores devices in use only.", "score_pct": None}
     dm = asset.device_model
@@ -366,4 +475,5 @@ def costs_tab(asset, today: date | None = None) -> dict:
         "pct": total / acquisition * 100 if acquisition else None,
         "contract": contract, "share": contract_share(asset),
         "outlook": replacement_outlook(asset, today),
+        "temporary": owner_maintains(asset),  # slice 29: no acquisition cost or contract of ours, no replacement outlook
     }}

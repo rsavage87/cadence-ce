@@ -1,6 +1,26 @@
 {% load web %}
 {# Device drawer, PM schedule tab (slice 12; the mock's drawerAsset). Context: pm, from apps/web/asset_tabs.pm_tab; the drawer's can_view_wo links work orders. Slice 26: a device waiting for its incoming inspection has no upcoming PMs, and the history lists its incoming inspections. Slice 28: a device held as evidence (who "held") says its next PM waits for the incident's release, never that nobody is credentialed. #}
+{% if pm.temporary %}
+{# Slice 29: a rental, vendor loaner, or demo unit (asset_tabs._temporary_pm_tab): its owner maintains it. The owner's PM date from its sticker, the checklist CE inspects it to before first use, and its incoming inspections; never projected PMs. #}
+  <div class="sec"><h3>Maintenance strategy</h3><div class="note">Its owner{% if pm.owner %}, {{ pm.owner }},{% endif %} maintains it: no PM of ours, and never on the PM schedule. Cadence records the owner's PM date from its sticker, and CE inspects it before first use.</div></div>
+
+  <div class="sec"><h3>Owner's PM</h3>
+    {% if pm.returned %}<div class="empty">Returned to its owner: nothing is scheduled.</div>
+    {% elif pm.owner_pm_due_on %}<div class="list"><div class="li static tmp-owner-pm"><span class="rail{% if pm.owner_pm_past %} crit{% else %} ok{% endif %}"></span>
+      <div class="bd"><div class="t{% if pm.owner_pm_past %} down{% endif %}">{{ pm.owner_pm_due_on|date:"M j, Y" }}</div>
+        <div class="s">{% if pm.owner_pm_past %}Past: have the owner do it, or record the date on their new sticker (Change details){% else %}From the owner's sticker; the owner does it{% endif %}</div></div>
+      <div class="r">{% pm_sticker asset %}</div></div></div>
+    {% else %}<div class="empty">No owner's PM date recorded. Record it from the owner's PM sticker (Change details).</div>{% endif %}
+  </div>
+
+  <div class="sec"><h3>Incoming inspection checklist <span>{{ pm.steps|length }} step{{ pm.steps|length|pluralize }}</span></h3>
+    <div style="font-weight:500;margin:-2px 0 6px">{{ pm.checklist.name }}</div>
+    <ul class="check">{% for s in pm.steps %}<li>{{ s.text }}</li>{% endfor %}</ul>
+    <div class="hint" style="margin-top:8px">The incoming checklist with the owner's PM label; never the model's PM procedure, which is the owner's to do.</div>
+  </div>
+{% endif %}
 {% with p=pm.procedure up=pm.upcoming %}
+  {% if not pm.temporary %}
   <div class="sec"><h3>Maintenance strategy</h3><div class="note">{{ pm.strategy }}{% if asset.device_model.oem_schedule_required %} CMS requires the manufacturer's maintenance schedule for imaging, radiologic, and medical laser equipment, so this model never goes on AEM.{% endif %}</div></div>
 
   <div class="sec">
@@ -31,15 +51,16 @@
     </div>
     {% if up.rows %}<div class="hint" style="margin-top:8px">Projected dates assume each PM is done when due{% if up.rows.0.overdue %}, the overdue one today{% if up.from_due %}, still inside its PM window, so the next ones keep counting from its due date{% endif %}{% endif %}. {% if up.who.kind == "held" %}Held as evidence for an incident investigation: nobody may start its PM until the incident releases it, so the PM schedule suggests nobody for it{% if up.open_pm and can_view_wo %}; the next PM is on {{ up.open_pm.number }}{% endif %}.{% elif up.who.kind == "suggested" %}The technician is the one the PM schedule suggests: credentialed for this device and least loaded.{% elif up.who.kind == "none" %}No active technician is credentialed for this device{% if asset.under_contract %}; {{ asset.contract.vendor }} covers it under {{ asset.contract.reference }}{% endif %}.{% elif can_view_wo %}The next PM is on {{ up.open_pm.number }}.{% endif %}</div>{% endif %}
   </div>
+  {% endif %}
 
   {% comment %}Work-order details (numbers, technicians, results, hours) only for roles with Work orders View, the same rule as the
      drawer's Work orders tab; others see the dates the device record already carries.{% endcomment %}
   {% if not can_view_wo %}
   <div class="sec"><h3>History</h3>
-    <div class="note">Last PM {{ asset.last_pm_on|date:"M j, Y"|default:"not on record" }}. PM work order details need access to work orders.</div>
+    <div class="note">{% if pm.temporary %}Its incoming inspections are work orders, which need access to work orders.{% else %}Last PM {{ asset.last_pm_on|date:"M j, Y"|default:"not on record" }}. PM work order details need access to work orders.{% endif %}</div>
   {% else %}
   {# Slice 26: the device's incoming inspections are listed with its PMs (the first maintenance record), each marked as such #}
-  <div class="sec"><h3>History <span>{{ pm.history_pms }} PM work order{{ pm.history_pms|pluralize }}{% if pm.history_inspections %} · {{ pm.history_inspections }} incoming inspection{{ pm.history_inspections|pluralize }}{% endif %}</span></h3>
+  <div class="sec"><h3>History <span>{% if pm.temporary %}{{ pm.history_inspections }} incoming inspection{{ pm.history_inspections|pluralize }}{% else %}{{ pm.history_pms }} PM work order{{ pm.history_pms|pluralize }}{% if pm.history_inspections %} · {{ pm.history_inspections }} incoming inspection{{ pm.history_inspections|pluralize }}{% endif %}{% endif %}</span></h3>
   {% if pm.history %}
     <div class="tbl-wrap"><table class="mini-tbl">
       <thead><tr><th>Completed</th><th>Work order</th><th>Technician</th><th>Result</th><th class="num">Hours</th></tr></thead>
@@ -53,7 +74,7 @@
     </table></div>
     {% if pm.history_more %}<div class="hint" style="margin-top:8px">The {{ pm.history|length }} most recent. The Work orders tab lists everything opened in the last 6 months.</div>{% endif %}
   {% else %}
-    <div class="empty">No PM work orders on file for this device.</div>
+    <div class="empty">{% if pm.temporary %}No incoming inspection on file for this device.{% else %}No PM work orders on file for this device.{% endif %}</div>
   {% endif %}
   {% endif %}
   </div>

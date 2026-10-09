@@ -46,6 +46,11 @@ keeps Passed (chosen to begin with; the service refuses Failed in words). The to
 date, or the re-inspection (its number only when the user may see it, as a repair's). From My work, a failed inspection answers with
 its drawer, as a failed PM does. results_context words the drawer's section by type: an inspection's result, who inspected it and
 when, its steps, its re-inspection, and "Opened from failed incoming inspection".
+
+Slice 29, a rental's, vendor loaner's, or demo unit's incoming inspection (equipment.services.owner_maintains): its checklist is the
+rental checklist (inspections.TEMPORARY_INCOMING, the incoming checklist with the owner's PM label), and the modal says so; Passed never
+says its PMs start (its owner maintains it); and while its owner's PM date has passed (inspections.owner_pm_refusal, completion's
+refusal of Passed) the modal says so before anything is filled in, and Passed's hint says it waits for the owner's PM.
 """
 
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -55,6 +60,7 @@ from django.utils import timezone
 from django_htmx.http import reswap, retarget, trigger_client_event
 
 from apps.equipment.models import AssetStatus
+from apps.equipment.services import owner_maintains
 from apps.pm.windows import windows
 from apps.workorders import completion, costs, inspections, scoping
 from apps.workorders import permissions as wo_perms
@@ -130,11 +136,11 @@ def _number(user, wo) -> str:
     return wo.number if wo is not None and scoping.can_see_work_order(user, wo) else ""
 
 
-def _offers(wo, user) -> dict:
+def _offers(wo, user, today) -> dict:
     """A failed PM's options, as the modal offers them: the repair a failure goes to, and whether tagging out applies. Slice 26, an
     incoming inspection's (_inspection_offers)."""
     if wo.type == WoType.INSPECTION:
-        return _inspection_offers(wo, user)
+        return _inspection_offers(wo, user, today)
     if wo.type != WoType.PM:
         return {"own_repair": None, "other_repair": None, "offer_open_repair": False, "offer_tag_out": False}
     own = completion.own_open_repair(wo)  # the PM's own repair whoever completes it (its number only if in their share: _number)
@@ -144,7 +150,7 @@ def _offers(wo, user) -> dict:
             "offer_tag_out": wo.asset.status in completion.HOLDABLE, "already_out": wo.asset.status != AssetStatus.IN_SERVICE}
 
 
-def _inspection_offers(wo, user) -> dict:
+def _inspection_offers(wo, user, today=None) -> dict:
     """An incoming inspection's options (slice 26), from the rules the completion uses. Its result is required while the device waits
     for its inspection (result_required), and only then does a fail open (or record on) a re-inspection: the one already open
     (completion.open_reinspection, its number only when the user may see it), else a new one for completion.reinspection_assignee.
@@ -154,11 +160,18 @@ def _inspection_offers(wo, user) -> dict:
     waiting = asset.awaiting_inspection
     existing = completion.open_reinspection(wo) if waiting else None
     vendor, tech = completion.reinspection_assignee(wo) if waiting and existing is None else ("", None)
+    kept_pass = inspections.pass_cleared_flag(wo)
+    today = today or timezone.localdate()  # wo_complete's day, read once there
+    # Slice 29: a rental's, vendor loaner's, or demo unit's owner's PM date has passed: Passed is refused (completion's rule), said up front
+    owner_pm = "" if kept_pass else inspections.owner_pm_refusal(asset, today)
+    hints = _inspection_hints(wo, existing)
+    if owner_pm:
+        hints[InspectionResult.PASSED] = "Not until the owner's PM is done, or its new date recorded"
     return {"own_repair": None, "other_repair": None, "offer_open_repair": False,
             "offer_tag_out": waiting and asset.status in completion.IN_USE, "result_required": waiting,
-            "kept_pass": inspections.pass_cleared_flag(wo),
+            "kept_pass": kept_pass, "owner_pm_refusal": owner_pm,
             "reinspection": existing, "reinspection_number": _number(user, existing), "reinspection_vendor": vendor, "reinspection_tech": tech,
-            "reinspection_days": inspections.REINSPECTION_DUE_DAYS, "inspection_hints": _inspection_hints(wo, existing)}
+            "reinspection_days": inspections.REINSPECTION_DUE_DAYS, "inspection_hints": hints}
 
 
 def _inspection_hints(wo, existing) -> dict:
@@ -166,7 +179,9 @@ def _inspection_hints(wo, existing) -> dict:
     asset = wo.asset
     if not asset.awaiting_inspection:
         return {InspectionResult.PASSED: "Every check passed", InspectionResult.FAILED: "A check failed: say which in the resolution"}
-    if asset.status in completion.IN_USE:
+    if owner_maintains(asset):
+        passed = _temporary_passed(asset)  # slice 29: no PMs of ours start
+    elif asset.status in completion.IN_USE:
         passed = "Stays in use and its PMs start"
     elif asset.status == AssetStatus.OUT_OF_SERVICE and wo_services.holding_repairs(asset).exists():
         passed = "Its PMs start; it stays out of service until its open repair is done"
@@ -182,6 +197,18 @@ def _inspection_hints(wo, existing) -> dict:
     else:
         failed = f"Stays {asset.get_status_display().lower()}; {failed}"
     return {InspectionResult.PASSED: passed, InspectionResult.FAILED: failed}
+
+
+def _temporary_passed(asset) -> str:
+    """What Passed does to a waiting rental, vendor loaner, or demo unit (slice 29): its owner maintains it, so no PM of ours starts
+    (equipment.services.pass_incoming_inspection); it goes into use, or stays as it is."""
+    if asset.status in completion.IN_USE:
+        return "Stays in use; its owner maintains it"
+    if asset.status == AssetStatus.OUT_OF_SERVICE and wo_services.holding_repairs(asset).exists():
+        return "It stays out of service until its open repair is done"
+    if asset.status == AssetStatus.OUT_OF_SERVICE and not asset.incident_hold:
+        return "Goes into service; its owner maintains it"
+    return f"Stops waiting for its inspection; it stays {asset.get_status_display().lower()}"
 
 
 def _revised(form, kwargs) -> CompleteForm:
@@ -255,6 +282,7 @@ def _modal(request, wo, form=None, *, steps=(), offers=None, hours=None, late=No
         "procedure": procedure, "rows": form.rows() if form is not None else [], "results": form.result_options() if form is not None else [],
         # Slice 26: an incoming inspection's checklist (the incoming checklist when the model's procedure has no steps) and result
         "is_inspection": is_inspection, "incoming_checklist": inspections.is_incoming_checklist(procedure),
+        "rental_checklist": getattr(procedure, "temporary", False),  # slice 29: inspections.TEMPORARY_INCOMING
         "inspection_results": form.inspection_options((offers or {}).get("inspection_hints")) if form is not None and is_inspection else [],
         "has_checklist": bool(steps), "step_choices": STEP_CHOICES, "reading_max": completion.READING_MAX, **(offers or {}),
         **_follow_up(wo),
@@ -357,7 +385,7 @@ def wo_complete(request, number):
     if reason:
         return _modal(request, wo, reason=reason)
     steps = completion.checklist_of(completion.procedure_for(wo))
-    offers = _offers(wo, request.user)
+    offers = _offers(wo, request.user, today)
     hours = _hours(request, wo)
     late = _late(request, wo, today)  # slice 25
     kwargs = _form_kwargs(wo, steps, offers, hours, late)

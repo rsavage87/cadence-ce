@@ -198,8 +198,13 @@ def contract_remove(request, pk):
 def contract_new(request):
     params = request.POST if request.method == "POST" else request.GET
     asset = Asset.objects.exclude(status=AssetStatus.RETIRED).select_related("device_model").filter(tag=params.get("asset", "")).first()
+    # Slice 29: a rental, vendor loaner, or demo unit goes on no contract of ours (its owner maintains it): the modal says so and the
+    # contract is created without it, never a refusal after the contract exists.
+    refusal = ct.temporary_refusal(asset) if asset is not None else ""
+    if refusal:
+        asset = None
     if request.method != "POST":
-        return render(request, "web/_contract_new.html", {"form": ContractForm(initial=new_contract_initial(asset)), "asset": asset})
+        return render(request, "web/_contract_new.html", {"form": ContractForm(initial=new_contract_initial(asset)), "asset": asset, "refusal": refusal})
     form = ContractForm(request.POST)
     contract = None
     if form.is_valid():
@@ -208,7 +213,7 @@ def contract_new(request):
         except ValidationError as e:
             form.add_service_errors(e)
     if contract is None:
-        return render(request, "web/_contract_new.html", {"form": form, "asset": asset})
+        return render(request, "web/_contract_new.html", {"form": form, "asset": asset, "refusal": refusal})
     if asset is not None:
         ct.add_asset(contract, asset)
     response = retarget(_render_drawer(request, contract), "#drawer")
@@ -224,10 +229,14 @@ def asset_support(request, tag):
     if not request.user.has_level(Module.EQUIPMENT, Level.VIEW):
         raise PermissionDenied
     asset = _get_asset(tag)
+    refusal = ct.temporary_refusal(asset)  # slice 29: a rental, vendor loaner, or demo unit: its owner maintains it, no contract here
     if request.method != "POST":
-        return render(request, "web/_contract_support.html", {"asset": asset, "choices": contract_choices(), "current": str(asset.contract_id or "")})
+        return render(request, "web/_contract_support.html", {"asset": asset, "choices": [] if refusal else contract_choices(),
+                                                               "current": str(asset.contract_id or ""), "refusal": refusal})
     choice = request.POST.get("contract", "")
     try:
+        if refusal:
+            raise ValidationError(refusal)
         if choice:
             contract = Contract.objects.filter(pk=parse_uuid(choice)).first() if parse_uuid(choice) else None
             if contract is None:

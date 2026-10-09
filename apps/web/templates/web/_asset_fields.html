@@ -5,59 +5,32 @@ it the moment the select changes; browsers without :has show them always, and th
 {% endcomment %}
 <div class="form">
   {% if form.non_field_errors %}<div class="full"><span class="err">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+  {% if new and can_add_temporary %}{% include "web/_temporary_whose.html" %}{% endif %}
   {% if new %}{% include "web/_asset_field.html" with field=form.tag %}{% else %}
   <div class="fld"><label for="dv-tag-ro">Asset tag</label><input id="dv-tag-ro" type="text" value="{{ asset.tag }}" readonly aria-describedby="dv-tag-ro-hint"><span class="hint" id="dv-tag-ro-hint">Cannot be changed: it is on the label and in links.</span></div>
   {% endif %}
   {% include "web/_asset_field.html" with field=form.serial %}
   {% include "web/_asset_field.html" with field=form.device_model cls="full" %}
-  {% if new %}
-  <fieldset class="full dv-sub dv-new dv-new-model">
-    <legend>New model</legend>
-    <div class="dv-grid">
-      {% include "web/_asset_field.html" with field=form.manufacturer %}
-      {% include "web/_asset_field.html" with field=form.model %}
-      {% include "web/_asset_field.html" with field=form.description %}
-      {% include "web/_asset_field.html" with field=form.category %}
-      {% include "web/_asset_field.html" with field=form.risk_class %}
-      {% include "web/_asset_field.html" with field=form.oem_pm_interval_months %}
-      {% include "web/_asset_field.html" with field=form.expected_life_years %}
-      {% include "web/_asset_field.html" with field=form.list_cost %}
-      {% if form.can_set_oem_schedule %}{% with f=form.oem_schedule_required %}{# the CMS mark: only Equipment Approve's form has it #}
-      <div class="fld full dm-mark"><label class="check-row" for="{{ f.id_for_label }}">{{ f }} {{ f.label }}</label><span class="hint" id="{{ f.auto_id }}_helptext">{{ f.help_text }}</span>{% if f.errors %}<span class="err" id="{{ f.auto_id }}_error">{{ f.errors|striptags }}</span>{% endif %}</div>
-      {% endwith %}{% endif %}
-    </div>
-    <datalist id="dv-categories">{% for c in form.categories %}<option value="{{ c }}"></option>{% endfor %}</datalist>
-  </fieldset>
-  {% endif %}
+  {% if new %}{% include "web/_asset_new_model.html" %}{% endif %}
   {% include "web/_asset_field.html" with field=form.department %}
   {% include "web/_asset_field.html" with field=form.room %}
   {% if new %}{% include "web/_asset_field.html" with field=form.new_department cls="full dv-new dv-new-dept" %}{% endif %}
+  {% if not form.temporary %}{# slice 29: a rental, vendor loaner, or demo unit is not ours: no install date, warranty, or cost #}
   {% include "web/_asset_field.html" with field=form.installed_on %}
   {% include "web/_asset_field.html" with field=form.warranty_end %}
   {% include "web/_asset_field.html" with field=form.acquisition_cost %}
+  {% endif %}
   {% include "web/_asset_field.html" with field=form.condition %}
   {% if new %}
-  {% comment %}Slice 26: how the device arrives (forms_equipment.NewDeviceForm's intake), each choice's own fields under it, shown while it
-     is chosen (CSS :has, as the new model's; without :has they all show, and the server ignores the ones not chosen).{% endcomment %}
-  <fieldset class="full dv-sub dv-intake"{% if form.intake.errors %} aria-describedby="dv-intake_error"{% endif %}>
-    <legend>{{ form.intake.label }}</legend>
-    <div class="dv-intake-list">
-    {% for radio, hint, fields in form.intake_options %}
-      <div class="radio"><label for="{{ radio.id_for_label }}">{{ radio.tag }}<span>{{ radio.choice_label }}<small>{{ hint }}</small></span></label></div>
-      {% if fields %}<div class="dv-grid dv-if dv-if-{{ radio.data.value }}">
-        {% for f in fields %}{% if f.name == "take_inspection" %}
-        <div class="fld full"><label class="check-row" for="{{ f.id_for_label }}">{{ f }} {{ f.label }}</label><span class="hint" id="{{ f.auto_id }}_helptext">{{ f.help_text }}</span>{% if f.errors %}<span class="err" id="{{ f.auto_id }}_error">{{ f.errors|striptags }}</span>{% endif %}</div>
-        {% else %}{% include "web/_asset_field.html" with field=f %}{% endif %}{% endfor %}
-      </div>{% endif %}
-    {% endfor %}
-    </div>
-    {% if form.intake.errors %}<span class="err" id="dv-intake_error">{{ form.intake.errors|striptags }}</span>{% endif %}
-  </fieldset>
+  {% include "web/_asset_intake.html" %}
+  {% elif form.temporary %}
+  {# Slice 29: its owner maintains it, so no PM date of ours; the owner's PM date is in the stay's Change details #}
+  <div class="fld"><label for="dv-next_pm_ro">Next PM</label><input id="dv-next_pm_ro" type="text" value="Its owner maintains it" readonly aria-describedby="dv-next_pm_ro-hint"><span class="hint" id="dv-next_pm_ro-hint">The owner's PM date is in its stay's Change details.</span></div>
   {% elif form.awaiting %}
   {# Slice 26: no next PM while the device waits for its incoming inspection; the pass starts its PM schedule #}
   <div class="fld full"><label for="dv-next_pm_ro">Next PM</label><input id="dv-next_pm_ro" type="text" value="After its incoming inspection" readonly aria-describedby="dv-next_pm_ro-hint"><span class="hint" id="dv-next_pm_ro-hint">Its PM schedule starts on the day its incoming inspection passes.</span></div>
   {% else %}
   {% include "web/_asset_field.html" with field=form.next_pm_on cls="full" %}
   {% endif %}
-  {% include "web/_asset_field.html" with field=form.notes cls="full" %}
+  {% if not form.temporary %}{% include "web/_asset_field.html" with field=form.notes cls="full" %}{% endif %}
 </div>

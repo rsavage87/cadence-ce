@@ -1,0 +1,23 @@
+{% load web %}
+{% comment %}Slice 29: a stay's Change details (views_temporary.temporary_change, forms_temporary.StayForm; Equipment Edit): the owner, the
+   agreement, PO, or RMA number, due back, the owner's PM date (record the date on the owner's new sticker), and for a vendor loaner the
+   device of ours it stands in for. A device returned or kept since the drawer was drawn gets the modal saying so instead.{% endcomment %}
+<div class="modal-h"><h2>{{ asset.tag }}: stay details</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="st-form" class="dv-form tmp-form" hx-post="{% url 'web:temporary_change' asset.tag %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    <p class="full hint">{{ asset.get_ownership_display }}{% if asset.arrived_on %}, arrived {{ asset.arrived_on|date:"M j, Y" }}{% endif %}. Its owner maintains it; these are what Cadence knows of its stay.</p>
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    {% include "web/_asset_field.html" with field=form.owner %}
+    {% include "web/_asset_field.html" with field=form.owner_reference %}
+    {% include "web/_asset_field.html" with field=form.due_back_on %}
+    {% include "web/_asset_field.html" with field=form.owner_pm_due_on %}
+    {% if form.stands_in_for %}{% include "web/_asset_field.html" with field=form.stands_in_for cls="full" %}{% endif %}
+  </div>
+  <datalist id="tmp-owners">{% for name in form.owners %}<option value="{{ name }}"></option>{% endfor %}</datalist>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Save</button></div>
+</form>
+{% endif %}

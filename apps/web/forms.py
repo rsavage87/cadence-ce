@@ -4,14 +4,27 @@ the allowed values; anything unknown is dropped rather than raising. Choices tha
 tenant's data are built in __init__, never at class level (no tenant is in context at import time).
 """
 import uuid
+from dataclasses import dataclass, replace
+from datetime import date
 
 from django import forms
+from django.utils import timezone
 
 from apps.credentials.services import qualification, ranked_technicians
-from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, RiskClass
-from apps.equipment.services import ACTIVE_STATUS_FILTER, SORTS, AssetFilters, FleetBucket, SupportFilter, service_vendor
+from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, Ownership, RiskClass
+from apps.equipment.services import (
+    ACTIVE_STATUS_FILTER,
+    OWNED,
+    SORTS,
+    AssetFilters,
+    FleetBucket,
+    SupportFilter,
+    filter_assets,
+    owner_maintains,
+    service_vendor,
+)
 from apps.workorders.models import Priority, WoStatus, WoType
-from apps.workorders.services import UNASSIGNED, WorkOrderFilters
+from apps.workorders.services import UNASSIGNED, WorkOrderFilters, no_pm_message
 
 VENDOR = "vendor"
 
@@ -27,6 +40,21 @@ def _one_of(value, allowed) -> str:
     return value if value in allowed else ""
 
 
+# Slice 29, temporary equipment on the Equipment toolbar. The Status option "Returned to owner" is a temporary device gone back (status
+# retired, not ours); "Retired" then means a device of ours retired. "Whose" narrows by ownership: ours (kept devices included), the
+# temporary devices on site, each kind (on site or returned: the Status filter narrows), or those past their due back date.
+RETURNED_STATUS_FILTER = "returned"
+WHOSE_OURS, WHOSE_TEMPORARY, WHOSE_PAST_DUE = "ours", "temporary", "past_due"
+WHOSE_CHOICES = [(WHOSE_OURS, "Ours"), (WHOSE_TEMPORARY, "Temporary on site"), (Ownership.RENTAL, "Rental"), (Ownership.LOANER, "Vendor loaner"),
+                 (Ownership.DEMO, "Demo or evaluation unit"), (WHOSE_PAST_DUE, "Past due back")]
+
+
+@dataclass
+class EquipmentFilters(AssetFilters):
+    """The Equipment list's filters: equipment.services.AssetFilters plus slice 29's Whose (equipment_assets applies it)."""
+    whose: str = ""
+
+
 def asset_filter_options(assets=None) -> dict:
     """The Equipment toolbar's choices. `assets` (a scoped user's devices, apps.workorders.scoping) limits the categories and
     departments to theirs, so the lists name no other unit; None offers the facility's."""
@@ -37,17 +65,18 @@ def asset_filter_options(assets=None) -> dict:
     return {
         "categories": list(models.order_by("category").values_list("category", flat=True).distinct()),
         "departments": list(departments.values_list("name", flat=True)),
-        "statuses": [(ACTIVE_STATUS_FILTER, "Active (not retired)"), *AssetStatus.choices],
+        "statuses": [(ACTIVE_STATUS_FILTER, "Active (not retired)"), *AssetStatus.choices, (RETURNED_STATUS_FILTER, "Returned to owner")],
         "risks": RiskClass.choices,
         "supports": SupportFilter.choices,
+        "whose": WHOSE_CHOICES,
     }
 
 
-def parse_asset_filters(params, options: dict) -> AssetFilters:
-    return AssetFilters(
+def parse_asset_filters(params, options: dict) -> EquipmentFilters:
+    return EquipmentFilters(
         q=params.get("q", "").strip()[:100],
         category=_one_of(params.get("category"), options["categories"]),
-        status=_one_of(params.get("status"), [ACTIVE_STATUS_FILTER, *AssetStatus.values]),
+        status=_one_of(params.get("status"), [ACTIVE_STATUS_FILTER, *AssetStatus.values, RETURNED_STATUS_FILTER]),
         risk=_one_of(params.get("risk"), RiskClass.values),
         department=_one_of(params.get("dept"), options["departments"]),
         support=_one_of(params.get("support"), SupportFilter.values),
@@ -55,7 +84,36 @@ def parse_asset_filters(params, options: dict) -> AssetFilters:
         bucket=_one_of(params.get("bucket"), FleetBucket.values),
         sort=_one_of(params.get("sort"), SORTS) or "tag",
         descending=params.get("dir") == "desc",
+        whose=_one_of(params.get("whose"), [v for v, _ in WHOSE_CHOICES]),
     )
+
+
+def equipment_assets(f: AssetFilters, today: date | None = None, qs=None):
+    """The Equipment list (the screen, its CSV, and its labels): equipment.services.filter_assets with slice 29's two filters applied
+    to the devices first. Status "Returned to owner" is a temporary device gone back (retired, not ours) and "Retired" a device of ours
+    retired; Whose (EquipmentFilters.whose) narrows by ownership. Over `qs` when given (a scoped user's devices)."""
+    today = today or timezone.localdate()
+    devices = Asset.objects.all() if qs is None else qs
+    if f.status == RETURNED_STATUS_FILTER:
+        devices, f = devices.filter(status=AssetStatus.RETIRED).exclude(OWNED), replace(f, status="")
+    elif f.status == AssetStatus.RETIRED:
+        devices = devices.filter(OWNED)
+    whose = getattr(f, "whose", "")
+    if whose == WHOSE_OURS:
+        devices = devices.filter(OWNED)
+    elif whose == WHOSE_TEMPORARY:
+        devices = devices.exclude(OWNED).exclude(status=AssetStatus.RETIRED)
+    elif whose == WHOSE_PAST_DUE:
+        devices = devices.exclude(OWNED).exclude(status=AssetStatus.RETIRED).filter(due_back_on__lt=today)
+    elif whose in Ownership.values:
+        devices = devices.filter(ownership=whose)
+    return filter_assets(f, today, qs=devices)
+
+
+def temporary_on_site(qs=None) -> int:
+    """How many rentals, vendor loaners, and demo units are on site (not returned), among `qs` (a scoped user's devices) or the
+    facility's: the Equipment summary's "N temporary on site" (fleet_summary's dict stays as it was)."""
+    return (Asset.objects.all() if qs is None else qs).exclude(OWNED).exclude(status=AssetStatus.RETIRED).count()
 
 
 def parse_work_order_filters(params, technician_ids: set[str]) -> WorkOrderFilters:
@@ -109,6 +167,11 @@ class NewWorkOrderForm(forms.Form):
         self.asset_obj = self._lookup_asset(self.data.get("asset") if self.is_bound else self.initial.get("asset"))
         if self.asset_obj is not None:
             self.fields["problem"].widget.attrs["autofocus"] = True
+        if self.asset_obj is not None and owner_maintains(self.asset_obj):
+            # Slice 29: a rental, vendor loaner, or demo unit gets no PM work orders (its owner maintains it; create_work_order refuses
+            # one too). Posted anyway, the refusal names why.
+            self.fields["type"].choices = [c for c in WoType.choices if c[0] != WoType.PM]
+            self.fields["type"].error_messages["invalid_choice"] = no_pm_message(self.asset_obj)
         if can_assign:
             self.fields["assignee"].choices = [("", "Leave unassigned")] + technician_choices(self.asset_obj)
         else:

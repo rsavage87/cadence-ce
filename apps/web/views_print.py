@@ -23,14 +23,13 @@ from django.utils import timezone
 
 from apps.accounts.models import Level, Module
 from apps.equipment.models import Asset
-from apps.equipment.services import filter_assets
 from apps.facility.services import asset_request_url, get_settings
 from apps.workorders import completion, inspections, scoping
 from apps.workorders import services as wo_services
 from apps.workorders.models import OPEN_STATUSES, LaborLine, PartLine, WorkOrder, WoType
 
 from .decorators import web_view
-from .forms import asset_filter_options, parse_asset_filters
+from .forms import asset_filter_options, equipment_assets, parse_asset_filters
 from .qr import qr_svg
 
 # --- asset labels ---------------------------------------------------------------------------------
@@ -65,7 +64,7 @@ def labels(request):
     if tag:
         assets = [get_object_or_404(scoping.assets(request.user, Asset.objects.select_related("device_model", "department", "tenant")), tag=tag)]
     else:
-        qs = filter_assets(parse_asset_filters(request.GET, asset_filter_options(mine)), qs=mine).select_related("tenant")
+        qs = equipment_assets(parse_asset_filters(request.GET, asset_filter_options(mine)), qs=mine).select_related("tenant")
         assets = list(qs[:LABELS_MAX + 1])
         if len(assets) > LABELS_MAX:
             too_many, assets = qs.count(), []

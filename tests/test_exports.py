@@ -220,6 +220,8 @@ def test_equipment_row_carries_every_column(client, signed_in, contract, vent, w
         "Installed": (TODAY - timedelta(days=800)).isoformat(), "Acquisition cost": "38000.00",
         "Warranty end": (TODAY + timedelta(days=40)).isoformat(), "Last PM": (TODAY - timedelta(days=170)).isoformat(),
         "Next PM": (TODAY + timedelta(days=10)).isoformat(), "Fleet state": "PM due within 30 days", "Open work orders": "2",
+        # Slice 29: whose it is and a temporary device's stay (blank for ours; tests/test_temporary_ui.py has a rental's)
+        "Whose": "Ours", "Owner": "", "Reference": "", "Arrived": "", "Due back": "",
     }
     pump = records(rows)[1]
     # Two open work orders (vendor, nobody) and one completed; no install date or warranty is an empty cell.

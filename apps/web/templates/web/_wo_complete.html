@@ -25,6 +25,7 @@
   <div class="form">
     <p class="full wc-title"><strong>{{ asset.tag }}</strong> · {{ dm.description }}, {{ dm.manufacturer }} {{ dm.model }}<br><span class="muted">{{ wo.get_type_display }}{% if wo.vendor_service %} · {{ wo.vendor_name|default:"Vendor" }}{% elif wo.assigned_to %} · {{ wo.assigned_to.name }}{% endif %}</span></p>
     {% if starting %}<p class="full hint wc-start">Not started yet: completing it records it as started and completed today.</p>{% endif %}
+    {% if owner_pm_refusal %}<div class="full note warn wc-owner-pm" role="status">{{ owner_pm_refusal }} Until then this inspection cannot pass (the device's Change details records the date).</div>{% endif %}
     {% if form.non_field_errors %}<div class="full"><span class="err">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
   </div>
   {% if is_pm or is_inspection %}
@@ -32,7 +33,7 @@
     {% if has_checklist %}
     <div class="wc-head"><span class="hint">Checklist{% if procedure %}: {% if procedure.code %}<b>{{ procedure.code }}</b> · {% endif %}{{ procedure.name }}{% endif %}</span>
       <button class="btn sm wc-rest" type="button" hx-get="{% url 'web:wo_complete' wo.number %}" hx-vals='{"fill": "pass"}' hx-include="#wc-form" hx-target="#modal-card">Mark the rest pass</button></div>
-    {% if is_inspection %}<p class="hint wc-insp-note">{% if incoming_checklist %}The model has no PM procedure with steps, so this is the incoming checklist. {% endif %}Record every step, or none and say in the resolution what was checked (a vendor's acceptance report, say).</p>{% endif %}
+    {% if is_inspection %}<p class="hint wc-insp-note">{% if rental_checklist %}{{ asset.tag }} is a {{ asset.get_ownership_display|lower }}: this is the rental checklist, the incoming checklist with the owner's PM label. Its owner maintains it, so never the model's PM procedure. {% elif incoming_checklist %}The model has no PM procedure with steps, so this is the incoming checklist. {% endif %}Record every step, or none and say in the resolution what was checked (a vendor's acceptance report, say).</p>{% endif %}
     {% if form.checklist_errors %}<div class="err" role="alert" style="margin-bottom:6px">{{ form.checklist_errors }}</div>{% endif %}
     <div class="tbl-wrap"><table class="mini-tbl wc-steps">
       <thead><tr><th>#</th><th>Step</th><th class="c">Pass</th><th class="c">Fail</th><th class="c">N/A</th></tr></thead>

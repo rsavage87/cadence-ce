@@ -8,8 +8,8 @@ from django.utils import timezone
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 
-from apps.equipment.models import AssetStatus, RiskClass
-from apps.equipment.services import AWAITING_LABEL, HELD_LABEL, status_label
+from apps.equipment.models import AssetStatus, Ownership, RiskClass
+from apps.equipment.services import AWAITING_LABEL, HELD_LABEL, owner_maintains, status_label
 from apps.workorders.models import Priority, WoStatus, WoType
 
 register = template.Library()
@@ -102,8 +102,25 @@ def wo_type_short(t):
     return WO_TYPE_SHORT.get(t, t)
 
 
+def _temporary_sticker(asset):
+    """Slice 29: a rental's, vendor loaner's, or demo unit's sticker. Its owner maintains it, so no PM date of ours: its owner's PM date
+    from its sticker ("Owner's PM Mar 2027", the overdue style once past), "Owner maintains" without one, "Returned" once it went back."""
+    if asset.status == AssetStatus.RETIRED:
+        return format_html('<span class="stk na">{}</span>', "Returned")
+    due = asset.owner_pm_due_on
+    if due is None:
+        return format_html('<span class="stk own" title="{}">{}</span>', "No owner's PM date recorded from its sticker", "Owner maintains")
+    words = f"Owner's PM {due.strftime('%b %Y')}"
+    if due < timezone.localdate():
+        return format_html('<span class="stk over" title="{}">{}</span>', "Its owner's PM date has passed: the owner does it, or record its new date",
+                           words)
+    return format_html('<span class="stk own" title="{}">{}</span>', "Its owner maintains it; the date is from the owner's PM sticker", words)
+
+
 @register.simple_tag
 def pm_sticker(asset):
+    if owner_maintains(asset):
+        return _temporary_sticker(asset)
     if asset.status == AssetStatus.RETIRED:
         return format_html('<span class="stk na">{}</span>', "Retired")
     if asset.awaiting_inspection:  # slice 26: its PM schedule starts when its incoming inspection passes
@@ -135,6 +152,29 @@ def incident_box(asset, user):
     """The device drawer's hold banner and Record incident offer for `user` (slice 28; apps.web.asset_tabs.incident_box):
     `{% incident_box asset request.user as ib %}`, then ib.hold (None when not held) and ib.record."""
     from ..asset_tabs import incident_box as box  # asset_tabs imports this module
+
+    return box(asset, user)
+
+
+WHOSE_SHORT = {Ownership.RENTAL: "Rental", Ownership.LOANER: "Vendor loaner", Ownership.DEMO: "Demo unit"}
+
+
+@register.simple_tag
+def whose_chip(asset):
+    """Slice 29: a chip saying whose a rental, vendor loaner, or demo unit is ("Rental · Acme Rentals"); nothing for a device of ours."""
+    if not owner_maintains(asset):
+        return ""
+    words = WHOSE_SHORT.get(asset.ownership, asset.get_ownership_display())
+    return format_html('<span class="chip acc" title="{}">{}{}</span>', "Not ours: its owner maintains it", words,
+                       f" · {asset.owner}" if asset.owner else "")
+
+
+@register.simple_tag
+def temporary_box(asset, user):
+    """The device drawer's temporary equipment parts for `user` (slice 29; apps.web.asset_tabs.temporary_box): a rental's, vendor
+    loaner's, or demo unit's stay and actions, or what a device of ours says about a loaner standing in for it. `{% temporary_box asset
+    request.user as tb %}`, then tb.kind ("temporary" or "ours"), or None when there is nothing to say."""
+    from ..asset_tabs import temporary_box as box  # asset_tabs imports this module
 
     return box(asset, user)
 

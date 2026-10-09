@@ -1,0 +1,10 @@
+{% comment %}Slice 29: Add device's "Whose is it", first. Ours (owned, leased, or placed: on our PM program) is this form; the other choice
+   opens Add rental or loaner (views_temporary.temporary_new). A device CE maintains, leased or placed, is entered as ours. Buttons, not
+   form fields: choosing switches the modal, and nothing of it is posted.{% endcomment %}
+<fieldset class="full dv-sub tmp-whose">
+  <legend>Whose is it</legend>
+  <div class="tmp-whose-list" role="group" aria-label="Whose is it">
+    <button class="tmp-whose-opt on" type="button" aria-pressed="true"><span>Ours (owned, leased, or placed: on our PM program)</span><small>CE maintains it: this form</small></button>
+    <button class="tmp-whose-opt" type="button" aria-pressed="false" hx-get="{% url 'web:temporary_new' %}?kind=rental" hx-target="#modal-card" hx-swap="innerHTML"><span>Rental, vendor loaner, or demo unit</span><small>Its owner maintains it: Add rental or loaner</small></button>
+  </div>
+</fieldset>

@@ -1,5 +1,9 @@
-{# The mock's supportForm, swapped into the device drawer's #sp-host by the Support row's Edit link. #}
+{# The mock's supportForm, swapped into the device drawer's #sp-host by the Support row's Edit link. Slice 29: a rental, vendor loaner, or demo unit goes on no contract of ours (refusal: its owner maintains it), so no form and no New contract. #}
 <div class="sec"><h3>Support and contract</h3>
+  {% if refusal %}
+  <div class="note">{{ refusal }}</div>
+  <div style="display:flex;justify-content:flex-end;margin-top:10px"><button class="btn sm" type="button" hx-get="{% url 'web:asset' asset.tag %}" hx-target="#drawer">Close</button></div>
+  {% else %}
   <form hx-post="{% url 'web:asset_support' asset.tag %}" hx-target="#drawer">
     <div class="form" style="padding:0;grid-template-columns:1fr">
       <label>Contract<select name="contract" id="sp-ct" autofocus>{% for v, l in choices %}<option value="{{ v }}"{% if v == current %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
@@ -11,4 +15,5 @@
     </div>
     <div class="hint" style="margin-top:8px">The support type follows the contract type (OEM or third-party). Terms, cost, and the full device list are managed under Contracts.</div>
   </form>
+  {% endif %}
 </div>
