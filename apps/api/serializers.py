@@ -7,8 +7,9 @@ from apps.equipment import services as eq_services
 from apps.equipment.models import AddedAs, Asset, Department, DeviceModel, Ownership
 from apps.recalls.models import Alert, AlertMatch
 from apps.recalls.services import progress as recall_progress
-from apps.workorders import scoping
-from apps.workorders.models import OPEN_STATUSES, LaborLine, PartLine, WorkOrder, WoType
+from apps.workorders import repair_checks, scoping
+from apps.workorders.completion import checklist_of, checklist_signature, procedure_for, repair_outcomes
+from apps.workorders.models import OPEN_STATUSES, LaborLine, PartLine, RepairCheck, WorkOrder, WoType
 
 
 class DepartmentSerializer(serializers.ModelSerializer):
@@ -239,6 +240,8 @@ class WorkOrderSerializer(serializers.ModelSerializer):
     total_cost = serializers.FloatField(read_only=True)
     late_reason_label = serializers.CharField(source="get_late_reason_display", read_only=True)
     inspection_result_label = serializers.CharField(source="get_inspection_result_display", read_only=True)
+    repair_check_label = serializers.CharField(source="get_repair_check_display", read_only=True)  # slice 30
+    completion_checklist = serializers.SerializerMethodField()
 
     class Meta:
         model = WorkOrder
@@ -246,13 +249,30 @@ class WorkOrderSerializer(serializers.ModelSerializer):
                   "assigned_to", "assigned_to_name", "vendor_service", "vendor_name", "opened_on", "due_on", "started_on", "completed_on",
                   "problem", "resolution", "estimated_hours", "tagged_out", "is_late", "total_cost", "labor_lines", "part_lines", "updated_at",
                   "pm_result", "checklist_results", "follow_up_of", "legacy_number", "late_reason", "late_reason_label", "inspection_result",
-                  "inspection_result_label"]
+                  "inspection_result_label", "repair_check", "repair_check_label", "checks_reference", "completion_checklist"]
         # Slice 15: what a completion recorded (transition to completed, apps.workorders.completion) is read here, never written.
         # Slice 23: so is an imported work order's number in the previous system (apps.workorders.legacy sets it, once).
         # Slice 25: so is why a PM was late (the model field is editable=False): POST {id}/late-reason/ or the completion records it.
         # Slice 26: so is an incoming inspection's result (InspectionResult, editable=False): only its completion records it.
+        # Slice 30: so is how a repair ended (RepairCheck) and the vendor's service report number (both editable=False).
         read_only_fields = ["number", "status", "started_on", "completed_on", "resolution", "pm_result", "checklist_results", "follow_up_of",
-                            "legacy_number", "late_reason", "inspection_result"]
+                            "legacy_number", "late_reason", "inspection_result", "repair_check", "checks_reference"]
+
+    def get_completion_checklist(self, wo):
+        """Slice 30: what completing this repair takes, for a client building its transition to completed: the standard checks after a
+        repair (completion.procedure_for: never the model's PM procedure) as steps {"text", "measure"} (measure: what to record, or
+        null), the signature to send back with the results, the steps never "na" (numbered from 1), and the outcomes (repair_check, with
+        their labels) this user may complete it with (completion.repair_outcomes: "vendor_report" only on vendor service, for a user who
+        sees the whole facility). Null for any other type, and for a repair no longer open (its checks as recorded are in
+        checklist_results). Reads no rows: the checklist is Cadence's own, and the user's scope is on their role."""
+        if wo.type != WoType.REPAIR or wo.status not in OPEN_STATUSES:
+            return None
+        procedure = procedure_for(wo)
+        steps = checklist_of(procedure)
+        user = getattr(self.context.get("request"), "user", None)
+        return {"name": procedure.name, "steps": [{"text": text, "measure": measure} for text, measure in steps],
+                "signature": checklist_signature(steps), "never_na": [n + 1 for n in repair_checks.NEVER_NA],
+                "outcomes": [{"value": value, "label": RepairCheck(value).label} for value in repair_outcomes(wo, user)]}
 
     def to_representation(self, instance):
         """As a scoped user (apps.workorders.scoping) may read it, the same as the web's drawer: the number of a work order outside

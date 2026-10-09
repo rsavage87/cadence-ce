@@ -36,7 +36,7 @@ from apps.tenants.context import get_current_tenant
 from apps.workorders import permissions as wo_perms
 from apps.workorders import scoping
 from apps.workorders import services as wo_services
-from apps.workorders.models import OPEN_STATUSES, WorkOrder, WoStatus, WoType
+from apps.workorders.models import OPEN_STATUSES, RepairCheck, WorkOrder, WoStatus, WoType
 
 from . import serializers as s
 from .base import TenantViewSet, _refuse_on_create, _via_service
@@ -293,6 +293,38 @@ class AssetViewSet(EquipmentWrites, TenantViewSet):
         return Response(data)
 
 
+# Slice 30: a repair completed without its checks after it, answered naming what to send (_repair_words). The modal's words ("Choose
+# how the repair ended", "Record each check") speak of what is on its screen; a client needs the fields and their values.
+SEND_REPAIR_CHECK = {
+    RepairCheck.PASSED: "\"passed\" (checked and ready for use) with results, one {\"result\", \"reading\"} per step of the work order's "
+                        "completion_checklist",
+    RepairCheck.VENDOR_REPORT: "\"vendor_report\" (checked by the vendor) with checks_reference, the vendor's service report or field "
+                               "service order number",
+    RepairCheck.NOT_RETURNED: "\"not_returned\" (not returned to use: the device stays out of service)",
+}
+
+
+def _repair_words(wo, user, sent: str, errors: dict) -> dict:
+    """A repair's completion refused for what was left out (slice 30), in the API's words: no repair_check (or one that is no outcome)
+    names the outcomes this user may send (completion.repair_outcomes) and what each takes; "passed" with no results names the
+    results' shape. Keyed as the service keys them (repair_check, checklist); every other refusal keeps the service's words."""
+    from apps.workorders import repair_checks
+    from apps.workorders.completion import NO_CHECKS, checklist_of, procedure_for, repair_outcomes
+
+    if wo.type != WoType.REPAIR:
+        return errors
+    out = dict(errors)
+    if "repair_check" in out and sent not in RepairCheck.values:
+        parts = [SEND_REPAIR_CHECK[c] for c in repair_outcomes(wo, user)]
+        out["repair_check"] = [f"Send repair_check, how the repair ended: {'; '.join(parts[:-1])}; or {parts[-1]}."]
+    if sent == RepairCheck.PASSED and out.get("checklist") == [NO_CHECKS]:
+        never = " and ".join(str(n + 1) for n in repair_checks.NEVER_NA)
+        out["checklist"] = [f"Send results with \"passed\": one {{\"result\": \"pass\", \"fail\", or \"na\", \"reading\": \"...\"}} per step of "
+                            f"the work order's completion_checklist, in order ({len(checklist_of(procedure_for(wo)))} steps), with a reading on "
+                            f"each measured step that is not \"na\"; steps {never} are never \"na\"."]
+    return out
+
+
 class WorkOrderViewSet(TenantViewSet):
     model, module, serializer_class = WorkOrder, "workorders", s.WorkOrderSerializer
     search_fields = ["number", "legacy_number", "asset__tag", "problem", "requester"]
@@ -356,6 +388,11 @@ class WorkOrderViewSet(TenantViewSet):
         if sent is not None and sent != wo.inspection_result:
             raise DRFValidationError({"inspection_result": ["An incoming inspection's result is recorded when it is completed: POST "
                                                             "/api/v1/work-orders/{id}/transition/ with status completed and inspection_result."]})
+        for field in ("repair_check", "checks_reference"):  # slice 30: how a repair ended, likewise (editable=False)
+            sent = body.get(field)
+            if sent is not None and sent != getattr(wo, field):
+                raise DRFValidationError({field: ["How a repair ended is recorded when it is completed: POST /api/v1/work-orders/{id}/transition/ "
+                                                  "with status completed and repair_check."]})
         changed = [f for f, v in d.items() if v != getattr(wo, f)]
         self._check_investigation_change(wo, changed)
         if changed and wo.status not in OPEN_STATUSES:
@@ -415,8 +452,28 @@ class WorkOrderViewSet(TenantViewSet):
             raise DRFValidationError({"asset" if asset_changed else "type": [f"{new_asset.tag} is waiting for its incoming inspection: its PMs "
                                                                              "start when it passes its incoming inspection."]})
 
+    # The completion's text fields (transition to completed): a list, number, or object in one is refused keyed by it, never read as
+    # its Python text ("['passed']") and answered with a refusal about something else (slice 30).
+    COMPLETION_TEXT = ("resolution", "pm_result", "inspection_result", "repair_check", "checks_reference", "signature", "late_reason")
+
     @action(detail=True, methods=["post"])
     def transition(self, request, pk=None):
+        """{"status": "<WoStatus>", "note": "..."}: a lifecycle move (services.change_status). To completed, as the drawer's Mark
+        completed (apps.workorders.completion.complete_work_order): "resolution", and
+
+        - a PM: "pm_result" and "results", one {"result": "pass" | "fail" | "na", "reading": "..."} per step of its procedure's checklist;
+          "open_repair", "tag_out", and "late_reason" as the modal's;
+        - an incoming inspection (slice 26): "inspection_result" ("passed" or "failed"; required while its device waits for it) and,
+          optionally, "results" for every step or none;
+        - a repair (slice 30): "repair_check", how it ended: "passed" (checked and ready for use) with "results" for every step of the
+          work order's completion_checklist (GET it: the steps, their signature, the steps never "na", and the outcomes this user may
+          send), "vendor_report" (vendor service, for a user who sees the whole facility) with "checks_reference", the vendor's service
+          report or field service order number, or "not_returned" (the device stays out of service). A failed step refuses "passed":
+          the repair stays open (the drawer records the failed checks), or it ends "not_returned".
+        "signature" (optional): the completion_checklist's (or the PM procedure checklist's) signature the results were typed against;
+        a checklist revised since is refused. A text field sent as a list, number, or object is a 400 keyed by it. Refusals are a 400
+        keyed by field in the service's words, but a repair sent with no repair_check, or "passed" with no results: those name what to
+        send (_repair_words)."""
         wo = self.get_object()
         if not hasattr(request.data, "get"):  # a JSON list or scalar body has no fields
             raise DRFValidationError({"detail": "Send the fields as a JSON object."})
@@ -434,9 +491,13 @@ class WorkOrderViewSet(TenantViewSet):
             from apps.workorders.completion import complete_work_order
 
             d = request.data
-            kwargs = {"resolution": d.get("resolution", ""), "pm_result": d.get("pm_result", ""), "results": d.get("results"),
-                      "inspection_result": d.get("inspection_result", ""),
-                      "repair_check": d.get("repair_check", ""), "checks_reference": d.get("checks_reference", ""),
+            not_text = {f: ["Send this as text."] for f in self.COMPLETION_TEXT if d.get(f) is not None and not isinstance(d.get(f), str)}
+            if not_text:
+                raise DRFValidationError(not_text)
+            kwargs = {"resolution": d.get("resolution") or "", "pm_result": d.get("pm_result") or "", "results": d.get("results"),
+                      "inspection_result": d.get("inspection_result") or "",
+                      "repair_check": d.get("repair_check") or "", "checks_reference": d.get("checks_reference") or "",
+                      "signature": d.get("signature") or None,  # blank or left out: not checked, as before slice 30
                       "late_reason": d.get("late_reason")}  # slice 25: why a PM completed after its due date was late, optional
             for flag in ("open_repair", "tag_out"):
                 if flag in d:
@@ -444,7 +505,9 @@ class WorkOrderViewSet(TenantViewSet):
             try:
                 complete_work_order(wo, by=request.user, **kwargs)
             except ValidationError as e:
-                return Response(e.message_dict if hasattr(e, "error_dict") else {"detail": " ".join(e.messages)}, status=status.HTTP_400_BAD_REQUEST)
+                if not hasattr(e, "error_dict"):
+                    return Response({"detail": " ".join(e.messages)}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(_repair_words(wo, request.user, kwargs["repair_check"], e.message_dict), status=status.HTTP_400_BAD_REQUEST)
             return Response(self.get_serializer(wo).data)
         note = request.data.get("note")
         if note is not None and not isinstance(note, str):  # slice 28 review fix: a list, number, or object reached the service's strip (a 500)
