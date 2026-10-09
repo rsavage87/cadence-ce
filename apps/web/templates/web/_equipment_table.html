@@ -21,9 +21,15 @@
           <td>{% risk_chip a.device_model.risk_class %}</td>
           <td>{% asset_status_chip a %}</td>
           <td>{% pm_sticker a %}</td>
+          {% if a.temporary %}{# slice 29: a rental, vendor loaner, or demo unit: days on site, whose it is and when it goes back, no cost of ours #}
+          <td>{% if a.status == "retired" %}<span class="muted">Returned{% if a.returned_on %} {{ a.returned_on|date:"M j" }}{% endif %}</span>{% elif a.arrived_on %}{{ a.arrived_on|days_since }} d on site{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td><div class="two">{{ a.get_ownership_display }} · {{ a.owner }}{% if a.status == "retired" %}<small>Back with its owner</small>{% elif a.due_back_on %}{% with left=a.due_back_on|days_until %}{% if left < 0 %}<small class="tmp-late">Past due back {{ a.due_back_on|days_since }} d</small>{% elif left == 0 %}<small class="tmp-late">Due back today</small>{% else %}<small>Due back {{ a.due_back_on|date:"M j" }}</small>{% endif %}{% endwith %}{% else %}<small>No due back date</small>{% endif %}</div></td>
+          <td class="num"><span class="muted" title="Not ours: its owner's">—</span></td>
+          {% else %}
           <td>{% if a.installed_on %}{{ a.age_years|floatformat:1 }} yr{% else %}<span class="muted">—</span>{% endif %}</td>
           <td>{% if a.contract %}<div class="two">{{ a.get_support_type_display }}<small{% if a.contract.is_expired %} style="color:var(--crit)"{% endif %}>{{ a.contract.reference }} · {% if a.contract.is_expired %}expired{% else %}through{% endif %} {{ a.contract.end_on|date:"M Y" }}</small></div>{% else %}<div class="two">{{ a.get_support_type_display }}<small>No contract</small></div>{% endif %}</td>
           <td class="num">{{ a.acquisition_cost|money }}</td>
+          {% endif %}
         </tr>
         {% empty %}
         <tr><td colspan="9"><div class="empty">No devices match these filters. Clear a filter or search a different term.</div></td></tr>

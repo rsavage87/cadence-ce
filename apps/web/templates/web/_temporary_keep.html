@@ -1,0 +1,20 @@
+{% load web %}
+{% comment %}Slice 29: Keep it (views_temporary.temporary_keep, forms_temporary.KeepForm; Equipment Approve): the facility buys it, so it
+   becomes ours, on the PM program. What was paid, its first PM as ours (today by default: the acceptance PM), and the warranty. Refused
+   up front, with nothing to fill in, while it waits for its incoming inspection, is held for an incident, or is missing.{% endcomment %}
+<div class="modal-h"><h2>Keep {{ asset.tag }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="kp-form" class="tmp-form" hx-post="{% url 'web:temporary_keep' asset.tag %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    <p class="full hint">The facility keeps it from {{ asset.owner|default:"its owner" }}: from today it is ours, on the PM program and in every fleet figure. Its stay stays in its history.</p>
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    {% include "web/_asset_field.html" with field=form.acquisition_cost %}
+    {% include "web/_asset_field.html" with field=form.next_pm_on %}
+    {% include "web/_asset_field.html" with field=form.warranty_end %}
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Keep it</button></div>
+</form>
+{% endif %}

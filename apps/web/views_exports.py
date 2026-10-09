@@ -27,7 +27,7 @@ from apps.contracts.models import Contract
 from apps.contracts.services import contract_status, filter_contracts
 from apps.credentials.models import Technician
 from apps.equipment.models import Asset, AssetStatus
-from apps.equipment.services import FleetBucket, filter_assets, status_label
+from apps.equipment.services import FleetBucket, status_label
 from apps.recalls.services import alert_label
 from apps.workorders import scoping
 from apps.workorders.models import LABOR_AMOUNT, OPEN_STATUSES, PART_AMOUNT, LaborLine, PartLine, WorkOrder
@@ -35,7 +35,7 @@ from apps.workorders.services import filter_work_orders
 
 from .decorators import web_view
 from .exports import csv_response
-from .forms import asset_filter_options, parse_asset_filters, parse_work_order_filters
+from .forms import asset_filter_options, equipment_assets, parse_asset_filters, parse_work_order_filters
 from .forms_contracts import parse_contract_filters
 from .templatetags.scoping_tags import scoped_text
 from .views import scoped_assets
@@ -71,7 +71,7 @@ def _covered_cost():
 
 EQUIPMENT_COLUMNS = ["Tag", "Serial", "Manufacturer", "Model", "Description", "Category", "Risk class", "Department", "Room", "Status", "Support",
                      "Contract", "Contract end", "Contract expired", "Installed", "Acquisition cost", "Warranty end", "Last PM", "Next PM",
-                     "Fleet state", "Open work orders"]
+                     "Fleet state", "Open work orders", "Whose", "Owner", "Reference", "Arrived", "Due back"]
 
 
 @web_view(Module.EQUIPMENT, Level.VIEW, scoped=True)
@@ -82,7 +82,7 @@ def equipment_csv(request):
     # A scoped user's count of open work orders is of their own, as the device drawer counts them.
     open_wos = (scoping.work_orders(request.user, WorkOrder.objects.filter(asset=OuterRef("pk"), status__in=OPEN_STATUSES)).order_by()
                 .values("asset").annotate(n=Count("id")).values("n"))
-    assets = filter_assets(f, today, qs=mine).annotate(open_wos=Subquery(open_wos))
+    assets = equipment_assets(f, today, qs=mine).annotate(open_wos=Subquery(open_wos))  # slice 29: Whose and Returned to owner too
 
     def rows():
         for a in assets.iterator(chunk_size=CHUNK):
@@ -92,7 +92,9 @@ def equipment_csv(request):
                    # as the screen words it (slice 26: "Awaiting inspection" for a device out of service waiting for its incoming inspection).
                    status_label(a), a.get_support_type_display(), a.contract.reference if a.contract_id else "",
                    a.contract.end_on if a.contract_id else None, (a.contract.end_on < today) if a.contract_id else None, a.installed_on,
-                   a.acquisition_cost, a.warranty_end, a.last_pm_on, a.next_pm_on, FleetBucket(a.bucket).label, a.open_wos or 0]
+                   a.acquisition_cost, a.warranty_end, a.last_pm_on, a.next_pm_on, FleetBucket(a.bucket).label, a.open_wos or 0,
+                   # Slice 29: whose it is, and a rental's, vendor loaner's, or demo unit's stay (blank for ours, a kept one's as it came)
+                   a.get_ownership_display(), a.owner, a.owner_reference, a.arrived_on, a.due_back_on]
 
     return csv_response(_filename("equipment", today), EQUIPMENT_COLUMNS, rows())
 

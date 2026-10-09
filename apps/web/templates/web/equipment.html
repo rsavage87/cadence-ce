@@ -12,6 +12,8 @@
     {% query request.GET page=None as eq_q %}
     <a class="btn" href="{% url 'web:labels' %}{{ eq_q }}" data-act="with-filters" data-base="{% url 'web:labels' %}" target="_blank" rel="noopener" title="Print asset labels, with their request QR codes, for the devices in this list">{% icon "print" %} Labels</a>
     <a class="btn" href="{% url 'web:equipment_csv' %}{{ eq_q }}" data-act="with-filters" data-base="{% url 'web:equipment_csv' %}" download title="Download the devices in this list as CSV">{% icon "dl" %} Export</a>
+    {# Slice 29: a rental, vendor loaner, or demo unit is added on its own form (views_temporary.temporary_new; Equipment Edit) #}
+    {% if can_add_temporary %}<button class="btn" type="button" hx-get="{% url 'web:temporary_new' %}" hx-target="#modal-card" title="A device on site that the facility does not own: its owner maintains it">{% icon "plus" %} Add rental or loaner</button>{% endif %}
     {% if can_add_device %}<button class="btn primary" type="button" hx-get="{% url 'web:asset_new' %}" hx-target="#modal-card">{% icon "plus" %} Add device</button>{% endif %}
   </div>
 </div>
@@ -22,6 +24,8 @@
   <label class="field"><span>Status</span><select name="status" aria-label="Status"><option value="">All</option>{% for v, l in options.statuses %}<option value="{{ v }}"{% if f.status == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
   <label class="field"><span>Risk</span><select name="risk" aria-label="Risk"><option value="">All</option>{% for v, l in options.risks %}<option value="{{ v }}"{% if f.risk == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
   <label class="field"><span>Department</span><select name="dept" aria-label="Department"><option value="">All</option>{% for d in options.departments %}<option{% if f.department == d %} selected{% endif %}>{{ d }}</option>{% endfor %}</select></label>
+  {# Slice 29: whose the device is (forms.WHOSE_CHOICES; forms.equipment_assets applies it) #}
+  <label class="field"><span>Whose</span><select name="whose" aria-label="Whose"><option value="">All</option>{% for v, l in options.whose %}<option value="{{ v }}"{% if f.whose == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
   <label class="field"><span>Support</span><select name="support" aria-label="Support"><option value="">All</option>{% for v, l in options.supports %}<option value="{{ v }}"{% if f.support == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
   <label class="tog"><input type="checkbox" name="overdue" value="1"{% if f.overdue %} checked{% endif %}><span class="sw"></span>Overdue PM only</label>
   {% if f.bucket %}<input type="hidden" name="bucket" value="{{ f.bucket }}">{% query request.GET bucket=None page=None as clear %}<a class="pill active" href="{{ list_url }}{{ clear }}">{{ bucket_label }}<span class="x" aria-label="Clear">✕</span></a>{% endif %}

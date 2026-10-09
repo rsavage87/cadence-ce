@@ -115,7 +115,8 @@ def _modal(request, template, form, **extra):
 
 
 def _new_modal(request, form):
-    return _modal(request, "web/_asset_new.html", form)
+    # Slice 29: Whose is it, first: ours here; a rental, vendor loaner, or demo unit switches to Add rental or loaner (views_temporary)
+    return _modal(request, "web/_asset_new.html", form, can_add_temporary=eq_perms.can_handle_temporary(request.user))
 
 
 def _new_department(name: str):

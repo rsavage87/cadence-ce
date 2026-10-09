@@ -1,0 +1,34 @@
+{% load web %}
+{% comment %}Slice 29: Return to owner (views_temporary.temporary_return, forms_temporary.ReturnForm; Equipment Edit). What blocks the return
+   is said first (ours, returned already, held for an incident, missing: refusal; open work a return does not cancel: blocking, by number),
+   with nothing to fill in. Otherwise the day it went back, how it was cleaned (OSHA 1910.1030), and what was done about patient data on
+   it (HIPAA 164.310(d)(2)(ii)), choices only, and what the return cancels (its open incoming inspection). `back`: the device of ours
+   "Return the loaner" was opened from, whose drawer the save shows.{% endcomment %}
+<div class="modal-h"><h2>Return {{ asset.tag }} to {{ asset.owner|default:"its owner" }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker or blocking %}
+<div class="form">
+  {% if blocker %}<div class="full note">{{ blocker }}</div>{% endif %}
+  {% if blocking %}<div class="full note warn tmp-blocking" role="status"><p>{{ asset.tag }} has open work: {% for w in blocking %}{{ w.number }} ({{ w.get_type_display|lower }}, {{ w.get_status_display|lower }}){% if not forloop.last %}, {% endif %}{% endfor %}.</p><p>Complete it, or cancel it (an in-progress work order goes back to open first), before returning it to its owner.</p></div>{% endif %}
+</div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="rt-form" class="tmp-form tmp-return" hx-post="{% url 'web:temporary_return' asset.tag %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  {% if back %}<input type="hidden" name="back" value="{{ back }}">{% endif %}
+  <div class="form">
+    <p class="full hint">{{ asset.get_ownership_display }}{% if asset.arrived_on %}, here since {{ asset.arrived_on|date:"M j, Y" }}{% endif %}. It leaves the inventory as returned to its owner{% if cancels %}; {% for w in cancels %}{{ w.number }}{% if not forloop.last %}, {% endif %}{% endfor %} ({% for w in cancels %}{{ w.get_type_display|lower }}{% if not forloop.last %}, {% endif %}{% endfor %}) is cancelled with it{% endif %}. A unit that comes back later is added again.</p>
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    {% include "web/_asset_field.html" with field=form.on %}
+    <fieldset class="full dv-sub tmp-choice"{% if form.cleaning.errors %} aria-describedby="rt-cleaning_error"{% endif %}>
+      <legend>{{ form.cleaning.label }}</legend>
+      <div class="radio">{% for radio in form.cleaning %}<label for="{{ radio.id_for_label }}">{{ radio.tag }}<span>{{ radio.choice_label }}</span></label>{% endfor %}</div>
+      {% if form.cleaning.errors %}<span class="err" id="rt-cleaning_error">{{ form.cleaning.errors|striptags }}</span>{% endif %}
+    </fieldset>
+    <fieldset class="full dv-sub tmp-choice"{% if form.data.errors %} aria-describedby="rt-data_error"{% endif %}>
+      <legend>{{ form.data.label }}</legend>
+      <div class="radio">{% for radio in form.data %}<label for="{{ radio.id_for_label }}">{{ radio.tag }}<span>{{ radio.choice_label }}</span></label>{% endfor %}</div>
+      {% if form.data.errors %}<span class="err" id="rt-data_error">{{ form.data.errors|striptags }}</span>{% endif %}
+    </fieldset>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Return to owner</button></div>
+</form>
+{% endif %}

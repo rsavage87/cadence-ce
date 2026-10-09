@@ -18,7 +18,7 @@ from django.utils import timezone
 
 from apps.credentials.models import Technician
 from apps.equipment.models import AddedAs, AssetStatus, Department, DeviceModel, RiskClass, UseBeforeInspection
-from apps.equipment.services import EDITABLE_FIELDS, INCOMING_WAITING
+from apps.equipment.services import EDITABLE_FIELDS, INCOMING_WAITING, owner_maintains
 from apps.workorders.inspections import INSPECTION_DUE_DAYS
 
 from .forms import VENDOR
@@ -251,6 +251,13 @@ class EditDeviceForm(DeviceForm):
         self.awaiting = bool(asset.awaiting_inspection)
         if self.awaiting:
             del self.fields["next_pm_on"]
+        # Slice 29: a rental, vendor loaner, or demo unit is not ours and its owner maintains it: no install date (it arrived), warranty,
+        # acquisition cost (update_asset keeps it 0; Keep it records a price), or next PM, and no notes (a stay carries no free text).
+        # Its stay is changed from the drawer's Change details.
+        self.temporary = owner_maintains(asset)
+        if self.temporary:
+            for name in ("installed_on", "warranty_end", "acquisition_cost", "next_pm_on", "notes"):
+                self.fields.pop(name, None)
 
     def changes(self) -> dict:
         """update_asset's keyword arguments: every editable detail on the form (it saves only what differs). Never the tag, status, or

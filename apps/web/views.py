@@ -31,7 +31,7 @@ from apps.credentials.services import qualification, qualified_technicians
 from apps.equipment import permissions as eq_perms
 from apps.equipment import services as eq_services
 from apps.equipment.models import Asset
-from apps.equipment.services import FleetBucket, asset_service_summary, filter_assets, fleet_summary, search_assets
+from apps.equipment.services import FleetBucket, asset_service_summary, fleet_summary, search_assets
 from apps.facility.services import asset_request_url, get_settings
 from apps.incidents import permissions as inc_perms
 from apps.incidents import services as inc_services
@@ -52,10 +52,12 @@ from .forms import (
     VENDOR,
     NewWorkOrderForm,
     asset_filter_options,
+    equipment_assets,
     parse_asset_filters,
     parse_uuid,
     parse_work_order_filters,
     technician_choices,
+    temporary_on_site,
     vendor_name_for,
 )
 from .htmx import PAGE_SIZE, is_partial, on_body, toast
@@ -116,11 +118,13 @@ def _equipment_context(request) -> dict:
     options = asset_filter_options(mine)
     f = parse_asset_filters(request.GET, options)
     today = timezone.localdate()  # the facility's: a PM falls due, and a contract ends, on its day
-    page = Paginator(filter_assets(f, today, qs=mine), PAGE_SIZE).get_page(request.GET.get("page"))
+    page = Paginator(equipment_assets(f, today, qs=mine), PAGE_SIZE).get_page(request.GET.get("page"))  # slice 29: Whose, Returned to owner
     bucket_label = FleetBucket(f.bucket).label if f.bucket else ""
     return {"nav_active": "equipment", "list_url": reverse("web:equipment"), "f": f, "options": options, "page": page, "bucket_label": bucket_label,
             "summary": fleet_summary(today, qs=mine), "sort_columns": EQUIPMENT_COLUMNS,
-            "can_add_device": eq_perms.can_add(request.user) and mine is None}  # asset_new refuses scoped users
+            "temporary_on_site": temporary_on_site(mine),  # slice 29: the summary's "N temporary on site" (fleet_summary's dict is unchanged)
+            "can_add_device": eq_perms.can_add(request.user) and mine is None,  # asset_new refuses scoped users
+            "can_add_temporary": eq_perms.can_handle_temporary(request.user) and mine is None}  # slice 29: Add rental or loaner
 
 
 @web_view(Module.EQUIPMENT, Level.VIEW, scoped=True)
@@ -163,7 +167,8 @@ def asset_drawer_context(request, asset) -> dict:
         extra = asset_tabs.pm_tab(asset, today) if tab == "pm" else asset_tabs.costs_tab(asset, today) if tab == "costs" else {}
     return {"asset": asset, "tab": tab, "summary": summary, "recent": summary["work_orders"][:4],
             # The facility's staff and their credentials (the API closes qualified_technicians to scoped users too): not theirs to read.
-            "qualified": [] if scoped else qualified_technicians(asset, today),
+            # Slice 29: none for a rental, vendor loaner, or demo unit, whose owner maintains it (the drawer's temporary section instead)
+            "qualified": [] if scoped or asset.temporary else qualified_technicians(asset, today),
             "portal_url": asset_request_url(asset), "can_create_wo": user.has_level(wo_perms.MODULE, wo_perms.CREATE_LEVEL) and not scoped,
             "can_view_wo": user.has_level(Module.WORKORDERS, Level.VIEW), "scoped": scoped,
             "can_view_recalls": can_view_recalls, "recalls": recalls, "tabs": tabs,

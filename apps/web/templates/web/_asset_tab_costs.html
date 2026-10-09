@@ -8,7 +8,7 @@
       <div class="stat"><div class="v">{% if c.pct is not None %}{{ c.pct|floatformat:1 }}%{% else %}—{% endif %}</div><div class="l">of acquisition cost</div></div>
       <div class="stat"><div class="v">{% if c.share is not None %}{{ c.share|money_k }}{% else %}—{% endif %}</div><div class="l">annual contract share</div></div>
     </div>
-    <div class="hint" style="margin-top:8px">{% if c.pct is None %}No acquisition cost on file, so no percentage. {% endif %}{% if c.share is not None %}{{ ct.reference }} · {{ ct.vendor }}{% if access.view %}: {{ ct.annual_cost|money }} a year{% endif %}, shared across its devices by acquisition cost.{% elif ct and not ct.is_expired and asset.status != "retired" and not asset.acquisition_cost %}Under {{ ct.reference }} · {{ ct.vendor }}, but with no acquisition cost on file its share of the contract cannot be worked out.{% elif ct and ct.is_expired %}{{ ct.reference }} · {{ ct.vendor }} ended {{ ct.end_on|date:"M j, Y" }}; no contract share.{% elif ct and asset.status == "retired" %}Retired devices carry no share of {{ ct.reference }}.{% else %}Not under a service contract.{% endif %}</div>
+    <div class="hint" style="margin-top:8px">{% if c.temporary %}Not ours: no acquisition cost and no contract share; its owner maintains it. Labor and parts are CE's own work on it (its incoming inspection, repairs while it is here).{% else %}{% if c.pct is None %}No acquisition cost on file, so no percentage. {% endif %}{% if c.share is not None %}{{ ct.reference }} · {{ ct.vendor }}{% if access.view %}: {{ ct.annual_cost|money }} a year{% endif %}, shared across its devices by acquisition cost.{% elif ct and not ct.is_expired and asset.status != "retired" and not asset.acquisition_cost %}Under {{ ct.reference }} · {{ ct.vendor }}, but with no acquisition cost on file its share of the contract cannot be worked out.{% elif ct and ct.is_expired %}{{ ct.reference }} · {{ ct.vendor }} ended {{ ct.end_on|date:"M j, Y" }}; no contract share.{% elif ct and asset.status == "retired" %}Retired devices carry no share of {{ ct.reference }}.{% else %}Not under a service contract.{% endif %}{% endif %}</div>
   </div>
 
   <div class="sec"><h3>Service cost by year <span>labor and parts of completed work orders</span></h3>
@@ -16,5 +16,5 @@
     {% else %}<div class="empty">No labor or parts on work orders completed since {{ c.first_year }}.</div>{% endif %}
   </div>
 
-  <div class="sec"><h3>Replacement outlook</h3><div class="note">{{ c.outlook.note }}</div></div>
+  {% if not c.temporary %}<div class="sec"><h3>Replacement outlook</h3><div class="note">{{ c.outlook.note }}</div></div>{% endif %}
 {% endwith %}

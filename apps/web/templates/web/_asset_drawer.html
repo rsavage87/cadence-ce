@@ -5,12 +5,14 @@
 {% incoming_banner asset request.user as inc %}
 {# Slice 28: a device held as evidence: the banner on every tab (asset_tabs.incident_box: the incident's number for Incidents View only), no status buttons (status_actions is []), and Record incident for Incidents Edit. #}
 {% incident_box asset request.user as ib %}
+{# Slice 29: temporary equipment (asset_tabs.temporary_box). A rental, vendor loaner, or demo unit (tb.kind "temporary"): its stay in place of the PM interval, the PM dates, and who can service it, with Change details and Return to owner (Equipment Edit) and Keep it (Equipment Approve). A device of ours (tb.kind "ours"): the vendor loaner standing in for it, "Return the loaner" once it is back, and "Vendor loaner arrived" while it is out. #}
+{% temporary_box asset request.user as tb %}
 {% with dm=asset.device_model %}
 <div class="dr-h">
   <div>
     <h2>{{ asset.tag }} · {{ dm.description }}</h2>
     <div class="sub">{{ dm.manufacturer }} {{ dm.model }}{% if asset.serial %} · SN {{ asset.serial }}{% endif %} · {{ asset.department }}{% if asset.room %}, room {{ asset.room }}{% endif %}</div>
-    <div class="chips">{% risk_chip dm.risk_class %}{% asset_status_chip asset %}{% pm_sticker asset %}{% if asset.contract %}{% if asset.contract.status == "expired" %}<span class="chip warn">Contract expired</span>{% elif asset.contract.status == "ending" %}<span class="chip warn">Contract ends {{ asset.contract.end_on|date:"M j" }}</span>{% else %}<span class="chip acc">Under contract</span>{% endif %}{% endif %}{% if open_recall %}<span class="chip info">Open recall</span>{% endif %}</div>
+    <div class="chips">{% risk_chip dm.risk_class %}{% asset_status_chip asset %}{% whose_chip asset %}{% pm_sticker asset %}{% if asset.contract %}{% if asset.contract.status == "expired" %}<span class="chip warn">Contract expired</span>{% elif asset.contract.status == "ending" %}<span class="chip warn">Contract ends {{ asset.contract.end_on|date:"M j" }}</span>{% else %}<span class="chip acc">Under contract</span>{% endif %}{% endif %}{% if open_recall %}<span class="chip info">Open recall</span>{% endif %}</div>
   </div>
   <button class="iconbtn" type="button" data-act="close-drawer" aria-label="Close">{% icon "x" %}</button>
 </div>
@@ -30,11 +32,19 @@
     {% for line in inc.lines %}<p>{% for p in line %}{% if p.number and can_view_wo %}<a class="link" href="{% url 'web:wo' p.number %}" hx-get="{% url 'web:wo' p.number %}" hx-target="#drawer">{{ p.text }}</a>{% else %}{{ p.text }}{% endif %}{% endfor %}</p>{% endfor %}
     {% if inc.offer_open %}<p><button class="link" type="button" hx-get="{% url 'web:wo_new' %}?asset={{ asset.tag|urlencode }}&amp;type=inspection" hx-target="#modal-card">Open incoming inspection</button></p>{% endif %}
   </div></div>{% endif %}
+  {% if tb.kind == "ours" and tb.loaners %}<div class="sec tmp-sec"><div class="note tmp-note{% if tb.back %} warn{% endif %}" role="status">
+    {% for l in tb.loaners %}<p>Vendor loaner <a class="link" href="{% url 'web:asset' l.tag %}" hx-get="{% url 'web:asset' l.tag %}" hx-target="#drawer">{{ l.tag }}</a>{% if l.owner %} from {{ l.owner }}{% endif %} stands in for {{ asset.tag }}{% if tb.back %}, which {{ tb.back_words }}: return the loaner{% elif l.due_back_on %}, due back {{ l.due_back_on|date:"M j, Y" }}{% endif %}.{% if tb.back and tb.can_return %} <button class="link" type="button" hx-get="{% url 'web:temporary_return' l.tag %}?back={{ asset.tag|urlencode }}" hx-target="#modal-card">Return the loaner</button>{% endif %}</p>{% endfor %}
+  </div></div>{% endif %}
+  {% if tb.kind == "temporary" and tb.stands_in.back %}<div class="sec tmp-sec"><div class="note tmp-note warn" role="status"><p>{{ tb.stands_in.tag }}, the device this loaner stands in for, {{ tb.stands_in.back_words }}: return the loaner to {{ tb.owner|default:"its owner" }}.{% if tb.can_return %} <button class="link" type="button" hx-get="{% url 'web:temporary_return' asset.tag %}" hx-target="#modal-card">Return the loaner</button>{% endif %}</p></div></div>{% endif %}
   {% if can_edit_device %}<div class="sec-actions"><button class="link" type="button" hx-get="{% url 'web:asset_edit' asset.tag %}" hx-target="#modal-card">Edit details</button></div>{% endif %}
   <div class="sec"><dl class="dl">
     <div><dt>Category</dt><dd>{{ dm.category }}</dd></div><div><dt>Serial number</dt><dd>{{ asset.serial|default:"—" }}</dd></div>
     <div><dt>Manufacturer</dt><dd>{{ dm.manufacturer }}</dd></div><div><dt>Model</dt><dd>{% if 'pm' in tabs %}<button class="link" type="button" hx-get="{% url 'web:pm_model' dm.pk %}" hx-target="#drawer" title="This model's PM program">{{ dm.model }}</button>{% else %}{{ dm.model }}{% endif %}</dd></div>
     <div><dt>Location</dt><dd>{{ asset.department }}{% if asset.room %}, room {{ asset.room }}{% endif %}</dd></div>{% with score=dm.risk_score %}<div><dt>Risk {% if score is None %}class{% else %}score{% endif %}</dt><dd>{% if score is not None %}{{ score }} · {% endif %}{{ dm.get_risk_class_display }}</dd></div>{% endwith %}
+    {% if tb.kind == "temporary" %}{# slice 29: not ours, so no install date, life, cost, warranty, contract, or PM dates of ours #}
+    <div><dt>Support</dt><dd>{{ asset.get_support_type_display }}</dd></div>
+    <div><dt>Condition</dt><dd>{{ asset.condition }} of 5</dd></div>
+    {% else %}
     <div><dt>Installed</dt><dd>{% if asset.installed_on %}{{ asset.installed_on|date:"M j, Y" }} ({{ asset.age_years|floatformat:1 }} yr){% else %}—{% endif %}</dd></div>
     <div><dt>Expected life</dt><dd>{{ dm.expected_life_years }} yr</dd></div>
     <div><dt>Acquisition cost</dt><dd>{{ asset.acquisition_cost|money }}</dd></div>
@@ -45,9 +55,12 @@
     <div><dt>PM interval</dt><dd>{% if dm.aem_interval_months and dm.pm_interval_months != dm.oem_pm_interval_months %}{{ dm.pm_interval_months }} mo AEM (OEM {{ dm.oem_pm_interval_months }} mo){% else %}{{ dm.pm_interval_months }} months, OEM{% endif %}</dd></div>
     <div><dt>Condition</dt><dd>{{ asset.condition }} of 5</dd></div>
     <div><dt>Last PM</dt><dd>{{ asset.last_pm_on|date:"M j, Y"|default:"—" }}</dd></div><div><dt>Next PM</dt><dd>{% if inc and asset.status != "retired" %}After its incoming inspection{% else %}{{ asset.next_pm_on|date:"M j, Y"|default:"—" }}{% endif %}</dd></div>
+    {% endif %}
   </dl></div>
+  {% if tb.kind == "temporary" %}{% include "web/_temporary_section.html" %}{% endif %}
+  {% if tb.kind == "ours" and tb.kept %}<div class="sec"><div class="note tmp-kept">Kept by the facility on {{ tb.kept.on|date:"M j, Y" }}{% if tb.kept.owner %}: it came from {{ tb.kept.owner }}{% if tb.kept.reference %} ({{ tb.kept.reference }}){% endif %}{% if tb.kept.arrived_on %} on {{ tb.kept.arrived_on|date:"M j, Y" }}{% endif %}{% endif %}. Ours since then, on the PM program.</div></div>{% endif %}
 
-  {% if not scoped %}<div class="sec"><h3>Who can service this <span>credentials on file</span></h3>
+  {% if not scoped and tb.kind != "temporary" %}<div class="sec"><h3>Who can service this <span>credentials on file</span></h3>
     {% if qualified %}<div class="list">{% for t, q in qualified %}
       <div class="li static"><span class="rail {% if q.expiring %}warn{% else %}ok{% endif %}"></span><div class="bd"><div class="t">{{ t.name }}</div><div class="s">{{ t.title|default:"Technician" }} · {{ q.via }}{% if q.expiring %} · expires in {{ q.expires_on|days_until }} d{% endif %}</div></div></div>
     {% endfor %}</div>
@@ -91,6 +104,9 @@
   <a class="btn" href="{% url 'web:labels' %}?tag={{ asset.tag|urlencode }}" target="_blank" rel="noopener" title="Print this device's asset label with its request QR code">{% icon "print" %} Label</a>
   {% for s in status_actions %}<button class="btn{% if s.style %} {{ s.style }}{% endif %}" type="button" hx-post="{% url 'web:asset_status' asset.tag %}?tab={{ tab }}" hx-vals='{"to": "{{ s.to }}"}' hx-target="#drawer"{% if s.confirm %} hx-confirm="{{ s.confirm }}"{% endif %}>{{ s.label }}</button>{% endfor %}
   {% if inc.use_before %}<button class="btn" type="button" hx-get="{% url 'web:asset_use_before' asset.tag %}" hx-target="#modal-card" title="An emergency, a loaner or rental needed now, or a device that arrived on the unit already in use">Put in use before inspection</button>{% endif %}
+  {% if tb.kind == "temporary" and tb.can_return %}<button class="btn" type="button" hx-get="{% url 'web:temporary_return' asset.tag %}" hx-target="#modal-card" title="It goes back to {{ tb.owner|default:'its owner' }}: record how it was cleaned and what was done about patient data">Return to owner</button>{% endif %}
+  {% if tb.kind == "temporary" and tb.can_keep %}<button class="btn" type="button" hx-get="{% url 'web:temporary_keep' asset.tag %}" hx-target="#modal-card" title="The facility buys it: it becomes ours, with a cost and a first PM">Keep it</button>{% endif %}
+  {% if tb.offer_arrived %}<button class="btn" type="button" hx-get="{% url 'web:temporary_new' %}?for={{ asset.tag|urlencode }}" hx-target="#modal-card" title="A vendor sent a loaner while {{ asset.tag }} is out: add it, standing in for this device">Vendor loaner arrived</button>{% endif %}
   {% if ib.record %}<button class="btn" type="button" hx-get="{% url 'web:incident_new' %}?asset={{ asset.tag|urlencode }}" hx-target="#modal-card" title="The device is suspected in an event that harmed, or could have harmed, someone: hold it as evidence and start the report clock">{% icon "incident" %} Record incident</button>{% endif %}
 </div>
 {% endwith %}

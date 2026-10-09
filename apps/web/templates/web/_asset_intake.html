@@ -1,0 +1,16 @@
+  {% comment %}Slice 26: how the device arrives (forms_equipment.NewDeviceForm's intake), each choice's own fields under it, shown while it
+     is chosen (CSS :has, as the new model's; without :has they all show, and the server ignores the ones not chosen).{% endcomment %}
+  <fieldset class="full dv-sub dv-intake"{% if form.intake.errors %} aria-describedby="dv-intake_error"{% endif %}>
+    <legend>{{ form.intake.label }}</legend>
+    <div class="dv-intake-list">
+    {% for radio, hint, fields in form.intake_options %}
+      <div class="radio"><label for="{{ radio.id_for_label }}">{{ radio.tag }}<span>{{ radio.choice_label }}<small>{{ hint }}</small></span></label></div>
+      {% if fields %}<div class="dv-grid dv-if dv-if-{{ radio.data.value }}">
+        {% for f in fields %}{% if f.name == "take_inspection" %}
+        <div class="fld full"><label class="check-row" for="{{ f.id_for_label }}">{{ f }} {{ f.label }}</label><span class="hint" id="{{ f.auto_id }}_helptext">{{ f.help_text }}</span>{% if f.errors %}<span class="err" id="{{ f.auto_id }}_error">{{ f.errors|striptags }}</span>{% endif %}</div>
+        {% else %}{% include "web/_asset_field.html" with field=f %}{% endif %}{% endfor %}
+      </div>{% endif %}
+    {% endfor %}
+    </div>
+    {% if form.intake.errors %}<span class="err" id="dv-intake_error">{{ form.intake.errors|striptags }}</span>{% endif %}
+  </fieldset>

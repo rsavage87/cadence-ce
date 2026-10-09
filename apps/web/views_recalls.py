@@ -17,6 +17,7 @@ from django.urls import reverse
 from django.views.decorators.http import require_POST
 
 from apps.accounts.models import Level, Module
+from apps.equipment.models import Ownership
 from apps.recalls import feeds
 from apps.recalls import permissions as rc_perms
 from apps.recalls import services as rc
@@ -134,18 +135,34 @@ def recall_status(request, pk):
 @web_view(rc_perms.MODULE, rc_perms.WORK_ORDERS_LEVEL)
 def recall_work_orders(request, pk):
     match = _get_match(pk)
+    before = set(rc.recall_work_orders(match).values_list("pk", flat=True))
     try:
         batch = rc.create_recall_work_orders(match, by=request.user)
     except ValidationError as e:
         return toast(_render_body(request), e.messages[0])
-    n = batch.created
+    # Slice 29: a rental's, vendor loaner's, or demo unit's recall work order goes to its owner as vendor service (the service's rule)
+    to_owners = (rc.recall_work_orders(match).exclude(pk__in=before).exclude(asset__ownership=Ownership.OWNED).filter(vendor_service=True)
+                 .count() if batch.created else 0)
+    return toast(_render_body(request), batch_message(batch.created, batch.unassigned, to_owners))
+
+
+def batch_message(n: int, unassigned: int, to_owners: int = 0) -> str:
+    """The recall work-order batch's toast: how many were created and where they went. Slice 29: those on rentals, vendor loaners,
+    and demo units went to their owners as vendor service, counted apart from the in-house ones."""
+    created = f"{n} recall work order{'' if n == 1 else 's'} created"
     if n == 0:
-        message = "Every affected device already has a recall work order"
-    elif batch.unassigned:
-        message = f"{n} recall work order{'' if n == 1 else 's'} created; no credentialed technician, left unassigned"
-    else:
-        message = f"{n} recall work order{'' if n == 1 else 's'} created and assigned to credentialed technicians"
-    return toast(_render_body(request), message)
+        return "Every affected device already has a recall work order"
+    if not to_owners:
+        if unassigned:
+            return f"{created}; no credentialed technician, left unassigned"
+        return f"{created} and assigned to credentialed technicians"
+    parts = [f"{to_owners} sent to {'its owner' if to_owners == 1 else 'their owners'} as vendor service"]
+    in_house = n - to_owners - unassigned
+    if in_house:
+        parts.append(f"{in_house} assigned to credentialed technicians")
+    if unassigned:
+        parts.append(f"{unassigned} left unassigned (no credentialed technician)")
+    return f"{created}: {', '.join(parts)}"
 
 
 @require_POST

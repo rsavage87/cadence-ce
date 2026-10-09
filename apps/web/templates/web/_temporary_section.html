@@ -1,0 +1,22 @@
+{% load web %}
+{% comment %}Slice 29: the device drawer's temporary section for a rental, vendor loaner, or demo unit (tb: asset_tabs.temporary_box). In place
+   of the PM interval, the PM dates, and "Who can service this": whose it is, the owner and their reference, when it arrived and how long it
+   has been here, when it is due back (days left, or past), the owner's PM date from its sticker, and for a vendor loaner the device of ours
+   it stands in for (named only when the user may see that device). A returned one says when, how it was cleaned, and what was done about
+   patient data. Change details (Equipment Edit) edits the stay.{% endcomment %}
+<div class="sec tmp-sec"><h3>{{ tb.whose }} <span>{% if tb.returned %}returned to its owner{% else %}its owner maintains it{% endif %}</span>{% if tb.can_change %}<button class="link tmp-change" type="button" hx-get="{% url 'web:temporary_change' asset.tag %}" hx-target="#modal-card">Change details</button>{% endif %}</h3>
+  <dl class="dl">
+    <div><dt>Owner</dt><dd>{{ tb.owner|default:"—" }}</dd></div>
+    <div><dt>Agreement, PO, or RMA</dt><dd>{{ tb.reference|default:"—" }}</dd></div>
+    <div><dt>Arrived</dt><dd>{% if tb.arrived_on %}{{ tb.arrived_on|date:"M j, Y" }}{% if tb.days_on_site is not None %} ({{ tb.days_on_site }} d{% if not tb.returned %} on site{% endif %}){% endif %}{% else %}—{% endif %}</dd></div>
+    {% if tb.returned %}
+    <div><dt>Returned</dt><dd>{{ tb.returned_on|date:"M j, Y"|default:"—" }}</dd></div>
+    <div><dt>Cleaning</dt><dd>{{ tb.cleaning|default:"—" }}</dd></div>
+    <div><dt>Patient data</dt><dd>{{ tb.data|default:"—" }}</dd></div>
+    {% else %}
+    <div><dt>Due back</dt><dd{% if tb.due_days is not None and tb.due_days < 0 %} class="down"{% endif %}>{% if tb.due_back_on %}{{ tb.due_back_on|date:"M j, Y" }}{% if tb.due_days > 0 %} (in {{ tb.due_days }} d){% elif tb.due_days == 0 %} (today){% else %} (past due {{ tb.due_back_on|days_since }} d){% endif %}{% else %}Not set{% endif %}</dd></div>
+    {% endif %}
+    <div><dt>Owner's PM</dt><dd{% if tb.owner_pm_past %} class="down"{% endif %}>{% if tb.owner_pm_due_on %}{{ tb.owner_pm_due_on|date:"M j, Y" }}{% if tb.owner_pm_past %} (past: the owner does it, or record its new date){% endif %}{% else %}Not recorded{% endif %}</dd></div>
+    {% if tb.loaner %}<div><dt>Stands in for</dt><dd>{% if tb.stands_in %}{% if tb.stands_in.visible %}<a class="link" href="{% url 'web:asset' tb.stands_in.tag %}" hx-get="{% url 'web:asset' tb.stands_in.tag %}" hx-target="#drawer">{{ tb.stands_in.tag }}</a> · {{ tb.stands_in.status }}{% else %}A device of ours{% endif %}{% else %}—{% endif %}</dd></div>{% endif %}
+  </dl>
+</div>
