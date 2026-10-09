@@ -88,7 +88,8 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
 - `apps/tenants` tenant model (with its time zone), context var, middleware, `enable_rls`; `tenant_context()` sets the facility's time
   zone (`zone_of`, `zone_override`), the ORM scope, and the Postgres
   `app.tenant_id` that RLS reads, so the public portal and management commands see the same rows under RLS
-- `apps/core` TenantModel, TenantManager, Sequence, TenantModelAdmin; `workdays.py` (slice 28: 21 CFR 803.3 work days, weekdays minus
+- `apps/core` TenantModel, TenantManager, Sequence, TenantModelAdmin; `validators.reference_token` (slice 30: a reference number as a
+  token, never a name: the incidents' event reference, a rental's agreement number, a vendor's service report); `workdays.py` (slice 28: 21 CFR 803.3 work days, weekdays minus
   Federal holidays as observed: `add_work_days`, `work_days_between`); `expressions.DayNumber` (a date as a day number, the same on
   SQLite and PostgreSQL); `days.local_day` (a timestamp's facility day: read audit
   timestamps and history dates inside the facility, never with .date()); `history.py` a record's changes in words from django-simple-history
@@ -163,6 +164,13 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   orders imported from another system (slice 23: `legacy_number`, the previous number, unique per facility; `Source.IMPORTED`; created in
   their final state with backdated status rows, never emailing or changing the device; their lines through costs.py's import-only writers,
   in-house hours that name no technician here as an in-house cost line, never vendor time; imported labor never fills a technician's live day);
+  slice 30: every repair records how it ended (`WorkOrder.repair_check`, `RepairCheck`: checked and ready for use on
+  `repair_checks.POST_REPAIR` (visual and function never N/A; readings, never limits), checked by the vendor with `checks_reference` (a
+  token, vendor service only, never for a scoped user), or not returned to use (the device stays out)), written only by
+  `completion.complete_work_order`; `completion.keep_open` (a failed check: noted, the device held out); `services.returns_device`;
+  `repair_checks.checked_by` names who checked (the vendor, else the technician assigned); equipment's set_status refuses in service or
+  on loan while a repair holds the device (`holding_repair`, `repair_hold_message`), and an incident's Return to use waits for its
+  investigation's checks;
   slice 29: no PM on a temporary device (`no_pm_message`), its incoming inspection on `inspections.TEMPORARY_INCOMING` and refused a
   pass while its owner's PM date is past (`owner_pm_refusal`), recall batches give its recall work order to its owner;
   slice 28, a device held as evidence (Asset.incident_hold): `change_status` refuses a start or completion (`HOLD_MOVES`) of any of its
@@ -227,7 +235,7 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   All facilities (each joined facility's Overview figures read inside it with the person's account there, totals from summed parts);
   slice 25, `survey/` the survey binder (the contract in `__init__.py`: Period, Section, Table with lazy rows, Gap kinds gap / finding /
   check, `binder()`; one module per section: program, inventory, maintenance, aem, inspections, recalls, incidents (slice 28, Incidents
-  View: decisions and reports against the clock; a held device past its PM is a finding, explained), staff (slice 29: inventory lists
+  View: decisions and reports against the clock; a held device past its PM is a finding, explained), staff (slice 30: `repairs`, the checks after repair before return to use, by outcome, never a gap; slice 29: inventory lists
   temporary equipment on site with each owner's PM date: a past one is a gap; the other sections count ours); read only, a fixed number
   of queries, history through `core.history._rows`, never requester text; each section needs Reports View plus its areas' View,
   `permissions.SURVEY_NEEDS` / `survey_refusal`; never in REPORTS, so never emailed)
@@ -235,7 +243,8 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `views_users.py` Users and Roles tabs; `views_account.py` sign-in, password reset and change; `views_invite.py` accepting an invitation; `views_credentials.py`; `views_recalls.py`; `views_reports.py` with the CSV download and `views_custom_reports.py` the custom report builder (with `reports_custom.py`); `views_settings.py`; `views_pm.py` with `pm_panels.py` for its lower panels; `views_pm_week.py` Auto-assign week; `views_wo_costs.py` and `views_wo_complete.py` the work order drawer's labor and parts and its Mark completed; `views_models.py` the device model drawer (PM program tab, Add model, Edit details, risk score) with `views_procedures.py` and `views_aem.py` for its Procedure and AEM tabs; `views_exports.py` the list CSVs; `views_scan.py` Scan tag (with `static/web/scan.js`, the camera where the browser reads codes); `history_tabs.py` the
   History tab or section of the device, work order, contract, and model drawers; `views_change_log.py` Users and access's Change log
   (with its CSV and print); `views_notifications.py` the account menu's Notifications page; `views_facilities.py` the facility switch and
-  an invitation's join page, `views_my_work.py` My work (slice 24: the cards, `wo_waiting`, `from=my_work` answers without the drawer), `views_settings.py`'s `settings_pm_window` the PM on-time window panel (slice 27), `views_temporary.py` loaners and rentals (slice 29, with `forms_temporary.py`: Add rental or
+  an invitation's join page, `views_my_work.py` My work (slice 24: the cards, `wo_waiting`, `from=my_work` answers without the drawer), `views_settings.py`'s `settings_pm_window` the PM on-time window panel (slice 27), `views_wo_complete.wo_keep_open` a repair kept open after a failed check (slice 30, with
+  `results_context`'s repair kind and `views_print.repair_checks_print`), `views_temporary.py` loaners and rentals (slice 29, with `forms_temporary.py`: Add rental or
   loaner, the drawer's temporary section (`asset_tabs.temporary_box`), Change details, Return to owner, Keep it, Vendor loaner arrived,
   Return the loaner; the Equipment "Whose" filter through `forms.equipment_assets`), `views_incidents.py` Incidents (slice 28, with
   `forms_incidents.py`: the list and its CSV, Record incident (from the page, the device drawer, or an open repair's drawer, which it
@@ -263,7 +272,9 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   incoming_inspection and inspection_due on create, awaiting_inspection, status_label, its open inspection, and use-before-inspection;
   a work order's inspection_result; slice 28: `views_incidents.py` / `serializers_incidents.py` device incidents (by id or number;
   every service action; no scoped actions), a device's incident_hold (read-only), a work order an incident keeps (never deleted, its
-  device and type never changed), the week assignment's on_hold; serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
+  device and type never changed), the week assignment's on_hold; slice 30: a work order's `repair_check`, `repair_check_label`,
+  `checks_reference`, and `completion_checklist` (steps, signature, never-N/A steps, the outcomes this user may send), the transition's
+  repair fields (`_repair_words` rewords a missing outcome or results as what to send); serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
   same thing and calls the same service; the API never imports apps.web. `tenancy.py` (`TenantAPIMixin`: the tenant from the session or
   token user, set after authentication and restored once the response is rendered), `authentication.py` (DRF's token check plus the
   deactivated-facility refusal sign-in has)

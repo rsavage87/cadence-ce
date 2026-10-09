@@ -208,6 +208,19 @@ work order lists still call a PM past its due date overdue, and a PM finished in
 date, so the schedule never drifts. A change counts every PM by the new window, past months included, is recorded with who made it, and
 the survey binder notes it; the default PM policy lines follow the window, and Settings warns when a line the facility wrote disagrees.
 
+## Checks after a repair
+Every repair records how it ended before its device goes back into use (CMS and the Joint Commission expect safety, operational, and
+functional checks after a major repair; the facility's own policy line says "Safety test required before return to service"). Mark
+completed on a repair asks "After the repair": checked and ready for use (a short standard checklist: visual, protective earth, touch and
+patient leakage with their readings, function, alarms, settings restored; the visual and function checks are never N/A, the electrical
+ones are N/A when the repair did not touch the power or patient parts), checked by the vendor (on vendor service, with their service
+report number), or not returned to use (beyond repair, going back to its owner: the device stays out of service, ready to retire). A
+failed check keeps the repair open and, by default, takes the device out of use. Cadence records the readings and the technician's
+judgment, never the limits, which the safety analyzer applies. Nothing puts a device back in service while a repair holds it out: Return
+to service waits for the repair's checks, and an incident's Return to use waits for its investigation's. The survey binder's "Checks
+after repair before return to use" section lists them. API clients that complete repairs send the outcome (and the checklist's results
+when checked): a work order's `completion_checklist` lists what to send.
+
 ## Loaners and rentals
 Equipment on site that the facility does not own (rentals such as specialty beds or surge pumps, vendor loaners sent while one of ours
 is out for repair, demo or evaluation units) goes on the inventory while it is here: Equipment's "Add rental or loaner" (or "Vendor
@@ -281,6 +294,11 @@ its module's docstring under `apps/api/`, and the browsable API (open `/api/v1/`
 - recall alert matches, recall work orders, and Check FDA feed (`views_recalls.py`); Scan (`views_scan.py`);
 - users, roles, technicians, and credentials (`views_users.py`); Settings;
 - device incidents: recording, holds, the decision, reports, release, and closing (`views_incidents.py`);
+- a repair is completed with how it ended (slice 30): POST `/api/v1/work-orders/{id}/transition/` with status completed and
+  `repair_check`: `passed` with `results` for every step of the work order's `completion_checklist` (GET the work order for the steps,
+  their signature, the steps never N/A, and the outcomes you may send), `vendor_report` with `checks_reference` (the vendor's service
+  report number; vendor service, facility staff only), or `not_returned`; a repair sent with no outcome, or passed with no results,
+  answers a 400 naming what to send;
 - the signed-in person's facilities and All facilities (`views_facilities.py`, `views_all_facilities.py`; session only).
 
 Vendor technicians and clinical requesters reach only their own devices and work orders (and Scan), as on the screens. Nobody gives

@@ -1,12 +1,12 @@
 # Build plan
 
 The mock (`cadence-ce-cmms-mock.html`) is the spec. Each slice below is shippable on its own and ends with green tests.
-Slices 0 to 29 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
+Slices 0 to 30 are built: every screen in the mock exists, people can be invited and sign in on their own, the lists
 export and print, devices are added and changed in the product, reports and request confirmations go out by email, each
 device model's PM program (risk score, procedure, AEM interval) is kept in the product, and the work itself (time, parts,
 what was done, a PM's results) is recorded on the work order; vendors and clinical requesters see only their own share; facilities
 build their own reports, and a label opens its device with Scan tag; the API covers what the screens do, by session or token; every record's changes and every access change can be read back;
-staff get the emails they choose about their own work; each facility works on its own clock; one person signs in once to every facility they work at; a facility brings its records over from the CMMS it is leaving; technicians work from their phones on My work; a survey binder gathers the evidence surveyors ask for; new equipment is inspected before its first use; each facility says when a PM counts as on time; a device suspected in a death or serious injury is held as evidence and reported on the Safe Medical Devices Act's clock; and rentals, vendor loaners, and demo units are on the inventory while on site, inspected before use, and returned to their owners. What each slice deferred is noted in its row and below.
+staff get the emails they choose about their own work; each facility works on its own clock; one person signs in once to every facility they work at; a facility brings its records over from the CMMS it is leaving; technicians work from their phones on My work; a survey binder gathers the evidence surveyors ask for; new equipment is inspected before its first use; each facility says when a PM counts as on time; a device suspected in a death or serious injury is held as evidence and reported on the Safe Medical Devices Act's clock; rentals, vendor loaners, and demo units are on the inventory while on site, inspected before use, and returned to their owners; and every repair records its safety and functional checks before the device goes back into use. What each slice deferred is noted in its row and below.
 
 | # | Slice | Mock screen(s) | Code | Status |
 |---|-------|----------------|------|--------|
@@ -40,6 +40,7 @@ staff get the emails they choose about their own work; each facility works on it
 | 27 | PM completion window | (none: Settings, PM on-time window; every on-time figure) | `facility` + `pm` + `reports` + `workorders` + `web` + `api` | done (an interval-scaled window and judging each PM by the window in force on its due date deferred) |
 | 28 | Device incidents | (none: Incidents; the device and work order drawers' hold; Record incident) | new `incidents` + `core` + `accounts` + `equipment` + `workorders` + `pm` + `reports` + `notifications` + `web` + `api` | done (the annual report (Form 3419), voluntary reports, a custody log, 3500A prefill, and a printable event file deferred) |
 | 29 | Loaners and rentals | (none: Equipment, Add rental or loaner; the device drawer's temporary section) | `equipment` + `workorders` + `contracts` + `recalls` + `incidents` + `reports` + `pm` + `imports` + `web` + `api` | done (one record per arrival; Arrived again, a CE-maintained rental, accepting the owner's delivery check, API writes, and rental cost deferred) |
+| 30 | Checks after a repair | (none: Mark completed on a repair; the binder) | `workorders` + `equipment` + `incidents` + `reports` + `web` + `api` | done (no Settings scope; checks after recall actions and upgrades, a drawer check for a hand return, analyzer calibration, and limit tables deferred) |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.
@@ -444,3 +445,19 @@ The mock's export and print buttons work since slice 11, Add device since slice 
   never "retired"; a lost unit leaves by Return to owner as "not in hand" (the one choice for a missing unit); the risk bands count
   ours, as the inventory does; a device of ours is back (its loaner can go) only once no vendor repair is open on it
   (`loaner_device_back`); a held rental whose owner's PM has lapsed is a binder finding explained by its hold, never a gap.
+- Checks after a repair (slice 30, beyond the mock; the binder listed it as not covered): every repair records how it ended
+  (`WorkOrder.repair_check`): checked and ready for use on a standard post-repair checklist (`workorders/repair_checks.py`: visual,
+  protective earth, touch and patient leakage, function, alarms, settings restored; visual and function never N/A, the electrical steps
+  N/A in words when the repair did not touch them; readings and the technician's judgment, never limits), checked by the vendor (vendor
+  service only, their service report number as a token, never chosen by a scoped vendor account), or not returned to use (the device
+  stays out of service, the repair kept as failure evidence instead of cancelled). One rule, no Settings scope: CMS A-0724 covers every
+  device, and the facility's policy line already says it. A failed check keeps the repair open and holds the device out
+  (`completion.keep_open`; IEC 62353 6.2). Doors closed: set_status refuses in service or on loan while a repair holds the device, an
+  incident's Return to use waits for its investigation's checks, and a loaner's device whose repair ended not returned is not back.
+  Imported and earlier repairs keep a blank outcome (counted, never gaps). The binder's `repairs` section lists them by outcome with who
+  checked. Deferred: a Settings scope (never), the model's PM checklist instead, leakage limit tables, an analyzer registry and its
+  calibration, checks after recall actions and upgrades, a check on the drawer's hand return, sharing the electrical steps with the
+  incoming checklist. Rules settled in review: putting a device in use before its incoming inspection waits for a repair that holds it
+  out; an API edit never drops a tag-out, or moves or retypes an open repair that holds its device; the drawer promises a return only
+  while the device is still out; a device's last repair is the one completed last, by the moment its completion was recorded
+  (`repair_checks.last_completed_first`).
