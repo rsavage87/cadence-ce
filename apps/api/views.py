@@ -325,6 +325,21 @@ def _repair_words(wo, user, sent: str, errors: dict) -> dict:
     return out
 
 
+# Slice 31: where the vendor's engineer is named, for a write that sends one anywhere else (refused rather than dropped).
+NAME_ENGINEER = ("The vendor's engineer is named when the work order is completed (POST /api/v1/work-orders/{id}/transition/ with status "
+                 "completed and vendor_engineer or engineer_name), or afterwards with POST /api/v1/work-orders/{id}/vendor-engineer/.")
+ENGINEER_ID = "Send the engineer's id as text (one of the work order's engineer_choices), or null: not named on the vendor's report."
+
+
+def _engineer_value(body):
+    """The vendor_engineer a body sent (slice 31): its id as text, None (null or blank: not named on the vendor's report), or a 400
+    keyed vendor_engineer for anything else."""
+    value = body.get("vendor_engineer")
+    if value is not None and not isinstance(value, str):
+        raise DRFValidationError({"vendor_engineer": [ENGINEER_ID]})
+    return value or None
+
+
 class WorkOrderViewSet(TenantViewSet):
     model, module, serializer_class = WorkOrder, "workorders", s.WorkOrderSerializer
     search_fields = ["number", "legacy_number", "asset__tag", "problem", "requester"]
@@ -338,7 +353,8 @@ class WorkOrderViewSet(TenantViewSet):
     scoped_actions = frozenset({"list", "retrieve", "transition", "late_reason"})
 
     def get_queryset(self):
-        qs = WorkOrder.objects.select_related("asset", "assigned_to").prefetch_related("labor_lines", "part_lines")
+        # Slice 31: the vendor's engineer with the row (vendor_engineer, vendor_engineer_name: no query per row)
+        qs = WorkOrder.objects.select_related("asset", "assigned_to", "vendor_engineer").prefetch_related("labor_lines", "part_lines")
         return scoping.work_orders(self.request.user, qs)
 
     def get_serializer(self, *args, **kwargs):
@@ -356,6 +372,7 @@ class WorkOrderViewSet(TenantViewSet):
 
     def perform_create(self, serializer):
         d = serializer.validated_data
+        self._refuse_engineer(self.request.data if hasattr(self.request.data, "get") else {})
         if (d.get("assigned_to") or d.get("vendor_service")) and not wo_perms.can_assign(self.request.user):
             raise PermissionDenied("Assigning work orders needs Approve access.")
         # Slice 26: a refusal is a 400 in the service's words (keyed type: a PM, or a second open incoming inspection, on a device
@@ -367,6 +384,25 @@ class WorkOrderViewSet(TenantViewSet):
         serializer.instance = wo
 
     ASSIGNMENT_FIELDS = ("assigned_to", "vendor_service", "vendor_name")
+    RECORDED_AT_COMPLETION = {
+        "repair_check": "How a repair ended is recorded when it is completed: POST /api/v1/work-orders/{id}/transition/ with status completed "
+                        "and repair_check.",
+        # slice 31: any vendor job's, not only a repair's
+        "checks_reference": "The vendor's report number is recorded when it is completed: POST /api/v1/work-orders/{id}/transition/ with "
+                            "status completed and checks_reference (vendor service).",
+    }
+
+    @staticmethod
+    def _refuse_engineer(body, wo=None):
+        """Slice 31: the vendor's engineer is read-only here (editable=False; a GET shows vendor_engineer as this user may read it): a
+        vendor_engineer other than the one the work order names, or an engineer_name, is refused rather than dropped, so a client never
+        thinks it was saved. Sending back what a GET returned (the id, or null) is fine."""
+        sent = body.get("vendor_engineer")
+        named = str(wo.vendor_engineer_id) if wo is not None and wo.vendor_engineer_id else None
+        if "vendor_engineer" in body and (None if sent in (None, "") else str(sent)) != named:
+            raise DRFValidationError({"vendor_engineer": [NAME_ENGINEER]})
+        if body.get("engineer_name") not in (None, ""):
+            raise DRFValidationError({"engineer_name": [NAME_ENGINEER]})
 
     def perform_update(self, serializer):
         # Assignment goes through the assign action so it is permission-checked and lands in the status history.
@@ -391,8 +427,8 @@ class WorkOrderViewSet(TenantViewSet):
         for field in ("repair_check", "checks_reference"):  # slice 30: how a repair ended, likewise (editable=False)
             sent = body.get(field)
             if sent is not None and sent != getattr(wo, field):
-                raise DRFValidationError({field: ["How a repair ended is recorded when it is completed: POST /api/v1/work-orders/{id}/transition/ "
-                                                  "with status completed and repair_check."]})
+                raise DRFValidationError({field: [self.RECORDED_AT_COMPLETION[field]]})
+        self._refuse_engineer(body, wo)  # slice 31: the vendor's engineer, likewise
         changed = [f for f, v in d.items() if v != getattr(wo, f)]
         self._check_investigation_change(wo, changed)
         self._check_repair_hold_change(wo, changed)
@@ -474,7 +510,8 @@ class WorkOrderViewSet(TenantViewSet):
 
     # The completion's text fields (transition to completed): a list, number, or object in one is refused keyed by it, never read as
     # its Python text ("['passed']") and answered with a refusal about something else (slice 30).
-    COMPLETION_TEXT = ("resolution", "pm_result", "inspection_result", "repair_check", "checks_reference", "signature", "late_reason")
+    COMPLETION_TEXT = ("resolution", "pm_result", "inspection_result", "repair_check", "checks_reference", "signature", "late_reason",
+                       "engineer_name")  # slice 31
 
     @action(detail=True, methods=["post"])
     def transition(self, request, pk=None):
@@ -490,10 +527,17 @@ class WorkOrderViewSet(TenantViewSet):
           send), "vendor_report" (vendor service, for a user who sees the whole facility) with "checks_reference", the vendor's service
           report or field service order number, or "not_returned" (the device stays out of service). A failed step refuses "passed":
           the repair stays open (the drawer records the failed checks), or it ends "not_returned".
+        - vendor service, any type (slice 31, optional, never blocking): "vendor_engineer", the engineer responsible as the vendor's
+          report names them (when a trainee came with a trained engineer, the trained engineer): an id from the work order's
+          engineer_choices (GET it), or null (not named on the report); left out, the engineer named already stays (a reopened work
+          order keeps it). Or "engineer_name", someone else by name (letters, spaces, and . ' - , only): the vendor's engineer of
+          that name, added when there is none. Not both. A vendor's account chooses only among its own company's engineers (another id
+          answers as an unknown one). "checks_reference", the vendor's report number, on any vendor job (required with
+          "vendor_report"; refused on in-house work).
         "signature" (optional): the completion_checklist's (or the PM procedure checklist's) signature the results were typed against;
         a checklist revised since is refused. A text field sent as a list, number, or object is a 400 keyed by it. Refusals are a 400
         keyed by field in the service's words, but a repair sent with no repair_check, or "passed" with no results: those name what to
-        send (_repair_words)."""
+        send (_repair_words). Another move refuses vendor_engineer and engineer_name (NAME_ENGINEER)."""
         wo = self.get_object()
         if not hasattr(request.data, "get"):  # a JSON list or scalar body has no fields
             raise DRFValidationError({"detail": "Send the fields as a JSON object."})
@@ -512,13 +556,19 @@ class WorkOrderViewSet(TenantViewSet):
 
             d = request.data
             not_text = {f: ["Send this as text."] for f in self.COMPLETION_TEXT if d.get(f) is not None and not isinstance(d.get(f), str)}
+            engineer = d.get("vendor_engineer")
+            if engineer is not None and not isinstance(engineer, str):
+                not_text["vendor_engineer"] = [ENGINEER_ID]
             if not_text:
                 raise DRFValidationError(not_text)
             kwargs = {"resolution": d.get("resolution") or "", "pm_result": d.get("pm_result") or "", "results": d.get("results"),
                       "inspection_result": d.get("inspection_result") or "",
                       "repair_check": d.get("repair_check") or "", "checks_reference": d.get("checks_reference") or "",
                       "signature": d.get("signature") or None,  # blank or left out: not checked, as before slice 30
-                      "late_reason": d.get("late_reason")}  # slice 25: why a PM completed after its due date was late, optional
+                      "late_reason": d.get("late_reason"),  # slice 25: why a PM completed after its due date was late, optional
+                      "engineer_name": d.get("engineer_name") or ""}  # slice 31: someone else, by name
+            if "vendor_engineer" in d:  # slice 31: left out, the engineer named stays (completion's KEEP)
+                kwargs["vendor_engineer"] = _engineer_value(d)
             for flag in ("open_repair", "tag_out"):
                 if flag in d:
                     kwargs[flag] = str(d[flag]).lower() in ("1", "true", "on", "yes")
@@ -529,6 +579,9 @@ class WorkOrderViewSet(TenantViewSet):
                     return Response({"detail": " ".join(e.messages)}, status=status.HTTP_400_BAD_REQUEST)
                 return Response(_repair_words(wo, request.user, kwargs["repair_check"], e.message_dict), status=status.HTTP_400_BAD_REQUEST)
             return Response(self.get_serializer(wo).data)
+        for field in ("vendor_engineer", "engineer_name"):  # slice 31: named only by completing, or by vendor-engineer
+            if request.data.get(field) not in (None, ""):
+                raise DRFValidationError({field: [NAME_ENGINEER]})
         note = request.data.get("note")
         if note is not None and not isinstance(note, str):  # slice 28 review fix: a list, number, or object reached the service's strip (a 500)
             raise DRFValidationError({"note": ["Send this as text."]})
@@ -590,6 +643,34 @@ class WorkOrderViewSet(TenantViewSet):
         if value is not None and not isinstance(value, str):
             raise DRFValidationError({"late_reason": ["Choose one of the reasons listed."]})
         _via_service(wo_services.set_late_reason, wo, value or "", by=request.user)
+        wo.refresh_from_db()
+        return Response(self.get_serializer(wo).data)
+
+    @action(detail=True, methods=["post"], url_path="vendor-engineer", url_name="vendor-engineer")
+    def vendor_engineer(self, request, pk=None):
+        """Slice 31, the drawer's Field engineer "Change": name the vendor's engineer responsible for a vendor-service work order (not
+        cancelled), as their report names them, once it arrives: body {"vendor_engineer": an id from the work order's
+        engineer_choices, or null (not named on the report)} or {"engineer_name": someone else, by name (the vendor's engineer of that
+        name, added when there is none)}, through wo_services.set_vendor_engineer. Work orders Edit, Approve once closed
+        (permissions.can_set_vendor_engineer); never a scoped user (not in scoped_actions: a vendor's account names its engineer only
+        as it completes its own work). A refusal is a 400 keyed vendor_engineer or engineer_name in the service's words. Recorded in the
+        work order's history ("Field engineer")."""
+        wo = self.get_object()
+        if not wo_perms.can_set_vendor_engineer(request.user, wo):
+            raise PermissionDenied(f"{wo.number} is closed: naming the vendor's engineer now needs Work orders Approve.")
+        body = request.data
+        if not hasattr(body, "keys"):  # a JSON list or scalar body has no fields
+            raise DRFValidationError({"detail": "Send the fields as a JSON object."})
+        unknown = sorted(set(body.keys()) - {"vendor_engineer", "engineer_name", "csrfmiddlewaretoken"})
+        if unknown:
+            raise DRFValidationError({name: ["Unknown field."] for name in unknown})
+        name = body.get("engineer_name")
+        if name is not None and not isinstance(name, str):
+            raise DRFValidationError({"engineer_name": ["Send this as text."]})
+        if "vendor_engineer" not in body and not (name or "").strip():
+            raise DRFValidationError({"vendor_engineer": ["Required: the engineer's id (one of the work order's engineer_choices), or null: not "
+                                                          "named on the vendor's report. Or send engineer_name, someone else by name."]})
+        _via_service(wo_services.set_vendor_engineer, wo, _engineer_value(body), engineer_name=name or "", by=request.user)
         wo.refresh_from_db()
         return Response(self.get_serializer(wo).data)
 

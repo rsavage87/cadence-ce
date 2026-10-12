@@ -1,4 +1,5 @@
 from django.db import models
+from django.utils import timezone
 from rest_framework import serializers
 
 from apps.contracts.models import Contract
@@ -7,9 +8,13 @@ from apps.equipment import services as eq_services
 from apps.equipment.models import AddedAs, Asset, Department, DeviceModel, Ownership
 from apps.recalls.models import Alert, AlertMatch
 from apps.recalls.services import progress as recall_progress
+from apps.vendors import services as vendor_services
+from apps.workorders import permissions as wo_perms
 from apps.workorders import repair_checks, scoping
 from apps.workorders.completion import checklist_of, checklist_signature, procedure_for, repair_outcomes
-from apps.workorders.models import OPEN_STATUSES, LaborLine, PartLine, RepairCheck, WorkOrder, WoType
+from apps.workorders.models import OPEN_STATUSES, LaborLine, PartLine, RepairCheck, WorkOrder, WoStatus, WoType
+
+from .serializers_vendors import engineer_choices
 
 
 class DepartmentSerializer(serializers.ModelSerializer):
@@ -242,6 +247,11 @@ class WorkOrderSerializer(serializers.ModelSerializer):
     inspection_result_label = serializers.CharField(source="get_inspection_result_display", read_only=True)
     repair_check_label = serializers.CharField(source="get_repair_check_display", read_only=True)  # slice 30
     completion_checklist = serializers.SerializerMethodField()
+    # Slice 31: the vendor's engineer the work order names (as this user may read it), and on a single work order the engineers this
+    # user may name (get_engineer_choices). Written only by the transition to completed and POST {id}/vendor-engineer/.
+    vendor_engineer = serializers.SerializerMethodField()
+    vendor_engineer_name = serializers.SerializerMethodField()
+    engineer_choices = serializers.SerializerMethodField()
 
     class Meta:
         model = WorkOrder
@@ -249,12 +259,15 @@ class WorkOrderSerializer(serializers.ModelSerializer):
                   "assigned_to", "assigned_to_name", "vendor_service", "vendor_name", "opened_on", "due_on", "started_on", "completed_on",
                   "problem", "resolution", "estimated_hours", "tagged_out", "is_late", "total_cost", "labor_lines", "part_lines", "updated_at",
                   "pm_result", "checklist_results", "follow_up_of", "legacy_number", "late_reason", "late_reason_label", "inspection_result",
-                  "inspection_result_label", "repair_check", "repair_check_label", "checks_reference", "completion_checklist"]
+                  "inspection_result_label", "repair_check", "repair_check_label", "checks_reference", "completion_checklist", "vendor_engineer",
+                  "vendor_engineer_name", "engineer_choices"]
         # Slice 15: what a completion recorded (transition to completed, apps.workorders.completion) is read here, never written.
         # Slice 23: so is an imported work order's number in the previous system (apps.workorders.legacy sets it, once).
         # Slice 25: so is why a PM was late (the model field is editable=False): POST {id}/late-reason/ or the completion records it.
         # Slice 26: so is an incoming inspection's result (InspectionResult, editable=False): only its completion records it.
         # Slice 30: so is how a repair ended (RepairCheck) and the vendor's service report number (both editable=False).
+        # Slice 31: so is the vendor's engineer (editable=False; a method field here, as the user may read it), and the report number
+        # is any vendor job's.
         read_only_fields = ["number", "status", "started_on", "completed_on", "resolution", "pm_result", "checklist_results", "follow_up_of",
                             "legacy_number", "late_reason", "inspection_result", "repair_check", "checks_reference"]
 
@@ -274,10 +287,48 @@ class WorkOrderSerializer(serializers.ModelSerializer):
                 "signature": checklist_signature(steps), "never_na": [n + 1 for n in repair_checks.NEVER_NA],
                 "outcomes": [{"value": value, "label": RepairCheck(value).label} for value in repair_outcomes(wo, user)]}
 
+    def _user(self):
+        return getattr(self.context.get("request"), "user", None)
+
+    def _in_list(self) -> bool:
+        return isinstance(self.parent, serializers.ListSerializer)
+
+    def get_vendor_engineer(self, wo):
+        """Slice 31: the id of the vendor's engineer the work order names (null: none named); for a scoped user, null too when they
+        would read "Another company's engineer" (vendors.services.engineer_shown). Read from the row's select_related: no query."""
+        if not wo.vendor_engineer_id:
+            return None
+        user = self._user()
+        if user is not None and scoping.is_scoped(user) and vendor_services.engineer_shown(wo, user) == vendor_services.ANOTHER_COMPANY:
+            return None
+        return str(wo.vendor_engineer_id)
+
+    def get_vendor_engineer_name(self, wo):
+        """Slice 31: "Dana Kim (Philips)", or "Another company's engineer" for a scoped user; null when none is named."""
+        return vendor_services.engineer_shown(wo, self._user()) or None
+
+    def get_engineer_choices(self, wo):
+        """Slice 31, on a single work order (left out of a list's rows: it reads rows): for vendor service not cancelled, the engineers
+        this user may send as vendor_engineer (serializers_vendors.engineer_choices: the work order's vendor's, then, for a user who
+        sees the whole facility, every other vendor's, with what is on file for each on this device), when they may name one now:
+        completing it (an open work order, Work orders Edit) or POST {id}/vendor-engineer/ (permissions.can_set_vendor_engineer).
+        Null otherwise. Besides these: null (not named on the vendor's report), or engineer_name (someone else, by name)."""
+        user = self._user()
+        if self._in_list() or user is None or not wo.vendor_service or wo.status == WoStatus.CANCELLED:
+            return None
+        completing = wo.status in OPEN_STATUSES and wo_perms.can_transition(user, wo.status, WoStatus.COMPLETED)
+        if not (completing or wo_perms.can_set_vendor_engineer(user, wo)):
+            return None
+        today = self.context.get("today") or timezone.localdate()
+        return engineer_choices(wo, user, today)
+
     def to_representation(self, instance):
         """As a scoped user (apps.workorders.scoping) may read it, the same as the web's drawer: the number of a work order outside
-        their share reads "another work order" in the problem and the resolution, and a link to one (follow_up_of) is left out."""
+        their share reads "another work order" in the problem and the resolution, and a link to one (follow_up_of) is left out.
+        Slice 31: a list's rows leave engineer_choices out (GET the work order for them)."""
         data = super().to_representation(instance)
+        if self._in_list():
+            data.pop("engineer_choices", None)
         request = self.context.get("request")
         user = getattr(request, "user", None)
         if user is None or not scoping.is_scoped(user):

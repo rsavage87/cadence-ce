@@ -168,7 +168,7 @@ def test_tokens_under_the_policies(client, tenant, other_roles, token_for, depar
     assert names(client.get(DEPARTMENTS, **auth(theirs))) == ["Oncology"]
     assert post(client, DEPARTMENTS, {"name": "Cardiology"}, mine).status_code == 201
     for url in ["/api/v1/", "/api/v1/assets/", "/api/v1/work-orders/", "/api/v1/pm/calendar/", "/api/v1/settings/", "/api/v1/reports/cosr/",
-                "/api/v1/overview/"]:
+                "/api/v1/overview/", "/api/v1/vendor-engineers/", "/api/v1/vendor-trainings/", "/api/v1/vendor-attestations/"]:  # slice 31
         r = client.get(url, **auth(mine))
         assert r.status_code == 200, (url, r.status_code)
     assert client.get("/api/v1/assets/", HTTP_ACCEPT="text/html", **auth(mine)).status_code == 200
