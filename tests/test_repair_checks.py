@@ -1,15 +1,16 @@
 """
 Slice 30, checks after a repair (apps.workorders.repair_checks, completion.complete_work_order's repair branch, completion.keep_open):
-every repair records how it ended. Checked and ready for use takes the standard post-repair checklist, every step recorded, never N/A on
-the visual check and the function check, none failed, a reading on each measured step, the signature checked, and returns the device
+every repair records how it ended. Checked and ready for use takes the standard post-repair checklist, every step recorded, never N/A
+on the visual check and the function check, none failed, a reading on each measured step, the signature checked, and returns the device
 as a repaired one always came back; checked by the vendor only on vendor service, for a user who sees the whole facility, with the
-vendor's report number (a token) and no steps; not returned to use takes no steps, keeps the device out (moved out of service through
-equipment's rules, the repair marked tagged out, never returned on completion, but by its reopening and completion as checked), and
-both keep the resolution required. keep_open records failed checks on the repair that stays open and holds the device out. The doors
-around them close: equipment.services.set_status (and the drawer's buttons, and the devices import) never puts in service or lends out
-a device a repair holds out; an incident's suspect device returns to use only after its investigation was checked; a vendor loaner's
-device of ours is not back after its last repair ended not returned. The API and the completion modal pass the outcome through. The
-demo seeds each outcome. All on both databases (the row-level security policies on PostgreSQL).
+vendor's report number (a token) and no steps (slice 31: the report number is taken on any vendor job, never on in-house work); not
+returned to use takes no steps, keeps the device out (moved out of service through equipment's rules, the repair marked tagged out,
+never returned on completion, but by its reopening and completion as checked), and both keep the resolution required. keep_open records
+failed checks on the repair that stays open and holds the device out. The doors around them close: equipment.services.set_status (and
+the drawer's buttons, and the devices import) never puts in service or lends out a device a repair holds out; an incident's suspect
+device returns to use only after its investigation was checked; a vendor loaner's device of ours is not back after its last repair
+ended not returned. The API and the completion modal pass the outcome through. The demo seeds each outcome. All on both databases (the
+row-level security policies on PostgreSQL).
 """
 from datetime import timedelta
 from io import StringIO
@@ -215,11 +216,19 @@ def test_checked_by_the_vendor_only_on_vendor_service_and_never_by_the_vendors_o
     assert theirs.repair_check == RepairCheck.PASSED and len(theirs.checklist_results) == 7
 
 
-def test_a_report_number_only_with_checked_by_the_vendor(vent, techs):
+def test_a_report_number_only_on_vendor_service(vent, techs):
+    """Slice 31: the vendor's report number on any vendor job (still required with checked by the vendor), never on in-house work."""
     wo = repair(vent, tech=techs["dana"])
     assert refused(wo, resolution="Fixed", checks_reference="FSO-1", **CHECKED) == {"checks_reference": completion.REFERENCE_ONLY}
-    # with no outcome yet, the outcome is what to fix
-    assert set(refused(wo, resolution="Fixed", checks_reference="FSO-1")) == {"repair_check"}
+    # in-house whatever the outcome: no outcome yet, and the number is refused with it
+    assert refused(wo, resolution="Fixed", checks_reference="FSO-1") == {
+        "repair_check": "Choose how the repair ended: checked and ready for use or not returned to use.",
+        "checks_reference": completion.REFERENCE_ONLY}
+    theirs = repair(vent, vendor="Hamilton Medical field service")
+    # on vendor service with no outcome yet, the outcome is what to fix
+    assert set(refused(theirs, resolution="Fixed", checks_reference="FSO-1")) == {"repair_check"}
+    complete_work_order(theirs, resolution="Vendor replaced the blower", checks_reference="FSO-1", **CHECKED)  # checked, and their report
+    assert (theirs.repair_check, theirs.checks_reference) == (RepairCheck.PASSED, "FSO-1")
 
 
 # --- not returned to use --------------------------------------------------------------------------------------------------------
@@ -569,7 +578,7 @@ def test_the_modal_offers_the_vendors_report_on_vendor_service_to_ce_only(client
     assert 'value="vendor_report"' in body and 'name="checks_reference"' in body
     client.force_login(vendor_user)
     body = client.get(f"/work-orders/{wo.number}/complete/", **HX).content.decode()
-    assert 'value="vendor_report"' not in body and 'name="checks_reference"' not in body
+    assert 'value="vendor_report"' not in body  # (slice 31: the report number's field on a vendor job is the modal's own test's)
     client.force_login(make_user("manager", username="mgr2@riverside.example"))
     r = client.post(f"/work-orders/{wo.number}/complete/", {"resolution": "Vendor fixed it", "repair_check": "vendor_report",
                                                              "checks_reference": "FSO-12", "step_1": "pass"}, **HX)

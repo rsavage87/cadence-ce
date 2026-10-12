@@ -329,13 +329,20 @@ def assign(wo: WorkOrder, technician=None, vendor_name: str = "", by=None) -> Wo
     from apps.credentials.services import qualification
     from apps.vendors.rules import vendor_key
 
-    if wo.status not in OPEN_STATUSES:
+    # Slice 31 review fix: the status and the engineer as stored, on the row locked (the UPDATE below locks it anyway, and nothing else
+    # is locked in between): a caller's copy read before a completion or a Change committed would move completed work, or keep an
+    # engineer on work that moved.
+    stored = WorkOrder.objects.select_for_update().filter(pk=wo.pk).values("status", "vendor_service", "vendor_name", "vendor_engineer_id").first()
+    if stored is None:
+        raise ValidationError("Choose a work order from this facility.")
+    if stored["status"] not in OPEN_STATUSES:
         raise ValidationError("Only open work orders can be reassigned.")
+    wo.status, wo.vendor_engineer_id = stored["status"], stored["vendor_engineer_id"]
     note = ""
     vendor_name = (vendor_name or "").strip()  # a stray space from the API would keep it from its company's share (apps.workorders.scoping)
     if len(vendor_name) > VENDOR_NAME_MAX:
         raise ValidationError({"vendor_name": f"Keep the vendor's name to {VENDOR_NAME_MAX} characters."})
-    before = vendor_key(wo.vendor_name) if wo.vendor_service else None
+    before = vendor_key(stored["vendor_name"]) if stored["vendor_service"] else None
     if vendor_name:
         wo.vendor_service, wo.vendor_name, wo.assigned_to = True, vendor_name, None
         note = f"Assigned to vendor: {vendor_name}"
@@ -410,15 +417,23 @@ def set_vendor_engineer(wo: WorkOrder, engineer=None, *, engineer_name: str = ""
     locked = WorkOrder.objects.select_for_update().get(pk=wo.pk)
     if locked.status == WoStatus.CANCELLED:
         raise ValidationError({"vendor_engineer": "A cancelled work order names no engineer."})
+    if not locked.vendor_service:  # review fix: clearing in-house work was a silent no-op; it names no engineer either way
+        raise ValidationError({"vendor_engineer": vendor_services.ENGINEER_ONLY})
     errors: dict = {}
     choice = vendor_services.engineer_choice(locked, None if engineer in (None, "") else engineer, engineer_name, by=by, errors=errors)
     if errors:
         raise ValidationError(errors)
+    locked._engineer_added = f"Added as the field engineer of {locked.number}"  # a typed name's new engineer (not at completion)
     engineer = vendor_services.resolve_choice(choice, locked, by=by)
     if engineer is not vendor_services.KEEP and (engineer.pk if engineer else None) != locked.vendor_engineer_id:
         locked.vendor_engineer = engineer
-        locked._change_reason = f"Field engineer: {engineer.name}" if engineer else "Field engineer cleared"
-        locked.save(update_fields=["vendor_engineer", "updated_at"])
+        # review fix: the history's reason column holds 100 characters (a long name was a database error on PostgreSQL)
+        reason_max = WorkOrder.history.model._meta.get_field("history_change_reason").max_length
+        locked._change_reason = (f"Field engineer: {engineer.name}" if engineer else "Field engineer cleared")[:reason_max]
+        try:
+            locked.save(update_fields=["vendor_engineer", "updated_at"])
+        finally:  # simple_history reads it on every save: never let it reach a later one of this copy
+            locked.__dict__.pop("_change_reason", None)
     wo.vendor_engineer = locked.vendor_engineer
     return locked
 

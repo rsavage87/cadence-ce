@@ -13,6 +13,7 @@ so (the binder words it "on file since <day>").
 """
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
 from datetime import date
 
@@ -33,7 +34,7 @@ TRAINING, ATTESTATION, NONE = "training", "attestation", "none"
 def vendor_key(name) -> str:
     """Which vendor a name is: casefolded, inner spaces collapsed, one trailing " field service" dropped ("Philips", "PHILIPS  field
     service" and "philips" are one vendor). Compared in Python (SQLite's iexact folds ASCII only)."""
-    text = " ".join(str(name or "").split()).casefold()
+    text = " ".join(unicodedata.normalize("NFC", str(name or "")).split()).casefold()  # composed: "Dräger" typed either way is one
     if text.endswith(FIELD_SERVICE) and len(text) > len(FIELD_SERVICE):
         text = text[: -len(FIELD_SERVICE)].rstrip()
     return text
@@ -42,7 +43,8 @@ def vendor_key(name) -> str:
 def clean_engineer_name(name, field: str = "name") -> str:
     """A person's name as typed, inner spaces collapsed: 2 to 120 characters of letters, spaces, and . ' - , (no digits, @, or /:
     badge numbers, phone numbers, record numbers, and dates stay out). Raises ValidationError keyed `field`."""
-    text = " ".join(str(name or "").split())
+    # Review fix: composed first ("José" typed as e and a combining accent read as a mark, not a letter, and was refused)
+    text = " ".join(unicodedata.normalize("NFC", str(name or "")).split())
     if not text:
         raise ValidationError({field: "Enter the engineer's name."})
     if len(text) > NAME_MAX:

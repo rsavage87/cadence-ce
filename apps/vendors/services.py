@@ -73,9 +73,19 @@ def _past(day, field: str, what: str, today: date, errors: dict, *, required: bo
 
 # --- engineers -------------------------------------------------------------------------------------------------------------------
 
-def _duplicate(company_key: str, nkey: str, exclude=None) -> bool:
+def _on_file(company_key: str, nkey: str, exclude=None) -> VendorEngineer | None:
+    """The engineer of that vendor and name already on file (another than `exclude`), active or not."""
     qs = VendorEngineer.objects.filter(company_key=company_key, name_key=nkey)
-    return (qs.exclude(pk=exclude.pk) if exclude is not None else qs).exists()
+    return (qs.exclude(pk=exclude.pk) if exclude is not None else qs).first()
+
+
+def _already(found: VendorEngineer | None, name: str, company: str) -> ValidationError:
+    """The refusal of a second engineer of one vendor and name, naming the one on file as it is written (review fix: it repeated the
+    name as typed, "kim, dana", and never said the one on file was inactive)."""
+    if found is None:
+        return ValidationError({"name": f"{name} is already an engineer of {company}."})
+    inactive = "" if found.is_active else " (inactive)"
+    return ValidationError({"name": f"{found.name} is already an engineer of {found.company}{inactive}."})
 
 
 def add_engineer(*, name, company, by=None) -> VendorEngineer:
@@ -84,14 +94,14 @@ def add_engineer(*, name, company, by=None) -> VendorEngineer:
     name = rules.clean_engineer_name(name)
     company = _company(company)
     key, nkey = rules.vendor_key(company), name_key(name)
-    exists = ValidationError({"name": f"{name} is already an engineer of {company}."})
-    if _duplicate(key, nkey):
-        raise exists
+    found = _on_file(key, nkey)
+    if found is not None:
+        raise _already(found, name, company)
     try:
         with transaction.atomic():
             return VendorEngineer.objects.create(name=name, company=company, company_key=key, name_key=nkey, created_by=by)
     except IntegrityError:  # added at the same moment by someone else
-        raise exists from None
+        raise _already(_on_file(key, nkey), name, company) from None
 
 
 @transaction.atomic
@@ -110,7 +120,9 @@ def update_engineer(engineer: VendorEngineer, *, name=None, company=None, is_act
     if company is not None:
         company = _company(company)
         if company != locked.company:
-            if WorkOrder.objects.filter(vendor_engineer=locked).exists():
+            # Another vendor once a work order names them; the same vendor spelled another way ("PHILIPS", "Philips field service":
+            # rules.vendor_key) is no move, and relabels none of their jobs (review fix: it was refused as one).
+            if rules.vendor_key(company) != locked.company_key and WorkOrder.objects.filter(vendor_engineer=locked).exists():
                 raise ValidationError({"company": COMPANY_FIXED.format(name=locked.name)})
             locked.company, locked.company_key = company, rules.vendor_key(company)
             fields += ["company", "company_key"]
@@ -120,14 +132,16 @@ def update_engineer(engineer: VendorEngineer, *, name=None, company=None, is_act
         if is_active != locked.is_active:
             locked.is_active = is_active
             fields.append("is_active")
-    if {"name_key", "company_key"} & set(fields) and _duplicate(locked.company_key, locked.name_key, exclude=locked):
-        raise ValidationError({"name": f"{locked.name} is already an engineer of {locked.company}."})
+    if {"name_key", "company_key"} & set(fields):
+        found = _on_file(locked.company_key, locked.name_key, exclude=locked)
+        if found is not None:
+            raise _already(found, locked.name, locked.company)
     if fields:
         try:
             with transaction.atomic():
                 locked.save(update_fields=[*fields, "updated_at"])
         except IntegrityError:
-            raise ValidationError({"name": f"{locked.name} is already an engineer of {locked.company}."}) from None
+            raise _already(_on_file(locked.company_key, locked.name_key, exclude=locked), locked.name, locked.company) from None
     engineer.__dict__.update({f: getattr(locked, f) for f in ("name", "name_key", "company", "company_key", "is_active")})
     return locked
 
@@ -143,8 +157,8 @@ def engineer_named(vendor_name: str, name, *, by=None, work_order=None) -> Vendo
     if found is not None:
         return found
     engineer = VendorEngineer(name=name, company=company, company_key=key, name_key=nkey, created_by=by)
-    if work_order is not None:
-        engineer._change_reason = f"Added at completion of {work_order.number}"
+    if work_order is not None:  # workorders.services.set_vendor_engineer says its own words (a name typed after completion, or before)
+        engineer._change_reason = getattr(work_order, "_engineer_added", "") or f"Added at completion of {work_order.number}"
     try:
         with transaction.atomic():
             engineer.save()
@@ -214,10 +228,10 @@ def engineer_choice(wo, value=KEEP, name="", *, by=None, errors: dict):
         return KEEP
     if not sent:
         return None
-    engineer = value if isinstance(value, VendorEngineer) else None
-    if engineer is None:
-        pk = _parse_uuid(value)
-        engineer = VendorEngineer.objects.filter(pk=pk).first() if pk else None
+    # Read again through this facility's rows, an engineer passed in too (review fix: a copy loaded before a deactivation still read
+    # as active; another facility's reads as unknown).
+    pk = value.pk if isinstance(value, VendorEngineer) else _parse_uuid(value)
+    engineer = VendorEngineer.objects.filter(pk=pk).first() if pk else None
     if engineer is None or not may_name(wo, engineer, by):
         errors["vendor_engineer"] = CHOOSE_LISTED
         return KEEP
@@ -287,15 +301,21 @@ def add_training(engineers, *, covers, model_ids=(), manufacturer="", category="
     """One training on file for each of `engineers` (one or several of a vendor's: a class the vendor ran for several), covering the
     same devices from issued_on (never in the future) to expires_on (none: no expiry). A certificate number is one engineer's, so it
     goes with one engineer only. The same coverage issued the same day for the same engineer is on file already."""
+    from apps.tenants.context import get_current_tenant
+
     today = today or timezone.localdate()
-    engineers = [e for e in (engineers or []) if e is not None]
+    sent = [e for e in (engineers or []) if e is not None]
     errors: dict = {}
-    if not engineers:
+    if not sent:
         errors["engineers"] = "Choose the engineer."
-    if any(not isinstance(e, VendorEngineer) for e in engineers):
+    tenant = get_current_tenant()
+    # Review fix: this facility's engineers only (a training saved here naming another facility's engineer crossed facilities: the
+    # foreign key reads around row-level security), each once (one engineer sent twice was "already has this training on file").
+    if any(not isinstance(e, VendorEngineer) for e in sent) or tenant is None or any(e.tenant_id != tenant.id for e in sent):
         raise ValidationError({"engineers": "Choose engineers on file."})
-    if len({e.tenant_id for e in engineers}) > 1:
-        raise ValidationError({"engineers": "Choose engineers on file."})
+    engineers = list({e.pk: e for e in sent}.values())
+    if len({e.company_key for e in engineers}) > 1:  # review fix: one vendor's engineers, as the docstring says (a class it ran)
+        raise ValidationError({"engineers": "Choose engineers of one vendor: add each vendor's training on its own."})
     coverage = _coverage(covers, model_ids, manufacturer, category, errors, allow_all=False)
     source = str(source or "").strip()
     if source not in TrainingSource.values:
