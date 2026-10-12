@@ -24,11 +24,22 @@ ready for use, so values left on screen under another choice are never sent. Wav
 (`repair_default`: checked and ready for use, unless the vendor's report is offered), the steps never N/A (repair_checks.NEVER_NA: no
 N/A choice, rows()' never_na), and "If a check fails" (keep_open_kwargs, for completion.keep_open: the steps as typed and `hold`, the
 hold-out box, ticked by default and taken from the post only when the modal showed it: shown_hold).
+
+Slice 31, vendor service of any type (apps.vendors): who did the work, one select (vendor_engineer: an engineer's id; "" not named on
+the report; OTHER, "Someone else", with the name typed in engineer_name; KEEP_CHOICE, a scoped vendor account's "Another company's
+engineer", left as stored), offered when the view says so (offer_engineer, the engineer stored as `engineer_initial`), and the vendor's
+report number (checks_reference) on any vendor job for a user who sees the whole facility (offer_reference). Slice 30 sent the number
+only with checked by the vendor; it is now sent whatever the outcome (the box shows on every vendor job), and completion still requires
+it with checked by the vendor. engineer_kwargs turns the select into the service's vendor_engineer and engineer_name (EngineerForm,
+the drawer's Change, reads it too); "Someone else" with no name is refused here, keyed engineer_name, since the service would read an
+empty name as not named.
 """
 import re
 
 from django import forms
+from django.core.exceptions import ValidationError
 
+from apps.vendors import rules as vendor_rules
 from apps.workorders import completion, repair_checks
 from apps.workorders.models import InspectionResult, LateReason, PmResult, RepairCheck
 
@@ -46,7 +57,10 @@ STEP_CHOICES = [(completion.PASS, "Pass"), (completion.FAIL, "Fail"), (completio
 # The fields after the checklist, in the modal's order: a form sent back with errors focuses the first one on screen. Slice 25: the
 # late reason comes first (late_first) or last (focus_first_error).
 LAYOUT_TAIL = ("pm_result", "inspection_result", "resolution", "open_repair", "hours")
-LAYOUT_REPAIR = ("repair_check", "checks_reference")  # slice 30: a repair's outcome comes before its checklist
+LAYOUT_REPAIR = ("repair_check",)  # slice 30: a repair's outcome comes before its checklist
+LAYOUT_VENDOR = ("vendor_engineer", "engineer_name", "checks_reference")  # slice 31: then who did the vendor's work, and their report
+OTHER = "other"  # slice 31: the select's "Someone else" (the name typed in engineer_name)
+KEEP_CHOICE = "keep"  # slice 31: a scoped vendor account's "Another company's engineer": the engineer stored stays
 LATE_BLANK = "Not recorded"
 LATE_KEEP = "Keep the reason recorded: {label}"
 # What a step records reads as a number when it names a limit or a unit ("leakage µA, limit 100", "Ω", "mmHg"). Anything else
@@ -70,6 +84,50 @@ def reads_number(measure) -> bool:
     return any(word in UNITS for word in _WORD.findall(text))  # a unit, never digits alone ("software version 2.1.3a" needs letters)
 
 
+def engineer_kwargs(value, name) -> dict:
+    """The service's vendor_engineer and engineer_name for what the select sent (slice 31): an engineer's id; "" (not named on the
+    report: None); OTHER with the name typed; KEEP_CHOICE ({}: the engineer stored stays). Raises ValidationError keyed engineer_name
+    for Someone else with no name (the name's own rule is the service's: vendors.rules.clean_engineer_name)."""
+    value, name = str(value or "").strip(), str(name or "").strip()
+    if value == KEEP_CHOICE:
+        return {}
+    if value == OTHER:
+        if not name:
+            vendor_rules.clean_engineer_name(name, "engineer_name")  # raises, in the rule's words
+        return {"vendor_engineer": None, "engineer_name": name}
+    return {"vendor_engineer": value or None, "engineer_name": ""}
+
+
+def service_errors(form, error):
+    """A service's ValidationError on the fields it names; anything else at the top (EngineerForm and CompleteForm)."""
+    if not hasattr(error, "error_dict"):
+        form.add_error(None, error.messages)
+        return
+    for key, messages in error.message_dict.items():
+        if key in form.fields:
+            form.add_error(key, messages)
+        else:
+            form._errors.setdefault(key, form.error_class()).extend(messages)  # "checklist": shown above the steps
+
+
+class EngineerForm(forms.Form):
+    """The drawer's Change (slice 31, views_wo_engineer): the completion modal's select, for workorders.services.set_vendor_engineer."""
+    vendor_engineer = forms.CharField(required=False)
+    engineer_name = forms.CharField(required=False)
+
+    def clean(self):
+        data = super().clean()
+        self.choice = {}
+        try:
+            self.choice = engineer_kwargs(data.get("vendor_engineer"), data.get("engineer_name"))
+        except ValidationError as e:
+            self.add_error(None, e)
+        return data
+
+    def add_service_errors(self, error):
+        service_errors(self, error)
+
+
 class CompleteForm(forms.Form):
     resolution = forms.CharField(required=False, strip=False, widget=forms.Textarea(attrs={"rows": 3, "maxlength": completion.RESOLUTION_MAX}))
     # Text, not a number field: apps.workorders.costs says what a valid number of hours is. inputmode brings up the number pad.
@@ -78,7 +136,8 @@ class CompleteForm(forms.Form):
     pm_result = forms.CharField(required=False)
     # Slice 26: text, not a choice field: completion checks the value (a refusal keyed inspection_result, in its words)
     inspection_result = forms.CharField(required=False)
-    # Slice 30: a repair's outcome (RepairCheck) and the vendor's service report number; text, completion checks them
+    # Slice 30: a repair's outcome (RepairCheck) and the vendor's service report number (slice 31: on any vendor job); text, completion
+    # checks them
     repair_check = forms.CharField(required=False)
     checks_reference = forms.CharField(required=False, widget=forms.TextInput(attrs={"maxlength": completion.REFERENCE_MAX, "autocomplete": "off",
                                                                                     "placeholder": "e.g. FSO-118204"}))
@@ -94,10 +153,13 @@ class CompleteForm(forms.Form):
     shown_tag_out = forms.CharField(required=False)
     # Slice 25: text, not a choice field: completion checks the value (a refusal keyed late_reason, in its words). Choices in __init__.
     late_reason = forms.CharField(required=False, widget=forms.Select(attrs={"aria-describedby": "wc-late-hint"}))
+    # Slice 31: who did the vendor's work (engineer_kwargs reads them; web/_wo_engineer_select.html draws them)
+    vendor_engineer = forms.CharField(required=False)
+    engineer_name = forms.CharField(required=False)
 
     def __init__(self, *args, steps=(), is_pm=False, is_inspection=False, kept_pass=False, offer_open_repair=False, offer_tag_out=False,
                  offer_hours=False, offer_late_reason=False, late_first=False, late_recorded="", is_repair=False, repair_default="",
-                 **kwargs):
+                 offer_engineer=False, engineer_initial="", offer_reference=False, reference_initial="", **kwargs):
         """`steps`: the checklist the modal shows, as completion.checklist_of gives it. The two offers say whether the failed-PM
         options are on screen: an option that is not offered is not taken from the post (a new repair is opened; no tag-out).
         `offer_hours`: the Hours box is on screen; without it no hours are taken from the post. `offer_late_reason` (slice 25): the
@@ -105,15 +167,26 @@ class CompleteForm(forms.Form):
         record, which its blank choice keeps. Slice 26: `is_inspection`, an incoming inspection (its result instead of a PM's, and a
         failed one's tag-out under `offer_tag_out`); `kept_pass`, one that passed and whose device no longer waits (it stays
         passed: Passed is chosen to begin with). Slice 30: `is_repair`, a repair (its outcome, and its checks after it as `steps`);
-        `repair_default`, the outcome chosen to begin with ("" for none)."""
+        `repair_default`, the outcome chosen to begin with ("" for none). Slice 31: `offer_engineer`, vendor service (who did the work,
+        the engineer stored as `engineer_initial`: the select's value to begin with); `offer_reference`, the vendor's report number box
+        (any vendor job, for a user who sees the whole facility), with the number stored as `reference_initial` (a reopened job)."""
         kwargs.setdefault("auto_id", "wc-%s")
         super().__init__(*args, **kwargs)
         self.steps, self.is_pm, self.is_inspection = list(steps), is_pm, is_inspection and not is_pm
         self.is_repair = is_repair and not (is_pm or is_inspection)
         if not self.is_repair:
-            del self.fields["repair_check"], self.fields["checks_reference"], self.fields["hold"], self.fields["shown_hold"]
+            del self.fields["repair_check"], self.fields["hold"], self.fields["shown_hold"]
         elif repair_default:
             self.fields["repair_check"].initial = repair_default
+        self.offer_engineer, self.offer_reference, self.engineer = offer_engineer, offer_reference, {}
+        if offer_engineer:
+            self.fields["vendor_engineer"].initial = engineer_initial
+        else:
+            del self.fields["vendor_engineer"], self.fields["engineer_name"]
+        if not offer_reference:
+            del self.fields["checks_reference"]
+        elif reference_initial:
+            self.fields["checks_reference"].initial = reference_initial
         if not self.is_inspection:
             del self.fields["inspection_result"]
         elif kept_pass:
@@ -156,6 +229,17 @@ class CompleteForm(forms.Form):
                     initial[f"step_{n}"] = fill
         form.initial.update(initial)
         return form
+
+    check_engineer = True  # slice 31: Keep open (completion.keep_open names no engineer) reads the form without the select
+
+    def clean(self):
+        data = super().clean()
+        if self.offer_engineer and self.check_engineer:  # slice 31
+            try:
+                self.engineer = engineer_kwargs(data.get("vendor_engineer"), data.get("engineer_name"))
+            except ValidationError as e:
+                self.add_error(None, e)
+        return data
 
     # --- what the template shows -----------------------------------------------------------------------------------------
 
@@ -218,10 +302,13 @@ class CompleteForm(forms.Form):
             kwargs.update(inspection_result=d["inspection_result"], results=results,
                           tag_out=d["tag_out"] if self.offer_tag_out and d["shown_tag_out"] else True)
         elif self.is_repair:
-            # Slice 30: the steps with checked and ready for use only, the report number with checked by the vendor only
+            # Slice 30: the steps with checked and ready for use only
             outcome = d["repair_check"].strip()
-            kwargs.update(repair_check=outcome, results=results if outcome == RepairCheck.PASSED else None,
-                          checks_reference=d["checks_reference"] if outcome == RepairCheck.VENDOR_REPORT else "")
+            kwargs.update(repair_check=outcome, results=results if outcome == RepairCheck.PASSED else None)
+        if self.offer_reference:  # slice 31: any vendor job's report number, whatever the outcome (required with checked by the vendor)
+            kwargs["checks_reference"] = d["checks_reference"]
+        if self.offer_engineer:  # slice 31: who did the vendor's work (KEEP_CHOICE sends nothing: the engineer stored stays)
+            kwargs.update(self.engineer)
         return kwargs
 
     def keep_open_kwargs(self) -> dict:
@@ -234,19 +321,12 @@ class CompleteForm(forms.Form):
 
     def add_service_errors(self, error):
         """Show a service's ValidationError on the fields it names; the checklist's and anything else at the top of its section."""
-        if not hasattr(error, "error_dict"):
-            self.add_error(None, error.messages)
-            return
-        for key, messages in error.message_dict.items():
-            if key in self.fields:
-                self.add_error(key, messages)
-            else:
-                self._errors.setdefault(key, self.error_class()).extend(messages)  # "checklist": shown above the steps
+        service_errors(self, error)
 
     def focus_first_error(self):
         """Sent back with errors: htmx focuses the [autofocus] element it swaps in, so the template marks the first one."""
         late = ("late_reason",)
-        names = [*(LAYOUT_REPAIR if self.is_repair else ()), "checklist",
+        names = [*(LAYOUT_REPAIR if self.is_repair else ()), *LAYOUT_VENDOR, "checklist",
                  *(f"{kind}_{n}" for n in range(1, len(self.steps) + 1) for kind in ("step", "reading")),
                  *(late if self.late_first else ()), *LAYOUT_TAIL, *(() if self.late_first else late)]
         self.first_error = next((name for name in names if name in self.errors), "")

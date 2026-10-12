@@ -1,0 +1,19 @@
+{% load web %}
+{% comment %}The drawer's Change of the field engineer (slice 31, views_wo_engineer.wo_engineer): the completion modal's select
+   (web/_wo_engineer_select.html), posting to workorders.services.set_vendor_engineer. A work order that is not vendor service, is
+   cancelled, or is closed for a user without Approve gets the reason instead of the form.{% endcomment %}
+<div class="modal-h"><h2>Field engineer on {{ wo.number }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="we-form" class="we-form" hx-post="{% url 'web:wo_engineer' wo.number %}" hx-target="#modal-card" hx-sync="this:drop" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    <p class="full wc-title"><strong>{{ asset.tag }}</strong> · {{ dm.description }}, {{ dm.manufacturer }} {{ dm.model }}<br><span class="muted">{{ wo.get_type_display }} · {{ wo.vendor_name|default:"Vendor" }}{% if wo.completed_on and judged_on %} · completed {{ wo.completed_on|date:"M j, Y" }}{% endif %}{% if wo.checks_reference %} · report <span class="mono">{{ wo.checks_reference }}</span>{% endif %}</span></p>
+    {% if form.non_field_errors %}<div class="full"><span class="err">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    {% include "web/_wo_engineer_select.html" %}
+    {% if not scoped %}<p class="full hint we-judged">{% if judged_on %}Each engineer's standing is what was on file for this model on {{ judged_on|date:"M j, Y" }}, the day it was completed.{% else %}Each engineer's standing is what is on file for this model today.{% endif %} Cadence keeps the documents; it does not judge competence.</p>{% endif %}
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Save</button></div>
+</form>
+{% endif %}

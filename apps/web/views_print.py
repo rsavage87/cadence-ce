@@ -19,6 +19,11 @@ Slice 30: a repair prints its "Checks after repair" (apps.workorders.repair_chec
 boxes to tick and readings to write (no N/A box on the steps never N/A) and how it ended to tick (checked by the vendor, with a line
 for their report's number, only on vendor service); once done, the record: how it ended, who checked and when (checked_by), the steps
 as recorded, or the vendor's report number, or not returned to use; one completed with no outcome says none was recorded.
+
+Slice 31: vendor service of any type prints its field engineer (the vendor's engineer the work order names, as the reader may read it:
+vendors.services.engineer_shown; "Not named" once done) and the vendor's report number, with a line to write each on while it is
+open; who checked a repair or an inspection names the engineer (checked_by, for the reader). Names only: no training or attestation
+on paper (a vendor's own account prints its work orders too).
 """
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -29,6 +34,7 @@ from django.utils import timezone
 from apps.accounts.models import Level, Module
 from apps.equipment.models import Asset
 from apps.facility.services import asset_request_url, get_settings
+from apps.vendors.services import engineer_shown
 from apps.workorders import completion, inspections, scoping
 from apps.workorders import services as wo_services
 from apps.workorders.models import OPEN_STATUSES, LaborLine, PartLine, RepairCheck, Source, WorkOrder, WoType
@@ -122,13 +128,13 @@ def checklist_steps(procedure) -> list[dict]:
     return [_step(s) for s in steps]
 
 
-def inspector(wo) -> str:
-    """Who did an incoming inspection (slice 26) or a repair's checks (slice 30): workorders.repair_checks.checked_by (the vendor for
-    vendor service, else the technician assigned), which the binder reads too."""
-    return checked_by(wo)
+def inspector(wo, user=None) -> str:
+    """Who did an incoming inspection (slice 26) or a repair's checks (slice 30): workorders.repair_checks.checked_by (on vendor service
+    the engineer named, as `user` may read it (slice 31), else the vendor; else the technician assigned), which the binder reads too."""
+    return checked_by(wo, user)
 
 
-def repair_checks_print(wo) -> dict | None:
+def repair_checks_print(wo, user=None) -> dict | None:
     """A repair's "Checks after repair" on paper (slice 30), or None for another type or a cancelled repair. Open: the steps to tick
     (`steps`, each with never_na) and how it ended (`offer_vendor`: checked by the vendor only on vendor service). Done: `recorded` (its
     outcome), who checked, the steps as recorded; else `unrecorded` (completed before slice 30, or imported)."""
@@ -144,7 +150,7 @@ def repair_checks_print(wo) -> dict | None:
     recorded = done and bool(wo.repair_check)
     return {"open": is_open, "steps": steps if is_open else [], "offer_vendor": wo.vendor_service,
             "choices": RepairCheck.choices if wo.vendor_service else [c for c in RepairCheck.choices if c[0] != RepairCheck.VENDOR_REPORT],
-            "recorded": recorded, "checked_by": checked_by(wo) if recorded else "",
+            "recorded": recorded, "checked_by": checked_by(wo, user) if recorded else "",
             "recorded_steps": completion.recorded_steps(wo) if recorded and wo.repair_check == RepairCheck.PASSED else [],
             "unrecorded": done and not wo.repair_check, "imported": wo.source == Source.IMPORTED}
 
@@ -157,7 +163,7 @@ def wo_print(request, number):
     part_lines = Prefetch("part_lines", queryset=PartLine.objects.order_by("created_at"))
     wo = get_object_or_404(scoping.work_orders(user, WorkOrder.objects.select_related(
         "asset", "asset__device_model", "asset__device_model__pm_procedure", "asset__department", "asset__contract", "assigned_to", "alert",
-        "follow_up_of").prefetch_related(labor_lines, part_lines)), number=number)
+        "follow_up_of", "vendor_engineer").prefetch_related(labor_lines, part_lines)), number=number)
     today = timezone.localdate()
     is_open = wo.status in OPEN_STATUSES
     is_pm, is_inspection = wo.type == WoType.PM, wo.type == WoType.INSPECTION
@@ -181,8 +187,9 @@ def wo_print(request, number):
     return render(request, "web/print_wo.html", {
         "wo": wo, "asset": wo.asset, "facility": request.tenant.name, "today": today, "is_open": is_open, "is_pm": is_pm,
         "is_inspection": is_inspection, "checked": is_pm or is_inspection, "incoming": incoming,
-        "inspector": inspector(wo) if is_inspection else "",
-        "repair_checks": repair_checks_print(wo),  # slice 30
+        "inspector": inspector(wo, user) if is_inspection else "",
+        "repair_checks": repair_checks_print(wo, user),  # slice 30
+        "field_engineer": engineer_shown(wo, user) if wo.vendor_service else "",  # slice 31: names only, as this reader may read them
         "past_due_days": (today - wo.due_on).days if is_open and wo.due_on < today else 0,
         # The procedure on file (never the incoming checklist, which is no procedure: no code, source, or revision to print)
         "procedure": None if incoming else procedure, "steps": checklist_steps(procedure),

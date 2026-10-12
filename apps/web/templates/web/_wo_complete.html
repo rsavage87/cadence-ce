@@ -19,7 +19,10 @@
    ready for use, chosen to begin with unless the vendor's report is offered; checked by the vendor, with their report's number shown
    once it is chosen; not returned to use), then the checks after repair, shown only with checked and ready for use (CSS :has; all of
    it without :has support), with no N/A on the steps never N/A, and "If a check fails" once a step is marked Fail: Keep the repair
-   open (views_wo_complete.wo_keep_open) with the hold-out box, ticked by default.{% endcomment %}
+   open (views_wo_complete.wo_keep_open) with the hold-out box, ticked by default.
+   Slice 31: vendor service of any type asks who did the work (web/_wo_engineer_select.html: names only for a vendor's own account)
+   and, for a user who sees the whole facility, the vendor's report number beside it, shown whatever the outcome (required with
+   checked by the vendor). Neither blocks completion.{% endcomment %}
 <div class="modal-h wc-h"><h2>Complete {{ wo.number }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
 {% if blocker %}
 <div class="form"><div class="full note">{{ blocker }}</div></div>
@@ -40,7 +43,12 @@
       </div>
       {% if form.repair_check.errors %}<span class="err">{{ form.repair_check.errors|striptags }}</span>{% endif %}
     </div>
-    {% if offer_vendor_report %}<label class="full wc-reference">The vendor's service report or field service order number{{ form.checks_reference }}<span class="hint">As printed on the report they left: the report is the record of their checks.</span>{% if form.checks_reference.errors %}<span class="err" id="wc-checks_reference_error">{{ form.checks_reference.errors|striptags }}</span>{% endif %}</label>{% endif %}
+    {% endif %}
+    {% if engineer %}{# slice 31: vendor service of any type: who did the work, and their report's number beside it #}
+    <div class="full wc-vendor">
+      {% include "web/_wo_engineer_select.html" %}
+      {% if form.offer_reference %}<label class="full wc-reference">The vendor's service report or field service order number{{ form.checks_reference }}<span class="hint">As printed on the report they left. Optional{% if is_repair %}, but required with Checked by the vendor: the report is the record of their checks{% endif %}.</span>{% if form.checks_reference.errors %}<span class="err" id="wc-checks_reference_error">{{ form.checks_reference.errors|striptags }}</span>{% endif %}</label>{% endif %}
+    </div>
     {% endif %}
   </div>
   {% if is_pm or is_inspection or is_repair %}

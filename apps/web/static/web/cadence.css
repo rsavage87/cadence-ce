@@ -1144,3 +1144,26 @@ td small.tmp-late{color:var(--crit)}
   .page-head,.panel-h,h1,h2,h3{break-after:avoid}
   .panel,.kpis,.kpi,.stat,.strip,.legend,.chart,.cal,.alert,.kcard,.note,.li,tr{break-inside:avoid}
 }
+
+/* Slice 31: field engineer (web/_wo_engineer_select.html in the completion modal and the drawer's Change; the drawer's row). On vendor
+   service the completion modal asks who did the work beside the vendor's report number (side by side, one column on a phone), the
+   number shown whatever the outcome; "Someone else"'s name box shows with it (all of it without :has support). */
+.wc-vendor{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;align-items:start}
+.wc-vendor>.full{grid-column:auto}
+.wc-eng{display:flex;flex-direction:column;gap:4px;min-width:0}
+.wc-eng .hint{font-size:12px}
+.we-judged{margin:0}
+@supports selector(:has(*)){
+  .wc-form .wc-vendor .wc-reference{display:flex}
+  .wc-eng .wc-eng-name{display:none}
+  .wc-eng:has(select[name="vendor_engineer"] option[value="other"]:checked) .wc-eng-name{display:flex}
+}
+.dl .wo-eng{grid-column:1/-1;display:grid;gap:3px}
+.dl .wo-eng dd{overflow:visible;white-space:normal;display:flex;flex-direction:column;gap:4px}
+.wo-eng-who{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px}
+.wo-eng .hint{font-weight:400}
+@media (max-width:760px){
+  .wc-vendor{grid-template-columns:1fr}
+  .we-form .form :is(input,select){min-height:44px;font-size:16px}
+  .wo-eng-who .btn{min-height:44px}
+}

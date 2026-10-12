@@ -24,6 +24,15 @@
         {% else %}<span class="chip crit">Not credentialed for this device</span>{% endif %}
       {% else %}<span class="chip warn">Unassigned</span>{% endif %}
     </dd></div>
+    {# Slice 31 (views_wo_engineer.drawer_context): the vendor's engineer named, the evidence on file for a user who sees the whole facility, Change, and the vendor's report number #}
+    {% with fe=field_engineer %}{% if fe %}
+    <div id="wo-eng" class="wo-eng"><dt>Field engineer</dt><dd>
+      <span class="wo-eng-who">{% if fe.name %}{% if fe.url %}<a class="link" href="{{ fe.url }}" hx-get="{{ fe.url }}" hx-target="#drawer">{{ fe.name }}</a>{% else %}{{ fe.name }}{% endif %}{% if fe.inactive %} <span class="chip neutral">No longer active</span>{% endif %}{% else %}<span class="muted">{{ fe.not_named }}</span>{% endif %}
+        {% if fe.can_change %}<button class="btn sm" type="button" hx-get="{% url 'web:wo_engineer' wo.number %}" hx-target="#modal-card">Change</button>{% endif %}</span>
+      {% if fe.evidence %}<span class="hint wo-eng-ev">{{ fe.evidence }}</span>{% elif fe.imported %}<span class="hint">Imported from the previous system: not judged.</span>{% endif %}
+    </dd></div>
+    {% if wo.checks_reference %}<div><dt>Vendor's report</dt><dd class="mono">{{ wo.checks_reference }}</dd></div>{% endif %}
+    {% endif %}{% endwith %}
     {% if wo.legacy_number %}<div><dt>Previous number</dt><dd>{{ wo.legacy_number }} <span class="chip neutral">Imported</span></dd></div>{% endif %}
     <div><dt>Opened</dt><dd>{{ wo.opened_on|date:"M j, Y" }}</dd></div>
     <div><dt>Due</dt><dd class="{% if late_days %}down{% endif %}">{{ wo.due_on|date:"M j, Y" }}</dd></div>
