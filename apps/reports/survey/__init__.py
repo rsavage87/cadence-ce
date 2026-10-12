@@ -2,9 +2,9 @@
 The survey binder (slice 25, beyond the mock): the evidence a Joint Commission, CMS, or DNV surveyor asks a Clinical Engineering
 department for, read from the records Cadence already keeps, for a period, with what is missing listed and linked.
 
-One module per section (program, inventory, maintenance, aem, inspections, repairs, recalls, incidents, staff), each with `build(period, user) ->
-Section`, registered in SECTIONS in the order the binder prints them. Each section needs Reports View plus its own areas' View
-(apps.reports.permissions.SURVEY_NEEDS); `binder()` builds the sections a reader may see and names the ones left out.
+One module per section (program, inventory, maintenance, aem, inspections, repairs, recalls, incidents, staff, vendors), each with
+`build(period, user) -> Section`, registered in SECTIONS in the order the binder prints them. Each section needs Reports View plus its own
+areas' View (apps.reports.permissions.SURVEY_NEEDS); `binder()` builds the sections a reader may see and names the ones left out.
 
 Rules every section keeps:
 - Read only. Tenant-scoped managers for live rows; historical tables (not tenant-scoped) through apps.core.history._rows, or filtered
@@ -116,7 +116,8 @@ class Gap:
 # with no link (the page, the print, the gaps CSV, the API: gap_links), as table cells and the change log do: a section needs only the
 # areas it lists, and a gap may point into another (Program's checks open Settings, Inventory's open a model's PM program).
 LINK_NEEDS = {"settings": Module.SETTINGS, "pm_model": Module.PM, "asset": Module.EQUIPMENT, "wo": Module.WORKORDERS, "recalls": Module.RECALLS,
-              "credentials": Module.USERS, "incidents": Module.INCIDENTS, "incident": Module.INCIDENTS}
+              "credentials": Module.USERS, "incidents": Module.INCIDENTS, "incident": Module.INCIDENTS,
+              "vendor_staff": Module.CONTRACTS}  # slice 31: the Contracts screen's Vendor staff tab (it refuses scoped users, as the binder does)
 
 
 def gap_links(user) -> Callable[[Gap], str]:
@@ -222,12 +223,15 @@ NOT_COVERED = [
     "Rental, loaner, and vendor-owned equipment never entered in Cadence",
     "Patients' own equipment",
     "Loaner surgical instrument sets",
-    "The competence of contracted vendor staff",
+    # Slice 31 keeps the contracted services and the evidence on file for vendor staff (the Contracted service and vendor staff section).
+    "Vendor staff's badges, immunizations, and background checks (the facility's vendor credentialing system), and the vendors' own "
+    "training records and competence assessments behind their statements",
+    "The yearly evaluation of each contracted service, and contracted services outside clinical engineering",
 ]
 
 
 def _sections():
-    from . import aem, incidents, inspections, inventory, maintenance, program, recalls, repairs, staff
+    from . import aem, incidents, inspections, inventory, maintenance, program, recalls, repairs, staff, vendors
 
     return [
         ("program", "Program and policies", program.build),
@@ -239,6 +243,7 @@ def _sections():
         ("recalls", "Recalls and safety alerts", recalls.build),
         ("incidents", "Device incidents", incidents.build),  # slice 28
         ("staff", "Technician qualifications", staff.build),
+        (vendors.KEY, vendors.TITLE, vendors.build),  # slice 31
     ]
 
 
