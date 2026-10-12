@@ -22,8 +22,6 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from apps.credentials.services import name_key
-
 from . import rules
 from .models import ATTESTATION_REFERENCE_VALIDATOR, CERTIFICATE_VALIDATOR, Covers, EngineerTraining, TrainingSource, VendorAttestation, VendorEngineer
 
@@ -32,6 +30,8 @@ CERTIFICATE_MAX = EngineerTraining._meta.get_field("certificate").max_length
 REFERENCE_MAX = VendorAttestation._meta.get_field("reference").max_length
 
 KEEP = object()  # engineer_choice: leave the engineer a work order names as it is (an API completion that sends none)
+SOMEONE_ELSE = object()  # engineer_choice: the screens' "Someone else", the name typed with it (review fix: an empty one is refused with
+                         # the rest of the completion's problems, not alone by the form)
 
 ENGINEER_ONLY = "Only vendor service names the vendor's engineer."
 CHOOSE_LISTED = "Choose one of the engineers listed, or type the name."
@@ -55,6 +55,8 @@ def _company(company, field: str = "company") -> str:
         raise ValidationError({field: "Enter the vendor as your work orders and contracts name it."})
     if len(text) > COMPANY_MAX:
         raise ValidationError({field: f"Keep the vendor's name to {COMPANY_MAX} characters."})
+    if len(rules.vendor_key(text)) > rules.KEY_MAX:  # review fix: letters that casefold longer ("ß") would overflow the stored key
+        raise ValidationError({field: "Shorten the vendor's name: it is too long to store."})
     return text
 
 
@@ -93,7 +95,7 @@ def add_engineer(*, name, company, by=None) -> VendorEngineer:
     "Last, First" too: credentials.services.name_key)."""
     name = rules.clean_engineer_name(name)
     company = _company(company)
-    key, nkey = rules.vendor_key(company), name_key(name)
+    key, nkey = rules.vendor_key(company), rules.engineer_key(name)
     found = _on_file(key, nkey)
     if found is not None:
         raise _already(found, name, company)
@@ -115,7 +117,7 @@ def update_engineer(engineer: VendorEngineer, *, name=None, company=None, is_act
     if name is not None:
         name = rules.clean_engineer_name(name)
         if name != locked.name:
-            locked.name, locked.name_key = name, name_key(name)
+            locked.name, locked.name_key = name, rules.engineer_key(name)
             fields += ["name", "name_key"]
     if company is not None:
         company = _company(company)
@@ -152,7 +154,7 @@ def engineer_named(vendor_name: str, name, *, by=None, work_order=None) -> Vendo
     after the second insert fails)."""
     name = rules.clean_engineer_name(name, "engineer_name")
     company = _company(vendor_name, "engineer_name")
-    key, nkey = rules.vendor_key(company), name_key(name)
+    key, nkey = rules.vendor_key(company), rules.engineer_key(name)
     found = VendorEngineer.objects.filter(company_key=key, name_key=nkey).first()
     if found is not None:
         return found
@@ -208,15 +210,18 @@ def engineer_choice(wo, value=KEEP, name="", *, by=None, errors: dict):
     or its id, or a typed `name`. Returns KEEP, None, an engineer, or ("new", the cleaned name) for engineer_named once the rest is
     checked; a refusal goes into `errors` keyed vendor_engineer or engineer_name, and KEEP is returned."""
     name = str(name or "").strip()
+    someone = value is SOMEONE_ELSE  # "Someone else": the name typed is required
+    if someone:
+        value = KEEP
     sent = value is not KEEP and value not in (None, "")
     if not wo.vendor_service:
-        if sent or name:
+        if sent or name or someone:
             errors["vendor_engineer"] = ENGINEER_ONLY
         return KEEP
     if sent and name:
         errors["vendor_engineer"] = NOT_BOTH
         return KEEP
-    if name:
+    if name or someone:
         try:
             return ("new", rules.clean_engineer_name(name, "engineer_name"))
         except ValidationError as e:

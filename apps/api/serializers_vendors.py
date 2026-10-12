@@ -18,14 +18,16 @@ from apps.workorders import scoping
 
 
 def models_by_id(records) -> dict:
-    """{str(id): DeviceModel} for every catalog model `records` (trainings or attestations) name: one query, none when no record names
-    a model. A model no longer in the catalog is left out (coverage_words reads it "a removed model")."""
+    """{str(id): DeviceModel} for every model `records` (trainings or attestations) name: one query, none when no record names a model.
+    A model no longer in the catalog maps to None (coverage_words reads it "a removed model"; review fix: so it is never looked up
+    again, row by row)."""
     from apps.equipment.models import DeviceModel
 
     ids = {str(i) for r in records for i in (r.model_ids or ())}
     if not ids:
         return {}
-    return {str(m.pk): m for m in DeviceModel.objects.filter(pk__in=ids).only("id", "manufacturer", "model", "category")}
+    found = {str(m.pk): m for m in DeviceModel.objects.filter(pk__in=ids).only("id", "manufacturer", "model", "category")}
+    return {**dict.fromkeys(ids), **found}
 
 
 def _known(context, record) -> dict:
@@ -33,6 +35,7 @@ def _known(context, record) -> dict:
     known = context.setdefault("models_by_id", {})
     missing = {str(i) for i in record.model_ids or ()} - known.keys()
     if missing:
+        known.update(dict.fromkeys(missing))  # review fix: a model gone since is looked up once (None: "a removed model")
         known.update(models_by_id([record]))
     return known
 

@@ -39,7 +39,7 @@ import re
 from django import forms
 from django.core.exceptions import ValidationError
 
-from apps.vendors import rules as vendor_rules
+from apps.vendors import services as vendor_services
 from apps.workorders import completion, repair_checks
 from apps.workorders.models import InspectionResult, LateReason, PmResult, RepairCheck
 
@@ -86,15 +86,13 @@ def reads_number(measure) -> bool:
 
 def engineer_kwargs(value, name) -> dict:
     """The service's vendor_engineer and engineer_name for what the select sent (slice 31): an engineer's id; "" (not named on the
-    report: None); OTHER with the name typed; KEEP_CHOICE ({}: the engineer stored stays). Raises ValidationError keyed engineer_name
-    for Someone else with no name (the name's own rule is the service's: vendors.rules.clean_engineer_name)."""
+    report: None); OTHER with the name typed (vendors.services.SOMEONE_ELSE: the service refuses an empty one, keyed engineer_name, with
+    every other problem at once: review fix); KEEP_CHOICE ({}: the engineer stored stays)."""
     value, name = str(value or "").strip(), str(name or "").strip()
     if value == KEEP_CHOICE:
         return {}
     if value == OTHER:
-        if not name:
-            vendor_rules.clean_engineer_name(name, "engineer_name")  # raises, in the rule's words
-        return {"vendor_engineer": None, "engineer_name": name}
+        return {"vendor_engineer": vendor_services.SOMEONE_ELSE, "engineer_name": name}
     return {"vendor_engineer": value or None, "engineer_name": ""}
 
 

@@ -25,7 +25,10 @@ from .models import Covers, TrainingSource
 
 FIELD_SERVICE = " field service"  # the name web.forms.vendor_name_for (equipment.services.service_vendor) gives a maker's own service
 NAME_MIN, NAME_MAX = 2, 120
-NAME_MARKS = frozenset(" .'-,’")  # with letters: "Mary-Jo O'Neil", "J. R. Smith, Jr."
+NAME_MARKS = frozenset(" .'-,’‘ʼ")  # with letters: "Mary-Jo O'Neil", "J. R. Smith, Jr."
+# Review fix: a phone's smart punctuation types ’ for ': one name either way (the key folds them; the name keeps what was typed).
+APOSTROPHES = str.maketrans({"’": "'", "‘": "'", "ʼ": "'"})
+KEY_MAX = 120  # the stored keys' columns (VendorEngineer.company_key, name_key): a key that folds longer than its name is refused
 NAME_RULE = "Enter the engineer's name as their report gives it: letters, spaces, and . ' - , only."
 
 TRAINING, ATTESTATION, NONE = "training", "attestation", "none"
@@ -40,6 +43,14 @@ def vendor_key(name) -> str:
     return text
 
 
+def engineer_key(name) -> str:
+    """Which engineer a name is, within a vendor: credentials.services.name_key ("Kim, Dana", "dana KIM" and "Dana Kim" are one name)
+    with the apostrophes folded ("O’Brien" is "O'Brien")."""
+    from apps.credentials.services import name_key
+
+    return name_key(unicodedata.normalize("NFC", str(name or "")).translate(APOSTROPHES))
+
+
 def clean_engineer_name(name, field: str = "name") -> str:
     """A person's name as typed, inner spaces collapsed: 2 to 120 characters of letters, spaces, and . ' - , (no digits, @, or /:
     badge numbers, phone numbers, record numbers, and dates stay out). Raises ValidationError keyed `field`."""
@@ -51,6 +62,8 @@ def clean_engineer_name(name, field: str = "name") -> str:
         raise ValidationError({field: f"Keep the name to {NAME_MAX} characters."})
     if len(text) < NAME_MIN or not any(ch.isalpha() for ch in text) or any(not (ch.isalpha() or ch in NAME_MARKS) for ch in text):
         raise ValidationError({field: NAME_RULE})
+    if len(engineer_key(text)) > KEY_MAX:  # review fix: letters that lowercase longer ("İ") would overflow the stored key
+        raise ValidationError({field: "Shorten the name: it is too long to store."})
     return text
 
 

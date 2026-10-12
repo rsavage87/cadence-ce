@@ -250,7 +250,10 @@ class AttestationForm(CoverageFields):
                 self.unasked.add("valid_from")
         if valid_through is None:
             if valid_from is not None:
-                valid_through = add_months(valid_from, 12) - timedelta(days=1)
+                try:
+                    valid_through = add_months(valid_from, 12) - timedelta(days=1)
+                except (ValueError, OverflowError):  # review fix: a year past 9999: left blank, the service asks for it in words
+                    pass
             else:
                 self.unasked.add("valid_through")
         return {**self.coverage_kwargs(), "vendor_names": d.get("vendor_names") or [], "reference": d.get("reference", ""),

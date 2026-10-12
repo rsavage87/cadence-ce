@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import OuterRef, Q, Subquery
 from django.urls import reverse
@@ -395,12 +396,32 @@ class _Names:
     def __init__(self):
         self.wanted: dict = {}
         self.found: dict = {}
+        self.model_ids: set = set()  # slice 31 review fix: a vendor record's device models (a JSON list of ids), named once per page
+        self.model_names: dict | None = None
 
     def want(self, f, value):
         if value not in (None, ""):
             self.wanted.setdefault(f.related_model, set()).add(value)
 
+    def want_models(self, ids):
+        if isinstance(ids, (list, tuple)):
+            self.model_ids.update(str(i) for i in ids)
+
+    def models_text(self, ids) -> str:
+        """Device model ids as the models' names, by name; one gone since reads "a removed model" (as _device_models_text)."""
+        ids = [str(i) for i in ids or ()]
+        named = [self.model_names[i] for i in ids if i in self.model_names]
+        return ", ".join(sorted(named, key=str.casefold) + ["a removed model"] * (len(ids) - len(named))) or EMPTY
+
     def load(self):
+        if self.model_ids:
+            from apps.equipment.models import DeviceModel
+
+            try:
+                rows = DeviceModel.objects.filter(pk__in=self.model_ids).values_list("pk", "manufacturer", "model")
+                self.model_names = {str(pk): f"{m} {n}" for pk, m, n in rows}
+            except (ValueError, ValidationError):  # an id not in the stored format: those values read as stored
+                self.model_names = None
         for model, pks in self.wanted.items():
             manager = model._default_manager  # the tenant-scoped manager for business rows; users and notices are not tenant-scoped
             self.found.update({(model, obj.pk): _name_of(model, obj) for obj in manager.filter(pk__in=pks)})
@@ -598,6 +619,8 @@ def _text(f, value, names: _Names, rec=None) -> str:
         return EMPTY_WORDS.get(_model_key(f.model), {}).get(f.name, EMPTY)
     kind = KINDS.get(_model_key(f.model), {}).get(f.name)
     text = None
+    if kind == "device_models" and names.model_names is not None:  # named for the whole page at once (_Names.load)
+        return _cut(names.models_text(value))
     if kind:
         try:
             text = _kind_text(kind, value, rec)
@@ -639,6 +662,7 @@ def _build(area: Area, pairs: list[tuple]) -> list[Entry | None]:
     model = area.model
     fields = _shown_fields(model)
     names = _Names()
+    kinds = KINDS.get(_model_key(model), {})
     raw = []
     for rec, prev in pairs:
         if rec.history_type == "~" and prev is not None:
@@ -652,6 +676,9 @@ def _build(area: Area, pairs: list[tuple]) -> list[Entry | None]:
             if f.is_relation:
                 names.want(f, before)
                 names.want(f, after)
+            elif kinds.get(f.name) == "device_models":
+                names.want_models(before)
+                names.want_models(after)
         raw.append((rec, prev, diffs))
     names.load()
     out: list[Entry | None] = []

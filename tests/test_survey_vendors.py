@@ -134,8 +134,7 @@ def test_the_named_engineers_training_on_the_model(today, vent, vent_model, moni
     row = jobs_of(s)[wo.number]
     assert row[:8] == [wo.number, "Corrective repair", today - 10 * DAY, "CE-10001", "Hamilton Medical Hamilton-G5",
                        "Hamilton Medical field service", "Dana Kim (Hamilton Medical field service)", wo.checks_reference]
-    names = {str(vent_model.pk): "Hamilton Medical Hamilton-G5", str(monitor_model.pk): "Philips IntelliVue MX750"}
-    covers = ", ".join(names[i] for i in t.model_ids)  # the record's models, as stored
+    covers = "Hamilton Medical Hamilton-G5, Philips IntelliVue MX750"  # the record's models, by name (review fix: never id order)
     assert row[8] == f"Training on file: {covers}, Manufacturer's (OEM) factory training, through {fmt(t.expires_on)}"
     assert figures(s)["Training on file"] == 1 and figures(s)["Nothing on file"] == 0 and s.gaps == []
     assert figures(s)["Evidence entered after the work"] == 0

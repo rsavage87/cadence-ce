@@ -325,19 +325,21 @@ def returns_device(wo: WorkOrder) -> bool:
 def assign(wo: WorkOrder, technician=None, vendor_name: str = "", by=None) -> WorkOrder:
     """Assign an open work order to a technician or to vendor service. Flags credential overrides in the status history. Slice 31: only
     an open one (a completed or closed work order keeps who did it; the drawer refused already, now the API does too), and the
-    vendor's engineer it names is cleared when the work moves in-house or to another vendor (apps.vendors.rules.vendor_key)."""
+    vendor's engineer it names, and the vendor's report number, are cleared when the work moves in-house or to another vendor
+    (apps.vendors.rules.vendor_key): they were that vendor's visit (review fix: a re-completion keeps a number left out)."""
     from apps.credentials.services import qualification
     from apps.vendors.rules import vendor_key
 
     # Slice 31 review fix: the status and the engineer as stored, on the row locked (the UPDATE below locks it anyway, and nothing else
     # is locked in between): a caller's copy read before a completion or a Change committed would move completed work, or keep an
     # engineer on work that moved.
-    stored = WorkOrder.objects.select_for_update().filter(pk=wo.pk).values("status", "vendor_service", "vendor_name", "vendor_engineer_id").first()
+    stored = (WorkOrder.objects.select_for_update().filter(pk=wo.pk)
+              .values("status", "vendor_service", "vendor_name", "vendor_engineer_id", "checks_reference").first())
     if stored is None:
         raise ValidationError("Choose a work order from this facility.")
     if stored["status"] not in OPEN_STATUSES:
         raise ValidationError("Only open work orders can be reassigned.")
-    wo.status, wo.vendor_engineer_id = stored["status"], stored["vendor_engineer_id"]
+    wo.status, wo.vendor_engineer_id, wo.checks_reference = stored["status"], stored["vendor_engineer_id"], stored["checks_reference"]
     note = ""
     vendor_name = (vendor_name or "").strip()  # a stray space from the API would keep it from its company's share (apps.workorders.scoping)
     if len(vendor_name) > VENDOR_NAME_MAX:
@@ -351,9 +353,13 @@ def assign(wo: WorkOrder, technician=None, vendor_name: str = "", by=None) -> Wo
         q = qualification(technician, wo.asset)
         note = f"Assigned to {technician.name}" + ("" if q.ok else " (override: not credentialed for this device)")
     fields = ["vendor_service", "vendor_name", "assigned_to", "updated_at"]
-    if wo.vendor_engineer_id and (not wo.vendor_service or vendor_key(wo.vendor_name) != before):
-        wo.vendor_engineer = None  # slice 31: that engineer did not do this vendor's (or this technician's) work
-        fields.append("vendor_engineer")
+    if before is not None and (not wo.vendor_service or vendor_key(wo.vendor_name) != before):  # the work moved off that vendor
+        if wo.vendor_engineer_id:
+            wo.vendor_engineer = None  # slice 31: that engineer did not do this vendor's (or this technician's) work
+            fields.append("vendor_engineer")
+        if wo.checks_reference:
+            wo.checks_reference = ""  # review fix: nor is the earlier vendor's report this one's (completion keeps a number left out)
+            fields.append("checks_reference")
     wo.save(update_fields=fields)
     WorkOrderStatusHistory.objects.create(tenant=wo.tenant, work_order=wo, from_status=wo.status, to_status=wo.status, changed_by=by, note=note)
     if technician is not None and not vendor_name:
