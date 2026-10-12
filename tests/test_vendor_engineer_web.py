@@ -347,7 +347,7 @@ def test_a_vendors_account_sees_its_own_engineers_by_name_only(client, signed_in
     assert groups(body) == ["Philips's engineers"]
     for words in ("on file", "Sam Ortiz", "TechCare", "Other vendors", "attestation", "training"):
         assert words not in select_of(body)
-    assert 'name="checks_reference"' not in body  # their own completion is the record (slice 30's rule for checked by the vendor)
+    assert 'name="checks_reference"' in body  # merge fix: their report's number too, as the API takes it (never "checked by the vendor")
 
 
 def test_a_vendors_account_names_its_engineer_or_types_one(client, signed_in, monitor, staff):

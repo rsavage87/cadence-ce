@@ -314,8 +314,8 @@ def test_adding_an_engineer(client, person, world):
     assert made.company_key == "techcare" and made.created_by.role.slug == "manager"
     before = counts()
     refusals = [
-        ({"name": "dana KIM", "company": "philips field service"}, {"name": ["dana KIM is already an engineer of philips field service."]}),
-        ({"name": "Kim, Dana", "company": "Philips"}, {"name": ["Kim, Dana is already an engineer of Philips."]}),
+        ({"name": "dana KIM", "company": "philips field service"}, {"name": ["Dana Kim is already an engineer of Philips."]}),
+        ({"name": "Kim, Dana", "company": "Philips"}, {"name": ["Dana Kim is already an engineer of Philips."]}),
         ({"name": "Badge 4471", "company": "Philips"}, {"name": [rules.NAME_RULE]}),
         ({"name": "Pat Morgan"}, {"company": ["Enter the vendor as your work orders and contracts name it."]}),
         ({"name": ["Pat"], "company": "Philips"}, {"name": ["Send this as text."]}),
@@ -685,8 +685,6 @@ def test_a_vendor_account_names_only_its_own_companys_engineers(client, person, 
     assert r.status_code == 200 and VendorEngineer.objects.get(name="Robin Hale").company == "Philips field service"
 
 
-@pytest.mark.xfail(strict=True, reason="service bug (wave E): vendors.services.may_name lets any user re-send the engineer named already, "
-                                       "before the scoped company check, so a vendor account's id outside its choices does not answer as unknown")
 def test_a_vendor_account_cannot_send_another_companys_engineer_named_by_ce(client, person, world):
     """CE names TechCare's Sam on Philips' open repair (a subcontractor); the Philips account never sees Sam (vendor_engineer null,
     engineer_choices without him), so his id is outside its choices and must answer as an unknown one does."""

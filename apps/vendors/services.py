@@ -198,11 +198,9 @@ def may_name(wo, engineer: VendorEngineer, user) -> bool:
 
     if engineer.tenant_id != wo.tenant_id:  # a foreign key check reads around row-level security: never trust an id
         return False
-    if engineer.pk == wo.vendor_engineer_id:
-        return True
-    if not engineer.is_active:
-        return False
-    return not scoping.is_scoped(user) or engineer.company_key == rules.vendor_key(wo.vendor_name)
+    if scoping.is_scoped(user) and engineer.company_key != rules.vendor_key(wo.vendor_name):
+        return False  # merge fix: never another company's engineer, even the one CE named (it reads "Another company's engineer")
+    return engineer.pk == wo.vendor_engineer_id or engineer.is_active
 
 
 def engineer_choice(wo, value=KEEP, name="", *, by=None, errors: dict):

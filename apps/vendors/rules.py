@@ -136,11 +136,14 @@ def coverage_words(record, models_by_id: dict) -> str:
         return Covers.ALL.label
     if record.covers == Covers.LINE:
         return f"{record.manufacturer} {record.category}"
-    names = []
+    names, gone = [], 0
     for i in record.model_ids or ():
         m = models_by_id.get(str(i))
-        names.append(f"{m.manufacturer} {m.model}" if m is not None else "a removed model")
-    return ", ".join(names)
+        if m is None:
+            gone += 1
+        else:
+            names.append(f"{m.manufacturer} {m.model}")
+    return ", ".join(sorted(names, key=str.casefold) + ["a removed model"] * gone)  # by name (ids are stored in id order)
 
 
 def training_words(training, models_by_id: dict) -> str:

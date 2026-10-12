@@ -364,14 +364,13 @@ def _revised(form, kwargs) -> CompleteForm:
 def _vendor_offers(wo, user, today) -> dict:
     """Slice 31, vendor service of any type: who did the work (views_wo_engineer's select, each option's standing judged today for a
     user who sees the whole facility, names only for a vendor's own account), the engineer stored to begin with (a reopened job), and
-    the vendor's report number box (any vendor job, for a user who sees the whole facility: a vendor's own account records the work
-    itself, as slice 30 decided for checked by the vendor)."""
+    the vendor's report number box (any vendor job, a vendor's own account too: the API takes it from them, and their report's number
+    is the trail a surveyor asks for; "checked by the vendor" stays CE's, slice 30)."""
     if not wo.vendor_service:
         return {"engineer_select": None, "engineer_initial": "", "offer_reference": False, "reference_initial": ""}
     sel = views_wo_engineer.select_context(wo, user, today)
-    offer = not scoping.is_scoped(user)
-    return {"engineer_select": sel, "engineer_initial": views_wo_engineer.initial_choice(wo, sel), "offer_reference": offer,
-            "reference_initial": wo.checks_reference if offer else ""}  # a reopened job's number, as the engineer stored is
+    return {"engineer_select": sel, "engineer_initial": views_wo_engineer.initial_choice(wo, sel), "offer_reference": True,
+            "reference_initial": wo.checks_reference}  # a reopened job's number, as the engineer stored is
 
 
 def _form_kwargs(wo, steps, offers, hours, late) -> dict:

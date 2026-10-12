@@ -563,10 +563,12 @@ class WorkOrderViewSet(TenantViewSet):
                 raise DRFValidationError(not_text)
             kwargs = {"resolution": d.get("resolution") or "", "pm_result": d.get("pm_result") or "", "results": d.get("results"),
                       "inspection_result": d.get("inspection_result") or "",
-                      "repair_check": d.get("repair_check") or "", "checks_reference": d.get("checks_reference") or "",
+                      "repair_check": d.get("repair_check") or "",
                       "signature": d.get("signature") or None,  # blank or left out: not checked, as before slice 30
                       "late_reason": d.get("late_reason"),  # slice 25: why a PM completed after its due date was late, optional
                       "engineer_name": d.get("engineer_name") or ""}  # slice 31: someone else, by name
+            if "checks_reference" in d:  # slice 31: left out, the vendor's report number on file stays (completion's KEEP)
+                kwargs["checks_reference"] = d.get("checks_reference") or ""
             if "vendor_engineer" in d:  # slice 31: left out, the engineer named stays (completion's KEEP)
                 kwargs["vendor_engineer"] = _engineer_value(d)
             for flag in ("open_repair", "tag_out"):

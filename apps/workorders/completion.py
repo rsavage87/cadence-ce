@@ -108,9 +108,10 @@ Slice 31, vendor staff (apps.vendors): a vendor-service completion of any type m
 report names them (vendor_engineer: an engineer or its id, None for not named, KEEP to leave it as stored; or engineer_name, a typed
 name: the engineer of the work order's vendor with that name, created when there is none), through vendors.services.engineer_choice
 (a scoped vendor account only among its own company's engineers; anything else answers as an unknown id, keyed vendor_engineer), and
-the vendor's report number (checks_reference) on any vendor job: optional, still required with "Checked by the vendor", refused on
-in-house work (REFERENCE_ONLY). Optional by design: the survey binder judges each vendor job by the evidence on file, the engineer's
-training or the vendor's attestation (apps.vendors.rules), and calls out the jobs no evidence covers.
+the vendor's report number (checks_reference) on any vendor job: optional (left out, the number on file stays: a re-completion after a
+reopen), still required with "Checked by the vendor", refused on in-house work (REFERENCE_ONLY). Optional by design: the survey binder
+judges each vendor job by the evidence on file, the engineer's training or the vendor's attestation (apps.vendors.rules), and calls out
+the jobs no evidence covers.
 """
 import hashlib
 import json
@@ -953,7 +954,7 @@ def result_note(result: str, done: Completion) -> str:
 
 @transaction.atomic
 def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str = "", inspection_result: str = "", repair_check: str = "",
-                        checks_reference: str = "", results=None, open_repair: bool = True, tag_out: bool | None = None,
+                        checks_reference=vendor_services.KEEP, results=None, open_repair: bool = True, tag_out: bool | None = None,
                         signature: str | None = None, hours=None, late_reason=None, vendor_engineer=vendor_services.KEEP,
                         engineer_name: str = "", by=None, today: date | None = None) -> Completion:
     """Complete `wo` with its resolution and, for a PM, its result and checklist results (the module's rules); a PM still open is
@@ -962,10 +963,10 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
     completed after its due date. Slice 26: an incoming inspection takes `inspection_result` (InspectionResult) and, optionally, its
     checklist's `results`; `tag_out` also applies to its fail. Slice 30: a repair takes `repair_check` (RepairCheck), the post-repair
     checklist's `results` for passed, and `checks_reference` for vendor_report. Slice 31: vendor service takes `vendor_engineer` or
-    `engineer_name` and `checks_reference` (the module's Slice 31 paragraph). Raises ValidationError: a plain message when the work
-    order cannot be completed now, else a dict keyed by resolution, pm_result, inspection_result, repair_check, checks_reference,
-    checklist, step_<n>, reading_<n>, open_repair, hours, late_reason, vendor_engineer, and engineer_name. `wo` is refreshed from the
-    database afterwards (and its device with it)."""
+    `engineer_name` and `checks_reference` (the module's Slice 31 paragraph; left out, the number on file stays). Raises
+    ValidationError: a plain message when the work order cannot be completed now, else a dict keyed by resolution, pm_result,
+    inspection_result, repair_check, checks_reference, checklist, step_<n>, reading_<n>, open_repair, hours, late_reason,
+    vendor_engineer, and engineer_name. `wo` is refreshed from the database afterwards (and its device with it)."""
     today = today or timezone.localdate()
     _check_tenant(wo)
     # The device's open work orders and this one first, in number order (its open inspections among them: two of its inspections
@@ -985,6 +986,8 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
     inspection_result = str(inspection_result or "").strip()
     repair_check = str(repair_check or "").strip()
 
+    if checks_reference is vendor_services.KEEP:  # slice 31 merge fix: a completion that sends none keeps the number on file
+        checks_reference = locked.checks_reference if locked.vendor_service else ""
     errors: dict[str, str] = {}
     text = _resolution(resolution, errors)
     snapshot: list[dict] = []

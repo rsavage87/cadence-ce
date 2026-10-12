@@ -307,6 +307,9 @@ KINDS = {
                                   "pm_window_high_days": "days", "pm_window_other_days": "days"},
     "reports.customreport": {"columns": "report_columns", "filters": "report_filters", "group_by": "report_group", "sort": "report_sort"},
     "tenants.tenant": {"timezone": "zone"},
+    # Slice 31: a record's device models by name, never their ids; an attestation's vendor names as a list in words
+    "vendors.engineertraining": {"model_ids": "device_models"},
+    "vendors.vendorattestation": {"model_ids": "device_models", "vendor_names": "names"},
 }
 
 _CAPITALS = {"pm": "PM", "oem": "OEM", "aem": "AEM", "po": "PO", "cms": "CMS", "mttr": "MTTR"}
@@ -533,7 +536,22 @@ def _kind_text(kind: str, value, rec) -> str:
         return zone_label(value)
     if kind == "asset_status":
         return _asset_status_text(value, rec)
+    if kind == "device_models":
+        return _device_models_text(value)
+    if kind == "names":
+        return ", ".join(str(v) for v in value or ()) or EMPTY
     raise ValueError(kind)
+
+
+def _device_models_text(ids) -> str:
+    """Device model ids (a vendor record's coverage, slice 31) as the models' names, by name; one gone since reads "a removed model"."""
+    from apps.equipment.models import DeviceModel
+
+    ids = [str(i) for i in ids or ()]
+    if not ids:
+        return EMPTY
+    named = {str(pk): f"{m} {n}" for pk, m, n in DeviceModel.objects.filter(pk__in=ids).values_list("pk", "manufacturer", "model")}
+    return ", ".join(sorted(named.values(), key=str.casefold) + ["a removed model"] * sum(i not in named for i in ids))
 
 
 def _asset_status_text(value, rec):

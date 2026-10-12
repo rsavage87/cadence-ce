@@ -421,7 +421,7 @@ def test_the_words_are_documents_on_file_never_competence(catalog, dana, today):
     t = training(dana, catalog.mx750, catalog.mx450, issued_on=today - 100 * DAY, expires_on=today + 200 * DAY, certificate="PH-88123")
     line = training(dana, covers=Covers.LINE, manufacturer="Philips", category="Patient monitors", source=TrainingSource.THIRD_PARTY,
                     issued_on=today - 50 * DAY)
-    names = ", ".join(f"Philips {models_by_id()[i].model}" for i in t.model_ids)  # in the record's order
+    names = ", ".join(sorted(f"Philips {models_by_id()[i].model}" for i in t.model_ids))  # by name
     assert rules.training_words(t, models_by_id()) == (
         f"Training on file: {names}, Manufacturer's (OEM) factory training, through {rules.fmt(today + 200 * DAY)}")
     assert rules.training_words(line, models_by_id()) == "Training on file: Philips Patient monitors, Third-party course, no expiry"
@@ -432,7 +432,7 @@ def test_the_words_are_documents_on_file_never_competence(catalog, dana, today):
                      f"{rules.fmt(today + 265 * DAY)}")
     assert rules.coverage_words(letter, {}) == "Every device this vendor services for us"
     catalog.mx450.delete()
-    assert rules.coverage_words(t, models_by_id()) == names.replace("Philips IntelliVue MX450", "a removed model")
+    assert rules.coverage_words(t, models_by_id()) == "Philips IntelliVue MX750, a removed model"  # the names first, then the gone
     every = [rules.training_words(t, models_by_id()), rules.training_words(line, models_by_id()), words,
              rules.evidence_words(evidence(today, catalog.ct, eng=dana), models_by_id()), *TrainingSource.labels, *Covers.labels]
     assert not [w for w in every if NEVER.search(w)]

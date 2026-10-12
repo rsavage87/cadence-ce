@@ -376,6 +376,12 @@ def closed_endpoints(world, pump_recall, techs):
         ("post", f"{API}pm/create-for-day/", {"day": day}), ("post", f"{API}pm/generate/", None),
         ("get", f"{API}settings/", None), ("patch", f"{API}settings/", {"portal_hotline": "x"}), ("post", f"{API}settings/reset-policy/", None),
         *incident_endpoints(world),
+        # Slice 31: vendor staff (apps/api/views_vendors.py) and naming a work order's engineer after the fact: never a scoped user's
+        ("get", f"{API}vendor-engineers/", None), ("post", f"{API}vendor-engineers/", {"name": "Lee Park", "company": "Hamilton Medical"}),
+        ("get", f"{API}vendor-trainings/", None), ("get", f"{API}vendor-attestations/", None),
+        ("post", f"{API}vendor-attestations/", {"vendor_names": ["Hamilton Medical"], "covers": "all", "reference": "LTR-1",
+                                                "received_on": day, "valid_from": day, "valid_through": day}),
+        ("post", wo_url(w, "vendor-engineer/"), {"engineer_name": "Lee Park"}),
     ]
 
 

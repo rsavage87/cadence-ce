@@ -174,10 +174,11 @@ def test_the_vendors_report_is_offered_on_vendor_service_to_ce_only_and_nothing_
     assert " checked>" not in section(body, "After the repair", "Checks after repair")  # the user chooses
     assert "Their service report&#x27;s number, no steps; CE-10001 goes back into service" in body
     assert "The vendor's service report or field service order number" in body and 'class="full wc-reference"' in body
-    # the vendor's own account records the steps: no report choice, and checked and ready for use is chosen
+    # the vendor's own account records the steps: no report choice, and checked and ready for use is chosen (slice 31: their report's
+    # number is still taken, as on any vendor job)
     signed_in("vendor", company="Hamilton Medical")
     body = client.get(url(wo), **HX).content.decode()
-    assert 'value="vendor_report"' not in body and 'name="checks_reference"' not in body and "wc-results-2" in body
+    assert 'value="vendor_report"' not in body and 'name="checks_reference"' in body and "wc-results-2" in body
     assert '<input type="radio" name="repair_check" value="passed" checked>' in body
 
 
