@@ -134,7 +134,7 @@ def test_the_list_newest_first_with_the_next_due(client, sign_in, span, today):
     row = row[:row.index("</tr>")]
     assert services.period_label(before.period_start, before.period_end) in row and '<span class="chip ok">Approved</span>' in row
     assert day(today) in row and "Environment of care or safety committee; Quality oversight (QAPI)" in row
-    due = add_months(before.period_end, 12) + timedelta(days=90)
+    due = services.period_end_of(before.period_end + timedelta(days=1)) + timedelta(days=90)  # the next 12 months' own end
     assert f"is due for approval by {day(due)}: 90 days after those months end" in body and "Overdue" not in body
     assert "New evaluation" not in body  # the analyst has View
     sign_in("manager")

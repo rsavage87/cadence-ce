@@ -13,7 +13,7 @@
       {% if t.rows %}
       <div class="tbl-wrap"><table>
         <thead><tr>{% for c in t.columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
-        <tbody>{% for row in t.rows %}<tr>{% for c in row %}<td{% if c.num %} class="num"{% elif c.nowrap %} class="nw"{% endif %}>{% if c.url %}<a class="link" href="{{ c.url }}" hx-get="{{ c.url }}" hx-target="#drawer">{{ c.text }}</a>{% else %}{{ c.text }}{% endif %}</td>{% endfor %}</tr>{% endfor %}</tbody>
+        <tbody>{% for row in t.rows %}<tr>{% for c in row %}<td{% if c.num %} class="num"{% elif c.nowrap %} class="nw"{% endif %}>{% if c.url %}<a class="link" href="{{ c.url }}"{% if c.drawer %} hx-get="{{ c.url }}" hx-target="#drawer"{% endif %}>{{ c.text }}</a>{% else %}{{ c.text }}{% endif %}</td>{% endfor %}</tr>{% endfor %}</tbody>
       </table></div>
       {% if t.more %}<p class="hint sv-more">The first {{ preview_rows }}{% if t.count is not None %} of {{ t.count }}{% endif %} rows; every row is in the CSV.</p>{% endif %}
       {% else %}<div class="empty sv-empty">{{ t.empty }}</div>{% endif %}

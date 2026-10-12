@@ -335,8 +335,11 @@ def _previous(data: dict) -> dict | None:
         return {"title": prev.get("label") or prev.get("number", ""), "period": words, "approved": True,
                 "how": f"approved {_day(approved)}" if approved else "approved"}
     shown_period = [i for i in data.get("indicators") or [] if i.get("basis") == indicators.PERIOD]
-    return {"title": "The 12 months before", "period": words, "approved": False,
-            "how": f"counted {_day(_iso(prev.get('counted_on')))}, not approved",
+    how = f"counted {_day(_iso(prev.get('counted_on')))}, not approved"
+    begin = _iso(prev.get("records_begin"))
+    if begin and prev.get("values"):  # review fix: a column counted from part of those months says so
+        how += f"; only from {_day(begin)}, when Cadence's records begin"
+    return {"title": "The 12 months before", "period": words, "approved": False, "how": how,
             "empty": bool(shown_period) and not prev.get("values")}
 
 
@@ -440,7 +443,7 @@ def actions_for(user, ev: ProgramEvaluation, live_amendment) -> dict:
     return {"write": edit and s == Status.DRAFT, "refresh": edit and s == Status.DRAFT, "send": edit and s == Status.DRAFT,
             "back": edit and s == Status.READY, "discard": edit and s in (Status.DRAFT, Status.READY),
             "approve": approve and s in (Status.READY, Status.APPROVED), "amend": approve and s == Status.APPROVED and live_amendment is None,
-            "correct": approve and s in (Status.APPROVED, Status.SUPERSEDED)}
+            "correct": approve and s == Status.APPROVED}  # review fix: a superseded version's approvals stay as recorded
 
 
 def page_context(request, ev: ProgramEvaluation, *, refusal: str = "", part_refusal: dict | None = None) -> dict:
@@ -761,6 +764,9 @@ def evaluation_approval(request, number, version, pk):
     approval = _approval(ev, pk)
     today = _today()
     if request.method != "POST":
+        if ev.status == Status.SUPERSEDED:  # review fix: its approvals stay as recorded, so no form to correct them
+            return _part(request, ev, APPROVALS, "#ev-approvals", part="approvals",
+                         refusal=f"{ev.label} was superseded by its amendment: its approvals stay as recorded. Correct the amendment's instead.")
         initial = {f: getattr(approval, f) for f in services.APPROVAL_FIELDS}
         initial["meeting_on"] = approval.meeting_on.isoformat()
         return _approval_modal(request, ev, ApprovalForm(initial=initial), today, approval=approval)

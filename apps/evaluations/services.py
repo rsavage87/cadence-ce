@@ -554,6 +554,7 @@ def correct_approval(approval, *, by, today: date | None = None, **fields) -> Ev
         lock_evaluations()
         current = EvaluationApproval.objects.select_for_update().get(pk=approval.pk)
         ev = _locked(current.evaluation)
+        _refuse_superseded(ev)
         values = _clean_approval({**{f: getattr(current, f) for f in APPROVAL_FIELDS}, **fields}, today)
         first = _first_approval(ev)
         if first is not None and first.pk == current.pk:
@@ -577,6 +578,13 @@ def correct_approval(approval, *, by, today: date | None = None, **fields) -> Ev
     return current
 
 
+def _refuse_superseded(ev) -> None:
+    """Review fix: a superseded version's approvals are its record as it stood; the amendment that replaced it is the version of record
+    (a correction there could date its approval after its own replacement's)."""
+    if ev.status == Status.SUPERSEDED:
+        raise ValidationError(f"{ev.label} was superseded by its amendment: its approvals stay as recorded. Correct the amendment's instead.")
+
+
 def remove_approval(approval, *, by) -> None:
     """Remove a later approval entered in error (Approve); never the one that approved the evaluation (correct it, or amend). Its
     history keeps it."""
@@ -585,6 +593,7 @@ def remove_approval(approval, *, by) -> None:
         lock_evaluations()
         current = EvaluationApproval.objects.select_for_update().get(pk=approval.pk)
         ev = _locked(current.evaluation)
+        _refuse_superseded(ev)
         first = _first_approval(ev)
         if first is not None and first.pk == current.pk:
             raise ValidationError("This approval approved the evaluation, so it is never removed: correct its details, or amend the "

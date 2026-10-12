@@ -741,6 +741,8 @@ def _previous(period_start: date, today: date, versions: list, previous, begin: 
            "values": {}}
     if begin is None or begin > end:
         return out
+    if begin > start:  # review fix: counted from part of those months only; the page and print say so
+        out["records_begin"] = begin.isoformat()
     s = _settings_at(versions, end)
     raw, _provisional, _aem_rows = _measure(survey.Period(start, end, today), windows_of(s), taken=False)
     out["values"] = {ind.key: _value_of(ind, raw[ind.key]) for ind in INDICATORS if ind.basis == PERIOD and ind.key in raw}

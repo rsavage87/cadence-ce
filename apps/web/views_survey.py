@@ -114,7 +114,8 @@ def cells(row, links: dict, can: dict, tenant=None) -> list[dict]:
             url = people.with_facility(url, tenant)
         num = isinstance(value, (int, float, Decimal)) and not isinstance(value, bool)
         # Numbers, dates, and record keys stay on one line; text wraps.
-        out.append({"text": display(value), "url": url, "num": num, "nowrap": bool(kind) or isinstance(value, date)})
+        out.append({"text": display(value), "url": url, "num": num, "nowrap": bool(kind) or isinstance(value, date),
+                    "drawer": bool(url) and tenant is None and opens_in_drawer(url)})  # review fix: a page of its own opens as a page
     return out
 
 

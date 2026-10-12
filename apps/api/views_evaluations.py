@@ -54,6 +54,7 @@ class ProgramEvaluationViewSet(TenantAPIMixin, viewsets.ReadOnlyModelViewSet):
 
     permission_classes = [IsAuthenticated, ModulePermission]
     module = perms.MODULE
+    delete_level = perms.EDIT_LEVEL  # review fix: a DELETE is a write like any other: Edit gets the 405, never a 403 naming a level held
     scoped_actions = frozenset()  # never a scoped user's: the evaluation covers the whole facility
     search_fields = ["number"]
     ordering_fields = ["period_start", "period_end", "number", "approved_on"]

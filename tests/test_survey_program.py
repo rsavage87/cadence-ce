@@ -226,7 +226,7 @@ def test_the_check_once_the_next_is_overdue(ctx, today):
 def test_the_check_starts_the_day_after_it_is_due(ctx, today):
     last = approved(start=months_back(today, 36), today=today)
     due = evaluations.next_due(today).due_on
-    assert due == add_months(last.period_end, 12) + timedelta(days=90)
+    assert due == evaluations.period_end_of(last.period_end + timedelta(days=1)) + timedelta(days=90)  # the next 12 months' own end
     for day, checks in ((due, 0), (due + timedelta(days=1), 1)):
         assert len(gaps_of(program.build(period(day - timedelta(days=30), day, day), None), CHECK)) == checks, day
 
