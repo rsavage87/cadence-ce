@@ -6,7 +6,7 @@ export and print, devices are added and changed in the product, reports and requ
 device model's PM program (risk score, procedure, AEM interval) is kept in the product, and the work itself (time, parts,
 what was done, a PM's results) is recorded on the work order; vendors and clinical requesters see only their own share; facilities
 build their own reports, and a label opens its device with Scan tag; the API covers what the screens do, by session or token; every record's changes and every access change can be read back;
-staff get the emails they choose about their own work; each facility works on its own clock; one person signs in once to every facility they work at; a facility brings its records over from the CMMS it is leaving; technicians work from their phones on My work; a survey binder gathers the evidence surveyors ask for; new equipment is inspected before its first use; each facility says when a PM counts as on time; a device suspected in a death or serious injury is held as evidence and reported on the Safe Medical Devices Act's clock; rentals, vendor loaners, and demo units are on the inventory while on site, inspected before use, and returned to their owners; every repair records its safety and functional checks before the device goes back into use; and the facility keeps the evidence that the vendor staff who service its equipment were trained for it. What each slice deferred is noted in its row and below.
+staff get the emails they choose about their own work; each facility works on its own clock; one person signs in once to every facility they work at; a facility brings its records over from the CMMS it is leaving; technicians work from their phones on My work; a survey binder gathers the evidence surveyors ask for; new equipment is inspected before its first use; each facility says when a PM counts as on time; a device suspected in a death or serious injury is held as evidence and reported on the Safe Medical Devices Act's clock; rentals, vendor loaners, and demo units are on the inventory while on site, inspected before use, and returned to their owners; every repair records its safety and functional checks before the device goes back into use; the facility keeps the evidence that the vendor staff who service its equipment were trained for it; and the program's yearly evaluation is drafted from Cadence's figures for the committee that approves it. What each slice deferred is noted in its row and below.
 
 | # | Slice | Mock screen(s) | Code | Status |
 |---|-------|----------------|------|--------|
@@ -42,6 +42,7 @@ staff get the emails they choose about their own work; each facility works on it
 | 29 | Loaners and rentals | (none: Equipment, Add rental or loaner; the device drawer's temporary section) | `equipment` + `workorders` + `contracts` + `recalls` + `incidents` + `reports` + `pm` + `imports` + `web` + `api` | done (one record per arrival; Arrived again, a CE-maintained rental, accepting the owner's delivery check, API writes, and rental cost deferred) |
 | 30 | Checks after a repair | (none: Mark completed on a repair; the binder) | `workorders` + `equipment` + `incidents` + `reports` + `web` + `api` | done (no Settings scope; checks after recall actions and upgrades, a drawer check for a hand return, analyzer calibration, and limit tables deferred) |
 | 31 | Contracted service and vendor staff | (none: Contracts, Vendor staff; who did the vendor's work on a work order; the binder) | new `vendors` + `workorders` + `contracts` + `reports` + `core` + `web` + `api` | done (a Vendor entity with aliases, linking accounts to engineers, imports, vendor scorecards, uploads, reminder emails, and an FSR date deferred) |
+| 32 | Program evaluation | (none: Reports, Program evaluation; its print; the binder's program section) | new `evaluations` + `accounts` + `reports` + `core` + `web` + `api` | done (writing the plan in Cadence, API writes, objectives linked to indicators, a repair finding for use errors, a year's uptime and cost of service ratio, a Settings cycle, quarterly reports, an all-facilities roll-up deferred) |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.
@@ -479,3 +480,17 @@ The mock's export and print buttons work since slice 11, Add device since slice 
   another vendor (or in-house) drops the earlier vendor's engineer and report number; an engineer's name matches with either apostrophe
   (a phone types ’); a name or vendor whose stored key would overflow is refused; "Someone else" with no name is refused with the rest
   of a completion's problems.
+- Program evaluation (slice 32, beyond the mock; the binder listed the written plan "and its annual evaluation" as not covered). The Joint
+  Commission's 2026 standards dropped the written EC plans and their annual evaluation for hospitals (ambulatory keeps them); DNV wants an
+  annual effectiveness evaluation forwarded to quality oversight, ACHC plans approved yearly, CMS the AEM program's effectiveness
+  evaluated; hospitals keep a yearly evaluation for the EOC or safety committee. `apps/evaluations` drafts it for a 12-month period that
+  has ended: a curated indicator set with stable keys (scope; PMs on time for life support and high risk, medium and low on the
+  manufacturer's interval, and on AEM, by quarter; inspections; repairs; AEM by model; recalls; incident counts; credential lapses; vendor
+  evidence; repair spend), judged by the facility's own targets and PM windows as they stood at the period's end, the previous period
+  beside each, cut per reader; CE's text, objectives reviewed and set, the committee's approvals from its minutes. Sent to committee
+  freezes it; approved is never edited (an amendment is the next version). A new module, Program evaluation. Cadence never says which
+  accreditor requires it. Deferred: writing the plan in Cadence, API writes, objectives linked to indicators, a repair finding (use
+  error, no problem found), a year's uptime and cost of service ratio, a Settings cycle, quarterly reports, an all-facilities roll-up.
+  Rules settled in review: a previous column counted from only part of its months says from when; a superseded version's approvals
+  stay as recorded (correct the amendment's); the read-only API answers every write by an Edit holder with 405; the binder's table links
+  open a drawer only for records that have one; the next evaluation is due 90 days after the next 12 months' own end (Feb 29).

@@ -270,6 +270,22 @@ documents and never judges anyone's competence; badges, immunizations, and backg
 credentialing system. Contracts View sees the tab, Contracts Edit changes it; a vendor's own account sees only its company's engineers'
 names on its work.
 
+## Program evaluation
+Reports' "Program evaluation" drafts the yearly evaluation of the medical equipment program that hospitals present to their environment
+of care or safety committee and their quality program (DNV and ACHC expect one; The Joint Commission's 2026 standards no longer require
+it of hospitals, and Cadence never says which accreditor does). Choose a 12-month period that has ended; Cadence takes the figures for
+it: scope, PMs on time for life support and high risk, for medium and low risk on the manufacturer's interval and on AEM (each by
+quarter, against the facility's own targets as they stood when the period ended), incoming inspections, repairs and their checks, how
+each AEM model did, recalls, incident counts (Incidents View only), work during a credential lapse, vendor jobs with nothing on file,
+and repair spend against the budget, with the previous period beside them and the binder's gaps as an appendix. Use errors and
+no-problem-found are not recorded in Cadence, and the evaluation says so. CE writes the rest (a summary, scope and changes, AEM safety
+and effectiveness, what went well and what needs improvement, capital and staffing, cybersecurity, the written plan reviewed), reviews
+last year's objectives and sets next year's, refreshes the figures while it is a draft, and sends it to committee, which freezes it for
+the meeting; the committee's approval is recorded from its minutes (later ones as it goes on to quality oversight or the governing
+body). An approved evaluation is never edited: an amendment is its next version. The printed copy carries the approvals or signature
+lines. Program evaluation is a module of its own in Roles: the CE manager drafts and records approvals by default, the director too,
+Finance and quality reads it.
+
 ## Custom reports
 Reports' "+ Custom report" (Reports Edit: the director and Finance and quality by default) builds a report from work orders, devices,
 labor, or parts: pick the columns, filter by type, status, department, category, technician, or a date range (a rolling period such
@@ -324,6 +340,8 @@ its module's docstring under `apps/api/`, and the browsable API (open `/api/v1/`
   their signature, the steps never N/A, and the outcomes you may send), `vendor_report` with `checks_reference` (the vendor's service
   report number; vendor service, facility staff only), or `not_returned`; a repair sent with no outcome, or passed with no results,
   answers a 400 naming what to send;
+- program evaluations, read only (`views_evaluations.py`: the list, and each with its text, objectives, approvals, and the figures your
+  access allows);
 - the signed-in person's facilities and All facilities (`views_facilities.py`, `views_all_facilities.py`; session only).
 
 Vendor technicians and clinical requesters reach only their own devices and work orders (and Scan), as on the screens. Nobody gives

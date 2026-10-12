@@ -31,7 +31,7 @@ security tests, `tests/test_postgres_rls.py`).
 5. **State changes go through services** (`apps/workorders/services.py`, `apps/pm/services.py`, `apps/contracts/services.py`,
    `apps/accounts/services.py`, `apps/credentials/services.py`, `apps/recalls/services.py`, `apps/facility/services.py`, `apps/equipment/services.py`,
    `apps/pm/aem.py`, `apps/pm/procedures.py`, `apps/workorders/costs.py`, `apps/workorders/completion.py`, `apps/workorders/legacy.py`, `apps/reports/custom.py`,
-   `apps/imports/services.py`, `apps/incidents/services.py`, `apps/vendors/services.py`), never by setting fields in a
+   `apps/imports/services.py`, `apps/incidents/services.py`, `apps/vendors/services.py`, `apps/evaluations/services.py`), never by setting fields in a
    view or calling model helpers like
    `Contract.add_assets` directly. Services validate, write status history, and keep the asset in sync.
 6. **No PHI by design.** The portal never asks for patient identifiers. Don't add free-text fields that invite them, and never offer
@@ -225,6 +225,17 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   reader; `engineer_named` creates on the unique key, re-read after a race); `permissions.py` (Contracts View sees, Edit changes; scoped
   users never). No email, phone, files, notes, health, or background data on an engineer (badges and immunizations are the vendor
   credentialing system's); never in an email, a digest, or a custom report
+- `apps/evaluations` the medical equipment program's annual evaluation (slice 32, beyond the mock; The Joint Commission dropped the
+  hospital requirement in 2026, DNV and ACHC still expect one: Cadence never says which accreditor requires it, and Met is the facility's
+  own target): `ProgramEvaluation` (EV-<yy>-<nnnn> and a version; a 12-month period that has ended; draft -> ready ("Sent to committee":
+  frozen) -> approved -> superseded by its amendment; discarded; live periods never overlap), the nine staff-written NARRATIVE fields
+  (length-limited, never emailed, never a CSV or custom report, never a scoped user's), `EvaluationSnapshot` (immutable figures, no history),
+  `EvaluationObjective` (this period's reviewed, carried from the previous approved evaluation; next period's), `EvaluationApproval` (a
+  committee's approval from its minutes; the first approves); `indicators.py` (INDICATORS with stable keys, `snapshot()` for a period by the
+  targets and PM windows in force at its end, the previous period beside each (approved, else counted), the AEM table, the binder's gap
+  counts; `cut(data, user)` for every reader: never render a snapshot without it; refreshing needs View on every area); `services.py` every
+  write and the read helpers (`current`, `previous_approved`, `next_due`, `suggested_start`); `permissions.py` (Module.EVALUATIONS:
+  View reads, Edit drafts and writes, Approve records approvals and amends; the figures also need Reports View)
 - `apps/recalls` Alert (global), AlertMatch (per tenant), matching, openFDA importer; `services.py` dispositions and recall work-order batches,
   `permissions.py` (review at Edit, close/reopen at Approve); `feeds.py` the openFDA fetch shared by `import_openfda` and the Recalls
   screen's Check FDA feed (one fetch per 15 minutes for everyone, kept in apps.jobs' `JobRun`; a check matches only its own facility).
@@ -253,7 +264,8 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `run_any`, and `csv_filename` are the one lookup by key for the screen, CSV, print page, Schedule, and report emails; `all_facilities.py`
   All facilities (each joined facility's Overview figures read inside it with the person's account there, totals from summed parts);
   slice 25, `survey/` the survey binder (the contract in `__init__.py`: Period, Section, Table with lazy rows, Gap kinds gap / finding /
-  check, `binder()`; one module per section: program, inventory, maintenance, aem, inspections, recalls, vendors (slice 31, "Contracted
+  check, `binder()`; one module per section: program (slice 32: the approved program evaluations overlapping the period, and a CHECK once
+  one was approved and the next is overdue), inventory, maintenance, aem, inspections, recalls, vendors (slice 31, "Contracted
   service and vendor staff": each vendor with its contracts and the evidence on file, the period's vendor jobs judged by
   vendors.rules.evidence_for, a GAP per vendor with jobs nothing covers (never a person), a CHECK for manufacturer-schedule jobs naming no
   engineer; Reports, Work orders, Contracts, and Equipment View), incidents (slice 28, Incidents
@@ -270,7 +282,10 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `forms_vendors.py`: the vendors merged by vendor_key with their attestations and engineers' training, `?vendor=` (the binder's gaps link
   here), Add engineer, Change engineer, Add training for one or several of a vendor's engineers, Add attestation, the engineer drawer, the
   contract drawer's vendor line), `views_wo_engineer.py` the work order's Field engineer row, its Change, and the completion modal's
-  "Who did the work" select (names only for a vendor's account), `views_temporary.py` loaners and rentals (slice 29, with `forms_temporary.py`: Add rental or
+  "Who did the work" select (names only for a vendor's account), `views_evaluations.py` Reports' Program evaluation (slice 32, with
+  `forms_evaluations.py` and `templatetags/evaluation_tags.py`: the list and next due, New evaluation, the page (figures cut to the
+  reader, each narrative field saved on its own, objectives, approvals, actions by status and level, history), the committee's print),
+  `views_temporary.py` loaners and rentals (slice 29, with `forms_temporary.py`: Add rental or
   loaner, the drawer's temporary section (`asset_tabs.temporary_box`), Change details, Return to owner, Keep it, Vendor loaner arrived,
   Return the loaner; the Equipment "Whose" filter through `forms.equipment_assets`), `views_incidents.py` Incidents (slice 28, with
   `forms_incidents.py`: the list and its CSV, Record incident (from the page, the device drawer, or an open repair's drawer, which it
@@ -303,7 +318,9 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   repair fields (`_repair_words` rewords a missing outcome or results as what to send); slice 31: `views_vendors.py` /
   `serializers_vendors.py` vendor engineers, trainings, attestations (Contracts module, no scoped actions), a work order's
   `vendor_engineer`, `vendor_engineer_name`, and `engineer_choices` (retrieve only), the transition's `vendor_engineer` /
-  `engineer_name` / `checks_reference` (omitted keeps), the `vendor-engineer` action; serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
+  `engineer_name` / `checks_reference` (omitted keeps), the `vendor-engineer` action; slice 32: `views_evaluations.py` /
+  `serializers_evaluations.py` program evaluations, read only (the list without figures or text; by id or number, the figures cut to the
+  reader); serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
   same thing and calls the same service; the API never imports apps.web. `tenancy.py` (`TenantAPIMixin`: the tenant from the session or
   token user, set after authentication and restored once the response is rendered), `authentication.py` (DRF's token check plus the
   deactivated-facility refusal sign-in has)
@@ -330,4 +347,5 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   work done during a credential's lapse; slice 28: two device incidents through the services, one closed, one open with its device held
   and its report due in a few work days; slice 29: a rental bed, a vendor loaner for a pump out for vendor repair, a demo unit past due
   back, a returned rental; slice 31: Philips engineers with training on the patient monitor model, one lapsed and named on the closed
-  monitor repair, with no Philips attestation: the binder's deliberate vendor gap; TechCare's engineer and its attestation)
+  monitor repair, with no Philips attestation: the binder's deliberate vendor gap; TechCare's engineer and its attestation; slice 32: a
+  draft program evaluation of the 12 months ending last month, made last, with no random draws)
