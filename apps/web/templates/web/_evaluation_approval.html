@@ -1,0 +1,19 @@
+{% load web %}
+{% comment %}Record a committee's approval, or correct one (slice 32, views_evaluations.evaluation_approval_new / evaluation_approval;
+   services.record_approval / correct_approval, Approve). The committee decides; Cadence records what its minutes say and who recorded
+   it. "Its name" shows while Another committee is chosen (CSS :has; without :has it always shows, and the service keeps it only for
+   another committee). The service's refusals come back on the field they name, with what was typed kept.{% endcomment %}
+<div class="modal-h"><h2>{% if approval %}Correct the approval{% else %}Record approval of {{ ev.label }}{% endif %}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+<form id="ev-app-form" class="ev-app-form" hx-post="{{ action }}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    <p class="full hint">{% if approval %}Its history keeps what it said before.{% elif first %}The committee's approval of the copy sent to it on {{ sent_on }}: this approves {{ ev.label }}. Its meeting is on or after that day.{% else %}Where it went after it was approved on {{ approved_on }}: a meeting on or after that day.{% endif %}</p>
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    <label class="full">{{ form.body.label }}{{ form.body }}{% if form.body.errors %}<span class="err" role="alert">{{ form.body.errors|striptags }}</span>{% endif %}</label>
+    <label class="full ev-body-name">{{ form.body_name.label }}{{ form.body_name }}<span class="hint">{{ form.body_name.help_text }}</span>{% if form.body_name.errors %}<span class="err" role="alert">{{ form.body_name.errors|striptags }}</span>{% endif %}</label>
+    <label>{{ form.meeting_on.label }}<input type="date" name="meeting_on" value="{% if form.is_bound %}{{ form.data.meeting_on }}{% else %}{{ form.initial.meeting_on }}{% endif %}" max="{{ today|date:'Y-m-d' }}"{% if form.meeting_on.errors %} aria-invalid="true"{% endif %}>{% if form.meeting_on.errors %}<span class="err" role="alert">{{ form.meeting_on.errors|striptags }}</span>{% endif %}</label>
+    <label>{{ form.minutes_reference.label }}{{ form.minutes_reference }}<span class="hint">{{ form.minutes_reference.help_text }}</span>{% if form.minutes_reference.errors %}<span class="err" role="alert">{{ form.minutes_reference.errors|striptags }}</span>{% endif %}</label>
+    <label>{{ form.chair_name.label }}{{ form.chair_name }}{% if form.chair_name.errors %}<span class="err" role="alert">{{ form.chair_name.errors|striptags }}</span>{% endif %}</label>
+    <label>{{ form.chair_title.label }}{{ form.chair_title }}{% if form.chair_title.errors %}<span class="err" role="alert">{{ form.chair_title.errors|striptags }}</span>{% endif %}</label>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">{% if approval %}Save{% else %}Record approval{% endif %}</button></div>
+</form>

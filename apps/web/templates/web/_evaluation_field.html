@@ -1,0 +1,26 @@
+{% comment %}One block of the evaluation's text (slice 32, views_evaluations.block): read, or written (`editing`: Edit on a draft) and
+   saved on its own by HTMX into this element. A refusal keeps what was typed, with the words on the field they name.{% endcomment %}
+<div class="ev-field" id="ev-f-{{ b.key }}">
+  <div class="ev-field-h"><h3>{{ b.label }}</h3>{% if write and not editing %}<button class="btn sm" type="button" hx-get="{{ b.url }}?edit=1" hx-target="#ev-f-{{ b.key }}" hx-swap="outerHTML">{% if b.text %}Edit{% else %}Write{% endif %}</button>{% endif %}</div>
+  {% if editing %}
+  <form class="ev-field-form" hx-post="{{ b.url }}" hx-target="#ev-f-{{ b.key }}" hx-swap="outerHTML" hx-disabled-elt="find button[type=submit]" novalidate>
+    {% if b.help %}<p class="hint">{{ b.help }}</p>{% endif %}
+    {% if b.kind == "text" %}<p class="hint ev-privacy-line">{{ privacy }}</p>{% endif %}
+    {% if b.error %}<p class="err" role="alert">{{ b.error }}</p>{% endif %}
+    <div class="ev-inputs{% if b.kind == 'plan' %} ev-plan{% endif %}">
+      {% for i in b.inputs %}
+      <label>{% if b.kind != "text" %}<span>{{ i.label }}</span>{% endif %}
+        {% if i.type == "textarea" %}<textarea name="{{ i.name }}" rows="6" aria-label="{{ i.label }}"{% if i.error %} aria-invalid="true"{% endif %}>{{ i.value }}</textarea>
+        {% else %}<input type="{{ i.type }}" name="{{ i.name }}" value="{{ i.value }}"{% if i.error %} aria-invalid="true"{% endif %}>{% endif %}
+        {% if i.max %}<span class="hint">At most {{ i.max }} characters.</span>{% endif %}
+        {% if i.error %}<span class="err" role="alert">{{ i.error }}</span>{% endif %}
+      </label>
+      {% endfor %}
+    </div>
+    <div class="ev-field-f"><button class="btn sm" type="button" hx-get="{{ b.url }}" hx-target="#ev-f-{{ b.key }}" hx-swap="outerHTML">Cancel</button><button class="btn sm primary" type="submit">Save</button></div>
+  </form>
+  {% else %}
+  {% if b.error %}<p class="err" role="alert">{{ b.error }}</p>{% endif %}
+  {% if b.text %}<div class="ev-prose">{{ b.text|linebreaksbr }}</div>{% else %}<p class="muted ev-none">{% if b.help %}{{ b.help }} {% endif %}{% if b.kind == "text" %}Not written yet.{% else %}Not recorded yet.{% endif %}</p>{% endif %}
+  {% endif %}
+</div>

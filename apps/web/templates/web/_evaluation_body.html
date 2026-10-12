@@ -1,0 +1,12 @@
+{% comment %}One program evaluation's page (slice 32, views_evaluations.evaluation): the head with its actions, the figures (cut to the
+   reader), the text, the objectives, the approvals, and History. Each part is its own element and partial (views_evaluations.PARTS);
+   an action that changes the status or the figures swaps this whole element (outerHTML, named by each control).{% endcomment %}
+{% if request.htmx %}<title>{{ ev.label }} · Program evaluation · Reports · {{ request.tenant.name }}</title>{% endif %}{# only in a swapped fragment, at its root: htmx retitles the document from it #}
+<div id="ev-body" class="ev">
+  {% include "web/_evaluation_head.html" %}
+  {% include "web/_evaluation_figures.html" %}
+  {% include "web/_evaluation_text.html" %}
+  {% include "web/_evaluation_objectives.html" %}
+  {% include "web/_evaluation_approvals.html" %}
+  {% if can_history %}<section class="panel ev-sec" aria-label="History"><div class="panel-b">{% include "web/_history_section.html" %}</div></section>{% endif %}
+</div>

@@ -1,0 +1,38 @@
+{% load web %}
+{% comment %}The evaluation's head (slice 32): its number and version, its 12 months, its status and stamp, when the figures were taken;
+   the actions its status and the reader's levels allow (views_evaluations.actions_for; each service checks again); its other versions;
+   and the lines a committee must not misread: provisional, Cadence's records beginning after the period starts, and Settings changed
+   since the period ended (the figures keep the ones in force then). Those three are figures' facts: only a reader who sees figures
+   gets them (indicators.cut).{% endcomment %}
+<div id="ev-head" class="ev-head">
+  <div class="page-head">
+    <div>
+      <p class="ev-crumb"><a class="link" href="{% url 'web:evaluations' %}">Program evaluation</a></p>
+      <h1>{{ ev.label }} <span class="chip {{ status_css }}">{{ ev.get_status_display }}</span></h1>
+      <p class="sub">{{ period }} · {{ stamp }}{% if fig.taken %} · figures taken {{ fig.taken_on }}{% endif %}</p>
+    </div>
+    <div class="actions">
+      <a class="btn" href="{{ print_url }}" target="_blank" rel="noopener" title="The committee's copy, for paper or saved as a PDF">{% icon "print" %} Print</a>
+      {% if acts.send %}<button class="btn primary" type="button" hx-get="{% url 'web:evaluation_send' ev.number ev.version %}" hx-target="#modal-card">Send to committee</button>{% endif %}
+      {% if acts.back %}<button class="btn" type="button" hx-post="{% url 'web:evaluation_back' ev.number ev.version %}" hx-target="#ev-body" hx-swap="outerHTML" hx-confirm="Take {{ ev.label }} back to draft? Its figures, text, and objectives can be changed again; send it to committee again after.">Back to draft</button>{% endif %}
+      {% if acts.approve %}<button class="btn{% if ev.status == 'ready' %} primary{% endif %}" type="button" hx-get="{% url 'web:evaluation_approval_new' ev.number ev.version %}" hx-target="#modal-card">Record approval</button>{% endif %}
+      {% if acts.amend %}<button class="btn" type="button" hx-get="{% url 'web:evaluation_amend' ev.number ev.version %}" hx-target="#modal-card">Amend</button>{% endif %}
+      {% if acts.discard %}<button class="btn danger" type="button" hx-get="{% url 'web:evaluation_discard' ev.number ev.version %}" hx-target="#modal-card">Discard</button>{% endif %}
+    </div>
+  </div>
+  {% if refusal %}<div class="note warn ev-refusal" role="alert">{{ refusal }}</div>{% endif %}
+  {% if ev.status == "ready" %}<div class="note ev-state">Sent to committee {{ ev.sent_on|date:"M j, Y" }}: its figures, text, and objectives are frozen. Record the committee's approval once it has met, or take it back to draft for changes.</div>{% endif %}
+  {% if ev.amends and ev.status == "draft" or ev.amends and ev.status == "ready" %}<div class="note ev-state">Amends <a class="link" href="{% url 'web:evaluation_version' ev.amends.number ev.amends.version %}">{{ ev.amends.label }}</a>, which stays the approved version until this one is approved.</div>{% endif %}
+  {% if live_amendment %}<div class="note ev-state">Being amended: <a class="link" href="{% url 'web:evaluation_version' live_amendment.number live_amendment.version %}">{{ live_amendment.label }}</a> ({{ live_amendment.get_status_display|lower }}). This stays the approved version until the amendment is approved.</div>{% endif %}
+  {% if superseded_by %}<div class="note ev-state">Superseded by <a class="link" href="{% url 'web:evaluation_version' superseded_by.number superseded_by.version %}">{{ superseded_by.label }}</a>, the approved version now.</div>{% endif %}
+  {% if ev.status == "discarded" %}<div class="note ev-state">Discarded: kept, and counted nowhere.</div>{% endif %}
+  {% if versions %}<p class="hint ev-versions">Versions: {% for v in versions %}{% if v.current %}<b>{{ v.ev.label }}</b>{% else %}<a class="link" href="{{ v.url }}">{{ v.ev.label }}</a>{% endif %} ({{ v.ev.get_status_display|lower }}){% if not forloop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+  {% if fig.provisional or fig.records_begin or fig.changed %}
+  <ul class="ev-lines">
+    {% if fig.provisional %}<li><span class="chip warn">Provisional</span> Provisional until {{ fig.provisional }}: PMs of the period are still inside their window, so the PM figures can still change. Refresh the figures after that day.</li>{% endif %}
+    {% if fig.records_begin %}<li><span class="chip info">Records</span> Cadence's records begin {{ fig.records_begin }}: work before then is not in Cadence, so a figure for those months is not a zero.</li>{% endif %}
+    {% if fig.changed %}<li><span class="chip neutral">Settings</span> Settings changed since the period ended; the figures keep the targets and windows in force on {{ fig.as_of }}:
+      <ul class="ev-changed">{% for c in fig.changed %}<li>{{ c.on }}: {{ c.what }} changed from {{ c.before|default:"none" }} to {{ c.after|default:"none" }}</li>{% endfor %}</ul></li>{% endif %}
+  </ul>
+  {% endif %}
+</div>

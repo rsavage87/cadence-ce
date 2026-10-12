@@ -1,0 +1,28 @@
+{% load web %}
+{% comment %}The committees' approvals (slice 32), as their minutes record them: the first approved the evaluation; later ones record where
+   it went next. Record approval (Approve, once sent to committee); Correct an approval's details, and Remove a later one entered in
+   error (Approve; never the first). The services check again; a refusal shows at the top.{% endcomment %}
+<section id="ev-approvals" class="panel ev-sec" aria-labelledby="ev-app-h">
+  <div class="panel-h"><h2 id="ev-app-h">Approvals</h2><span class="sub">As the committees' minutes record them</span>
+    {% if acts.approve %}<div class="actions"><button class="btn sm" type="button" hx-get="{% url 'web:evaluation_approval_new' ev.number ev.version %}" hx-target="#modal-card">Record approval</button></div>{% endif %}
+  </div>
+  <div class="panel-b">
+    {% if approvals_refusal %}<div class="note warn" role="alert">{{ approvals_refusal }}</div>{% endif %}
+    {% if approvals %}
+    <ul class="ev-apps">
+      {% for r in approvals %}{% with a=r.a %}<li class="ev-app">
+        <div class="ev-app-b">
+          <p class="ev-app-t">{{ r.body }}{% if r.first %} <span class="chip ok">Approved it</span>{% endif %}</p>
+          <p class="hint">Met {{ a.meeting_on|date:"M j, Y" }}{% if a.chair_name %} · chair {{ a.chair_name }}{% if a.chair_title %}, {{ a.chair_title }}{% endif %}{% endif %}{% if a.minutes_reference %} · minutes {{ a.minutes_reference }}{% endif %}{% if a.recorded_by %} · recorded by {{ a.recorded_by }}{% endif %}</p>
+        </div>
+        {% if acts.correct %}<div class="ev-obj-a">
+          <button class="btn sm" type="button" hx-get="{% url 'web:evaluation_approval' ev.number ev.version a.pk %}" hx-target="#modal-card">Correct</button>
+          {% if not r.first %}<button class="btn sm danger" type="button" hx-post="{% url 'web:evaluation_approval_remove' ev.number ev.version a.pk %}" hx-target="#ev-body" hx-swap="outerHTML" hx-confirm="Remove this approval, entered in error? Its history keeps it.">Remove</button>{% endif %}
+        </div>{% endif %}
+      </li>{% endwith %}{% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted ev-none">None recorded.{% if ev.status == "draft" %} Send it to committee, then record the committee's approval once it has met.{% elif ev.status == "ready" %} Record the committee's approval once it has met.{% endif %}</p>
+    {% endif %}
+  </div>
+</section>

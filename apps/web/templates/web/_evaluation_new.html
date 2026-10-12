@@ -1,0 +1,27 @@
+{% load web %}
+{% comment %}New evaluation (slice 32, views_evaluations.evaluation_new; services.create_draft, Edit and View on every area the figures
+   cover): the 12 months by their first month, with shortcuts (each re-renders this form for its month) and the months it covers. In
+   the modal (`modal`) the form posts by HTMX; on the list page (opened directly) it posts as a plain form. A refusal shows on the field
+   with the month typed kept; a person who cannot take the figures is told why, and offered no Draft button.{% endcomment %}
+{% if modal %}<div class="modal-h"><h2 id="ev-new-h">New evaluation</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% else %}<div class="panel-h"><h2 id="ev-new-h">New evaluation</h2></div>{% endif %}
+{% if refusal %}
+<div class="form"><div class="full note warn" role="alert">{{ refusal }}</div></div>
+{% if modal %}<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>{% endif %}
+{% else %}
+<form id="ev-new-form" method="post" action="{% url 'web:evaluation_new' %}"{% if modal %} hx-post="{% url 'web:evaluation_new' %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]"{% endif %} novalidate>{% csrf_token %}
+  <div class="form">
+    <p class="full hint">An evaluation covers 12 months that have ended. Drafting it takes Cadence's figures for them (it can take a few seconds); you write the text and the objectives after.</p>
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    <label class="full">{{ form.start.label }}
+      <input type="month" name="start" value="{% if form.is_bound %}{{ form.data.start }}{% else %}{{ form.initial.start }}{% endif %}" placeholder="YYYY-MM" autocomplete="off"{% if form.start.errors %} aria-invalid="true" aria-describedby="ev-new-err"{% endif %}{% if modal %} hx-get="{% url 'web:evaluation_new' %}" hx-trigger="change" hx-target="#modal-card" hx-include="this"{% endif %}>
+      {% if form.start.errors %}<span class="err" id="ev-new-err" role="alert">{{ form.start.errors|striptags }}</span>{% endif %}
+    </label>
+    {% if covers %}<p class="full ev-covers{% if covers.open %} warn{% endif %}">Covers {{ covers.words }}.{% if covers.open %} Those months end on {{ covers.end }}: draft their evaluation from {{ covers.from }}.{% endif %}</p>{% endif %}
+    <div class="full pills ev-presets" role="group" aria-label="Periods">
+      {% for p in presets %}<a class="pill{% if p.active %} active{% endif %}" href="{% url 'web:evaluation_new' %}?start={{ p.start }}"{% if modal %} hx-get="{% url 'web:evaluation_new' %}?start={{ p.start }}" hx-target="#modal-card"{% endif %} title="{{ p.period }}"{% if p.active %} aria-current="true"{% endif %}>{{ p.label }}</a>{% endfor %}
+    </div>
+  </div>
+  <div class="modal-f">{% if modal %}<button class="btn" type="button" data-act="close-modal">Cancel</button>{% else %}<a class="btn" href="{% url 'web:evaluations' %}">Cancel</a>{% endif %}<button class="btn primary" type="submit">Draft it</button></div>
+</form>
+{% endif %}

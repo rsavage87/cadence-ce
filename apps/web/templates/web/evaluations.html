@@ -1,0 +1,7 @@
+{% extends "web/base.html" %}
+{% comment %}Reports' Program evaluation (slice 32, views_evaluations): the list of the facility's evaluations (with New evaluation's
+   form on the page when it was opened directly), or one evaluation's page (#ev-body and its parts).{% endcomment %}
+{% block title %}{% if ev %}{{ ev.label }} · {% endif %}Program evaluation · Reports{% endblock %}
+{% block content %}
+{% if ev %}{% include "web/_evaluation_body.html" %}{% else %}{% include "web/_evaluation_list.html" %}{% endif %}
+{% endblock %}

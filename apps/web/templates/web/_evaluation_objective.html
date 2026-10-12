@@ -1,0 +1,18 @@
+{% load web %}
+{% comment %}Add or change an objective (slice 32, views_evaluations.evaluation_objective_new / evaluation_objective): this period's with
+   its result and comment, or the next period's with its target. The service's refusals come back on the field they name, with what was
+   typed kept.{% endcomment %}
+<div class="modal-h"><h2>{% if objective %}{{ title }}{% else %}Add {{ title|lower }}{% endif %}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+<form id="ev-obj-form" hx-post="{{ action }}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    <p class="full hint">{{ privacy }}</p>
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    <label class="full">{{ form.text.label }}{{ form.text }}<span class="hint">At most {{ text_max }} characters.</span>{% if form.text.errors %}<span class="err" role="alert">{{ form.text.errors|striptags }}</span>{% endif %}</label>
+    <label class="full">{{ form.target.label }}{{ form.target }}<span class="hint">{{ form.target.help_text }}</span>{% if form.target.errors %}<span class="err" role="alert">{{ form.target.errors|striptags }}</span>{% endif %}</label>
+    {% if review %}
+    <label class="full">{{ form.result.label }}{{ form.result }}{% if form.result.errors %}<span class="err" role="alert">{{ form.result.errors|striptags }}</span>{% endif %}</label>
+    <label class="full">{{ form.comment.label }}{{ form.comment }}<span class="hint">At most {{ comment_max }} characters.</span>{% if form.comment.errors %}<span class="err" role="alert">{{ form.comment.errors|striptags }}</span>{% endif %}</label>
+    {% endif %}
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Save</button></div>
+</form>

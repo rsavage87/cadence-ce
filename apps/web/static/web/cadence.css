@@ -1196,6 +1196,116 @@ td small.tmp-late{color:var(--crit)}
   .wo-eng-who .btn{min-height:44px}
 }
 
+/* slice 32: program evaluation (Reports: web/evaluations.html, _evaluation_*.html). The list's table (discarded and superseded rows
+   quieter), the next-due note; the evaluation's head (its crumb, state notes, the provisional / records / Settings lines), the figures
+   (one table, a row group per group, so the columns line up; the indicator column wraps, the value's "39 of 40" and the previous
+   column's heading on lines of their own; each counting rule small under its label, shown by the "How each figure is counted" switch:
+   CSS :has, and always shown without it), the text blocks (written in place: the textarea full width, the plan's three boxes side by
+   side and one column on a phone), the objectives and approvals (text that wraps, their buttons at the right and under it on a phone),
+   and New evaluation's months. Theme tokens only. */
+.ev{display:grid;gap:14px;min-width:0}
+.ev>.page-head,.ev-head>.page-head{margin-bottom:0}
+.ev .page-head .actions a.btn,.ev .panel-h .actions a.btn{text-decoration:none}
+.ev-head{display:grid;gap:8px;min-width:0}
+.ev-head h1{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;overflow-wrap:anywhere}
+.ev-crumb{font-size:12.5px;margin-bottom:2px}
+.ev-due .chip{vertical-align:middle}
+.ev-due .link{color:inherit;font-weight:600}
+.ev-tbl td.ev-wrap,.ev-figs td.ev-wrap{white-space:normal;overflow-wrap:anywhere;min-width:160px}
+.ev-tbl td.nw{white-space:nowrap}
+.ev-tbl tr.ev-quiet td{color:var(--ink-3)}
+.ev-tbl a.tag{text-decoration:none}
+.ev-versions b{font-weight:600}
+.ev-lines{list-style:none;margin:0;padding:0;display:grid;gap:6px;font-size:13px}
+.ev-lines>li{overflow-wrap:anywhere}
+.ev-lines>li>.chip{margin-right:6px}
+.ev-changed{margin:4px 0 0;padding-left:18px;font-size:12.5px;color:var(--ink-2)}
+.ev-sec .panel-h{align-items:center;justify-content:flex-start;column-gap:10px}
+.ev-sec .panel-h .actions{margin-left:auto}
+.ev-left-out p{margin:0}
+.ev-left-out ul{margin:4px 0;padding-left:18px}
+.ev-refresh-refusal{margin-bottom:10px}
+.ev-judged{margin-bottom:8px}
+.ev-figs-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 14px;margin-bottom:8px}
+.ev-tally{font-size:13px}
+.ev-group{margin:16px 0 6px}
+.ev-group:first-child{margin-top:0}
+.ev-figs-wrap{border-radius:8px}
+.ev-figs td{vertical-align:top}
+.ev-figs td small,.ev-figs th small{display:block;font-size:11.5px;font-weight:400;color:var(--ink-3);white-space:normal}
+.ev-figs th.ev-prev-h{white-space:normal;min-width:120px}
+.ev-figs col.ev-c-ind{width:46%}
+.ev-figs col.ev-c-n{width:12%}
+.ev-figs col.ev-c-prev{width:18%}
+.ev-figs col.ev-c-res{width:12%}
+.ev-figs tr.ev-grp-h th{background:var(--surface);color:var(--ink);font-size:13px;font-weight:600;padding-top:14px;white-space:normal}
+.ev-figs tbody.ev-grp:first-of-type tr.ev-grp-h th{padding-top:9px}
+.ev-figs tbody.ev-grp tr:last-child td{border-bottom:1px solid var(--line)}
+.ev-figs tbody.ev-grp:last-of-type tr:last-child td{border-bottom:0}
+.ev-figs .ev-ind{font-weight:500}
+.ev-figs small.ev-rule{display:none;margin-top:2px;max-width:60ch}
+@supports selector(:has(*)){
+  #ev-figures:has(.ev-rules-on:checked) .ev-figs small.ev-rule{display:block}
+}
+@supports not selector(:has(*)){
+  .ev-figs small.ev-rule{display:block}
+  .ev-rules-tog{display:none}
+}
+.ev-not{margin:0;padding-left:18px;font-size:13px;color:var(--ink-2)}
+.ev-not li{margin:2px 0}
+.ev-empty{padding:14px;border:1px dashed var(--line);border-radius:8px}
+.ev-privacy{margin-bottom:10px}
+.ev-field{padding:10px 0;border-top:1px solid var(--line);min-width:0}
+.ev-field:first-of-type{border-top:0}
+.ev-field-h{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:4px}
+.ev-prose{font-size:13.5px;overflow-wrap:anywhere}
+.ev-none{font-size:13px}
+.ev-field-form{display:grid;gap:8px}
+.ev-field-form p{margin:0}
+.ev-inputs{display:grid;gap:10px}
+.ev-inputs label{display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--ink-2);min-width:0}
+.ev-inputs :is(textarea,input){font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line-2);border-radius:6px;padding:7px 9px;width:100%;min-width:0}
+.ev-inputs textarea{resize:vertical;min-height:120px}
+.ev-inputs :is(textarea,input)[aria-invalid="true"]{border-color:var(--crit)}
+.ev-inputs.ev-plan{grid-template-columns:2fr 1fr 1fr}
+.ev-field-f{display:flex;justify-content:flex-end;gap:8px}
+.ev-objs,.ev-apps{list-style:none;margin:0 0 10px;padding:0}
+.ev-obj,.ev-app{display:flex;flex-wrap:wrap;align-items:flex-start;gap:6px 12px;padding:9px 0;border-top:1px solid var(--line)}
+.ev-obj:first-child,.ev-app:first-child{border-top:0}
+.ev-obj-b,.ev-app-b{flex:1 1 280px;min-width:0;display:grid;gap:3px}
+.ev-obj-b p,.ev-app-b p{margin:0;overflow-wrap:anywhere}
+.ev-obj-t,.ev-app-t{font-weight:500}
+.ev-obj-c{font-size:13px;color:var(--ink-2)}
+.ev-obj-a{display:flex;flex-wrap:wrap;gap:6px;flex:none}
+.ev-covers{margin:0;font-size:13px;color:var(--ink-2)}
+.ev-covers.warn{color:var(--warn)}
+.ev-presets .pill{white-space:nowrap}
+.ev-new-panel .form{padding-top:10px}
+.ev-new-panel .modal-f{padding-top:0}
+.ev-app-form .ev-body-name{display:flex}
+@supports selector(:has(*)){
+  .ev-app-form .ev-body-name{display:none}
+  .ev-app-form:has(select[name="body"] option[value="other"]:checked) .ev-body-name{display:flex}
+}
+.ev-prev-line{display:none;margin-bottom:8px}
+@media (max-width:760px){
+  /* the figures as cards on a phone: the indicator across, then its target, this period, the previous period, and the result */
+  .ev-prev-line{display:block}
+  .ev-ind-tbl,.ev-ind-tbl tbody,.ev-ind-tbl tr,.ev-ind-tbl td,.ev-ind-tbl th{display:block}
+  .ev-ind-tbl thead,.ev-ind-tbl colgroup{display:none}
+  .ev-ind-tbl tr{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px 10px;padding:9px 12px;border-bottom:1px solid var(--line)}
+  .ev-ind-tbl tr.ev-grp-h{display:block;padding:0}
+  .ev-ind-tbl td{padding:0;border:0;text-align:left;white-space:normal}
+  .ev-ind-tbl td.ev-wrap{grid-column:1/-1;min-width:0}
+  .ev-ind-tbl td[data-label]::before{content:attr(data-label);display:block;font-size:11px;color:var(--ink-3)}
+  .ev-ind-tbl tbody.ev-grp tr:last-child td{border-bottom:0}
+  .ev-inputs.ev-plan{grid-template-columns:1fr}
+  .ev-inputs :is(textarea,input){font-size:16px;min-height:44px}
+  .ev-obj-a{flex-basis:100%}
+  .ev-obj-a .btn,.ev-field-h .btn,.ev-field-f .btn{min-height:44px}
+  .ev-figs small.ev-rule{max-width:none}
+}
+
 /* Slice 11: printing app pages */
 /* What the browser prints of an app page (the Overview's Export button calls window.print(); any other screen prints from the
    browser's menu): the page's content on white, in the light theme whatever the screen shows, with chart and chip colours kept.

@@ -16,13 +16,27 @@ urlpatterns = [
     path("custom/preview/", vc.custom_preview, name="custom_report_preview"),
     path("custom-<uuid:pk>/edit/", vc.custom_edit, name="custom_report_edit"),
     path("custom-<uuid:pk>/delete/", vc.custom_delete, name="custom_report_delete"),
-    # slice 25: the survey binder (never a report key: it is not in REPORTS, so it is never emailed)
     # slice 32: the program's annual evaluation (before the key routes: "evaluations" is no report key). `web:evaluation` takes the
-    # evaluation's number (EV-26-0001) and opens its current version; `web:evaluation_version` a given one.
+    # evaluation's number (EV-26-0001) and opens its current version; `web:evaluation_version` a given one. Every action names the
+    # version it acts on (views_evaluations).
     path("evaluations/", ve.evaluations, name="evaluations"),
     path("evaluations/new/", ve.evaluation_new, name="evaluation_new"),
     path("evaluations/<str:number>/", ve.evaluation, name="evaluation"),
     path("evaluations/<str:number>/v<int:version>/", ve.evaluation, name="evaluation_version"),
+    path("evaluations/<str:number>/v<int:version>/refresh/", ve.evaluation_refresh, name="evaluation_refresh"),
+    path("evaluations/<str:number>/v<int:version>/text/<slug:key>/", ve.evaluation_text, name="evaluation_text"),
+    path("evaluations/<str:number>/v<int:version>/objectives/new/", ve.evaluation_objective_new, name="evaluation_objective_new"),
+    path("evaluations/<str:number>/v<int:version>/objectives/<uuid:pk>/", ve.evaluation_objective, name="evaluation_objective"),
+    path("evaluations/<str:number>/v<int:version>/objectives/<uuid:pk>/remove/", ve.evaluation_objective_remove, name="evaluation_objective_remove"),
+    path("evaluations/<str:number>/v<int:version>/objectives/<uuid:pk>/move/", ve.evaluation_objective_move, name="evaluation_objective_move"),
+    path("evaluations/<str:number>/v<int:version>/send/", ve.evaluation_send, name="evaluation_send"),
+    path("evaluations/<str:number>/v<int:version>/back/", ve.evaluation_back, name="evaluation_back"),
+    path("evaluations/<str:number>/v<int:version>/discard/", ve.evaluation_discard, name="evaluation_discard"),
+    path("evaluations/<str:number>/v<int:version>/amend/", ve.evaluation_amend, name="evaluation_amend"),
+    path("evaluations/<str:number>/v<int:version>/approvals/new/", ve.evaluation_approval_new, name="evaluation_approval_new"),
+    path("evaluations/<str:number>/v<int:version>/approvals/<uuid:pk>/", ve.evaluation_approval, name="evaluation_approval"),
+    path("evaluations/<str:number>/v<int:version>/approvals/<uuid:pk>/remove/", ve.evaluation_approval_remove, name="evaluation_approval_remove"),
+    # slice 25: the survey binder (never a report key: it is not in REPORTS, so it is never emailed)
     path("survey/", vs.survey, name="survey"),
     path("survey/gaps.csv", vs.survey_gaps_csv, name="survey_gaps_csv"),
     path("survey/<slug:section>/<slug:table>.csv", vs.survey_csv, name="survey_csv"),

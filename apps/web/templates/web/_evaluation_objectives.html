@@ -1,0 +1,46 @@
+{% load web %}
+{% comment %}The objectives (slice 32): this period's (copied from the previous approved evaluation's next-period objectives when the draft
+   was made, or added; each with its result and a comment) and the next period's (each with its target). Added, changed, moved, and
+   removed on a draft with Edit (views_evaluations; the services check again); a refusal shows at the top.{% endcomment %}
+<section id="ev-objectives" class="panel ev-sec" aria-labelledby="ev-obj-h">
+  <div class="panel-h"><h2 id="ev-obj-h">Objectives</h2><span class="sub">This period's, reviewed; the next period's, set</span></div>
+  <div class="panel-b">
+    {% if objectives_refusal %}<div class="note warn" role="alert">{{ objectives_refusal }}</div>{% endif %}
+    <h3 class="ev-group">This period's objectives</h3>
+    {% if review %}
+    <ol class="ev-objs">
+      {% for o in review %}<li class="ev-obj">
+        <div class="ev-obj-b">
+          <p class="ev-obj-t">{{ o.text }}</p>
+          {% if o.target %}<p class="hint">Target: {{ o.target }}</p>{% endif %}
+          <p class="ev-obj-r">{% if o.result %}<span class="chip {% if o.result == 'met' %}ok{% elif o.result == 'partly' %}warn{% elif o.result == 'not_met' %}crit{% else %}info{% endif %}">{{ o.get_result_display }}</span>{% else %}<span class="chip neutral">No result yet</span>{% endif %}{% if o.comment %} <span class="ev-obj-c">{{ o.comment }}</span>{% endif %}</p>
+          {% if o.carried_from %}<p class="hint">Set in {{ o.carried_from.evaluation.label }}</p>{% endif %}
+        </div>
+        {% if acts.write %}<div class="ev-obj-a">
+          <button class="btn sm" type="button" hx-get="{% url 'web:evaluation_objective' ev.number ev.version o.pk %}" hx-target="#modal-card">{% if o.result %}Edit{% else %}Record result{% endif %}</button>
+          {% if not forloop.first %}<button class="btn sm ghost" type="button" hx-post="{% url 'web:evaluation_objective_move' ev.number ev.version o.pk %}" hx-vals='{"up": "1"}' hx-target="#ev-objectives" hx-swap="outerHTML" aria-label="Move up">↑</button>{% endif %}
+          {% if not forloop.last %}<button class="btn sm ghost" type="button" hx-post="{% url 'web:evaluation_objective_move' ev.number ev.version o.pk %}" hx-vals='{"up": "0"}' hx-target="#ev-objectives" hx-swap="outerHTML" aria-label="Move down">↓</button>{% endif %}
+          <button class="btn sm danger" type="button" hx-post="{% url 'web:evaluation_objective_remove' ev.number ev.version o.pk %}" hx-target="#ev-objectives" hx-swap="outerHTML" hx-confirm="Remove this objective? Its history keeps it.">Remove</button>
+        </div>{% endif %}
+      </li>{% endfor %}
+    </ol>
+    {% else %}<p class="muted ev-none">None.{% if acts.write %} The previous approved evaluation's next-period objectives are copied here when a draft is made for the 12 months right after it.{% endif %}</p>{% endif %}
+    {% if acts.write %}<button class="btn sm" type="button" hx-get="{% url 'web:evaluation_objective_new' ev.number ev.version %}?kind=review" hx-target="#modal-card">{% icon "plus" %} Add an objective for this period</button>{% endif %}
+
+    <h3 class="ev-group">Next period's objectives</h3>
+    {% if next %}
+    <ol class="ev-objs">
+      {% for o in next %}<li class="ev-obj">
+        <div class="ev-obj-b"><p class="ev-obj-t">{{ o.text }}</p>{% if o.target %}<p class="hint">Target: {{ o.target }}</p>{% endif %}</div>
+        {% if acts.write %}<div class="ev-obj-a">
+          <button class="btn sm" type="button" hx-get="{% url 'web:evaluation_objective' ev.number ev.version o.pk %}" hx-target="#modal-card">Edit</button>
+          {% if not forloop.first %}<button class="btn sm ghost" type="button" hx-post="{% url 'web:evaluation_objective_move' ev.number ev.version o.pk %}" hx-vals='{"up": "1"}' hx-target="#ev-objectives" hx-swap="outerHTML" aria-label="Move up">↑</button>{% endif %}
+          {% if not forloop.last %}<button class="btn sm ghost" type="button" hx-post="{% url 'web:evaluation_objective_move' ev.number ev.version o.pk %}" hx-vals='{"up": "0"}' hx-target="#ev-objectives" hx-swap="outerHTML" aria-label="Move down">↓</button>{% endif %}
+          <button class="btn sm danger" type="button" hx-post="{% url 'web:evaluation_objective_remove' ev.number ev.version o.pk %}" hx-target="#ev-objectives" hx-swap="outerHTML" hx-confirm="Remove this objective? Its history keeps it.">Remove</button>
+        </div>{% endif %}
+      </li>{% endfor %}
+    </ol>
+    {% else %}<p class="muted ev-none">None.</p>{% endif %}
+    {% if acts.write %}<button class="btn sm" type="button" hx-get="{% url 'web:evaluation_objective_new' ev.number ev.version %}?kind=next" hx-target="#modal-card">{% icon "plus" %} Add an objective for the next period</button>{% endif %}
+  </div>
+</section>

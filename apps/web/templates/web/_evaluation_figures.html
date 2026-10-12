@@ -1,0 +1,91 @@
+{% comment %}The evaluation's figures as this reader may read them (slice 32, views_evaluations.figures_context over indicators.cut): by
+   group, each indicator with the facility's own target as it stood at the period's end, this period, the previous period (headed with
+   its dates and whether an approved evaluation's or counted from Cadence's records), and Met / Not met; the PM figures by quarter; the
+   AEM table; what Cadence does not record; the survey binder's items for the period; and what was left out for this reader and why.
+   Refresh figures (Edit, a draft) takes them again, or says why this person cannot.{% endcomment %}
+<section id="ev-figures" class="panel ev-sec" aria-labelledby="ev-figures-h">
+  <div class="panel-h">
+    <h2 id="ev-figures-h">Figures</h2>
+    <span class="sub">{% if fig.taken %}Taken {{ fig.taken_on }}{% if fig.taken_by %} by {{ fig.taken_by }}{% endif %}{% else %}Not taken yet{% endif %}</span>
+    {% if acts.refresh and not refresh_refusal %}<div class="actions"><button class="btn sm" type="button" hx-post="{% url 'web:evaluation_refresh' ev.number ev.version %}" hx-target="#ev-body" hx-swap="outerHTML" hx-disabled-elt="this" hx-confirm="Take the figures for {{ period }} again, as of today? The figures shown now are replaced.">Refresh figures</button></div>{% endif %}
+  </div>
+  <div class="panel-b">
+    {% if refresh_refusal %}<p class="note ev-refresh-refusal">{{ refresh_refusal }}</p>{% endif %}
+    {% if fig.left_out %}<div class="note warn ev-left-out" role="status"><p><b>Left out for your role:</b></p><ul>{% for x in fig.left_out %}<li>{{ x }}</li>{% endfor %}</ul>{% if fig.shown %}<p>A copy printed from here is a partial copy. Someone whose role can see every area should print the committee's copy.</p>{% endif %}</div>{% endif %}
+    {% if fig.shown %}
+    <p class="hint ev-judged">Judged by the facility's own targets and the PM windows in force on {{ fig.as_of|default:"the period's end" }}{% if fig.window_high %} (life support and high risk: {{ fig.window_high }}; medium and low risk: {{ fig.window_other }}){% endif %}. Met means the facility's own target was reached. Figures marked "on {{ fig.taken_on }}" are the day the figures were taken, not the period's end.</p>
+    <div class="ev-figs-bar">
+      {% if fig.judged %}<p class="ev-tally"><b>{{ fig.met }} of {{ fig.judged }}</b> of the facility's targets met{% if fig.left_out %}, of those shown to you{% endif %}</p>{% endif %}
+      <label class="tog ev-rules-tog"><input type="checkbox" class="ev-rules-on"><span class="sw"></span>How each figure is counted</label>
+    </div>
+    {% if fig.groups %}
+    {% if fig.previous %}<p class="hint ev-prev-line">Beside each: {{ fig.previous.title }}, {{ fig.previous.period }}, {{ fig.previous.how }}.</p>{% endif %}
+    <div class="tbl-wrap ev-figs-wrap">
+      <table class="ev-figs ev-ind-tbl">
+        <colgroup><col class="ev-c-ind"><col class="ev-c-n"><col class="ev-c-n"><col class="ev-c-prev"><col class="ev-c-res"></colgroup>
+        <thead><tr><th>Indicator</th><th class="num">Target</th><th class="num">This period</th><th class="num ev-prev-h">{% if fig.previous %}{{ fig.previous.title }}<small>{{ fig.previous.period }}</small><small>{{ fig.previous.how }}</small>{% else %}Previous{% endif %}</th><th>Result</th></tr></thead>
+        {% for g in fig.groups %}
+        <tbody class="ev-grp" id="ev-g-{{ g.key }}">
+          <tr class="ev-grp-h"><th colspan="5" scope="rowgroup">{{ g.label }}</th></tr>
+          {% for r in g.rows %}<tr>
+            <td class="ev-wrap"><span class="ev-ind">{{ r.label }}</span>{% if r.taken %} <span class="muted">on {{ fig.taken_on }}</span>{% endif %}{% if r.rule %}<small class="ev-rule">{{ r.rule }}</small>{% endif %}</td>
+            <td class="num" data-label="Target">{{ r.target|default:"—" }}</td>
+            <td class="num" data-label="This period"><b>{{ r.value }}</b>{% if r.detail %}<small>{{ r.detail }}</small>{% endif %}</td>
+            <td class="num" data-label="{{ fig.previous.title|default:'Previous' }}">{{ r.previous|default:"—" }}{% if r.previous_detail %}<small>{{ r.previous_detail }}</small>{% endif %}</td>
+            <td data-label="Result">{% if r.met %}<span class="chip {{ r.met_css }}">{{ r.met }}</span>{% endif %}</td>
+          </tr>{% endfor %}
+        </tbody>
+        {% endfor %}
+      </table>
+    </div>
+    {% endif %}
+    {% if fig.previous.empty %}<p class="hint ev-prev-empty">Nothing was counted for {{ fig.previous.period }}: Cadence's records begin after those months end.</p>{% endif %}
+
+    {% if fig.quarters %}
+    <h3 class="ev-group">PMs on time by quarter</h3>
+    <div class="tbl-wrap ev-figs-wrap">
+      <table class="ev-figs">
+        <thead><tr><th>PMs on time</th>{% for q in fig.quarters.labels %}<th class="num">{{ q }}</th>{% endfor %}</tr></thead>
+        <tbody>{% for r in fig.quarters.rows %}<tr><td class="ev-wrap">{{ r.label }}</td>{% for c in r.cells %}<td class="num">{{ c.value }}{% if c.detail %}<small>{{ c.detail }}</small>{% endif %}</td>{% endfor %}</tr>{% endfor %}</tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    {% if fig.aem is not None %}
+    <h3 class="ev-group">AEM effectiveness by model</h3>
+    {% if fig.aem %}
+    <div class="tbl-wrap ev-figs-wrap">
+      <table class="ev-figs">
+        <thead><tr><th>Model</th><th>Risk</th><th class="num">Interval (manufacturer → AEM)</th><th class="num">Devices</th><th class="num">Device-years</th><th class="num">Repairs</th><th class="num">Per device-year</th><th class="num">At approval</th><th class="num">Failed PMs</th></tr></thead>
+        <tbody>{% for r in fig.aem %}<tr>
+          <td class="ev-wrap">{{ r.model }}{% if r.approved_on %}<small>AEM approved {{ r.approved_on }}</small>{% endif %}</td><td>{{ r.risk_class }}</td>
+          <td class="num">{{ r.oem_months }} → {{ r.aem_months }} months</td><td class="num">{{ r.devices }}</td><td class="num">{{ r.device_years }}</td>
+          <td class="num">{{ r.repairs }}</td><td class="num">{{ r.per_device_year|default_if_none:"—" }}</td><td class="num">{{ r.evidence_per_device_year|default_if_none:"—" }}</td>
+          <td class="num">{{ r.failed_pms }}</td>
+        </tr>{% endfor %}</tbody>
+      </table>
+    </div>
+    <p class="hint">Corrective repairs completed in the period per device-year, beside the rate in the evidence the AEM decision approved. Our devices only.</p>
+    {% else %}<div class="empty ev-empty">No device model was on AEM on {{ fig.taken_on }}.</div>{% endif %}
+    {% endif %}
+
+    {% if fig.not_recorded %}
+    <h3 class="ev-group">Not recorded in Cadence</h3>
+    <ul class="ev-not">{% for line in fig.not_recorded %}<li>{{ line }}</li>{% endfor %}</ul>
+    {% endif %}
+
+    {% if fig.binder %}
+    <h3 class="ev-group">The survey binder's items for the period</h3>
+    <div class="tbl-wrap ev-figs-wrap">
+      <table class="ev-figs">
+        <thead><tr><th>Section</th><th class="num">Gaps</th><th class="num">Findings</th><th class="num">Checks</th></tr></thead>
+        <tbody>{% for s in fig.binder %}<tr><td class="ev-wrap">{{ s.title }}</td><td class="num">{{ s.gap }}</td><td class="num">{{ s.finding }}</td><td class="num">{{ s.check }}</td></tr>{% endfor %}</tbody>
+      </table>
+    </div>
+    <p class="hint">Counted on {{ fig.taken_on }}. <a class="link" href="{{ fig.binder_url }}">Open the survey binder for these months</a> for each item and the record that fixes it (it counts as of today).</p>
+    {% endif %}
+    {% elif not fig.left_out %}
+    <div class="empty ev-empty">No figures taken.</div>
+    {% endif %}
+  </div>
+</section>

@@ -1,0 +1,50 @@
+{% load web %}
+{% comment %}The facility's program evaluations (slice 32, views_evaluations.evaluations): newest period first, each with its number and
+   version, its 12 months, its status, the day it was approved, and the committees that approved it; when the next is due
+   (services.next_due: 90 days after the 12 months after the last approved one end); New evaluation (Edit) as a modal, or on the page
+   when its address was opened directly (`new`).{% endcomment %}
+<div class="ev ev-list" id="ev-list">
+  <div class="page-head">
+    <div>
+      <h1>Program evaluation</h1>
+      <p class="sub">The medical equipment program's evaluation of each 12 months for its committee: Cadence's figures for the period, what Clinical Engineering writes about it, the objectives, and the committee's approval</p>
+    </div>
+    <div class="actions">
+      <a class="btn" href="{% url 'web:reports' %}">{% icon "rep" %} Reports</a>
+      {% if can_new %}<a class="btn primary" href="{% url 'web:evaluation_new' %}" hx-get="{% url 'web:evaluation_new' %}" hx-target="#modal-card">{% icon "plus" %} New evaluation</a>{% endif %}
+    </div>
+  </div>
+
+  {% if next_due %}
+  <div class="note ev-due{% if next_due.overdue %} warn{% endif %}" role="status">
+    {% if next_due.overdue %}<span class="chip crit">Overdue</span> {% endif %}The evaluation of {{ next_due.period }} is due for approval by {{ next_due.due_on|date:"M j, Y" }}: 90 days after those months end. The last approved is <a class="link" href="{{ next_due.url }}">{{ next_due.after.label }}</a>.
+  </div>
+  {% else %}
+  <p class="hint ev-due">No evaluation is approved yet. Once one is, Cadence shows when the next is due: 90 days after the following 12 months end.</p>
+  {% endif %}
+
+  {% if new %}
+  <section class="panel ev-new-panel" aria-labelledby="ev-new-h">{% include "web/_evaluation_new.html" with form=new.form covers=new.covers presets=new.presets refusal=new.refusal modal=False %}</section>
+  {% endif %}
+
+  <section class="panel" aria-label="Evaluations">
+    {% if rows %}
+    <div class="tbl-wrap flat">
+      <table class="ev-tbl">
+        <thead><tr><th>Evaluation</th><th>Period</th><th>Status</th><th>Approved</th><th>By</th></tr></thead>
+        <tbody>
+          {% for r in rows %}<tr{% if r.quiet %} class="ev-quiet"{% endif %}>
+            <td class="nw"><a class="tag" href="{{ r.url }}">{{ r.ev.label }}</a></td>
+            <td class="ev-wrap">{{ r.period }}</td>
+            <td><span class="chip {{ r.css }}">{{ r.status }}</span></td>
+            <td class="nw">{% if r.ev.approved_on %}{{ r.ev.approved_on|date:"M j, Y" }}{% else %}<span class="muted">—</span>{% endif %}</td>
+            <td class="ev-wrap">{{ r.bodies|default:"—" }}</td>
+          </tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty">No program evaluation yet.{% if can_new %} New evaluation drafts one for 12 months that have ended, with Cadence's figures for them.{% endif %}</div>
+    {% endif %}
+  </section>
+</div>

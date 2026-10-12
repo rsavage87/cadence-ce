@@ -1,0 +1,10 @@
+{% comment %}What Clinical Engineering writes (slice 32): each NARRATIVE field, the inventory review day, and the written plan reviewed, a
+   block each, written and saved on its own (views_evaluations.evaluation_text) while the evaluation is a draft and the reader has
+   Edit. About the program as a whole: the warning says so.{% endcomment %}
+<section id="ev-text" class="panel ev-sec" aria-labelledby="ev-text-h">
+  <div class="panel-h"><h2 id="ev-text-h">The evaluation</h2><span class="sub">What Clinical Engineering writes for the committee</span></div>
+  <div class="panel-b">
+    {% if acts.write %}<p class="note ev-privacy" role="note">{{ privacy }}</p>{% endif %}
+    {% for b in blocks %}{% include "web/_evaluation_field.html" with b=b editing=False write=acts.write %}{% endfor %}
+  </div>
+</section>

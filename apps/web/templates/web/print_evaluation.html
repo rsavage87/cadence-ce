@@ -1,0 +1,178 @@
+{% extends "web/print_base.html" %}
+{% comment %}The committee's copy of a program evaluation (slice 32, views_evaluations.evaluation_print): a cover (the facility, the
+   period, the number and version, the stamp, when the figures were taken, the plan and inventory reviewed, the lines a committee must
+   not misread, and what was left out for this reader), the figures as this reader may read them (indicators.cut), the text, the
+   objectives, and the approvals; on a complete copy sent to committee, the committee's signature lines. Each page repeats the
+   evaluation, the period, the day the figures were taken, and the stamp. A copy with anything left out is stamped a partial copy and
+   carries no signature lines.{% endcomment %}
+{% block title %}{{ ev.label }} program evaluation{% endblock %}
+{% block page_style %}<style>
+@page{size:letter;margin:.5in}
+.evp-run{font-size:10.5px;color:var(--muted);margin:0 0 10px;padding-bottom:4px;border-bottom:1px solid var(--line-2)}
+.evp-stamp{display:inline-block;font-size:15px;font-weight:700;letter-spacing:.02em;padding:4px 12px;border:2px solid var(--ink);border-radius:4px;margin:0 0 12px}
+.evp-stamp.draft{border-style:dashed;color:var(--ink-2)}
+.evp-stamp.ready{color:var(--accent);border-color:var(--accent)}
+.evp-stamp.approved{color:var(--ok);border-color:var(--ok)}
+.evp-stamp.superseded,.evp-stamp.discarded{color:var(--muted);border-color:var(--muted)}
+.evp-partial{display:block;font-size:14px;font-weight:700;color:var(--bad);border:2px solid var(--bad);border-radius:4px;padding:4px 12px;margin:0 0 12px}
+.evp-cover h1{font-size:24px;margin-bottom:4px}
+.evp-sub{color:var(--ink-2);margin-bottom:14px}
+.evp-cover dl.kv{margin:10px 0 12px}
+.evp-lines{padding-left:18px;margin:6px 0}
+.evp-lines li{margin:3px 0}
+.evp-out{padding-left:18px;margin:4px 0}
+table.evp td{overflow-wrap:anywhere}
+table.evp td small,table.evp th small{display:block;font-size:10.5px;font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0}
+table.evp td.ind{width:46%}
+table.evp td.res{white-space:nowrap}
+.evp-met{font-weight:600}
+.evp-met.ok{color:var(--ok)}
+.evp-met.crit{color:var(--bad)}
+.evp-prose{white-space:normal;margin:2px 0 10px}
+.evp-none{color:var(--muted);margin:2px 0 10px}
+.evp-hint{color:var(--muted);font-size:11px;margin:4px 0 8px}
+.evp-tally{font-size:13px;font-weight:600;margin:6px 0}
+.evp-gap{margin-top:18px}
+table.evp tr.evp-grp th{font-size:12.5px;text-transform:none;letter-spacing:0;color:var(--ink);padding-top:12px;border-bottom:1.5px solid var(--ink)}
+table.evp-figs thead{display:table-header-group}
+</style>{% endblock %}
+{% block bar_title %}{{ ev.label }} · {{ period }}{% endblock %}
+{% block bar_hint %}The committee's copy. Print it, or choose Save as PDF in the print dialog.{% endblock %}
+{% block sheets %}
+<main>
+<section class="sheet evp-cover">
+  <p class="evp-stamp {{ ev.status }}">{{ stamp }}</p>
+  {% if fig.left_out %}<p class="evp-partial">{{ partial_copy }}</p>{% endif %}
+  <h1>Medical equipment program evaluation</h1>
+  <p class="evp-sub">{{ request.tenant.name }} · Clinical Engineering · {{ period }}</p>
+  <dl class="kv">
+    <div><dt>Facility</dt><dd>{{ request.tenant.name }}</dd></div>
+    <div><dt>Period</dt><dd>{{ period }}</dd></div>
+    <div><dt>Evaluation</dt><dd>{{ ev.label }}{% if ev.amends %} (amends {{ ev.amends.label }}){% endif %}</dd></div>
+    <div><dt>Status</dt><dd>{{ ev.get_status_display }}</dd></div>
+    <div><dt>Figures taken</dt><dd>{{ fig.taken_on|default:"Not taken" }}</dd></div>
+    <div><dt>Written plan reviewed</dt><dd>{{ plan.text|default:"Not recorded" }}</dd></div>
+    <div><dt>Inventory reviewed</dt><dd>{{ inventory.text|default:"Not recorded" }}</dd></div>
+  </dl>
+  {% if fig.provisional or fig.records_begin or fig.changed %}
+  <ul class="evp-lines">
+    {% if fig.provisional %}<li>Provisional until {{ fig.provisional }}: PMs of the period were still inside their window when the figures were taken.</li>{% endif %}
+    {% if fig.records_begin %}<li>Cadence's records begin {{ fig.records_begin }}: work before then is not in Cadence, so a figure for those months is not a zero.</li>{% endif %}
+    {% if fig.changed %}<li>Settings changed since the period ended; the figures keep the targets and windows in force on {{ fig.as_of }}:{% for c in fig.changed %} {{ c.on }}: {{ c.what }} changed from {{ c.before|default:"none" }} to {{ c.after|default:"none" }}.{% endfor %}</li>{% endif %}
+  </ul>
+  {% endif %}
+  {% if fig.left_out %}
+  <h2>Left out of this copy</h2>
+  <p>Printed by {{ request.user }}, whose role cannot see:</p>
+  <ul class="evp-out">{% for x in fig.left_out %}<li>{{ x }}</li>{% endfor %}</ul>
+  <p>{{ partial_copy }}. Someone whose role can see every area should print the committee's copy.</p>
+  {% endif %}
+  {% for b in narrative %}{% if b.key == "summary" %}
+  <h2>{{ b.label }}</h2>
+  {% if b.text %}<div class="evp-prose">{{ b.text|linebreaksbr }}</div>{% else %}<p class="evp-none">Not written.</p>{% endif %}
+  {% endif %}{% endfor %}
+</section>
+
+{% if fig.shown %}
+<section class="sheet">
+  <p class="evp-run">{{ ev.label }} · {{ period }} · figures taken {{ fig.taken_on }} · {{ stamp }}{% if fig.left_out %} · {{ partial_copy }}{% endif %}</p>
+  <h1>Figures</h1>
+  <p class="evp-hint">Judged by the facility's own targets and the PM windows in force on {{ fig.as_of|default:"the period's end" }}{% if fig.window_high %} (life support and high risk: {{ fig.window_high }}; medium and low risk: {{ fig.window_other }}){% endif %}. Met means the facility's own target was reached. "On {{ fig.taken_on }}" marks a figure as of the day the figures were taken, not the period's end.</p>
+  {% if fig.judged %}<p class="evp-tally">{{ fig.met }} of {{ fig.judged }} of the facility's targets met{% if fig.left_out %}, of those in this copy{% endif %}</p>{% endif %}
+  {% if fig.groups %}
+  <table class="evp evp-figs">
+    <thead><tr><th>Indicator</th><th class="num">Target</th><th class="num">This period</th><th class="num">{% if fig.previous %}{{ fig.previous.title }}<small>{{ fig.previous.period }}</small><small>{{ fig.previous.how }}</small>{% else %}Previous{% endif %}</th><th>Result</th></tr></thead>
+    {% for g in fig.groups %}
+    <tbody>
+      <tr class="evp-grp"><th colspan="5" scope="rowgroup">{{ g.label }}</th></tr>
+      {% for r in g.rows %}<tr>
+      <td class="ind">{{ r.label }}{% if r.taken %} (on {{ fig.taken_on }}){% endif %}{% if r.rule %}<small>{{ r.rule }}</small>{% endif %}</td>
+      <td class="num">{{ r.target|default:"—" }}</td>
+      <td class="num">{{ r.value }}{% if r.detail %}<small>{{ r.detail }}</small>{% endif %}</td>
+      <td class="num">{{ r.previous|default:"—" }}{% if r.previous_detail %}<small>{{ r.previous_detail }}</small>{% endif %}</td>
+      <td class="res">{% if r.met %}<span class="evp-met {{ r.met_css }}">{{ r.met }}</span>{% endif %}</td>
+      </tr>{% endfor %}
+    </tbody>
+    {% endfor %}
+  </table>
+  {% endif %}
+  {% if fig.previous.empty %}<p class="evp-hint">Nothing was counted for {{ fig.previous.period }}: Cadence's records begin after those months end.</p>{% endif %}
+  {% if fig.quarters %}
+  <h2>PMs on time by quarter</h2>
+  <table class="evp">
+    <thead><tr><th>PMs on time</th>{% for q in fig.quarters.labels %}<th class="num">{{ q }}</th>{% endfor %}</tr></thead>
+    <tbody>{% for r in fig.quarters.rows %}<tr><td>{{ r.label }}</td>{% for c in r.cells %}<td class="num">{{ c.value }}{% if c.detail %}<small>{{ c.detail }}</small>{% endif %}</td>{% endfor %}</tr>{% endfor %}</tbody>
+  </table>
+  {% endif %}
+  {% if fig.aem is not None %}
+  <h2>AEM effectiveness by model</h2>
+  {% if fig.aem %}
+  <table class="evp">
+    <thead><tr><th>Model</th><th>Risk</th><th class="num">Interval</th><th class="num">Devices</th><th class="num">Device-years</th><th class="num">Repairs</th><th class="num">Per device-year</th><th class="num">At approval</th><th class="num">Failed PMs</th></tr></thead>
+    <tbody>{% for r in fig.aem %}<tr><td>{{ r.model }}{% if r.approved_on %}<small>AEM approved {{ r.approved_on }}</small>{% endif %}</td><td>{{ r.risk_class }}</td><td class="num">{{ r.oem_months }} → {{ r.aem_months }} months</td><td class="num">{{ r.devices }}</td><td class="num">{{ r.device_years }}</td><td class="num">{{ r.repairs }}</td><td class="num">{{ r.per_device_year|default_if_none:"—" }}</td><td class="num">{{ r.evidence_per_device_year|default_if_none:"—" }}</td><td class="num">{{ r.failed_pms }}</td></tr>{% endfor %}</tbody>
+  </table>
+  <p class="evp-hint">Corrective repairs completed in the period per device-year, beside the rate in the evidence the AEM decision approved. Our devices only.</p>
+  {% else %}<p class="evp-none">No device model was on AEM on {{ fig.taken_on }}.</p>{% endif %}
+  {% endif %}
+  {% if fig.not_recorded %}
+  <h2>Not recorded in Cadence</h2>
+  <ul class="evp-lines">{% for line in fig.not_recorded %}<li>{{ line }}</li>{% endfor %}</ul>
+  {% endif %}
+  {% if fig.binder %}
+  <h2>The survey binder's items for the period</h2>
+  <table class="evp">
+    <thead><tr><th>Section</th><th class="num">Gaps</th><th class="num">Findings</th><th class="num">Checks</th></tr></thead>
+    <tbody>{% for s in fig.binder %}<tr><td>{{ s.title }}</td><td class="num">{{ s.gap }}</td><td class="num">{{ s.finding }}</td><td class="num">{{ s.check }}</td></tr>{% endfor %}</tbody>
+  </table>
+  <p class="evp-hint">Counted on {{ fig.taken_on }}.</p>
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="sheet">
+  <p class="evp-run">{{ ev.label }} · {{ period }} · figures taken {{ fig.taken_on|default:"—" }} · {{ stamp }}{% if fig.left_out %} · {{ partial_copy }}{% endif %}</p>
+  <h1>The evaluation</h1>
+  {% for b in narrative %}{% if b.key != "summary" %}
+  <h2>{{ b.label }}</h2>
+  {% if b.text %}<div class="evp-prose">{{ b.text|linebreaksbr }}</div>{% else %}<p class="evp-none">Not written.</p>{% endif %}
+  {% endif %}{% endfor %}
+</section>
+
+<section class="sheet">
+  <p class="evp-run">{{ ev.label }} · {{ period }} · figures taken {{ fig.taken_on|default:"—" }} · {{ stamp }}{% if fig.left_out %} · {{ partial_copy }}{% endif %}</p>
+  <h1>Objectives</h1>
+  <h2>This period's objectives</h2>
+  {% if review %}
+  <table class="evp">
+    <thead><tr><th>Objective</th><th>Target</th><th>Result</th><th>Comment</th></tr></thead>
+    <tbody>{% for o in review %}<tr><td>{{ o.text }}</td><td>{{ o.target|default:"—" }}</td><td class="res">{{ o.get_result_display|default:"Not recorded" }}</td><td>{{ o.comment|default:"—" }}</td></tr>{% endfor %}</tbody>
+  </table>
+  {% else %}<p class="evp-none">None.</p>{% endif %}
+  <h2>Next period's objectives</h2>
+  {% if next %}
+  <table class="evp">
+    <thead><tr><th>Objective</th><th>Target</th></tr></thead>
+    <tbody>{% for o in next %}<tr><td>{{ o.text }}</td><td>{{ o.target|default:"—" }}</td></tr>{% endfor %}</tbody>
+  </table>
+  {% else %}<p class="evp-none">None.</p>{% endif %}
+
+  <h1 class="evp-gap">Approvals</h1>
+  {% if approvals %}
+  <table class="evp">
+    <thead><tr><th>Committee</th><th>Meeting</th><th>Chair</th><th>Minutes</th><th>Recorded by</th></tr></thead>
+    <tbody>{% for r in approvals %}{% with a=r.a %}<tr><td>{{ r.body }}{% if r.first %}<small>Approved it</small>{% endif %}</td><td class="res">{{ a.meeting_on|date:"M j, Y" }}</td><td>{{ a.chair_name|default:"—" }}{% if a.chair_title %}<small>{{ a.chair_title }}</small>{% endif %}</td><td>{{ a.minutes_reference|default:"—" }}</td><td>{{ a.recorded_by|default:"—" }}</td></tr>{% endwith %}{% endfor %}</tbody>
+  </table>
+  {% else %}<p class="evp-none">None recorded.</p>{% endif %}
+  {% if ev.status == "ready" %}
+  {% if fig.left_out %}
+  <p class="evp-hint">Signature lines are printed only on a complete copy: this one leaves figures out.</p>
+  {% else %}
+  <h2>For the committee</h2>
+  <p>Sent to committee {{ ev.sent_on|date:"M j, Y" }}. Approved by the committee as its minutes record:</p>
+  <div class="sign"><div>Committee</div><div>Meeting day</div><div>Minutes reference</div></div>
+  <div class="sign"><div>Chair's name and title</div><div>Chair's signature</div><div>Date</div></div>
+  {% endif %}
+  {% endif %}
+</section>
+</main>
+{% endblock %}

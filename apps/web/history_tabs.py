@@ -31,8 +31,11 @@ RELATED = {
     "work_orders": {"labor": "work_order_id", "parts": "work_order_id"},
     "device_models": {"aem": "device_model_id"},
     "incidents": {"incident_holds": "incident_id"},  # slice 28: the incident drawer's History carries its holds' changes
+    # slice 32: a program evaluation's History carries its objectives' and approvals' changes
+    "evaluations": {"evaluation_objectives": "evaluation_id", "evaluation_approvals": "evaluation_id"},
 }
-NOUNS = {"labor": "Labor", "parts": "Part", "aem": "AEM case", "incident_holds": "Hold"}  # a related row's entries: "Labor added", "Part removed"
+NOUNS = {"labor": "Labor", "parts": "Part", "aem": "AEM case", "incident_holds": "Hold", "evaluation_objectives": "Objective",
+         "evaluation_approvals": "Approval"}  # a related row's entries: "Labor added", "Part removed"
 VERBS = {"added": "added", "changed": "changed", "deleted": "removed"}
 
 
