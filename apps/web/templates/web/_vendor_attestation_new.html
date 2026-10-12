@@ -1,0 +1,23 @@
+{% load web %}
+{# Add attestation (slice 31). Context: form (forms_vendors.AttestationForm), suggestions, vendor_list, states (what an attestation states), elsewhere (what belongs to the vendor credentialing system). #}
+<div class="modal-h"><h2>Add attestation</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+<form id="va-form" class="vs-form" hx-post="{% url 'web:vendor_attestation_new' %}" hx-target="#modal-card">
+  {% if form.non_field_errors %}<div class="note warn" style="margin:12px 16px 0">{{ form.non_field_errors|striptags }}</div>{% endif %}
+  <div class="form">
+    <div class="note full vs-states">{{ states }} {{ elsewhere }}</div>
+    <fieldset class="full vs-names"><legend>Vendor names</legend>
+      {% for n in form.names_shown %}<input name="vendor_names" value="{{ n }}" list="{{ vendor_list }}" autocomplete="off" maxlength="120" aria-label="Vendor name {{ forloop.counter }}"{% if forloop.first %} autofocus placeholder="As your work orders and contracts name it"{% else %} placeholder="Another name it goes by, if any"{% endif %}>{% endfor %}
+      <datalist id="{{ vendor_list }}">{% for c in suggestions %}<option value="{{ c }}"></option>{% endfor %}</datalist>
+      {% if form.vendor_names.errors %}<span class="err">{{ form.vendor_names.errors|striptags }}</span>{% endif %}
+      <span class="hint">Each name your contracts and work orders use for this vendor: "Philips Healthcare" on the contract, "Philips field service" on work without one.</span>
+    </fieldset>
+    {% include "web/_vendor_coverage_fields.html" %}
+    <label class="full">{{ form.reference.label }}{{ form.reference }}{% if form.reference.errors %}<span class="err">{{ form.reference.errors|striptags }}</span>{% endif %}<span class="hint">{{ form.reference.help_text }}</span></label>
+    <label>Received{{ form.received_on }}{% if form.received_on.errors %}<span class="err">{{ form.received_on.errors|striptags }}</span>{% endif %}</label>
+    <span class="vs-fill" aria-hidden="true"></span>
+    <label>Valid from{{ form.valid_from }}{% if form.valid_from.errors %}<span class="err">{{ form.valid_from.errors|striptags }}</span>{% endif %}<span class="hint">{{ form.valid_from.help_text }}</span></label>
+    <label>Valid through{{ form.valid_through }}{% if form.valid_through.errors %}<span class="err">{{ form.valid_through.errors|striptags }}</span>{% endif %}<span class="hint">{{ form.valid_through.help_text }}</span></label>
+    <p class="hint full">The period the letter states, whenever it reached you: a letter for 2026 received in February covers January too. Cadence keeps the document; it does not judge anyone's competence.</p>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Add attestation</button></div>
+</form>

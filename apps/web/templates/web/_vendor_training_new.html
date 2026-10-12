@@ -1,0 +1,26 @@
+{% load web %}
+{# Add training (slice 31): one coverage, source, and dates for one or several of a vendor's engineers. Context: form (forms_vendors.TrainingForm), vendor, offered, from_engineer. The engineers' boxes are sibling inputs so that CSS can hide the certificate number once two are ticked (the form drops it then too). #}
+<div class="modal-h"><h2>Add training{% if vendor %} · {{ vendor }}{% endif %}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if not offered %}
+<div class="form" style="grid-template-columns:1fr"><div class="note">No active engineer on file for {{ vendor|default:"this vendor" }}. Add the engineer first, then their training.</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="vt-form" class="vs-form" hx-post="{% url 'web:vendor_training_new' %}" hx-target="#modal-card">
+  {% if from_engineer %}<input type="hidden" name="engineer" value="{{ from_engineer.pk }}">{% else %}<input type="hidden" name="vendor" value="{{ vendor }}">{% endif %}
+  {% if form.non_field_errors %}<div class="note warn" style="margin:12px 16px 0">{{ form.non_field_errors|striptags }}</div>{% endif %}
+  <div class="form">
+    <fieldset class="full vs-engs"><legend>Engineers</legend>
+      <div class="vs-eng-boxes">{% with chosen=form.engineers.value %}{% for pk, label in form.engineers.field.choices %}<input type="checkbox" id="vt-eng-{{ forloop.counter }}" name="engineers" value="{{ pk }}"{% if pk in chosen %} checked{% endif %}><label for="vt-eng-{{ forloop.counter }}">{{ label }}</label>{% endfor %}{% endwith %}</div>
+      {% if form.engineers.errors %}<span class="err">{{ form.engineers.errors|striptags }}</span>{% endif %}
+      <span class="hint">Tick several for a class the vendor ran: each gets the same record.</span>
+    </fieldset>
+    {% include "web/_vendor_coverage_fields.html" %}
+    <label>Source{{ form.source }}{% if form.source.errors %}<span class="err">{{ form.source.errors|striptags }}</span>{% endif %}</label>
+    <label class="vs-cert">{{ form.certificate.label }}{{ form.certificate }}{% if form.certificate.errors %}<span class="err">{{ form.certificate.errors|striptags }}</span>{% endif %}</label>
+    <label>Issued{{ form.issued_on }}{% if form.issued_on.errors %}<span class="err">{{ form.issued_on.errors|striptags }}</span>{% endif %}</label>
+    <label>{{ form.expires_on.label }}{{ form.expires_on }}{% if form.expires_on.errors %}<span class="err">{{ form.expires_on.errors|striptags }}</span>{% endif %}<span class="hint">{{ form.expires_on.help_text }}</span></label>
+    <p class="hint full">Cadence keeps the document, by its own dates; it does not judge anyone's competence. A renewal is a new record: the one before stays, for the days it covered.</p>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Add training</button></div>
+</form>
+{% endif %}

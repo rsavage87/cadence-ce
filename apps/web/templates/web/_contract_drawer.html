@@ -29,6 +29,7 @@
     <div><dt>Notes</dt><dd>{{ c.notes|default:"—" }}</dd></div>
     <div><dt>Status</dt><dd><span class="chip {{ st.css }}">{{ st.label }}</span></dd></div>
   </dl>
+  {% if vendor_line.text %}<p class="vs-ct-line">{% icon "users" %} <a class="link" href="{{ vendor_line.url }}">{{ vendor_line.text }}</a></p>{% endif %}
   {% if can_edit %}<div style="margin-top:10px"><a class="link" href="{% url 'web:contract' c.pk %}?edit=1" hx-get="{% url 'web:contract' c.pk %}?edit=1" hx-target="#drawer">Edit contract</a></div>{% endif %}
   </div>
   {% endif %}
