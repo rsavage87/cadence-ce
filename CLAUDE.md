@@ -31,7 +31,7 @@ security tests, `tests/test_postgres_rls.py`).
 5. **State changes go through services** (`apps/workorders/services.py`, `apps/pm/services.py`, `apps/contracts/services.py`,
    `apps/accounts/services.py`, `apps/credentials/services.py`, `apps/recalls/services.py`, `apps/facility/services.py`, `apps/equipment/services.py`,
    `apps/pm/aem.py`, `apps/pm/procedures.py`, `apps/workorders/costs.py`, `apps/workorders/completion.py`, `apps/workorders/legacy.py`, `apps/reports/custom.py`,
-   `apps/imports/services.py`, `apps/incidents/services.py`), never by setting fields in a
+   `apps/imports/services.py`, `apps/incidents/services.py`, `apps/vendors/services.py`), never by setting fields in a
    view or calling model helpers like
    `Contract.add_assets` directly. Services validate, write status history, and keep the asset in sync.
 6. **No PHI by design.** The portal never asks for patient identifiers. Don't add free-text fields that invite them, and never offer
@@ -171,6 +171,11 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `repair_checks.checked_by` names who checked (the vendor, else the technician assigned); equipment's set_status refuses in service or
   on loan while a repair holds the device (`holding_repair`, `repair_hold_message`), and an incident's Return to use waits for its
   investigation's checks;
+  slice 31: `WorkOrder.vendor_engineer` (the vendor's engineer responsible, as their report names them; optional), written only by
+  `complete_work_order` (vendor_engineer / engineer_name, KEEP when omitted) and `services.set_vendor_engineer` (Edit; Approve once
+  closed; never scoped: `permissions.can_set_vendor_engineer`); the vendor's report number (`checks_reference`) on any vendor job (kept
+  when omitted, refused in-house); `assign` only on open work orders, clearing the engineer when the work moves (by vendor_key);
+  `repair_checks.checked_by(wo, user)` names the engineer;
   slice 29: no PM on a temporary device (`no_pm_message`), its incoming inspection on `inspections.TEMPORARY_INCOMING` and refused a
   pass while its owner's PM date is past (`owner_pm_refusal`), recall batches give its recall work order to its owner;
   slice 28, a device held as evidence (Asset.incident_hold): `change_status` refuses a start or completion (`HOLD_MOVES`) of any of its
@@ -206,6 +211,20 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   Equipment Edit to put a device back in use)) and the read helpers (`clock`, `needing_action`, `badge`, `hold_words`,
   `investigation_of`); `permissions.py` (Edit records and holds, also Equipment Edit; Approve decides, reports, releases, closes; scoped
   users never); `notify.py` (the incidents emails to Incidents Approve: recorded, 3 work days left, overdue; number, tag, due date only)
+- `apps/vendors` contracted service and vendor staff (slice 31, beyond the mock; CMS A-0724 asks how the facility assures contractors use
+  qualified people, never each engineer's certificate): `VendorEngineer` (a name and a company, as the vendor's reports name them; one per
+  vendor and name by the stored `company_key` / `name_key`; never deleted, deactivated; the company fixed once a work order names them),
+  `EngineerTraining` and `VendorAttestation` (the vendor's written statement: one or more vendor names, a token reference, received, valid
+  from and through), each covering device models (ids), a manufacturer's product category, or (an attestation) every device the vendor
+  services, and each judged by its own dates whenever entered (a renewal is a new record; removed only as entered in error); `rules.py`
+  the one rule (`vendor_key`: casefold, spaces collapsed, one trailing " field service" dropped; the name rule: letters and . ' - , only;
+  `evidence_for` a vendor job on its completed day: the named engineer's training, else an attestation from the work order's vendor or
+  the engineer's company, else none; the words: "training on file", "attestation on file", never "trained" or "qualified"); `services.py`
+  every write and the doors' helpers (`engineer_choice` / `KEEP`, `engineer_options`, `may_name`: a scoped vendor account only its own
+  company's engineers, an id outside its choices answering as unknown; `engineer_shown`: "Another company's engineer" for a scoped
+  reader; `engineer_named` creates on the unique key, re-read after a race); `permissions.py` (Contracts View sees, Edit changes; scoped
+  users never). No email, phone, files, notes, health, or background data on an engineer (badges and immunizations are the vendor
+  credentialing system's); never in an email, a digest, or a custom report
 - `apps/recalls` Alert (global), AlertMatch (per tenant), matching, openFDA importer; `services.py` dispositions and recall work-order batches,
   `permissions.py` (review at Edit, close/reopen at Approve); `feeds.py` the openFDA fetch shared by `import_openfda` and the Recalls
   screen's Check FDA feed (one fetch per 15 minutes for everyone, kept in apps.jobs' `JobRun`; a check matches only its own facility).
@@ -234,7 +253,10 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `run_any`, and `csv_filename` are the one lookup by key for the screen, CSV, print page, Schedule, and report emails; `all_facilities.py`
   All facilities (each joined facility's Overview figures read inside it with the person's account there, totals from summed parts);
   slice 25, `survey/` the survey binder (the contract in `__init__.py`: Period, Section, Table with lazy rows, Gap kinds gap / finding /
-  check, `binder()`; one module per section: program, inventory, maintenance, aem, inspections, recalls, incidents (slice 28, Incidents
+  check, `binder()`; one module per section: program, inventory, maintenance, aem, inspections, recalls, vendors (slice 31, "Contracted
+  service and vendor staff": each vendor with its contracts and the evidence on file, the period's vendor jobs judged by
+  vendors.rules.evidence_for, a GAP per vendor with jobs nothing covers (never a person), a CHECK for manufacturer-schedule jobs naming no
+  engineer; Reports, Work orders, Contracts, and Equipment View), incidents (slice 28, Incidents
   View: decisions and reports against the clock; a held device past its PM is a finding, explained), staff (slice 30: `repairs`, the checks after repair before return to use, by outcome, never a gap; slice 29: inventory lists
   temporary equipment on site with each owner's PM date: a past one is a gap; the other sections count ours); read only, a fixed number
   of queries, history through `core.history._rows`, never requester text; each section needs Reports View plus its areas' View,
@@ -244,7 +266,11 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   History tab or section of the device, work order, contract, and model drawers; `views_change_log.py` Users and access's Change log
   (with its CSV and print); `views_notifications.py` the account menu's Notifications page; `views_facilities.py` the facility switch and
   an invitation's join page, `views_my_work.py` My work (slice 24: the cards, `wo_waiting`, `from=my_work` answers without the drawer), `views_settings.py`'s `settings_pm_window` the PM on-time window panel (slice 27), `views_wo_complete.wo_keep_open` a repair kept open after a failed check (slice 30, with
-  `results_context`'s repair kind and `views_print.repair_checks_print`), `views_temporary.py` loaners and rentals (slice 29, with `forms_temporary.py`: Add rental or
+  `results_context`'s repair kind and `views_print.repair_checks_print`), `views_vendors.py` the Contracts screen's Vendor staff tab (slice 31, with
+  `forms_vendors.py`: the vendors merged by vendor_key with their attestations and engineers' training, `?vendor=` (the binder's gaps link
+  here), Add engineer, Change engineer, Add training for one or several of a vendor's engineers, Add attestation, the engineer drawer, the
+  contract drawer's vendor line), `views_wo_engineer.py` the work order's Field engineer row, its Change, and the completion modal's
+  "Who did the work" select (names only for a vendor's account), `views_temporary.py` loaners and rentals (slice 29, with `forms_temporary.py`: Add rental or
   loaner, the drawer's temporary section (`asset_tabs.temporary_box`), Change details, Return to owner, Keep it, Vendor loaner arrived,
   Return the loaner; the Equipment "Whose" filter through `forms.equipment_assets`), `views_incidents.py` Incidents (slice 28, with
   `forms_incidents.py`: the list and its CSV, Record incident (from the page, the device drawer, or an open repair's drawer, which it
@@ -274,7 +300,10 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   every service action; no scoped actions), a device's incident_hold (read-only), a work order an incident keeps (never deleted, its
   device and type never changed), the week assignment's on_hold; slice 30: a work order's `repair_check`, `repair_check_label`,
   `checks_reference`, and `completion_checklist` (steps, signature, never-N/A steps, the outcomes this user may send), the transition's
-  repair fields (`_repair_words` rewords a missing outcome or results as what to send); serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
+  repair fields (`_repair_words` rewords a missing outcome or results as what to send); slice 31: `views_vendors.py` /
+  `serializers_vendors.py` vendor engineers, trainings, attestations (Contracts module, no scoped actions), a work order's
+  `vendor_engineer`, `vendor_engineer_name`, and `engineer_choices` (retrieve only), the transition's `vendor_engineer` /
+  `engineer_name` / `checks_reference` (omitted keeps), the `vendor-engineer` action; serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
   same thing and calls the same service; the API never imports apps.web. `tenancy.py` (`TenantAPIMixin`: the tenant from the session or
   token user, set after authentication and restored once the response is rendered), `authentication.py` (DRF's token check plus the
   deactivated-facility refusal sign-in has)
@@ -300,4 +329,5 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   deliberate survey binder items, such as a late life-support PM with no reason, a new device in service with no incoming inspection, and
   work done during a credential's lapse; slice 28: two device incidents through the services, one closed, one open with its device held
   and its report due in a few work days; slice 29: a rental bed, a vendor loaner for a pump out for vendor repair, a demo unit past due
-  back, a returned rental)
+  back, a returned rental; slice 31: Philips engineers with training on the patient monitor model, one lapsed and named on the closed
+  monitor repair, with no Philips attestation: the binder's deliberate vendor gap; TechCare's engineer and its attestation)

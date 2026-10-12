@@ -6,7 +6,7 @@ export and print, devices are added and changed in the product, reports and requ
 device model's PM program (risk score, procedure, AEM interval) is kept in the product, and the work itself (time, parts,
 what was done, a PM's results) is recorded on the work order; vendors and clinical requesters see only their own share; facilities
 build their own reports, and a label opens its device with Scan tag; the API covers what the screens do, by session or token; every record's changes and every access change can be read back;
-staff get the emails they choose about their own work; each facility works on its own clock; one person signs in once to every facility they work at; a facility brings its records over from the CMMS it is leaving; technicians work from their phones on My work; a survey binder gathers the evidence surveyors ask for; new equipment is inspected before its first use; each facility says when a PM counts as on time; a device suspected in a death or serious injury is held as evidence and reported on the Safe Medical Devices Act's clock; rentals, vendor loaners, and demo units are on the inventory while on site, inspected before use, and returned to their owners; and every repair records its safety and functional checks before the device goes back into use. What each slice deferred is noted in its row and below.
+staff get the emails they choose about their own work; each facility works on its own clock; one person signs in once to every facility they work at; a facility brings its records over from the CMMS it is leaving; technicians work from their phones on My work; a survey binder gathers the evidence surveyors ask for; new equipment is inspected before its first use; each facility says when a PM counts as on time; a device suspected in a death or serious injury is held as evidence and reported on the Safe Medical Devices Act's clock; rentals, vendor loaners, and demo units are on the inventory while on site, inspected before use, and returned to their owners; every repair records its safety and functional checks before the device goes back into use; and the facility keeps the evidence that the vendor staff who service its equipment were trained for it. What each slice deferred is noted in its row and below.
 
 | # | Slice | Mock screen(s) | Code | Status |
 |---|-------|----------------|------|--------|
@@ -41,6 +41,7 @@ staff get the emails they choose about their own work; each facility works on it
 | 28 | Device incidents | (none: Incidents; the device and work order drawers' hold; Record incident) | new `incidents` + `core` + `accounts` + `equipment` + `workorders` + `pm` + `reports` + `notifications` + `web` + `api` | done (the annual report (Form 3419), voluntary reports, a custody log, 3500A prefill, and a printable event file deferred) |
 | 29 | Loaners and rentals | (none: Equipment, Add rental or loaner; the device drawer's temporary section) | `equipment` + `workorders` + `contracts` + `recalls` + `incidents` + `reports` + `pm` + `imports` + `web` + `api` | done (one record per arrival; Arrived again, a CE-maintained rental, accepting the owner's delivery check, API writes, and rental cost deferred) |
 | 30 | Checks after a repair | (none: Mark completed on a repair; the binder) | `workorders` + `equipment` + `incidents` + `reports` + `web` + `api` | done (no Settings scope; checks after recall actions and upgrades, a drawer check for a hand return, analyzer calibration, and limit tables deferred) |
+| 31 | Contracted service and vendor staff | (none: Contracts, Vendor staff; who did the vendor's work on a work order; the binder) | new `vendors` + `workorders` + `contracts` + `reports` + `core` + `web` + `api` | done (a Vendor entity with aliases, linking accounts to engineers, imports, vendor scorecards, uploads, reminder emails, and an FSR date deferred) |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.
@@ -461,3 +462,20 @@ The mock's export and print buttons work since slice 11, Add device since slice 
   out; an API edit never drops a tag-out, or moves or retypes an open repair that holds its device; the drawer promises a return only
   while the device is still out; a device's last repair is the one completed last, by the moment its completion was recorded
   (`repair_checks.last_completed_first`).
+- Contracted service and vendor staff (slice 31, beyond the mock; the binder listed "the competence of contracted vendor staff" as not
+  covered). CMS A-0724 asks the hospital to show how it assures contractors use qualified personnel, never each engineer's certificate,
+  and 482.12(e), TJC LD.13.03.03, and DNV GB.3 want the list of contracted services. So `apps/vendors` keeps two kinds of evidence, each
+  a record judged by its own dates: the vendor's written attestation (a letter or contract clause covering named models, a
+  manufacturer's category, or every device it services; several vendor names, since vendors are only names in Cadence) and an
+  engineer's training on file (models or a category; never a whole manufacturer). A vendor job may name its engineer
+  (`WorkOrder.vendor_engineer`, optional; a scoped vendor account only among its own company's engineers) and the vendor's report number
+  on any vendor job. The binder's `vendors` section lists each vendor with its contracts and what is on file, and judges each job on its
+  completed day: the named engineer's training, else the vendor's or the engineer's company's attestation, else a gap for that vendor
+  (never a person); manufacturer-schedule equipment naming no engineer is a check. Cadence keeps documents, never judges competence.
+  Deferred: a Vendor entity with aliases, linking a vendor account to an engineer, a roster on an attestation, imports of engineers and
+  training, the yearly vendor evaluation, certificate uploads, attestation reminders, an FSR date apart from completed_on, homonym
+  tie-breakers, a vendor filter on the work orders list. Rules settled in review: a vendor account never names another company's
+  engineer, even one CE named on its job; a completion that leaves the report number out keeps the one on file, and a job moved to
+  another vendor (or in-house) drops the earlier vendor's engineer and report number; an engineer's name matches with either apostrophe
+  (a phone types ’); a name or vendor whose stored key would overflow is refused; "Someone else" with no name is refused with the rest
+  of a completion's problems.

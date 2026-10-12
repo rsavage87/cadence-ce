@@ -174,8 +174,9 @@ Engineering for, for a period (the twelve months ending today by default, up to 
 the maintenance policy and targets set in Cadence, the inventory by risk class, PM completion by risk class (every PM not done by its
 due date, why it was late, when it was done after all, due dates moved after they had passed, failed PMs and their repairs, and
 life-support or high-risk devices past their PM date today), the AEM intervals in force with their committee approvals and how those
-devices have done since, incoming inspections of new devices before first use, recall and alert responses, and technician credentials
-with any work done without a credential that day (credentials read as they stood each day). What is missing is listed with a link to
+devices have done since, incoming inspections of new devices before first use, recall and alert responses, technician credentials
+with any work done without a credential that day (credentials read as they stood each day), and the contracted services with the
+evidence on file for the vendor staff who did the work. What is missing is listed with a link to
 the record that fixes it: a gap (one record fixes it), a finding (a surveyor will ask; be ready to explain), or a check (housekeeping).
 Each section also needs View on the areas it lists, so a role may see part of the binder, and the page says what was left out. Every
 table downloads as CSV, the gaps too, and "Print binder" makes one printable document with a cover page and what the binder does not
@@ -252,6 +253,23 @@ Edit); CE managers and directors decide, record reports, release, and close (Inc
 see an incident, only that a device is "Held by Clinical Engineering". A facility made before this slice gets Incidents on its
 standard roles at their defaults; set it for any custom role on the Roles tab.
 
+## Contracted service and vendor staff
+CMS asks a hospital to show how it makes sure its contractors use qualified people, and surveyors ask for the list of contracted
+services; neither asks for every vendor engineer's certificate. The Contracts screen's "Vendor staff" tab keeps the evidence, by vendor:
+the vendor's written attestation (a yearly letter or a contract clause stating that everyone who services the listed devices for you,
+on site, at its depot, or remotely, is trained on them, with the training records available on request: its reference, the names the
+vendor goes by on your work orders and contracts, the devices it covers, and the period it states), and, where you keep them, each
+engineer's training on file (a certificate or the vendor's record for named device models or one manufacturer's product category, with
+its dates). A renewal is a new record; one entered in error is removed (its history keeps it). Completing vendor work asks who did it,
+as the vendor's report names them (optional; a new name is added under that vendor), with the report's number; the work order's "Field
+engineer" row changes it once the report arrives. The survey binder's "Contracted service and vendor staff" section lists each vendor
+with its contracts and what is on file, and judges every vendor job on the day it was completed: the named engineer's training on that
+model, else the vendor's attestation (or the engineer's own company's), else nothing on file, which is a gap for that vendor; on
+imaging, radiologic, or laser equipment kept on the manufacturer's schedule, a job naming no engineer is a check. Cadence keeps the
+documents and never judges anyone's competence; badges, immunizations, and background checks belong to the facility's vendor
+credentialing system. Contracts View sees the tab, Contracts Edit changes it; a vendor's own account sees only its company's engineers'
+names on its work.
+
 ## Custom reports
 Reports' "+ Custom report" (Reports Edit: the director and Finance and quality by default) builds a report from work orders, devices,
 labor, or parts: pick the columns, filter by type, status, department, category, technician, or a date range (a rolling period such
@@ -294,6 +312,13 @@ its module's docstring under `apps/api/`, and the browsable API (open `/api/v1/`
 - recall alert matches, recall work orders, and Check FDA feed (`views_recalls.py`); Scan (`views_scan.py`);
 - users, roles, technicians, and credentials (`views_users.py`); Settings;
 - device incidents: recording, holds, the decision, reports, release, and closing (`views_incidents.py`);
+- vendor engineers, their training on file, and vendors' attestations (`views_vendors.py`: Contracts View reads; Edit adds, changes, and
+  removes a record entered in error; never a vendor's or a requester's account);
+- a vendor job names the vendor's engineer (slice 31): the transition to completed takes `vendor_engineer`, an id from the work order's
+  `engineer_choices` (GET the work order), or null when the vendor's report names nobody; left out, the engineer already named stays.
+  Or send `engineer_name` for someone else, added under the work order's vendor. Afterwards, POST
+  `/api/v1/work-orders/{id}/vendor-engineer/` (facility staff only; Approve once closed). `checks_reference`, the vendor's report number,
+  is taken on any vendor job (left out, the number on file stays) and refused on in-house work;
 - a repair is completed with how it ended (slice 30): POST `/api/v1/work-orders/{id}/transition/` with status completed and
   `repair_check`: `passed` with `results` for every step of the work order's `completion_checklist` (GET the work order for the steps,
   their signature, the steps never N/A, and the outcomes you may send), `vendor_report` with `checks_reference` (the vendor's service
