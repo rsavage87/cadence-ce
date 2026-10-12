@@ -103,6 +103,14 @@ in checklist_results (passed only), the outcome in repair_check, the report numb
 "Checked after repair; CE-10241 back in service", "Checked by the vendor, report FSO-123", "Not returned to use: CE-10241 stays out of
 service". keep_open records failed checks on a repair that stays open (a note in the failed PM's format) and, with hold, holds the
 device out (IEC 62353 6.2: equipment that fails is marked unsafe until put right).
+
+Slice 31, vendor staff (apps.vendors): a vendor-service completion of any type may name the vendor's engineer responsible, as their
+report names them (vendor_engineer: an engineer or its id, None for not named, KEEP to leave it as stored; or engineer_name, a typed
+name: the engineer of the work order's vendor with that name, created when there is none), through vendors.services.engineer_choice
+(a scoped vendor account only among its own company's engineers; anything else answers as an unknown id, keyed vendor_engineer), and
+the vendor's report number (checks_reference) on any vendor job: optional, still required with "Checked by the vendor", refused on
+in-house work (REFERENCE_ONLY). Optional by design: the survey binder judges each vendor job by the evidence on file, the engineer's
+training or the vendor's attestation (apps.vendors.rules), and calls out the jobs no evidence covers.
 """
 import hashlib
 import json
@@ -118,6 +126,7 @@ from apps.equipment.models import AssetStatus, RiskClass
 from apps.pm.procedures import step_parts
 from apps.pm.windows import window_of
 from apps.tenants.context import get_current_tenant
+from apps.vendors import services as vendor_services
 
 from . import costs, inspections, repair_checks, services
 from . import permissions as wo_perms
@@ -480,7 +489,7 @@ NO_CHECKS = "Record each check after the repair: pass, fail, or N/A (steps 1 and
 REPAIR_REVISED = "The checks after repair were revised while this was open. Check the steps again."
 REPAIR_RESULTS_ONLY = "Only a PM, an incoming inspection, or a repair records checklist results."
 REPAIR_CHECK_ONLY = "Only a repair records its checks after repair."
-REFERENCE_ONLY = "Only a repair checked by the vendor records the vendor's service report number."
+REFERENCE_ONLY = "Only vendor service records the vendor's report number."  # slice 31: any vendor job may (slice 30: repairs only)
 KEEP_OPEN_PERMISSION = "Recording failed checks after a repair needs Work orders Edit."
 # Where not returned to use takes the device from: in use, or in repair (the repair is over). keep_open's hold takes it only from in
 # use (IN_USE): a device in repair stays in repair, its repair still open. Out of service already, missing, or retired: nothing to move
@@ -562,17 +571,22 @@ def _check_repair(wo: WorkOrder, repair_check: str, steps, results, signature, b
     return snapshot
 
 
-def _reference(value, repair_check: str, errors: dict) -> str:
-    """The vendor's service report number (slice 30): required with checked by the vendor, a token (apps.core.validators) of at most
-    REFERENCE_MAX characters; refused, keyed checks_reference, with another outcome. "" when it is not kept."""
+def _reference(value, errors: dict, *, vendor_service: bool, repair_check: str | None = None) -> str:
+    """The vendor's service report or field service order number (slice 30; slice 31: on any vendor-service completion): required with
+    checked by the vendor, optional on other vendor work, a token (apps.core.validators) of at most REFERENCE_MAX characters; refused,
+    keyed checks_reference, on in-house work. `repair_check` is a repair's outcome (None: not a repair). "" when it is not kept."""
     text = str(value if value is not None else "").strip()
-    if repair_check != RepairCheck.VENDOR_REPORT:
-        if text and repair_check in RepairCheck.values:  # no outcome yet: repair_check's error says what to fix
-            errors["checks_reference"] = REFERENCE_ONLY
-        return ""
+    required = repair_check == RepairCheck.VENDOR_REPORT
     if not text:
-        errors["checks_reference"] = "Enter the vendor's service report or field service order number."
-    elif len(text) > REFERENCE_MAX:
+        if required:
+            errors["checks_reference"] = "Enter the vendor's service report or field service order number."
+        return ""
+    if not (vendor_service or required):  # checked by the vendor on in-house work: repair_check's refusal says it
+        errors["checks_reference"] = REFERENCE_ONLY
+        return ""
+    if repair_check is not None and repair_check not in RepairCheck.values:
+        return ""  # no outcome yet: repair_check's error says what to fix
+    if len(text) > REFERENCE_MAX:
         errors["checks_reference"] = f"Keep the report number to {REFERENCE_MAX} characters."
     else:
         try:
@@ -940,16 +954,18 @@ def result_note(result: str, done: Completion) -> str:
 @transaction.atomic
 def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str = "", inspection_result: str = "", repair_check: str = "",
                         checks_reference: str = "", results=None, open_repair: bool = True, tag_out: bool | None = None,
-                        signature: str | None = None, hours=None, late_reason=None, by=None, today: date | None = None) -> Completion:
+                        signature: str | None = None, hours=None, late_reason=None, vendor_engineer=vendor_services.KEEP,
+                        engineer_name: str = "", by=None, today: date | None = None) -> Completion:
     """Complete `wo` with its resolution and, for a PM, its result and checklist results (the module's rules); a PM still open is
     started first (starts_on_completion). `results` is one {"result": "pass" | "fail" | "na", "reading": "..."} per checklist step, in
     order. `hours` (None or blank: none) are logged with it, and `late_reason` (None or blank: none; slice 25) is recorded on a PM
     completed after its due date. Slice 26: an incoming inspection takes `inspection_result` (InspectionResult) and, optionally, its
     checklist's `results`; `tag_out` also applies to its fail. Slice 30: a repair takes `repair_check` (RepairCheck), the post-repair
-    checklist's `results` for passed, and `checks_reference` for vendor_report. Raises ValidationError: a plain message when the work
+    checklist's `results` for passed, and `checks_reference` for vendor_report. Slice 31: vendor service takes `vendor_engineer` or
+    `engineer_name` and `checks_reference` (the module's Slice 31 paragraph). Raises ValidationError: a plain message when the work
     order cannot be completed now, else a dict keyed by resolution, pm_result, inspection_result, repair_check, checks_reference,
-    checklist, step_<n>, reading_<n>, open_repair, hours, and late_reason. `wo` is refreshed from the database afterwards (and its
-    device with it)."""
+    checklist, step_<n>, reading_<n>, open_repair, hours, late_reason, vendor_engineer, and engineer_name. `wo` is refreshed from the
+    database afterwards (and its device with it)."""
     today = today or timezone.localdate()
     _check_tenant(wo)
     # The device's open work orders and this one first, in number order (its open inspections among them: two of its inspections
@@ -975,12 +991,11 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
     reference = ""
     if is_repair:  # slice 30: the checks after it, by the outcome chosen
         snapshot = _check_repair(locked, repair_check, steps, results, signature, by, errors)
-        reference = _reference(checks_reference, repair_check, errors)
+        reference = _reference(checks_reference, errors, vendor_service=locked.vendor_service, repair_check=repair_check)
     else:
         if repair_check:
             errors["repair_check"] = REPAIR_CHECK_ONLY
-        if str(checks_reference if checks_reference is not None else "").strip():
-            errors["checks_reference"] = REFERENCE_ONLY
+        reference = _reference(checks_reference, errors, vendor_service=locked.vendor_service)  # slice 31: any vendor job's report
         if not (is_pm or is_inspection):
             if results:
                 errors["pm_result"] = REPAIR_RESULTS_ONLY
@@ -1008,6 +1023,7 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
         errors["open_repair"] = f"{asset.tag} has no open repair work order to record the failure on, so a failed PM opens one."
     reinspect = is_inspection and inspection_result == InspectionResult.FAILED and asset.awaiting_inspection
     late = _late_reason(locked, late_reason, by, today, errors)
+    engineer = vendor_services.engineer_choice(locked, vendor_engineer, engineer_name, by=by, errors=errors)  # slice 31
     if errors:
         _log_hours(locked, hours, by, today, errors)  # its refusal too, so every problem is reported at once (a line goes back with the rest)
         raise ValidationError(errors)
@@ -1028,6 +1044,9 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
     if errors:
         raise ValidationError(errors)  # the start, and a repair or re-inspection opened, go back with it
     done.started, done.labor = started, labor
+    locked.checks_reference = reference  # slice 31: any vendor job's report number ("" on in-house work)
+    if engineer is not vendor_services.KEEP:
+        locked.vendor_engineer = vendor_services.resolve_choice(engineer, locked, by=by)  # saved with the completion
     note = ""
     if is_pm:
         locked.pm_result = pm_result
@@ -1040,7 +1059,7 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
         text = text or _default_inspection_resolution(inspection_result, procedure, snapshot)
         note = result_note(inspection_result, done)
     elif is_repair:  # slice 30: saved with the completion (change_status saves the whole row)
-        locked.repair_check, locked.checks_reference, locked.checklist_results = repair_check, reference, snapshot
+        locked.repair_check, locked.checklist_results = repair_check, snapshot
         if repair_check == RepairCheck.NOT_RETURNED:
             # The repair holds the device out (marked tagged out) and services._on_completed never returns it; in use or in repair, it
             # moves out of service now, through equipment's status rules (the device's open work is locked already: lock_work).

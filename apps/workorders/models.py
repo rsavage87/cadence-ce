@@ -142,6 +142,10 @@ class WorkOrder(TenantModel):
     checks_reference = models.CharField("vendor's service report", max_length=40, blank=True, editable=False,
                                         validators=[reference_token("Enter the vendor's service report or field service order number as it is "
                                                                     "printed, without spaces.")])
+    # Slice 31: the vendor's engineer responsible for vendor service, as their report names them (apps.vendors). Written only by
+    # completion.complete_work_order and services.set_vendor_engineer (cleared by assign when the work moves); the API keeps it read-only.
+    vendor_engineer = models.ForeignKey("vendors.VendorEngineer", on_delete=models.PROTECT, null=True, blank=True, editable=False,
+                                        related_name="work_orders", verbose_name="field engineer")
     history = HistoricalRecords()
 
     class Meta:

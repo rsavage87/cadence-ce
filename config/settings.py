@@ -61,6 +61,7 @@ INSTALLED_APPS = [
     "apps.notifications",
     "apps.imports",
     "apps.incidents",
+    "apps.vendors",  # slice 31: contracted service and vendor staff
     "apps.api",
     "apps.demo",
     "apps.web",

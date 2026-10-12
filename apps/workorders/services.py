@@ -323,13 +323,19 @@ def returns_device(wo: WorkOrder) -> bool:
 
 @transaction.atomic
 def assign(wo: WorkOrder, technician=None, vendor_name: str = "", by=None) -> WorkOrder:
-    """Assign to a technician or to vendor service. Flags credential overrides in the status history."""
+    """Assign an open work order to a technician or to vendor service. Flags credential overrides in the status history. Slice 31: only
+    an open one (a completed or closed work order keeps who did it; the drawer refused already, now the API does too), and the
+    vendor's engineer it names is cleared when the work moves in-house or to another vendor (apps.vendors.rules.vendor_key)."""
     from apps.credentials.services import qualification
+    from apps.vendors.rules import vendor_key
 
+    if wo.status not in OPEN_STATUSES:
+        raise ValidationError("Only open work orders can be reassigned.")
     note = ""
     vendor_name = (vendor_name or "").strip()  # a stray space from the API would keep it from its company's share (apps.workorders.scoping)
     if len(vendor_name) > VENDOR_NAME_MAX:
         raise ValidationError({"vendor_name": f"Keep the vendor's name to {VENDOR_NAME_MAX} characters."})
+    before = vendor_key(wo.vendor_name) if wo.vendor_service else None
     if vendor_name:
         wo.vendor_service, wo.vendor_name, wo.assigned_to = True, vendor_name, None
         note = f"Assigned to vendor: {vendor_name}"
@@ -337,7 +343,11 @@ def assign(wo: WorkOrder, technician=None, vendor_name: str = "", by=None) -> Wo
         wo.vendor_service, wo.vendor_name, wo.assigned_to = False, "", technician
         q = qualification(technician, wo.asset)
         note = f"Assigned to {technician.name}" + ("" if q.ok else " (override: not credentialed for this device)")
-    wo.save(update_fields=["vendor_service", "vendor_name", "assigned_to", "updated_at"])
+    fields = ["vendor_service", "vendor_name", "assigned_to", "updated_at"]
+    if wo.vendor_engineer_id and (not wo.vendor_service or vendor_key(wo.vendor_name) != before):
+        wo.vendor_engineer = None  # slice 31: that engineer did not do this vendor's (or this technician's) work
+        fields.append("vendor_engineer")
+    wo.save(update_fields=fields)
     WorkOrderStatusHistory.objects.create(tenant=wo.tenant, work_order=wo, from_status=wo.status, to_status=wo.status, changed_by=by, note=note)
     if technician is not None and not vendor_name:
         assignments.announce(wo, technician, by=by)  # slice 20: emailed once this commits, at most once per work order and person
@@ -379,6 +389,37 @@ def set_late_reason(wo: WorkOrder, reason: str, by=None, today: date | None = No
         locked._change_reason = f"Why late: {LateReason(reason).label}" if reason else "Why late cleared"
         locked.save(update_fields=["late_reason", "updated_at"])
     wo.late_reason = locked.late_reason
+    return locked
+
+
+# --- the vendor's engineer (slice 31) ---------------------------------------------------------------
+
+@transaction.atomic
+def set_vendor_engineer(wo: WorkOrder, engineer=None, *, engineer_name: str = "", by=None) -> WorkOrder:
+    """Name the vendor's engineer responsible for `wo` (vendor service, not cancelled), as their report names them, once it arrives: an
+    engineer or its id (None clears it: not named), or a typed name (the engineer of the work order's vendor with that name, created
+    when there is none). Through apps.vendors.services.engineer_choice, as completing does. Never a scoped user's (a vendor account
+    names its engineer when it completes the work, and never rewrites it after). The caller checks the level
+    (permissions.can_set_vendor_engineer: Edit; Approve once closed). Audited in the work order's history ("Field engineer")."""
+    from apps.vendors import services as vendor_services
+
+    from . import scoping
+
+    if scoping.is_scoped(by):
+        raise ValidationError({"vendor_engineer": "The facility's CE staff record who did the vendor's work after it is completed."})
+    locked = WorkOrder.objects.select_for_update().get(pk=wo.pk)
+    if locked.status == WoStatus.CANCELLED:
+        raise ValidationError({"vendor_engineer": "A cancelled work order names no engineer."})
+    errors: dict = {}
+    choice = vendor_services.engineer_choice(locked, None if engineer in (None, "") else engineer, engineer_name, by=by, errors=errors)
+    if errors:
+        raise ValidationError(errors)
+    engineer = vendor_services.resolve_choice(choice, locked, by=by)
+    if engineer is not vendor_services.KEEP and (engineer.pk if engineer else None) != locked.vendor_engineer_id:
+        locked.vendor_engineer = engineer
+        locked._change_reason = f"Field engineer: {engineer.name}" if engineer else "Field engineer cleared"
+        locked.save(update_fields=["vendor_engineer", "updated_at"])
+    wo.vendor_engineer = locked.vendor_engineer
     return locked
 
 

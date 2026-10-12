@@ -71,6 +71,7 @@ urlpatterns = [
     path("work-orders/<str:number>/late-reason/", views_wo_late.wo_late_reason, name="wo_late_reason"),  # slice 25: why a PM was late
     path("work-orders/<str:number>/waiting/", views_my_work.wo_waiting, name="wo_waiting"),  # slice 24: Waiting on parts from My work, with a note
     path("pm/", include("apps.web.urls_pm")),
+    path("contracts/vendors/", include("apps.web.urls_vendors")),  # slice 31: the Vendor staff tab
     path("contracts/", include("apps.web.urls_contracts")),
     path("users/", include("apps.web.urls_users")),
     path("users/credentials/", include("apps.web.urls_credentials")),

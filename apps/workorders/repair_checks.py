@@ -70,9 +70,15 @@ def last_completed_first(qs):
     return qs.annotate(done_at=Subquery(done_at)).order_by("-completed_on", F("done_at").desc(nulls_last=True), "-number")
 
 
-def checked_by(wo) -> str:
-    """Who did a repair's checks, or an incoming inspection (the print, the drawer's results, the binder): the vendor on vendor service
-    (their field engineer), else the technician assigned; never whoever completed it from the desk (IEC 62353 6.1 names the tester)."""
+def checked_by(wo, user=None) -> str:
+    """Who did a repair's checks, or an incoming inspection (the print, the drawer's results, the binder): on vendor service the vendor's
+    engineer the work order names (slice 31: "Dana Kim (Philips)"; for a scoped `user`, another company's engineer reads as
+    vendors.services.engineer_shown words it), else the vendor; else the technician assigned; never whoever completed it from the desk
+    (IEC 62353 6.1 names the tester). Select vendor_engineer with the work order when reading many."""
     if wo.vendor_service:
+        if wo.vendor_engineer_id:
+            from apps.vendors.services import engineer_shown
+
+            return engineer_shown(wo, user)
         return wo.vendor_name or "Vendor"
     return wo.assigned_to.name if wo.assigned_to_id else ""

@@ -66,6 +66,14 @@ def can_set_late_reason(user, wo) -> bool:
     return user.has_level(MODULE, late_reason_level(wo.status))
 
 
+def can_set_vendor_engineer(user, wo) -> bool:
+    """Name or change the vendor's engineer on `wo` after it was completed, or before (slice 31): Edit, Approve once closed, as the
+    reason a PM was late; never a scoped user (a vendor account names its engineer only as it completes its own work)."""
+    from . import scoping
+
+    return user.has_level(MODULE, late_reason_level(wo.status)) and not scoping.is_scoped(user)
+
+
 def can_keep_open(user) -> bool:
     """Record failed checks after a repair on the repair, which stays open and may hold the device out (slice 30: completion.keep_open):
     Edit, as completing it."""

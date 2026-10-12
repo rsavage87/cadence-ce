@@ -160,6 +160,14 @@ AREAS = {a.key: a for a in (
          _safe(lambda r: reverse("web:incident", args=[r.number]))),
     Area("incident_holds", "Incident holds", "incidents.IncidentHold", "incidents", _safe(lambda r: f"{r.incident.number} hold · {r.asset.tag}"),
          _safe(lambda r: reverse("web:incident", args=[r.incident.number])), select=("incident", "asset")),
+    # Slice 31: vendor staff, read with Contracts View (the Contracts screen's Vendor staff tab).
+    Area("vendor_engineers", "Vendor engineers", "vendors.VendorEngineer", "contracts", _safe(lambda r: f"{r.name} ({r.company})"),
+         _safe(lambda r: reverse("web:vendor_engineer", args=[r.id]))),
+    Area("engineer_training", "Vendor engineers' training", "vendors.EngineerTraining", "contracts",
+         _safe(lambda r: f"{r.engineer.name} ({r.engineer.company}) · training"), _safe(lambda r: reverse("web:vendor_engineer", args=[r.engineer_id])),
+         select=("engineer",)),
+    Area("vendor_attestations", "Vendor attestations", "vendors.VendorAttestation", "contracts",
+         _safe(lambda r: f"{', '.join(r.vendor_names)} · attestation {r.reference}"), _safe(lambda r: reverse("web:vendor_staff"))),
 )}
 ACCESS = Area("access", "Access", "accounts.AccessEvent", "users", _safe(lambda e: str(e.user) if e.user_id else ""))
 ALL_AREAS = {**AREAS, ACCESS.key: ACCESS}
@@ -219,6 +227,10 @@ HIDE = {
     "reports.customreport": {"created_by"},
     "incidents.incident": {"number", "created_by"},  # the record; the creator is the "added" entry's who
     "incidents.incidenthold": {"incident", "asset"},  # in the record's name
+    # Slice 31: the stored match keys mirror the name and the vendor; the creator is the "added" entry's who.
+    "vendors.vendorengineer": {"name_key", "company_key", "created_by"},
+    "vendors.engineertraining": {"engineer", "created_by"},  # the engineer is in the record's name
+    "vendors.vendorattestation": {"vendor_keys", "created_by"},
 }
 
 # Labels that read better than the verbose names, per model; `_label` falls back to the verbose name.
@@ -239,7 +251,7 @@ LABELS = {
                              "due_on": "Due", "started_on": "Started", "completed_on": "Completed", "estimated_hours": "Estimated time",
                              "alert": "Recall notice", "pm_result": "PM result", "checklist_results": "Checklist", "follow_up_of": "Follow-up of",
                              "inspection_result": "Inspection result", "repair_check": "Checks after repair",
-                             "checks_reference": "Vendor's service report"},
+                             "checks_reference": "Vendor's service report", "vendor_engineer": "Field engineer"},
     "workorders.laborline": {"worked_on": "Date", "hours": "Time"},
     "workorders.partline": {"description": "Part", "part_number": "Part number", "unit_cost": "Unit cost", "po_number": "PO number"},
     "contracts.contract": {"start_on": "Starts", "end_on": "Ends"},
@@ -248,6 +260,12 @@ LABELS = {
                        "proposed_on": "Proposed", "decided_on": "Committee date", "decision_note": "Committee note", "ended_on": "Ended",
                        "end_reason": "Why it ended"},
     "credentials.credential": {"scope": "Applies to", "value": "Matches", "issued_on": "Issued", "expires_on": "Expires"},
+    # Slice 31: vendor staff (the stored keys are never shown: HIDE)
+    "vendors.vendorengineer": {"company": "Vendor", "is_active": "Active"},
+    "vendors.engineertraining": {"covers": "Covers", "model_ids": "Device models", "source": "Source", "certificate": "Certificate number",
+                                 "issued_on": "Issued", "expires_on": "Expires"},
+    "vendors.vendorattestation": {"vendor_names": "Vendor names", "covers": "Covers", "model_ids": "Device models",
+                                  "received_on": "Received", "valid_from": "Valid from", "valid_through": "Valid through"},
     "accounts.role": {"is_system": "System role", "scope": "What its users see"},
     "facility.facilitysettings": {"portal_require_callback": "Portal: callback number required", "portal_hotline": "Portal: hotline",
                                   "portal_confirmation": "Portal: confirmation", "portal_email_domains": "Portal: email domains",
@@ -358,6 +376,7 @@ _NAMERS = {
     "accounts.role": lambda o: o.name,
     "recalls.alert": lambda o: f"{o.get_source_display()} {o.external_id}",
     "incidents.incident": lambda o: o.number,
+    "vendors.vendorengineer": lambda o: f"{o.name} ({o.company})",
 }
 
 

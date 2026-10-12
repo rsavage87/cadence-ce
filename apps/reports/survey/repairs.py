@@ -50,7 +50,8 @@ _CLASS_LABELS = dict(RiskClass.choices)
 _STATUS_WORDS = {AssetStatus.IN_SERVICE: "in service", AssetStatus.ON_LOAN: "on loan"}
 # The columns a row reads (staff-written, chosen, or names only: never the problem, the resolution, the requester, or notes)
 _ONLY = ("number", "completed_on", "repair_check", "checks_reference", "source", "vendor_service", "vendor_name", "assigned_to__name",
-         "asset__tag", "asset__device_model__manufacturer", "asset__device_model__model", "asset__device_model__risk_class")
+         "asset__tag", "asset__device_model__manufacturer", "asset__device_model__model", "asset__device_model__risk_class",
+         "vendor_engineer__name", "vendor_engineer__company", "vendor_engineer__company_key")  # slice 31: checked_by names the engineer
 
 
 def _day(d) -> str:
@@ -80,7 +81,7 @@ def _figures(repairs) -> dict:
 
 def _rows(repairs):
     """Every repair completed in the period, in the order completed: one query, read as the CSV streams it."""
-    qs = repairs.select_related("asset__device_model", "assigned_to").only(*_ONLY).order_by("completed_on", "number")
+    qs = repairs.select_related("asset__device_model", "assigned_to", "vendor_engineer").only(*_ONLY).order_by("completed_on", "number")
     for wo in qs.iterator(chunk_size=1000):
         dm = wo.asset.device_model
         if wo.repair_check:
