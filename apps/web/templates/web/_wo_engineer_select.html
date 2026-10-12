@@ -1,0 +1,24 @@
+{% comment %}Who did the vendor's work (slice 31, views_wo_engineer.select_context / picked, under "engineer"): the completion modal's and
+   the drawer's Change. One native select: not named on the report (blank), the work order's vendor's engineers, other vendors'
+   engineers (a user who sees the whole facility only), and Someone else, whose name box shows with it (CSS :has; always shown without
+   :has support). Each option carries its standing for a user who sees the whole facility; a scoped vendor account sees names only.
+   `e.prefix` keeps the ids apart ("wc" in the completion modal, "we" in Change).{% endcomment %}
+{% with e=engineer %}
+<div class="full wc-eng">
+  <label class="fld" for="{{ e.prefix }}-vendor_engineer">Who did the work
+    <select id="{{ e.prefix }}-vendor_engineer" name="vendor_engineer" aria-describedby="{{ e.prefix }}-eng-hint{% if e.error %} {{ e.prefix }}-vendor_engineer_error{% endif %}"{% if e.error %} aria-invalid="true"{% endif %}{% if e.focus == "vendor_engineer" %} autofocus{% endif %}>
+      <option value=""{% if not e.value %} selected{% endif %}>Not named on the report</option>
+      {% if e.keep %}<option value="keep"{% if e.value == "keep" %} selected{% endif %}>{{ e.keep }}</option>{% endif %}
+      {% for g in e.groups %}<optgroup label="{{ g.label }}">{% for o in g.options %}<option value="{{ o.value }}"{% if o.value == e.value %} selected{% endif %}>{{ o.text }}</option>{% endfor %}</optgroup>{% endfor %}
+      <option value="other"{% if e.value == "other" %} selected{% endif %}>Someone else: type the name</option>
+    </select>
+  </label>
+  <span class="hint" id="{{ e.prefix }}-eng-hint">The engineer responsible, as the vendor's report names them; when a trainee came with a trained engineer, the trained engineer.</span>
+  {% if e.error %}<span class="err" id="{{ e.prefix }}-vendor_engineer_error">{{ e.error }}</span>{% endif %}
+  <label class="fld wc-eng-name" for="{{ e.prefix }}-engineer_name">Their name, as the report gives it
+    <input type="text" id="{{ e.prefix }}-engineer_name" name="engineer_name" value="{{ e.name }}" maxlength="{{ e.name_max }}" autocomplete="off" aria-describedby="{{ e.prefix }}-name-hint{% if e.name_error %} {{ e.prefix }}-engineer_name_error{% endif %}"{% if e.name_error %} aria-invalid="true"{% endif %}{% if e.focus == "engineer_name" %} autofocus{% endif %}>
+    <span class="hint" id="{{ e.prefix }}-name-hint">Letters, spaces, and . ' - , only. Added as an engineer of {{ e.vendor }} when there is none of that name.</span>
+    {% if e.name_error %}<span class="err" id="{{ e.prefix }}-engineer_name_error">{{ e.name_error }}</span>{% endif %}
+  </label>
+</div>
+{% endwith %}

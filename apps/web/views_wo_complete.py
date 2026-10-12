@@ -65,6 +65,14 @@ the step. The toast says what moved (completion.repair_note; not returned to use
 of service). From My work both answer without the drawer. results_context's "repair" kind is the drawer's "Checks after repair": the
 outcome, who checked (repair_checks.checked_by) and when, the steps and readings, the vendor's report number, or not returned to use;
 a reopened repair says what was recorded, and one completed with no outcome (before slice 30, or imported) says none was.
+
+Slice 31, vendor staff (apps.vendors): vendor service of any type asks "Who did the work" (views_wo_engineer's select: the vendor's
+engineers, other vendors' for CE, someone else with a typed name, or not named on the report; each option's standing for this device
+today for CE, names only for a vendor's own account; the engineer stored chosen to begin with on a reopened job) and, for a user who
+sees the whole facility, the vendor's report number beside it, whatever the outcome (completion requires it only with checked by the
+vendor). Both go to complete_work_order (vendor_engineer / engineer_name through forms_wo_complete.engineer_kwargs, checks_reference);
+neither blocks completion, and a refusal comes back keyed vendor_engineer, engineer_name, or checks_reference with the rest. Keep open
+names no engineer. results_context's "Checked by" names the engineer as this user may read it (repair_checks.checked_by(wo, user)).
 """
 import copy
 
@@ -83,7 +91,7 @@ from apps.workorders import permissions as wo_perms
 from apps.workorders import services as wo_services
 from apps.workorders.models import OPEN_STATUSES, InspectionResult, PmResult, RepairCheck, ServiceRequest, Source, WoStatus, WoType
 
-from . import views_wo_late
+from . import views_wo_engineer, views_wo_late
 from .decorators import web_view
 from .forms_wo_complete import STEP_CHOICES, CompleteForm
 from .htmx import toast
@@ -142,7 +150,8 @@ def results_context(request, wo) -> dict:
         # The inspection whose pass ended the device's wait: completing it again keeps it passed (completion's rule)
         "kept_pass": is_inspection and recorded and inspections.pass_cleared_flag(wo),
         "label": label if recorded else "", "css": REPAIR_CSS.get(result, "neutral") if is_repair else RESULT_CSS.get(result, "neutral"),
-        "inspector": inspector(wo) if (is_inspection or is_repair) and recorded else "",
+        # slice 31: the vendor's engineer the work order names, as this user may read it (repair_checks.checked_by)
+        "inspector": inspector(wo, request.user) if (is_inspection or is_repair) and recorded else "",
         # Slice 30: a repair completed with no outcome says so (imported ones apart)
         "unrecorded": ((IMPORTED_NO_CHECK if wo.source == Source.IMPORTED else NO_REPAIR_CHECK)
                        if is_repair and done and not recorded else ""),
@@ -352,13 +361,28 @@ def _revised(form, kwargs) -> CompleteForm:
     return fresh
 
 
+def _vendor_offers(wo, user, today) -> dict:
+    """Slice 31, vendor service of any type: who did the work (views_wo_engineer's select, each option's standing judged today for a
+    user who sees the whole facility, names only for a vendor's own account), the engineer stored to begin with (a reopened job), and
+    the vendor's report number box (any vendor job, for a user who sees the whole facility: a vendor's own account records the work
+    itself, as slice 30 decided for checked by the vendor)."""
+    if not wo.vendor_service:
+        return {"engineer_select": None, "engineer_initial": "", "offer_reference": False, "reference_initial": ""}
+    sel = views_wo_engineer.select_context(wo, user, today)
+    offer = not scoping.is_scoped(user)
+    return {"engineer_select": sel, "engineer_initial": views_wo_engineer.initial_choice(wo, sel), "offer_reference": offer,
+            "reference_initial": wo.checks_reference if offer else ""}  # a reopened job's number, as the engineer stored is
+
+
 def _form_kwargs(wo, steps, offers, hours, late) -> dict:
     offer = late["late_offer"]
     return {"steps": steps, "is_pm": wo.type == WoType.PM, "offer_open_repair": offers["offer_open_repair"], "offer_tag_out": offers["offer_tag_out"],
             "offer_hours": hours["offer_hours"], "offer_late_reason": offer is not None, "late_first": bool(offer and offer["prominent"]),
             "late_recorded": offer["recorded"] if offer else "",
             "is_inspection": wo.type == WoType.INSPECTION, "kept_pass": offers.get("kept_pass", False),  # slice 26
-            "is_repair": wo.type == WoType.REPAIR, "repair_default": offers.get("repair_default", "")}  # slice 30
+            "is_repair": wo.type == WoType.REPAIR, "repair_default": offers.get("repair_default", ""),  # slice 30
+            "offer_engineer": offers.get("engineer_select") is not None, "engineer_initial": offers.get("engineer_initial", ""),  # slice 31
+            "offer_reference": offers.get("offer_reference", False), "reference_initial": offers.get("reference_initial", "")}
 
 
 def _late(request, wo, today) -> dict:
@@ -425,6 +449,9 @@ def _modal(request, wo, form=None, *, steps=(), offers=None, hours=None, late=No
         "starting": not reason and wo.status == WoStatus.OPEN, **(hours or {"offer_hours": False}),
         "from_my_work": from_my_work(request), "from_value": FROM_MY_WORK,
         **(late if late is not None and form is not None else {"late_offer": None}),  # slice 25: "Why was it late?"
+        # Slice 31: who did the vendor's work, as the form holds it
+        "engineer": (views_wo_engineer.picked((offers or {})["engineer_select"], form, "wc")
+                     if form is not None and (offers or {}).get("engineer_select") is not None and "vendor_engineer" in form.fields else None),
     })
     if reason and from_my_work(request):  # review fix: a card offered a move the work order no longer allows; the list is behind
         trigger_client_event(response, "wo-changed", {})
@@ -537,7 +564,7 @@ def _kept(request, wo, kept):
 def _setup(request, wo, today) -> tuple:
     """The modal's parts for `wo` today: its checklist's steps, the offers, the hours box, the late reason, and the form's kwargs."""
     steps = completion.checklist_of(completion.procedure_for(wo))
-    offers = _offers(wo, request.user, today)
+    offers = {**_offers(wo, request.user, today), **_vendor_offers(wo, request.user, today)}  # slice 31: who did the vendor's work
     hours = _hours(request, wo)
     late = _late(request, wo, today)  # slice 25
     return steps, offers, hours, late, _form_kwargs(wo, steps, offers, hours, late)
@@ -597,6 +624,7 @@ def wo_keep_open(request, number):
         return _modal(request, wo, reason=reason)
     steps, offers, hours, late, kwargs = _setup(request, wo, today)
     form = CompleteForm(request.POST, **kwargs)
+    form.check_engineer = False  # slice 31: keeping it open names no engineer, so an unfinished "Someone else" never stops it
     kept = None
     if form.is_valid():
         try:

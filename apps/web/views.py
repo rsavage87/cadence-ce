@@ -257,7 +257,7 @@ WO_ACTIONS = {
 
 
 def _wo_drawer_context(request, wo) -> dict:
-    from . import views_wo_complete, views_wo_costs  # slice 15's sections; they render this drawer, so imported here
+    from . import views_wo_complete, views_wo_costs, views_wo_engineer  # their sections render this drawer, so imported here
 
     user = request.user
     scoped = scoping.is_scoped(user)
@@ -298,6 +298,7 @@ def _wo_drawer_context(request, wo) -> dict:
         **_wo_incident_context(user, wo, held_by, scoped),
         **views_wo_costs.costs_context(request, wo),
         **views_wo_complete.results_context(request, wo),
+        **views_wo_engineer.drawer_context(request, wo, today),  # slice 31: the "Field engineer" row, under "field_engineer"
     }
 
 

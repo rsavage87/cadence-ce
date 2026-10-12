@@ -7,7 +7,9 @@
    once completed, its result, who inspected it and when, and its steps as recorded), and a re-inspection names the failed
    inspection it follows.
    Slice 30: a repair's "Checks after repair" (views_print.repair_checks_print): blank boxes and lines while it is open (a box per
-   pass, fail, and N/A, none for N/A on the steps never N/A; how it ended; who checked), the record once done.{% endcomment %}
+   pass, fail, and N/A, none for N/A on the steps never N/A; how it ended; who checked), the record once done.
+   Slice 31: vendor service names its field engineer (views_print: names only, as the reader may read them) and the vendor's report
+   number under Assignment, or lines to write them on while it is open.{% endcomment %}
 {% block title %}{{ wo.number }}{% endblock %}
 {% block page_style %}<style>
 @page{size:letter;margin:.5in;@bottom-right{content:"{{ wo.number }} · page " counter(page) " of " counter(pages);font:9px sans-serif;color:#6a7280}}
@@ -93,6 +95,10 @@ table.rc-steps td.meas{width:1.9in}
 <h2>Assignment</h2>
 <dl class="kv">
   <div><dt>Assigned to</dt><dd>{% if wo.vendor_service %}Vendor: {{ wo.vendor_name|default:"not named" }}{% elif wo.assigned_to %}{{ wo.assigned_to.name }}{% else %}Unassigned{% endif %}</dd></div>
+  {% if wo.vendor_service %}{# slice 31: who did the vendor's work, and their report #}
+  <div class="pr-eng"><dt>Field engineer</dt><dd>{% if field_engineer %}{{ field_engineer }}{% elif is_open %}<span class="blank"></span>{% else %}Not named{% endif %}</dd></div>
+  <div class="pr-ref"><dt>Vendor's report</dt><dd>{% if wo.checks_reference %}<span class="mono">{{ wo.checks_reference }}</span>{% elif is_open %}<span class="blank"></span>{% else %}Not recorded{% endif %}</dd></div>
+  {% endif %}
   <div><dt>Estimated hours</dt><dd>{{ wo.estimated_hours|floatformat:"-2" }} h</dd></div>
 </dl>
 
