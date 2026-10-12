@@ -38,6 +38,16 @@ completion.complete_work_order: checked and ready for use with every step passed
 nothing from the demo's generators, so every later draw is as before), but for the patient monitor's closed vendor repair, checked by
 the vendor with their service report's number (VENDOR_REPORT_NUMBER), and one smart bed found beyond repair (NOT_RETURNED_*): not
 returned to use, then retired. The closed incident's investigation is checked before its release returns the monitor to use.
+
+Slice 31: Riverside keeps records for two vendors' staff (VENDOR_ENGINEERS, VENDOR_TRAININGS, VENDOR_ATTESTATION), added through
+apps.vendors.services as the Vendor staff tab adds them, before the vendor work: Philips has two field engineers on file, one with OEM
+training on the patient monitor model in force for months to come, one whose training on it expired before the monitor's closed vendor
+repair; TechCare Biomedical Services has one engineer with the vendor's own training on Fresenius dialysis machines (a product
+category) and its attestation covering every device it services. The patient monitor's closed vendor repair names the engineer whose
+training had expired (complete_work_order(vendor_engineer=...)), and Philips has no attestation on file: the survey binder's Contracted
+service and vendor staff section shows its one deliberate GAP (Philips, linking to the Vendor staff tab). TechCare has no job in the
+demo, so its records show on the Vendor staff tab and in the binder's tables only. Constants only: nothing is drawn from the demo's
+generators, and no work order is added (every later number and draw stays as it was).
 """
 import random
 from datetime import date, datetime, time, timedelta
@@ -81,6 +91,8 @@ from apps.recalls.models import Alert, AlertMatch
 from apps.recalls.services import create_recall_work_orders, set_status
 from apps.tenants.context import tenant_context, zone_of
 from apps.tenants.models import Tenant
+from apps.vendors import services as vendor_services
+from apps.vendors.models import Covers, TrainingSource
 from apps.workorders import inspections
 from apps.workorders.completion import checklist_of, complete_work_order, inspection_procedure
 from apps.workorders.models import (
@@ -280,6 +292,24 @@ NOT_RETURNED_RESOLUTION = ("Lift actuator seized and the base frame cracked at a
                            "recommended for retirement.")
 NOT_RETURNED_RETIRED = "Beyond economical repair"
 
+# Slice 31, vendor staff (_vendor_staff), fictional people. Engineers: name, company (as the contracts name the vendor). Trainings:
+# engineer, the device models it names (by model) or a manufacturer's product category, source, certificate, issued (days ago),
+# expires (days from the seed's today; negative: expired). The patient monitors' closed vendor repair names VENDOR_REPAIR_ENGINEER,
+# whose training expired TRAINING_EXPIRED_DAYS_AGO, before that repair (VENDOR_WORK's closed one, done 21 days ago).
+TECHCARE = "TechCare Biomedical Services"
+VENDOR_ENGINEERS = [("Grace Lindqvist", "Philips"), ("Owen Marsh", "Philips"), ("Luis Ortega", TECHCARE)]
+TRAINING_EXPIRED_DAYS_AGO = 60
+VENDOR_TRAININGS = [
+    ("Grace Lindqvist", {"models": ["IntelliVue MX750"]}, TrainingSource.OEM, "PHL-IVM-55120", 280, 200),
+    ("Owen Marsh", {"models": ["IntelliVue MX750"]}, TrainingSource.OEM, "PHL-IVM-41877", 1150, -TRAINING_EXPIRED_DAYS_AGO),
+    ("Luis Ortega", {"manufacturer": "Fresenius", "category": "Dialysis"}, TrainingSource.VENDOR, "", 200, 300),
+]
+VENDOR_REPAIR_ENGINEER = "Owen Marsh"
+# TechCare's attestation, covering every device it services for us: its reference, the day it was received, and the first day of
+# the year it states (days ago; it runs a year from then, less a day).
+VENDOR_ATTESTATION_REFERENCE = "TC-ATT-2026-014"
+VENDOR_ATTESTATION_RECEIVED_DAYS_AGO, VENDOR_ATTESTATION_FROM_DAYS_AGO = 100, 110
+
 
 def _noon(day: date) -> datetime:
     """Noon of `day` in the current time zone (the facility's, inside tenant_context): a backdated timestamp's moment."""
@@ -433,7 +463,8 @@ class Command(BaseCommand):
                 # the status changes, which save the whole row.
                 AlertMatch.objects.filter(pk=match.pk).update(created_at=_noon(alert.published_on))
             self._approved_aem(domain, today)
-            self._vendor_work(today)
+            engineers = self._vendor_staff(today)  # slice 31: before the vendor work, which names one of them
+            self._vendor_work(today, engineers[VENDOR_REPAIR_ENGINEER])
             self._credential_lapse(today)
             self._risk_scores(today)
             self._new_devices(today, depts, user)
@@ -826,9 +857,30 @@ class Command(BaseCommand):
         return wo
 
     @staticmethod
-    def _vendor_work(today: date) -> None:
+    def _vendor_staff(today: date) -> dict:
+        """Slice 31: the vendors' engineers, their training, and TechCare's attestation, through apps.vendors.services as the Vendor
+        staff tab adds them (VENDOR_ENGINEERS, VENDOR_TRAININGS, VENDOR_ATTESTATION_*). Returns {name: engineer}."""
+        engineers = {name: vendor_services.add_engineer(name=name, company=company) for name, company in VENDOR_ENGINEERS}
+        for name, covers, source, certificate, issued_days_ago, expires_in_days in VENDOR_TRAININGS:
+            if "models" in covers:
+                ids = [str(pk) for pk in DeviceModel.objects.filter(model__in=covers["models"]).values_list("pk", flat=True)]
+                coverage = {"covers": Covers.MODELS, "model_ids": ids}
+            else:
+                coverage = {"covers": Covers.LINE, "manufacturer": covers["manufacturer"], "category": covers["category"]}
+            vendor_services.add_training([engineers[name]], source=source, certificate=certificate, today=today,
+                                         issued_on=today - timedelta(days=issued_days_ago), expires_on=today + timedelta(days=expires_in_days),
+                                         **coverage)
+        valid_from = today - timedelta(days=VENDOR_ATTESTATION_FROM_DAYS_AGO)
+        vendor_services.add_attestation(vendor_names=[TECHCARE], covers=Covers.ALL, reference=VENDOR_ATTESTATION_REFERENCE,
+                                        received_on=today - timedelta(days=VENDOR_ATTESTATION_RECEIVED_DAYS_AGO), valid_from=valid_from,
+                                        valid_through=add_months(valid_from, 12) - timedelta(days=1), today=today)
+        return engineers
+
+    @staticmethod
+    def _vendor_work(today: date, engineer) -> None:
         """Repairs dispatched to the vendor on the contract (through the work-order services like any other): what the demo vendor
-        technician works on. One device each, the first in service by tag, so the demo stays the same from run to run."""
+        technician works on. One device each, the first in service by tag, so the demo stays the same from run to run. The closed one
+        names `engineer` (slice 31: VENDOR_REPAIR_ENGINEER, as the vendor's report names them)."""
         used = set()
         for model, days_ago, state, problem in VENDOR_WORK:
             candidates = Asset.objects.filter(device_model__model=model, contract__isnull=False).exclude(pk__in=used).select_related("contract").order_by("tag")
@@ -844,7 +896,7 @@ class Command(BaseCommand):
                 done = opened + timedelta(days=3)
                 LaborLine.objects.create(work_order=wo, worked_on=done, hours=Decimal("2.5"), rate=labor_rates()["vendor"], description="Vendor service")
                 complete_work_order(wo, resolution=VENDOR_RESOLUTION, repair_check=RepairCheck.VENDOR_REPORT,
-                                    checks_reference=VENDOR_REPORT_NUMBER, today=done)
+                                    checks_reference=VENDOR_REPORT_NUMBER, vendor_engineer=engineer, today=done)
                 change_status(wo, "closed", as_of=done)
 
     def _approved_aem(self, domain: str, today: date) -> None:

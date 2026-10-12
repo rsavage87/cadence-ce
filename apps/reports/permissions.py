@@ -88,6 +88,8 @@ SURVEY_NEEDS = {
     "recalls": ((Module.RECALLS, Level.VIEW),),
     "incidents": ((Module.INCIDENTS, Level.VIEW),),  # slice 28: facts about a health event (CLAUDE.md non-negotiable 6)
     "staff": ((Module.USERS, Level.VIEW), (Module.WORKORDERS, Level.VIEW)),
+    # slice 31: contracted service and vendor staff (the contracts, the engineers' records, the vendor jobs and their devices)
+    "vendors": ((Module.WORKORDERS, Level.VIEW), (Module.CONTRACTS, Level.VIEW), (Module.EQUIPMENT, Level.VIEW)),
 }
 
 

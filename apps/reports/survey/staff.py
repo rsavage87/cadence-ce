@@ -3,11 +3,11 @@ The survey binder's "Technician qualifications" section (slice 25): the facility
 the work completed in the period by a technician who was not credentialed for the device on the day it was completed.
 
 Who did the work: the technicians on its labor lines; when none logged time, the technician it is assigned to. Left out: work orders
-imported from the previous system (Source.IMPORTED: who did them was not recorded in Cadence's terms) and vendor service (Cadence keeps
-no record of a vendor's staff). Credentialed on a day: each credential as it stood at the end of that day, from its history
-(apps.credentials.services.credential_versions, version_on), judged by the one rule qualification() uses too (credential_standing): a
-credential renewed after it lapsed leaves the days between uncovered, one removed later still covers the days before, and one typed in
-after it was issued covers the days since its issue date.
+imported from the previous system (Source.IMPORTED: who did them was not recorded in Cadence's terms) and vendor service (slice 31: the
+Contracted service and vendor staff section, apps.reports.survey.vendors). Credentialed on a day: each credential as it stood at the end
+of that day, from its history (apps.credentials.services.credential_versions, version_on), judged by the one rule qualification() uses
+too (credential_standing): a credential renewed after it lapsed leaves the days between uncovered, one removed later still covers the
+days before, and one typed in after it was issued covers the days since its issue date.
 
 Queries: the technicians, the active technicians' credentials, the period's work order counts, the work orders to check, their labor
 lines' technicians, and the credentials' history; whatever the number of work orders. qualification() is never called per row.
@@ -170,7 +170,7 @@ def build(period: Period, user) -> Section:
         notes=[
             "Who did the work: the technicians who logged time on it; when nobody logged time, the technician it is assigned to.",
             f"Left out: work orders imported from the previous system ({counts['imported']} in the period) and vendor service "
-            f"({counts['vendor']}): Cadence keeps no record of a vendor's staff or their training.",
+            f"({counts['vendor']}), which the Contracted service and vendor staff section covers.",
             "Credentials are read as they stood at the end of each day work was completed, from their history: a credential renewed after "
             "it lapsed leaves the days between uncovered, one removed later still covers the days before, and one entered in Cadence "
             "after it was issued covers the days since its issue date.",
