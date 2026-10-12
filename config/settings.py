@@ -62,6 +62,7 @@ INSTALLED_APPS = [
     "apps.imports",
     "apps.incidents",
     "apps.vendors",  # slice 31: contracted service and vendor staff
+    "apps.evaluations",  # slice 32: the program's annual evaluation
     "apps.api",
     "apps.demo",
     "apps.web",

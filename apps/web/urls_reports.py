@@ -4,6 +4,7 @@ The custom report builder's and the survey binder's routes come before the key r
 from django.urls import path
 
 from . import views_custom_reports as vc
+from . import views_evaluations as ve
 from . import views_reports as v
 from . import views_survey as vs
 
@@ -16,6 +17,12 @@ urlpatterns = [
     path("custom-<uuid:pk>/edit/", vc.custom_edit, name="custom_report_edit"),
     path("custom-<uuid:pk>/delete/", vc.custom_delete, name="custom_report_delete"),
     # slice 25: the survey binder (never a report key: it is not in REPORTS, so it is never emailed)
+    # slice 32: the program's annual evaluation (before the key routes: "evaluations" is no report key). `web:evaluation` takes the
+    # evaluation's number (EV-26-0001) and opens its current version; `web:evaluation_version` a given one.
+    path("evaluations/", ve.evaluations, name="evaluations"),
+    path("evaluations/new/", ve.evaluation_new, name="evaluation_new"),
+    path("evaluations/<str:number>/", ve.evaluation, name="evaluation"),
+    path("evaluations/<str:number>/v<int:version>/", ve.evaluation, name="evaluation_version"),
     path("survey/", vs.survey, name="survey"),
     path("survey/gaps.csv", vs.survey_gaps_csv, name="survey_gaps_csv"),
     path("survey/<slug:section>/<slug:table>.csv", vs.survey_csv, name="survey_csv"),

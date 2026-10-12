@@ -117,7 +117,8 @@ class Gap:
 # areas it lists, and a gap may point into another (Program's checks open Settings, Inventory's open a model's PM program).
 LINK_NEEDS = {"settings": Module.SETTINGS, "pm_model": Module.PM, "asset": Module.EQUIPMENT, "wo": Module.WORKORDERS, "recalls": Module.RECALLS,
               "credentials": Module.USERS, "incidents": Module.INCIDENTS, "incident": Module.INCIDENTS,
-              "vendor_staff": Module.CONTRACTS}  # slice 31: the Contracts screen's Vendor staff tab (it refuses scoped users, as the binder does)
+              "vendor_staff": Module.CONTRACTS,  # slice 31: the Contracts screen's Vendor staff tab (it refuses scoped users, as the binder does)
+              "evaluations": Module.EVALUATIONS, "evaluation": Module.EVALUATIONS, "evaluation_version": Module.EVALUATIONS}  # slice 32
 
 
 def gap_links(user) -> Callable[[Gap], str]:

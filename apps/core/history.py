@@ -136,6 +136,14 @@ def _aem_url(rec):
     return reverse("web:pm_model", args=[rec.device_model_id]) + "?tab=aem" if rec.device_model is not None else None
 
 
+def _evaluation_name(r) -> str:
+    return r.number if r.version == 1 else f"{r.number} v{r.version}"
+
+
+def _evaluation_url(number, version) -> str:
+    return reverse("web:evaluation", args=[number]) if version == 1 else reverse("web:evaluation_version", args=[number, version])
+
+
 AREAS = {a.key: a for a in (
     Area("devices", "Devices", "equipment.Asset", "equipment", _safe(lambda r: r.tag), _safe(lambda r: reverse("web:asset", args=[r.tag]))),
     Area("device_models", "Device models", "equipment.DeviceModel", "equipment", _safe(lambda r: f"{r.manufacturer} {r.model}"),
@@ -169,6 +177,15 @@ AREAS = {a.key: a for a in (
          select=("engineer",)),
     Area("vendor_attestations", "Vendor attestations", "vendors.VendorAttestation", "contracts",
          _safe(lambda r: f"{', '.join(r.vendor_names)} · attestation {r.reference}"), _safe(lambda r: reverse("web:vendor_staff"))),
+    # Slice 32: the program's annual evaluations, their objectives and approvals, read with Program evaluation View.
+    Area("evaluations", "Program evaluations", "evaluations.ProgramEvaluation", "evaluations", _safe(_evaluation_name),
+         _safe(lambda r: _evaluation_url(r.number, r.version))),
+    Area("evaluation_objectives", "Program evaluation objectives", "evaluations.EvaluationObjective", "evaluations",
+         _safe(lambda r: f"{_evaluation_name(r.evaluation)} · objective"), _safe(lambda r: _evaluation_url(r.evaluation.number, r.evaluation.version)),
+         select=("evaluation",)),
+    Area("evaluation_approvals", "Program evaluation approvals", "evaluations.EvaluationApproval", "evaluations",
+         _safe(lambda r: f"{_evaluation_name(r.evaluation)} · approval"), _safe(lambda r: _evaluation_url(r.evaluation.number, r.evaluation.version)),
+         select=("evaluation",)),
 )}
 ACCESS = Area("access", "Access", "accounts.AccessEvent", "users", _safe(lambda e: str(e.user) if e.user_id else ""))
 ALL_AREAS = {**AREAS, ACCESS.key: ACCESS}
@@ -232,6 +249,10 @@ HIDE = {
     "vendors.vendorengineer": {"name_key", "company_key", "created_by"},
     "vendors.engineertraining": {"engineer", "created_by"},  # the engineer is in the record's name
     "vendors.vendorattestation": {"vendor_keys", "created_by"},
+    # Slice 32: the record's own name; the creator is the "added" entry's who; an objective's or approval's evaluation is in its name
+    "evaluations.programevaluation": {"number", "version", "created_by"},
+    "evaluations.evaluationobjective": {"evaluation", "position", "carried_from"},
+    "evaluations.evaluationapproval": {"evaluation"},
 }
 
 # Labels that read better than the verbose names, per model; `_label` falls back to the verbose name.
@@ -267,6 +288,18 @@ LABELS = {
                                  "issued_on": "Issued", "expires_on": "Expires"},
     "vendors.vendorattestation": {"vendor_names": "Vendor names", "covers": "Covers", "model_ids": "Device models",
                                   "received_on": "Received", "valid_from": "Valid from", "valid_through": "Valid through"},
+    # Slice 32 (the narrative's labels as apps.evaluations.models.NARRATIVE words them)
+    "evaluations.programevaluation": {"period_start": "Period starts", "period_end": "Period ends", "snapshot": "Figures",
+                                      "sent_on": "Sent to committee", "approved_on": "Approved", "amends": "Amends",
+                                      "summary": "Summary", "scope_changes": "Scope and changes", "emergency_equipment": "Equipment for emergencies",
+                                      "aem_effectiveness": "AEM program safety and effectiveness", "effectiveness": "Overall effectiveness",
+                                      "went_well": "What went well", "improvements": "What needs improvement",
+                                      "capital_staffing": "Capital, replacement, staffing, and training", "cybersecurity": "Cybersecurity",
+                                      "inventory_reviewed_on": "Inventory reviewed", "plan_title": "Plan reviewed", "plan_version": "Plan version",
+                                      "plan_effective_on": "Plan effective"},
+    "evaluations.evaluationobjective": {"text": "Objective", "target": "Target", "result": "Result", "comment": "Comment"},
+    "evaluations.evaluationapproval": {"body_name": "Committee", "meeting_on": "Meeting", "chair_name": "Chair", "chair_title": "Chair's title",
+                                       "minutes_reference": "Minutes", "recorded_by": "Recorded by"},
     "accounts.role": {"is_system": "System role", "scope": "What its users see"},
     "facility.facilitysettings": {"portal_require_callback": "Portal: callback number required", "portal_hotline": "Portal: hotline",
                                   "portal_confirmation": "Portal: confirmation", "portal_email_domains": "Portal: email domains",
@@ -381,6 +414,8 @@ _NAMERS = {
     "recalls.alert": lambda o: f"{o.get_source_display()} {o.external_id}",
     "incidents.incident": lambda o: o.number,
     "vendors.vendorengineer": lambda o: f"{o.name} ({o.company})",
+    "evaluations.programevaluation": lambda o: o.number if o.version == 1 else f"{o.number} v{o.version}",
+    "evaluations.evaluationsnapshot": lambda o: f"Figures taken {o.taken_on:%b} {o.taken_on.day}, {o.taken_on.year}",
 }
 
 

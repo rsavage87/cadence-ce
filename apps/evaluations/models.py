@@ -1,0 +1,183 @@
+"""
+The medical equipment program's annual evaluation (slice 32, beyond the mock): one facility's evaluation of its program for one
+12-month period, drafted from Cadence's figures for the period (a snapshot of indicators, apps.evaluations.indicators), with the text
+Clinical Engineering writes about the program, the year's objectives reviewed and the next year's set, and the committee approvals
+recorded. The Joint Commission no longer requires it of hospitals (2026); DNV, ACHC, and the facility's own plan may, and hospitals
+keep it for their EOC or safety committee and their QAPI program. Cadence never says which accreditor requires it.
+
+Every write goes through apps.evaluations.services. Statuses: draft (figures refreshed, text and objectives written) -> ready (sent to
+committee: frozen; Back to draft) -> approved (the first approval) -> superseded (when its amendment, the same number with the next
+version, is approved). A draft may be discarded. Nothing approved is ever edited: an amendment is a new version.
+
+Privacy (CLAUDE.md non-negotiable 6): the text is staff-written, about the program in aggregate, length-limited, and the form warns
+against patient or requester details; it is never emailed, never a custom report source, never in All facilities, never shown to a
+scoped user. Incident figures are counts only and shown only to Incidents View.
+"""
+from django.conf import settings
+from django.db import models
+from simple_history.models import HistoricalRecords
+
+from apps.core.models import TenantModel
+from apps.core.validators import reference_token
+
+PLAN_VERSION_VALIDATOR = reference_token("Enter the plan's version as your policy system shows it, without spaces (v4, 2026-1).")
+MINUTES_VALIDATOR = reference_token("Enter the minutes' reference as your committee files them, without spaces (EOC-2026-02).")
+
+TEXT_MAX = 2000  # each narrative field
+OBJECTIVE_MAX, TARGET_MAX, COMMENT_MAX = 300, 120, 300
+OBJECTIVES_MAX = 20  # of each kind
+
+# The text Clinical Engineering writes (field, label, help): one column each, saved one field at a time (services.update_text), and the
+# form, the page, the print, and the history read this tuple. Each at most TEXT_MAX characters.
+NARRATIVE = (
+    ("summary", "Summary", "A paragraph for the committee: the year in short, and what you ask of it."),
+    ("scope_changes", "Scope and changes", "What the program covers, and what changed in the year: services, sites, equipment, hazards."),
+    ("emergency_equipment", "Equipment for emergencies", "The equipment needed for likely emergencies, and how it is kept ready."),
+    ("aem_effectiveness", "AEM program safety and effectiveness",
+     "How degraded performance was detected, malfunctions investigated, unsafe equipment removed, and the program changed. Refer to "
+     "incidents by number only, never by unit, day, or outcome."),
+    ("effectiveness", "Overall effectiveness", "Whether the program did what it set out to do, judged from the figures and the objectives."),
+    ("went_well", "What went well", ""),
+    ("improvements", "What needs improvement", ""),
+    ("capital_staffing", "Capital, replacement, staffing, and training", "Replacement planning, capital requests, staffing, and CE staff training."),
+    ("cybersecurity", "Cybersecurity", "Cadence keeps no data on it: how medical device security was managed."),
+)
+NARRATIVE_FIELDS = tuple(f for f, _label, _help in NARRATIVE)
+PRIVACY_WARNING = "About the program as a whole: no patient, requester, or incident details (incidents by number only)."
+
+
+class Status(models.TextChoices):
+    DRAFT = "draft", "Draft"
+    READY = "ready", "Sent to committee"
+    APPROVED = "approved", "Approved"
+    SUPERSEDED = "superseded", "Superseded by an amendment"
+    DISCARDED = "discarded", "Discarded"
+
+
+# The statuses whose period counts: no two of these overlap but for one evaluation's versions (services._overlapping).
+LIVE_STATUSES = (Status.DRAFT, Status.READY, Status.APPROVED)
+
+
+class ProgramEvaluation(TenantModel):
+    number = models.CharField(max_length=20, editable=False, help_text="EV-26-0001 (Sequence 'evaluation-<yy>', yy from the period's end)")
+    version = models.PositiveSmallIntegerField(default=1, editable=False)
+    amends = models.ForeignKey("self", on_delete=models.PROTECT, null=True, blank=True, related_name="amendments", editable=False,
+                               help_text="The approved version this amendment replaces once it is approved")
+    period_start = models.DateField(help_text="The first of a month")
+    period_end = models.DateField(help_text="12 months after the start, less a day; ended before the evaluation is drafted")
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.DRAFT, editable=False)
+    snapshot = models.ForeignKey("EvaluationSnapshot", on_delete=models.PROTECT, null=True, blank=True, related_name="+", editable=False,
+                                 help_text="The figures as last taken (services.refresh); kept as they were when it was sent to committee")
+    sent_on = models.DateField(null=True, blank=True, editable=False, help_text="The day it was last sent to committee (ready)")
+    approved_on = models.DateField(null=True, blank=True, editable=False, help_text="The first approval's meeting date")
+    # The text (NARRATIVE), each at most TEXT_MAX characters.
+    summary = models.TextField(blank=True)
+    scope_changes = models.TextField(blank=True)
+    emergency_equipment = models.TextField(blank=True)
+    aem_effectiveness = models.TextField(blank=True)
+    effectiveness = models.TextField(blank=True)
+    went_well = models.TextField(blank=True)
+    improvements = models.TextField(blank=True)
+    capital_staffing = models.TextField(blank=True)
+    cybersecurity = models.TextField(blank=True)
+    inventory_reviewed_on = models.DateField(null=True, blank=True, help_text="When the inventory was last reviewed for completeness")
+    # The written plan reviewed: a reference (the plan lives in the facility's policy system), never the plan itself.
+    plan_title = models.CharField(max_length=120, blank=True)
+    plan_version = models.CharField(max_length=40, blank=True, validators=[PLAN_VERSION_VALIDATOR])
+    plan_effective_on = models.DateField(null=True, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    history = HistoricalRecords()
+
+    class Meta:
+        ordering = ["-period_end", "-version"]
+        constraints = [
+            models.UniqueConstraint(fields=["tenant", "number", "version"], name="uniq_evaluation_version_per_tenant"),
+            models.UniqueConstraint(fields=["tenant", "period_start"], condition=models.Q(status="approved"),
+                                    name="uniq_approved_evaluation_per_period"),
+        ]
+        indexes = [models.Index(fields=["tenant", "status"]), models.Index(fields=["tenant", "period_end"])]
+
+    def __str__(self):
+        return self.label
+
+    @property
+    def label(self) -> str:
+        return self.number if self.version == 1 else f"{self.number} v{self.version}"
+
+
+class EvaluationSnapshot(TenantModel):
+    """The figures for an evaluation's period as taken on one day (apps.evaluations.indicators.snapshot): every indicator, whoever
+    reads it later (each reader sees the ones their access allows: indicators.cut). Immutable and without history: a refresh adds a new
+    row and the evaluation points at it."""
+    evaluation = models.ForeignKey(ProgramEvaluation, on_delete=models.CASCADE, related_name="snapshots")
+    taken_at = models.DateTimeField()
+    taken_on = models.DateField(help_text="The facility's day the figures were taken")
+    taken_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    data = models.JSONField(default=dict, help_text='{"schema": 1, ...}: indicators.snapshot\'s shape')
+
+    class Meta:
+        ordering = ["-taken_at"]
+
+    def __str__(self):
+        return f"{self.evaluation.label} figures {self.taken_on}"
+
+
+class ObjectiveKind(models.TextChoices):
+    REVIEW = "review", "This period's objective"
+    NEXT = "next", "Next period's objective"
+
+
+class ObjectiveResult(models.TextChoices):
+    MET = "met", "Met"
+    PARTLY = "partly", "Partly met"
+    NOT_MET = "not_met", "Not met"
+    CARRIED = "carried", "Carried forward"
+
+
+class EvaluationObjective(TenantModel):
+    """One objective: this period's (copied from the previous approved evaluation's next-period objectives when the draft is made, or
+    added; its result and comment written here), or the next period's (its text and target)."""
+    evaluation = models.ForeignKey(ProgramEvaluation, on_delete=models.CASCADE, related_name="objectives")
+    kind = models.CharField(max_length=10, choices=ObjectiveKind.choices)
+    position = models.PositiveSmallIntegerField(default=0)
+    text = models.CharField(max_length=OBJECTIVE_MAX)
+    target = models.CharField(max_length=TARGET_MAX, blank=True)
+    result = models.CharField(max_length=10, choices=ObjectiveResult.choices, blank=True)
+    comment = models.CharField(max_length=COMMENT_MAX, blank=True)
+    carried_from = models.ForeignKey("self", on_delete=models.SET_NULL, null=True, blank=True, related_name="+", editable=False,
+                                     help_text="The previous evaluation's next-period objective this one was copied from")
+    history = HistoricalRecords()
+
+    class Meta:
+        ordering = ["kind", "position", "created_at"]
+
+    def __str__(self):
+        return f"{self.evaluation.label} · objective"
+
+
+class Body(models.TextChoices):
+    EOC = "eoc", "Environment of care or safety committee"
+    QUALITY = "quality", "Quality oversight (QAPI)"
+    MEC = "mec", "Medical executive committee"
+    GOVERNING = "governing", "Governing body"
+    OTHER = "other", "Another committee"
+
+
+class EvaluationApproval(TenantModel):
+    """One committee's approval of an evaluation, as its minutes record it: the first approves the evaluation (it was sent to that
+    committee); later ones record where it went next (quality oversight, the governing body)."""
+    evaluation = models.ForeignKey(ProgramEvaluation, on_delete=models.PROTECT, related_name="approvals")
+    body = models.CharField(max_length=12, choices=Body.choices)
+    body_name = models.CharField(max_length=80, blank=True, help_text="The committee's name, for another committee")
+    meeting_on = models.DateField()
+    chair_name = models.CharField(max_length=120, blank=True)
+    chair_title = models.CharField(max_length=120, blank=True)
+    minutes_reference = models.CharField(max_length=40, blank=True, validators=[MINUTES_VALIDATOR])
+    recorded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    history = HistoricalRecords()
+
+    class Meta:
+        ordering = ["meeting_on", "created_at"]
+
+    def __str__(self):
+        return f"{self.evaluation.label} · approval"

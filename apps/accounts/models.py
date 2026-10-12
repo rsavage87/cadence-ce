@@ -17,6 +17,7 @@ class Module(models.TextChoices):
     USERS = "users", "Users and access"
     SETTINGS = "settings", "Settings"
     INCIDENTS = "incidents", "Incidents"  # slice 28: device incidents (apps.incidents)
+    EVALUATIONS = "evaluations", "Program evaluation"  # slice 32: the program's annual evaluation (apps.evaluations)
 
 
 class Level(models.IntegerChoices):
@@ -173,19 +174,19 @@ DEFAULT_ROLES = [
     ("director", "Director", "Everything, including policy, contracts, integrations, and user management", {m: Level.FULL for m in Module.values}),
     ("manager", "CE manager", "Assigns and closes work, approves AEM changes and recall closures",
      {"equipment": Level.EDIT, "workorders": Level.APPROVE, "pm": Level.APPROVE, "contracts": Level.EDIT, "recalls": Level.APPROVE,
-      "reports": Level.VIEW, "users": Level.VIEW, "settings": Level.VIEW, "incidents": Level.APPROVE}),
+      "reports": Level.VIEW, "users": Level.VIEW, "settings": Level.VIEW, "incidents": Level.APPROVE, "evaluations": Level.APPROVE}),
     ("technician", "Technician", "Work orders, PM checklists, and parts requests; cannot close recalls",
      {"equipment": Level.EDIT, "workorders": Level.EDIT, "pm": Level.EDIT, "contracts": Level.VIEW, "recalls": Level.VIEW,
-      "reports": Level.VIEW, "users": Level.NONE, "settings": Level.NONE, "incidents": Level.EDIT}),
+      "reports": Level.VIEW, "users": Level.NONE, "settings": Level.NONE, "incidents": Level.EDIT, "evaluations": Level.NONE}),
     ("requester", "Clinical requester", "Submits requests and sees status for their own unit",
      {"equipment": Level.VIEW, "workorders": Level.REQUEST, "pm": Level.NONE, "contracts": Level.NONE, "recalls": Level.NONE,
-      "reports": Level.NONE, "users": Level.NONE, "settings": Level.NONE, "incidents": Level.NONE}),
+      "reports": Level.NONE, "users": Level.NONE, "settings": Level.NONE, "incidents": Level.NONE, "evaluations": Level.NONE}),
     ("analyst", "Finance and quality", "Dashboards and reports, read-only",
      {"equipment": Level.VIEW, "workorders": Level.VIEW, "pm": Level.VIEW, "contracts": Level.VIEW, "recalls": Level.VIEW,
-      "reports": Level.FULL, "users": Level.NONE, "settings": Level.NONE, "incidents": Level.VIEW}),
+      "reports": Level.FULL, "users": Level.NONE, "settings": Level.NONE, "incidents": Level.VIEW, "evaluations": Level.VIEW}),
     ("vendor", "Vendor technician", "Sees and updates only work orders assigned to their company",
      {"equipment": Level.VIEW, "workorders": Level.EDIT, "pm": Level.NONE, "contracts": Level.NONE, "recalls": Level.NONE,
-      "reports": Level.NONE, "users": Level.NONE, "settings": Level.NONE, "incidents": Level.NONE}),
+      "reports": Level.NONE, "users": Level.NONE, "settings": Level.NONE, "incidents": Level.NONE, "evaluations": Level.NONE}),
 ]
 # A default role's level for a module it has no row for (Role.levels): a facility made before a module existed gets its default.
 DEFAULT_LEVELS = {slug: levels for slug, _name, _desc, levels in DEFAULT_ROLES}
