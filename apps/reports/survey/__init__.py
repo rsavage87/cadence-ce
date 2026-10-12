@@ -49,6 +49,7 @@ GAPS_SHOWN = 50  # a section's gaps listed on the screen; all of them in the gap
 # Table.links: the column holding a record's key, and what kind of record it is (the screen and print make the link).
 WORK_ORDER, DEVICE = "work_order", "device"
 INCIDENT = "incident"  # slice 28: an incident's number (web:incident), linked for Incidents View only
+EVALUATION = "evaluation"  # slice 32: a program evaluation's number (web:evaluation: its version of record), linked for Program evaluation View only
 
 
 @dataclass(frozen=True)
@@ -157,7 +158,7 @@ class Table:
     columns: list[str]
     rows: Callable[[], Iterable[list]]  # lazy: every row, plain values (str, int, Decimal, float, date, None)
     count: int | None = None  # how many rows, when the section knows it cheaply (else the page says "see the CSV")
-    links: dict[int, str] = field(default_factory=dict)  # {column index: WORK_ORDER, DEVICE, or INCIDENT}
+    links: dict[int, str] = field(default_factory=dict)  # {column index: WORK_ORDER, DEVICE, INCIDENT, or EVALUATION}
     printed: bool = True  # False: the print shows the count and points to the CSV (the inventory's every device)
     empty: str = "None in this period."
 
@@ -212,7 +213,8 @@ class Binder:
 # Not covered: what a surveyor may ask for that Cadence keeps no record of, printed on the cover so the binder is never read as the
 # whole program.
 NOT_COVERED = [
-    "The facility's written medical equipment management plan and its annual evaluation",
+    # Slice 32 keeps the program's annual evaluation (Reports, Program evaluation; the Program and policies section lists those approved).
+    "The facility's written medical equipment management plan itself (an evaluation records the version reviewed)",
     # Slice 30 keeps the checks after a repair work order (the Checks after repair section); these it does not.
     "Checks after a recall action or software upgrade; devices returned to service by hand without a repair work order; calibration of "
     "electrical safety analyzers; a medical physicist's evaluation of imaging equipment after a major repair",

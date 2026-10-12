@@ -349,7 +349,7 @@ def test_the_program_makes_a_fixed_number_of_queries(ctx, make_user):
     few = queries()
     for days in (5, 10, 20, 30, 45):
         fac.update_settings(by=kim, pm_window_other=K.DAYS_AFTER, pm_window_other_days=days)
-    assert queries() == few <= 3
+    assert queries() == few <= 6  # slice 32: with the approved evaluations, their approvals, and the last approved (test_survey_program)
     assert len(rows_of(program_build(today, today - timedelta(days=90)), "pm_window_changes")) == 6
 
 

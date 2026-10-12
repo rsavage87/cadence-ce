@@ -234,6 +234,53 @@ def test_seed_demo_adds_its_temporary_devices(db):
         assert {f.label: f.value for f in s.figures}["Temporary devices on site"] == 3
 
 
+def test_seed_demo_drafts_last_years_program_evaluation(db):
+    """Slice 32: a draft evaluation of the 12 months ending at the end of last month, drafted by the CE manager through the services
+    after everything else (its figures count the demo's work: Cadence's records begin inside the period, and the previous 12 months
+    have no records), two of this period's objectives with their results, one for the next period, and two parts of the text. Riverside
+    only; nothing approved, so the binder has no evaluation item."""
+    from django.db.models import Min
+    from django.utils import timezone
+
+    from apps.evaluations import indicators
+    from apps.evaluations.models import NARRATIVE_FIELDS, ObjectiveKind, ProgramEvaluation, Status
+    from apps.pm.dates import add_months
+    from apps.reports.survey import default_period, program
+
+    call_command("seed_demo", stdout=StringIO())
+    with tenant_context(Tenant.objects.get(slug="riverside")):
+        today = timezone.localdate()
+        author = User.objects.get(username=f"{seed_demo.EVALUATION_AUTHOR}@riverside.example")
+        ev = ProgramEvaluation.objects.select_related("snapshot").get()
+        start = add_months(today.replace(day=1), -12)
+        assert (ev.period_start, ev.period_end, ev.status, ev.version) == (start, today.replace(day=1) - timedelta(days=1), Status.DRAFT, 1)
+        assert ev.number == f"EV-{ev.period_end:%y}-0001" and ev.created_by == author and author.role.slug == "manager"
+        assert {h.history_user_id for h in ev.history.all()} == {author.pk}
+        data = ev.snapshot.data
+        assert (ev.snapshot.taken_on, ev.snapshot.taken_by) == (today, author)
+        first = WorkOrder.objects.aggregate(first=Min("opened_on"))["first"]
+        assert data["records_begin"] == first.isoformat() and first > ev.period_start  # the page says where the records begin
+        assert data["previous"]["source"] == "counted" and data["previous"]["values"] == {}  # nothing in Cadence the year before
+        figures = {i["key"]: i for i in data["indicators"]}
+        assert figures["repairs_completed"]["value"] > 0 and figures["pm_high"]["den"] > 0 and figures["incidents_recorded"]["value"] >= 1
+        assert figures["recalls_received"]["value"] >= 1 and data["tables"]["aem"][0]["model"] == "Philips IntelliVue MX750"
+        # taken by someone who may see every area, so nothing in it depends on who took it; the director may refresh it too
+        assert indicators.missing_for(author) == [] and indicators.cut(data, author)["left_out"] == []
+        assert indicators.can_refresh(User.objects.get(username="kim@riverside.example"))
+        assert {f: getattr(ev, f) for f in NARRATIVE_FIELDS if getattr(ev, f)} == seed_demo.EVALUATION_TEXT
+        review = [(o.text, o.target, o.result, o.comment) for o in ev.objectives.filter(kind=ObjectiveKind.REVIEW)]
+        assert review == [tuple(o) for o in seed_demo.EVALUATION_REVIEW_OBJECTIVES]
+        assert [(o.text, o.target, o.result) for o in ev.objectives.filter(kind=ObjectiveKind.NEXT)] == [
+            (*seed_demo.EVALUATION_NEXT_OBJECTIVES[0], "")]
+        s = program.build(default_period(today), None)
+        assert s.gaps == [] and list(s.table("evaluations").rows()) == []  # a draft: nothing approved, no check
+    with tenant_context(Tenant.objects.get(slug="riverside-north")):
+        assert not ProgramEvaluation.objects.exists()
+    call_command("seed_demo", stdout=StringIO())  # a second run drafts nothing more
+    with tenant_context(Tenant.objects.get(slug="riverside")):
+        assert ProgramEvaluation.objects.count() == 1
+
+
 def test_a_database_seeded_before_slice_22_gets_the_north_campus(db, monkeypatch):
     monkeypatch.setattr(seed_demo.Command, "_north_campus", lambda self, tenant, opts: None)
     call_command("seed_demo", stdout=StringIO())

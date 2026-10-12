@@ -7,18 +7,21 @@ narrow every row to the share, so a record outside it is a 404 as another facili
 from datetime import date, timedelta
 
 import pytest
+from evaluation_fixtures import draft as evaluation_draft
 
 from apps.accounts.models import DataScope, Level, Module, Role, User
 from apps.api import urls as api_urls
 from apps.api.permissions import ModulePermission, PersonPermission
 from apps.api.views import AssetViewSet, WorkOrderViewSet
 from apps.api.views_all_facilities import AllFacilitiesViewSet
+from apps.api.views_evaluations import ProgramEvaluationViewSet
 from apps.api.views_facilities import FacilityViewSet
 from apps.api.views_incidents import IncidentViewSet
 from apps.api.views_scan import ScanViewSet
 from apps.api.views_work import WorkOrderLaborViewSet, WorkOrderNoteViewSet, WorkOrderPartViewSet
 from apps.contracts.models import Contract, ContractType
 from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, RiskClass
+from apps.evaluations.models import ProgramEvaluation
 from apps.incidents.models import Affected, Incident, Outcome
 from apps.incidents.services import record_incident
 from apps.tenants.context import tenant_context
@@ -77,8 +80,10 @@ def world(ctx, dept, vent, pump, pump_model, techs):
                                        end_on=TODAY + timedelta(days=365))
     # Slice 28: an incident on the vendor's device, not held (its status and work orders stay as they are)
     incident = record_incident(asset=vent, outcome=Outcome.NO_HARM, affected=Affected.NONE, hold=False)
+    # Slice 32: a draft program evaluation of last year (its figures cover the vendor's and the unit's devices among the rest)
+    evaluation = evaluation_draft()
     return {"assets": {"vent": vent, "pump": pump, "card_mon": card_mon, "card_pump": card_pump}, "wos": wos, "cardio": cardio,
-            "icu": dept, "monitor": monitor, "contract": contract, "incident": incident}
+            "icu": dept, "monitor": monitor, "contract": contract, "incident": incident, "evaluation": evaluation}
 
 
 @pytest.fixture
@@ -382,7 +387,17 @@ def closed_endpoints(world, pump_recall, techs):
         ("post", f"{API}vendor-attestations/", {"vendor_names": ["Hamilton Medical"], "covers": "all", "reference": "LTR-1",
                                                 "received_on": day, "valid_from": day, "valid_through": day}),
         ("post", wo_url(w, "vendor-engineer/"), {"engineer_name": "Lee Park"}),
+        *evaluation_endpoints(world),
     ]
+
+
+def evaluation_endpoints(world):
+    """Slice 32: the program evaluation endpoints (apps/api/views_evaluations.py), read-only and never a scoped user's."""
+    ev = world["evaluation"]
+    return [("get", f"{API}program-evaluations/", None), ("get", f"{API}program-evaluations/{ev.id}/", None),
+            ("get", f"{API}program-evaluations/{ev.number}/", None), ("get", f"{API}program-evaluations/{ev.number}/?version=1", None),
+            ("post", f"{API}program-evaluations/", {"period_start": "2025-01-01"}),
+            ("patch", f"{API}program-evaluations/{ev.id}/", {"summary": "x"})]
 
 
 def incident_endpoints(world):
@@ -425,6 +440,7 @@ def test_every_other_endpoint_refuses_a_scoped_role_with_full_levels(client, per
     assert pump_recall.status == "needs_action" and world["contract"].covered_assets().count() == 0
     incident = Incident.objects.get(pk=world["incident"].pk)
     assert (incident.status, incident.event_log, incident.finding, incident.reportable, incident.holds.count()) == ("open", "", "", None, 0)
+    assert ProgramEvaluation.objects.get(pk=world["evaluation"].pk).summary == "" and ProgramEvaluation.objects.count() == 1  # slice 32
 
 
 @pytest.mark.parametrize("who", ["vendor", "requester"])
@@ -472,3 +488,5 @@ def test_only_work_orders_and_devices_opt_in():
     assert WorkOrderNoteViewSet.scoped_actions == {"list", "create"} and ScanViewSet.scoped_actions == {"list"}
     # Slice 28: incidents are never a scoped user's (the device shows only "Held by Clinical Engineering")
     assert IncidentViewSet.scoped_actions == frozenset()
+    # Slice 32: nor the program evaluation, which covers the whole facility
+    assert ProgramEvaluationViewSet.scoped_actions == frozenset()
