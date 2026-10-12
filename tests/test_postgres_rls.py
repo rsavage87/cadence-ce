@@ -205,6 +205,48 @@ def test_the_survey_binder_under_the_policies(client, seeded):
     assert tables >= len(binder["sections"])  # every section lists something in a seeded facility
 
 
+def _seeded_evaluation(tenant):
+    from apps.evaluations.models import ProgramEvaluation
+
+    with tenant_context(tenant):
+        return ProgramEvaluation.objects.get()
+
+
+def test_the_program_evaluation_api_under_the_policies(client, seeded):
+    """Slice 32: the seeded draft evaluation over the API as the runtime role: the list, and the evaluation by number with its text,
+    objectives, and every figure (Kim may see every area), its previous column and the binder's items read from the stored snapshot."""
+    from apps.demo.management.commands import seed_demo
+    from apps.evaluations import indicators
+
+    ev = _seeded_evaluation(seeded)
+    client.force_login(User.objects.get(username="kim@riverside.example"))
+    as_app_role()
+    listed = client.get("/api/v1/program-evaluations/").json()
+    assert [e["number"] for e in listed["results"]] == [ev.number] and listed["results"][0]["status"] == "draft"
+    r = client.get(f"/api/v1/program-evaluations/{ev.number}/")
+    assert r.status_code == 200, r.content
+    data = r.json()
+    assert {t["field"]: t["text"] for t in data["text"] if t["text"]} == seed_demo.EVALUATION_TEXT
+    assert len(data["objectives"]["review"]) == 2 and len(data["objectives"]["next"]) == 1
+    figures = data["figures"]
+    assert figures["left_out"] == [] and len(figures["indicators"]) == len(indicators.INDICATORS) and figures["binder_gaps"]
+    assert figures["taken_by_name"] == "Rob Feldman"
+
+
+def test_the_program_evaluation_screens_under_the_policies(client, seeded):
+    """Slice 32: the seeded draft evaluation's screens as the runtime role (wave 2A's views): the list, the evaluation (by number and by
+    version), and the committee's printable copy."""
+    from django.urls import reverse
+
+    ev = _seeded_evaluation(seeded)
+    client.force_login(User.objects.get(username="kim@riverside.example"))
+    as_app_role()
+    for url in [reverse("web:evaluations"), reverse("web:evaluation", args=[ev.number]), reverse("web:evaluation_version", args=[ev.number, 1]),
+                reverse("web:evaluation_print", args=[ev.number])]:
+        r = client.get(url)
+        assert r.status_code == 200, (url, r.status_code)
+
+
 def test_changing_things_under_the_policies(client, seeded):
     """A few writes through the screens: the rows are stamped with the request's tenant and pass WITH CHECK."""
     client.force_login(User.objects.get(username="kim@riverside.example"))

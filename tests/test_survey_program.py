@@ -3,20 +3,31 @@ The survey binder's "Program and policies" section (slice 25, part 1; apps/repor
 last changed, the PM targets by risk class and the other KPI targets, the policy lines as set in Cadence (default or not), the
 risk-scoring bands with today's active devices, the note on what on time means, and the CHECK on a PM policy line that speaks of a
 month or a grace period. Also the two default PM policy texts, which now say what Cadence measures.
+
+Slice 32: the program's annual evaluations approved whose 12 months overlap the binder's period (never a draft, one sent to committee,
+a discarded one, or a superseded version), with the committees that approved each; the CHECK once the facility has approved one and
+the next is overdue (never before a first approval), linked for a reader with Program evaluation View; NOT_COVERED and the note on the
+written plan; a fixed number of queries.
 """
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
+from evaluation_fixtures import approved, draft, sent
 from survey_helpers import gaps_of, period, rows_of
 
+from apps.accounts.models import Level, Module, Role, User
 from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, RiskClass
+from apps.evaluations import services as evaluations
+from apps.evaluations.models import Body
 from apps.facility import services as fs
 from apps.facility.models import POLICY_DEFAULTS, FacilitySettings
-from apps.reports.survey import CHECK, program
+from apps.pm.dates import add_months
+from apps.reports import survey
+from apps.reports.survey import CHECK, EVALUATION, NOT_COVERED, program
 
 OLD_LIFE_SUPPORT = "OEM interval, complete within due month, no grace"
 OLD_MEDIUM_LOW = "AEM allowed, 30-day grace after due month"
@@ -119,15 +130,141 @@ def test_another_facility_is_never_read(ctx, today, tenant, other_tenant, dept, 
 
 
 def test_a_fixed_number_of_queries(ctx, today, dept, vent_model):
+    first = months_back(today, 12)
+    since = add_months(first, -24)  # slice 32: a three-year binder, reaching three evaluations
+
     def queries():
         with CaptureQueriesContext(connection) as q:
-            s = build(today)
+            s = build_over(today, since)
             for t in s.tables:
                 list(t.rows())
         return len(q.captured_queries)
 
+    approved(start=add_months(first, -12), today=today)  # slice 32: one approved evaluation with one approval
     few = queries()
     for i in range(40):
         Asset.objects.create(tag=f"V-{i}", device_model=vent_model, department=dept)
     fs.update_settings(policy_medium_low=OLD_MEDIUM_LOW)
-    assert queries() == few <= 3
+    for start in (first, since):  # two more, each with a later committee's approval too
+        ev = approved(start=start, today=today)
+        evaluations.record_approval(ev, body=Body.GOVERNING, meeting_on=today, by=None, today=today)
+    assert len(rows_of(build_over(today, since), "evaluations")) == 3
+    # the settings row, its history, the devices by class, the approved evaluations and their approvals, and the last approved
+    assert queries() == few <= 6
+
+
+# --- slice 32: the program's annual evaluations -------------------------------------------------------------------------------
+
+def build_over(today, start):
+    """The section for a period from `start` to today."""
+    return program.build(period(start, today, today), None)
+
+
+def months_back(today, n: int) -> date:
+    """The first of the month `n` months before this one."""
+    return add_months(today.replace(day=1), -n)
+
+
+def test_a_facility_that_never_approved_one_has_no_item(ctx, today):
+    s = build_over(today, months_back(today, 36))
+    assert s.gaps == [] and rows_of(s, "evaluations") == []
+    assert s.table("evaluations").empty == "No approved program evaluation covers any of this period."
+    draft(start=months_back(today, 36), today=today)  # a draft, then one sent to committee: still nothing approved
+    sent(start=months_back(today, 24), today=today)
+    s = build_over(today, months_back(today, 36))
+    assert s.gaps == [] and rows_of(s, "evaluations") == []
+
+
+def test_the_table_lists_the_approved_evaluations_overlapping_the_period(ctx, today):
+    old = approved(start=months_back(today, 36), today=today)  # ended two years ago: outside a 13-month binder
+    last = approved(start=months_back(today, 12), today=today, meeting_on=today - timedelta(days=3))
+    evaluations.record_approval(last, body=Body.OTHER, body_name="Board quality committee", meeting_on=today, by=None, today=today)
+    evaluations.record_approval(last, body=Body.GOVERNING, meeting_on=today, by=None, today=today)
+    middle = approved(start=months_back(today, 24), today=today)
+    amendment = evaluations.amend(middle, by=None, today=today)  # approved below: the earlier version is superseded
+    sent(ev=amendment, today=today)
+    evaluations.record_approval(amendment, body=Body.QUALITY, meeting_on=today, by=None, today=today)
+    discarded = draft(start=months_back(today, 48), today=today)
+    evaluations.discard(discarded, by=None)
+    s = build_over(today, months_back(today, 13))
+    table = s.table("evaluations")
+    assert table.columns == ["Evaluation", "Version", "Period from", "Period to", "Approved on", "Approved by"] and table.links == {0: EVALUATION}
+    d = program._day
+    assert rows_of(s, "evaluations") == [
+        [middle.number, 2, middle.period_start, middle.period_end, today, f"Quality oversight (QAPI), {d(today)}"],
+        [last.number, 1, last.period_start, last.period_end, today - timedelta(days=3),
+         f"Environment of care or safety committee, {d(today - timedelta(days=3))}; Board quality committee, {d(today)}; Governing body, {d(today)}"],
+    ]
+    assert table.count == 2 and old.number not in {r[0] for r in rows_of(s, "evaluations")}
+    assert [r[0] for r in rows_of(build_over(today, months_back(today, 48)), "evaluations")] == [old.number, middle.number, last.number]
+    assert s.gaps == []  # the last one is not overdue
+
+
+def test_never_the_text_or_the_figures(ctx, today):
+    ev = draft(start=months_back(today, 12), today=today)
+    evaluations.update_text(ev, "summary", "Words for the committee only", by=None)
+    approved(ev=ev, today=today)
+    cells = [str(c) for r in rows_of(build_over(today, months_back(today, 12)), "evaluations") for c in r]
+    assert len(cells) == 6 and not any("Words for the committee" in c for c in cells)
+
+
+def test_the_check_once_the_next_is_overdue(ctx, today):
+    last = approved(start=months_back(today, 36), today=today)  # the 12 months after it ended about a year ago
+    ended = evaluations.period_end_of(last.period_end + timedelta(days=1))
+    [check] = gaps_of(build_over(today, months_back(today, 12)), CHECK)
+    assert check.text == (f"No approved program evaluation of the 12 months after {evaluations.period_label(last.period_start, last.period_end)} "
+                          f"({last.number}, the last approved), 90 days after they ended on {program._day(ended)}. Record its approval in "
+                          "Program evaluation, or be ready to explain.")
+    assert (check.url, check.record) == ("/reports/evaluations/", "Program evaluation")
+    assert not any(word in check.text for word in ("Joint Commission", "DNV", "ACHC", "CMS", "require"))
+    following = draft(start=months_back(today, 24), today=today)  # drafting the next is not approving it
+    assert len(gaps_of(build_over(today, months_back(today, 12)), CHECK)) == 1
+    approved(ev=following, today=today)  # the next approved: the one after it is not due yet
+    assert gaps_of(build_over(today, months_back(today, 12)), CHECK) == []
+
+
+def test_the_check_starts_the_day_after_it_is_due(ctx, today):
+    last = approved(start=months_back(today, 36), today=today)
+    due = evaluations.next_due(today).due_on
+    assert due == add_months(last.period_end, 12) + timedelta(days=90)
+    for day, checks in ((due, 0), (due + timedelta(days=1), 1)):
+        assert len(gaps_of(program.build(period(day - timedelta(days=30), day, day), None), CHECK)) == checks, day
+
+
+@pytest.mark.xfail(strict=True, reason="apps.evaluations.services.next_due ends the next 12 months at add_months(the last end, 12), a day "
+                                       "early when they end on Feb 29: the check fires on the 90th day")
+def test_the_check_counts_90_days_from_a_february_29(ctx):
+    on = date(2024, 5, 29)  # the 12 months after Mar 1, 2022 to Feb 28, 2023 ended on Feb 29, 2024: May 29 is the 90th day after
+    approved(start=date(2022, 3, 1), today=on)
+    assert evaluations.period_end_of(date(2023, 3, 1)) == date(2024, 2, 29)
+    assert gaps_of(program.build(period(date(2024, 1, 1), on, on), None), CHECK) == []
+
+
+def _reports_only(tenant) -> User:
+    role = Role.objects.create(name="Reports only", slug="reports-only")
+    role.set_levels({m: Level.VIEW if m == Module.REPORTS else Level.NONE for m in Module.values})
+    return User.objects.create_user(username="ro@riverside.example", password="Test-Pass-2026-x", tenant=tenant, role=role)
+
+
+@pytest.mark.parametrize("who, linked", [("director", True), ("manager", True), ("analyst", True), ("technician", False),
+                                         ("reports-only", False)])
+def test_the_check_links_for_program_evaluation_view_only(ctx, today, tenant, make_user, client, who, linked):
+    approved(start=months_back(today, 36), today=today)
+    user = _reports_only(tenant) if who == "reports-only" else make_user(who)
+    [check] = gaps_of(build_over(today, months_back(today, 12)), CHECK)
+    assert (survey.gap_links(user)(check) == "/reports/evaluations/") is linked
+    client.force_login(user)
+    [gap] = [g for g in client.get("/api/v1/survey/program/").json()["gaps"] if g["record"] == "Program evaluation"]
+    assert gap["url"] == ("/reports/evaluations/?facility=riverside" if linked else "")
+    page = client.get("/reports/survey/").content.decode()
+    assert "No approved program evaluation of the 12 months after" in page
+    assert ('href="/reports/evaluations/"' in page) is linked
+
+
+def test_not_covered_and_the_note_name_the_plan_itself(ctx, today):
+    assert "The facility's written medical equipment management plan itself (an evaluation records the version reviewed)" in NOT_COVERED
+    assert not any("annual evaluation" in item for item in NOT_COVERED)
+    s = build_over(today, months_back(today, 12))
+    assert program.PLAN_NOTE in s.notes and program.EVALUATIONS_NOTE in s.notes
+    assert "plan itself, which Cadence does not keep: a program evaluation records the version reviewed" in program.PLAN_NOTE
+    assert not any(word in note for note in s.notes for word in ("Joint Commission", "DNV", "ACHC"))

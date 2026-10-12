@@ -11,25 +11,39 @@ Slice 27, the PM completion window (apps.pm.windows; Settings): the figures show
 who changed it; a table lists every change to it, from the facility's Settings history (apps.core.history._rows: this facility's rows
 only); and a CHECK names each change made on or after the period's first day, because every PM in the period is judged by today's
 window. A PM policy line is read against its group's window: by the due date with disagrees_with_due_date (the binder's slice 25 rule),
-any other window with apps.pm.windows.policy_disagrees (word classes, never numbers: the Settings panel's warning). A fixed three queries:
-the settings row, its history, and the active devices by risk class.
+any other window with apps.pm.windows.policy_disagrees (word classes, never numbers: the Settings panel's warning).
+
+Slice 32, the program's annual evaluation (apps.evaluations): a table of the approved evaluations whose 12 months overlap the binder's
+period (number and version, the months, the day it was approved, and the committees that approved it, from their approvals; never its
+text or its figures), each number linked for a reader with Program evaluation View (the EVALUATION link column). A CHECK only once the
+facility has approved one and the next is overdue (apps.evaluations.services.next_due: the last approved period's end, 12 months, and
+90 days, before today), linking to Program evaluation (LINK_NEEDS): the facility's own housekeeping. A facility that never approved one
+has no item here, and Cadence never says which accreditor asks for an evaluation. The written plan itself is not in Cadence; an
+evaluation records the version its committee reviewed.
+
+A fixed six queries: the settings row, its history, the active devices by risk class, the approved evaluations overlapping the period
+and their approvals, and the last approved evaluation.
 """
 from __future__ import annotations
 
+from datetime import timedelta
 from decimal import Decimal
 
+from django.db.models import Prefetch
 from django.urls import reverse
 
 from apps.core.days import local_day
 from apps.core.history import _rows, who
 from apps.equipment.models import RiskClass
+from apps.evaluations import services as evaluations
+from apps.evaluations.models import Body, EvaluationApproval, ProgramEvaluation, Status
 from apps.facility import services as fs
 from apps.facility.models import FacilitySettings
 from apps.pm import windows as pm_windows
 from apps.reports.fleet import on_time_words
 from apps.tenants.context import get_current_tenant
 
-from . import CHECK, Figure, Gap, Period, Section, Table
+from . import CHECK, EVALUATION, Figure, Gap, Period, Section, Table
 
 KEY, TITLE = "program", "Program and policies"
 CLASS_ORDER = (RiskClass.LIFE_SUPPORT, RiskClass.HIGH, RiskClass.MEDIUM, RiskClass.LOW)
@@ -41,6 +55,47 @@ POLICY_GROUP = {field: group for group, field in pm_windows.PM_POLICY_FIELDS.ite
 ON_TIME_NOTE = "How on time is measured: a PM is on time when completed on or before its due date, as on the Overview. No grace period is added."
 # "no grace", "without grace", "without a grace period", "zero grace", "0-day grace": a text that denies a grace period agrees with Cadence.
 WINDOW_FIELDS = ("pm_window_high", "pm_window_high_days", "pm_window_other", "pm_window_other_days")
+# Slice 32: the written plan is the facility's own (its policy system); a program evaluation records the version its committee reviewed.
+PLAN_NOTE = ("The policy lines are the short texts set in Cadence's Settings. They are not the facility's written medical equipment management "
+             "plan itself, which Cadence does not keep: a program evaluation records the version reviewed.")
+EVALUATIONS_NOTE = ("Program evaluations: the facility's evaluations of its program approved in Cadence (Reports, Program evaluation) whose 12 "
+                    "months overlap this period, and the committees that approved each, as their minutes record it. Once one is approved, a "
+                    f"check names the next when it is not approved {evaluations.DUE_AFTER_DAYS} days after its 12 months end.")
+EVALUATION_COLUMNS = ["Evaluation", "Version", "Period from", "Period to", "Approved on", "Approved by"]
+
+
+def _committee(approval: EvaluationApproval) -> str:
+    """"Environment of care or safety committee, Mar 3, 2026"; another committee by the name recorded."""
+    name = approval.body_name if approval.body == Body.OTHER and approval.body_name else Body(approval.body).label
+    return f"{name}, {_day(approval.meeting_on)}"
+
+
+def approved_evaluations(period: Period) -> list[ProgramEvaluation]:
+    """The approved evaluations (the version of record of each) whose 12 months overlap the period, oldest first, with their approvals
+    in meeting order. Two queries."""
+    approvals = EvaluationApproval.objects.order_by("meeting_on", "created_at")
+    return list(ProgramEvaluation.objects.filter(status=Status.APPROVED, period_start__lte=period.end, period_end__gte=period.start)
+                .order_by("period_start", "version").prefetch_related(Prefetch("approvals", queryset=approvals)))
+
+
+def evaluation_rows(found: list[ProgramEvaluation]) -> list[list]:
+    """The evaluations table: number (linked: EVALUATION), version, the months, approved on, and by which committees. Never the text."""
+    return [[ev.number, ev.version, ev.period_start, ev.period_end, ev.approved_on, "; ".join(_committee(a) for a in ev.approvals.all())]
+            for ev in found]
+
+
+def overdue_check(today) -> Gap | None:
+    """The CHECK once the facility has approved an evaluation and the next is overdue (evaluations.next_due), else None: never before a
+    first approval. It names the 12 months after the last approved one and links to Program evaluation (LINK_NEEDS)."""
+    due = evaluations.next_due(today)
+    if due is None or not due.overdue:
+        return None
+    last = due.after
+    ended = evaluations.period_end_of(last.period_end + timedelta(days=1))
+    return Gap(CHECK, f"No approved program evaluation of the 12 months after {evaluations.period_label(last.period_start, last.period_end)} "
+                      f"({last.label}, the last approved), {evaluations.DUE_AFTER_DAYS} days after they ended on {_day(ended)}. Record its "
+                      "approval in Program evaluation, or be ready to explain.",
+               url=reverse("web:evaluations"), record="Program evaluation")
 
 
 def disagrees_with_due_date(text: str) -> bool:
@@ -144,11 +199,17 @@ def build(period: Period, user) -> Section:
             gaps.append(Gap(CHECK, f"The PM window for {names[c['group']]} was changed on {_day(c['on'])} by {c['by']}, from "
                                    f"“{c['old'].describe()}” to “{c['new'].describe()}”: every PM in the period is judged by today's window. "
                                    "Be ready to explain the change.", url=settings_url, record="Settings"))
+    # Slice 32: the program's annual evaluations
+    found = approved_evaluations(period)
+    evaluation_table = evaluation_rows(found)
+    overdue = overdue_check(period.today)
+    if overdue is not None:
+        gaps.append(overdue)
 
     return Section(
         key=KEY, title=TITLE,
         topic="What Cadence is set to measure for this facility: its PM completion targets and when a PM counts as on time, its maintenance "
-              "policy lines, and how devices are placed in risk classes.",
+              "policy lines, and how devices are placed in risk classes; and the program evaluations its committees approved.",
         covers=period.as_of_today,
         figures=figures,
         gaps=gaps,
@@ -160,11 +221,14 @@ def build(period: Period, user) -> Section:
                   empty="Never changed: Cadence has always counted a PM on time when done by its due date."),
             Table(key="risk_bands", title="Risk-scoring bands", columns=["Score", "Risk class", "Active devices today"],
                   rows=lambda: iter(band_rows), count=len(band_rows)),
+            Table(key="evaluations", title="Program evaluations approved (their 12 months overlap this period)", columns=list(EVALUATION_COLUMNS),
+                  rows=lambda: iter(evaluation_table), count=len(evaluation_table), links={0: EVALUATION},
+                  empty="No approved program evaluation covers any of this period."),
         ],
         notes=[
             on_time_note(w),
-            "The policy lines are the short texts set in Cadence's Settings. They are not the facility's written medical equipment management "
-            "plan, which Cadence does not keep.",
+            PLAN_NOTE,
+            EVALUATIONS_NOTE,
             "PM completion targets: life support and high risk are held at 100%; medium and low risk use the facility's target from Settings.",
             f"Risk scores: {fs.RISK_RUBRIC}. A model's risk class follows its score's band; a model never scored has a class set by hand. "
             "Devices are counted under their model's class today.",

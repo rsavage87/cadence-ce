@@ -48,6 +48,14 @@ training had expired (complete_work_order(vendor_engineer=...)), and Philips has
 service and vendor staff section shows its one deliberate GAP (Philips, linking to the Vendor staff tab). TechCare has no job in the
 demo, so its records show on the Vendor staff tab and in the binder's tables only. Constants only: nothing is drawn from the demo's
 generators, and no work order is added (every later number and draw stays as it was).
+
+Slice 32: Riverside has a draft program evaluation (Reports, Program evaluation) of the 12 months ending at the end of last month,
+drafted through apps.evaluations.services at the very end of the seed by the CE manager (rfeldman@: Program evaluation Approve, and
+View on every area the figures cover, which taking them needs), so its figures count everything the demo did: about six months of
+work, with "Cadence's records begin" on the day the demo's work starts, and no previous column (the records begin after the 12 months
+before end). Two of this period's objectives with their results, one for the next period, and two parts of the text (EVALUATION_*:
+plain words about the program as a whole). A draft, so the demo can refresh its figures, send it to committee, print the committee's
+copy, and record the approval. Constants only: nothing is drawn from the demo's generators. The North Campus has none.
 """
 import random
 from datetime import date, datetime, time, timedelta
@@ -77,6 +85,8 @@ from apps.equipment.models import (
     RiskClass,
     UseBeforeInspection,
 )
+from apps.evaluations import services as evaluations
+from apps.evaluations.models import ObjectiveKind, ObjectiveResult
 from apps.facility.models import PmWindow
 from apps.facility.services import labor_rates, update_settings
 from apps.incidents import notify as incident_notify
@@ -310,6 +320,24 @@ VENDOR_REPAIR_ENGINEER = "Owen Marsh"
 VENDOR_ATTESTATION_REFERENCE = "TC-ATT-2026-014"
 VENDOR_ATTESTATION_RECEIVED_DAYS_AGO, VENDOR_ATTESTATION_FROM_DAYS_AGO = 100, 110
 
+# Slice 32, the draft program evaluation (_program_evaluation), drafted by EVALUATION_AUTHOR (the CE manager). The text Clinical
+# Engineering wrote (NARRATIVE fields: about the program as a whole, never a patient, a requester, or an incident's details); this
+# period's objectives (text, target, result, comment) and the next period's (text, target).
+EVALUATION_AUTHOR = "rfeldman"
+EVALUATION_TEXT = {
+    "summary": "A year of scheduled maintenance, repairs, and recall work across the fleet. The committee is asked to review the figures "
+               "and this year's objectives, and to approve the objectives set for next year.",
+    "improvements": "Late PMs on life-support and high-risk equipment need their reason recorded every time, and incoming inspections "
+                    "must be passed before a new device is first used.",
+}
+EVALUATION_REVIEW_OBJECTIVES = [
+    ("Complete every life-support and high-risk PM within its window", "100%", ObjectiveResult.PARTLY,
+     "A few PMs were late; a reason is recorded for each but the latest."),
+    ("Record the checks after repair on every completed repair", "Every repair", ObjectiveResult.MET,
+     "Recorded on each repair since Cadence began keeping them."),
+]
+EVALUATION_NEXT_OBJECTIVES = [("Bring the mean repair turnaround within the facility's target", "3 days or less")]
+
 
 def _noon(day: date) -> datetime:
     """Noon of `day` in the current time zone (the facility's, inside tenant_context): a backdated timestamp's moment."""
@@ -474,6 +502,7 @@ class Command(BaseCommand):
             self._late_reasons(today)
             self._incidents(today, domain)
             self._not_returned(today)
+            self._program_evaluation(today, domain)  # slice 32: last, so its figures count everything above
         devices = len(assets) + len(NEW_DEVICES) + len(TEMPORARY_DEVICES)
         self.stdout.write(self.style.SUCCESS(f"Seeded {tenant.name}: {devices} devices, {len(techs)} technicians. Sign in as {kim} / DemoPass-2026"))
         self._north_campus(tenant, opts)
@@ -898,6 +927,21 @@ class Command(BaseCommand):
                 complete_work_order(wo, resolution=VENDOR_RESOLUTION, repair_check=RepairCheck.VENDOR_REPORT,
                                     checks_reference=VENDOR_REPORT_NUMBER, vendor_engineer=engineer, today=done)
                 change_status(wo, "closed", as_of=done)
+
+    @staticmethod
+    def _program_evaluation(today: date, domain: str) -> None:
+        """Slice 32: a draft evaluation of the 12 months ending at the end of last month, drafted by the CE manager through
+        apps.evaluations.services (its figures taken now, after everything else), with this period's objectives and their results, the
+        next period's, and two parts of the text. Constants only."""
+        author = User.objects.get(username=f"{EVALUATION_AUTHOR}@{domain}")
+        ev = evaluations.create_draft(period_start=add_months(today.replace(day=1), -12), by=author, today=today)
+        for field, text in EVALUATION_TEXT.items():
+            evaluations.update_text(ev, field, text, by=author, today=today)
+        for text, target, result, comment in EVALUATION_REVIEW_OBJECTIVES:
+            objective = evaluations.add_objective(ev, kind=ObjectiveKind.REVIEW, text=text, target=target, by=author)
+            evaluations.update_objective(objective, result=result, comment=comment, by=author)
+        for text, target in EVALUATION_NEXT_OBJECTIVES:
+            evaluations.add_objective(ev, kind=ObjectiveKind.NEXT, text=text, target=target, by=author)
 
     def _approved_aem(self, domain: str, today: date) -> None:
         """One AEM interval in force, as the mock's PM library shows for the patient monitors: proposed by a technician with the
