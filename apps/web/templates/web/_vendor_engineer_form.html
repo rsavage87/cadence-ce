@@ -1,0 +1,17 @@
+{% load web %}
+{# Add engineer, or (eng given) Change engineer (slice 31). Context: form (forms_vendors.EngineerForm), eng, suggestions, vendor_list. #}
+<div class="modal-h"><h2>{% if eng %}Change engineer{% else %}Add engineer{% endif %}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+<form id="ve-form" class="vs-form" hx-post="{% if eng %}{% url 'web:vendor_engineer_change' eng.pk %}{% else %}{% url 'web:vendor_engineer_new' %}{% endif %}" hx-target="#modal-card">
+  {% if form.non_field_errors %}<div class="note warn" style="margin:12px 16px 0">{{ form.non_field_errors|striptags }}</div>{% endif %}
+  <div class="form">
+    <label class="full">Name{{ form.name }}{% if form.name.errors %}<span class="err">{{ form.name.errors|striptags }}</span>{% endif %}
+      <span class="hint">As the vendor's service reports name them: letters, spaces, and . ' - , only.</span></label>
+    <label class="full">Vendor{{ form.company }}{% if form.company.errors %}<span class="err">{{ form.company.errors|striptags }}</span>{% endif %}
+      <span class="hint">{{ form.company.help_text }}</span></label>
+    <datalist id="{{ vendor_list }}">{% for c in suggestions %}<option value="{{ c }}"></option>{% endfor %}</datalist>
+    {% if eng %}<label class="full check-row">{{ form.is_active }} {{ form.is_active.label }}</label>
+    {% if form.is_active.errors %}<span class="err full">{{ form.is_active.errors|striptags }}</span>{% endif %}{% endif %}
+    <p class="hint full">In Cadence an engineer is a name and a vendor, nothing more. Badges, immunizations, and background checks belong to the facility's vendor credentialing system.</p>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">{% if eng %}Save{% else %}Add engineer{% endif %}</button></div>
+</form>

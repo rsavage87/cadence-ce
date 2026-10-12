@@ -1,0 +1,44 @@
+{% load web %}
+{# One vendor on the Vendor staff tab (slice 31): its attestations, then its engineers with their training on file. Context: s (views_vendors.VendorSection), can_edit, job_months, f. #}
+<section class="panel vs-sec" aria-labelledby="vs-h-{{ forloop.counter }}">
+  <div class="panel-h">
+    <div class="vs-head">
+      <h2 id="vs-h-{{ forloop.counter }}">{{ s.name }}</h2>
+      <p class="vs-sub">
+        {% if s.also %}<span>Also written {{ s.also|join:", " }}</span>{% endif %}
+        {% if s.contracts %}<span>Contract{{ s.contracts|length|pluralize }} {% for pk, ref in s.contracts %}<a class="link" href="{% url 'web:contract' pk %}" hx-get="{% url 'web:contract' pk %}" hx-target="#drawer">{{ ref }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}</span>{% endif %}
+        {% if s.jobs is not None %}<span>{{ s.jobs }} vendor job{{ s.jobs|pluralize }} in the last {{ job_months }} months</span>{% endif %}
+      </p>
+    </div>
+    {% if can_edit %}<div class="actions vs-acts">
+      <button class="btn sm" type="button" hx-get="{% url 'web:vendor_attestation_new' %}{{ s.vendor_query }}" hx-target="#modal-card">{% icon "plus" %} Attestation</button>
+      <button class="btn sm" type="button" hx-get="{% url 'web:vendor_engineer_new' %}{{ s.vendor_query }}" hx-target="#modal-card">{% icon "plus" %} Engineer</button>
+      {% if s.active_engineers %}<button class="btn sm" type="button" hx-get="{% url 'web:vendor_training_new' %}{{ s.vendor_query }}" hx-target="#modal-card">{% icon "plus" %} Training</button>{% endif %}
+    </div>{% endif %}
+  </div>
+  <div class="panel-b">
+    {% if s.empty %}
+    <p class="vs-none">Nothing on file for {{ s.name }}.</p>
+    {% else %}
+    <h3 class="vs-h3">Attestations</h3>
+    {% if s.attestations %}<ul class="vs-list">
+      {% for r in s.attestations %}{% with a=r.a %}
+      <li class="vs-row">
+        <span class="chip {{ r.chip.0 }}">{{ r.chip.1 }}</span>
+        <div class="vs-what"><b>Attestation {{ a.reference }} on file</b> · {{ r.words }}
+          <small>{{ a.vendor_names|join:", " }} · valid {{ a.valid_from|date:"M j, Y" }} to {{ a.valid_through|date:"M j, Y" }} · received {{ a.received_on|date:"M j, Y" }}</small></div>
+        {% if can_edit %}<button class="btn sm ghost" type="button" hx-post="{% url 'web:vendor_attestation_remove' a.pk %}{% query request.GET %}" hx-target="#vs-body" hx-swap="outerHTML"
+                hx-confirm="Remove attestation {{ a.reference }} as entered in error? It will cover no day; its history keeps it. One that ended stays on file: it covered its own days.">Remove</button>{% endif %}
+      </li>{% endwith %}{% endfor %}
+    </ul>{% else %}<p class="hint">No attestation on file.</p>{% endif %}
+    <h3 class="vs-h3">Engineers{% if s.narrowed %} <span>matching “{{ f.q }}”</span>{% endif %}</h3>
+    {% if s.engineers %}<ul class="vs-list">
+      {% for r in s.engineers %}{% with e=r.e %}
+      <li class="vs-eng">
+        <div class="vs-eng-h"><a class="link" href="{% url 'web:vendor_engineer' e.pk %}" hx-get="{% url 'web:vendor_engineer' e.pk %}" hx-target="#drawer">{{ e.name }}</a>{% if e.company != s.name %} <small class="muted">{{ e.company }}</small>{% endif %}{% if not e.is_active %} <span class="chip neutral">Inactive</span>{% endif %}</div>
+        {% for t in r.trainings %}<div class="vs-tr"><span class="chip {{ t.chip.0 }}">{{ t.chip.1 }}</span><span>{{ t.words }}</span></div>{% empty %}<div class="hint">No training on file.</div>{% endfor %}
+      </li>{% endwith %}{% endfor %}
+    </ul>{% else %}<p class="hint">No engineers on file.</p>{% endif %}
+    {% endif %}
+  </div>
+</section>

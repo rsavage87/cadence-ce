@@ -10,6 +10,7 @@ from django.core.paginator import Paginator
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, render
 from django.urls import reverse
+from django.utils import timezone
 from django.views.decorators.http import require_POST
 from django_htmx.http import retarget, trigger_client_event
 
@@ -24,6 +25,7 @@ from .forms import parse_uuid
 from .forms_contracts import STATUS_CHOICES, ContractForm, contract_choices, edit_contract_initial, new_contract_initial, parse_contract_filters
 from .htmx import PAGE_SIZE, is_partial, toast
 from .views import asset_drawer_context
+from .views_vendors import vendor_line
 
 DRAWER = "web/_contract_drawer.html"
 
@@ -83,6 +85,8 @@ def _drawer_context(request, contract, edit=False, form=None) -> dict:
         "model_options": ct.model_options(contract) if can_edit else [],
         "can_edit": can_edit, "can_delete": request.user.has_level(Module.CONTRACTS, Level.FULL),
         "can_view_asset": request.user.has_level(Module.EQUIPMENT, Level.VIEW),
+        # Slice 31: what is on file for the contract's vendor's staff, linking to the Vendor staff tab filtered to it
+        "vendor_line": vendor_line(contract.vendor, timezone.localdate()),
     }
 
 

@@ -1,0 +1,9 @@
+{# What a training or an attestation covers (slice 31), inside a .vs-form's .form grid: the choice, then the device models or the product category it picks (the other is hidden by CSS :has, and dropped by the form). Context: form (forms_vendors.CoverageFields). #}
+<fieldset class="full vs-covers"><legend>Covers</legend>
+  <div class="radio vs-cover-pick">{% for radio in form.covers %}<label>{{ radio.tag }} <span>{{ radio.choice_label }}</span></label>{% endfor %}</div>
+  {% if form.covers.errors %}<span class="err">{{ form.covers.errors|striptags }}</span>{% endif %}
+</fieldset>
+<label class="full vs-models">Device models{{ form.model_ids }}{% if form.model_ids.errors %}<span class="err">{{ form.model_ids.errors|striptags }}</span>{% endif %}
+  <span class="hint">Every model the certificate or letter names: one record. Hold Ctrl or ⌘ to choose several.</span></label>
+<label class="full vs-line">Product category{{ form.line }}{% if form.line.errors %}<span class="err">{{ form.line.errors|striptags }}</span>{% endif %}
+  <span class="hint">One manufacturer's category, as your catalog writes it. Never a whole manufacturer: a certificate on its monitors does not cover its CT.</span></label>

@@ -1,0 +1,9 @@
+{% load web %}
+{# The Vendor staff tab's body (slice 31). Re-fetches itself on vendors-changed (a modal saved, a training removed in the drawer); Remove an attestation swaps it directly. #}
+<div id="vs-body" hx-get="{{ list_url }}{% query request.GET %}" hx-trigger="vendors-changed from:body" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap hx-target">
+  <p class="hint vs-summary">{{ summary.vendors }} vendor{{ summary.vendors|pluralize }} · {{ summary.engineers }} active engineer{{ summary.engineers|pluralize }} · {{ summary.attestations }} attestation{{ summary.attestations|pluralize }} in force today</p>
+  {% if f.vendor %}<div class="note vs-only">Showing {{ f.vendor }} only{% if f.q %}, matching “{{ f.q }}”{% endif %}. <a class="link" href="{{ list_url }}">Show every vendor</a></div>{% endif %}
+  {% for s in sections %}{% include "web/_vendor_section.html" %}{% empty %}
+  <div class="panel"><div class="empty">{% if f.q %}No vendor or engineer matches “{{ f.q }}”.{% else %}No vendors yet. A vendor shows here once a contract, a completed vendor service work order, an engineer, or an attestation names it.{% endif %}</div></div>
+  {% endfor %}
+</div>

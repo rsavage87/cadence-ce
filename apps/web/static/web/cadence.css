@@ -1144,3 +1144,59 @@ td small.tmp-late{color:var(--crit)}
   .page-head,.panel-h,h1,h2,h3{break-after:avoid}
   .panel,.kpis,.kpi,.stat,.strip,.legend,.chart,.cal,.alert,.kcard,.note,.li,tr{break-inside:avoid}
 }
+
+/* ===== slice 31: vendor staff ===== */
+/* The Contracts screen's Vendor staff tab (web/vendor_staff.html): one panel per vendor, its attestations then its engineers with their
+   training on file; the engineer drawer; the modals (Add engineer, Add training, Add attestation). A record's state is a chip beside
+   its words, which wrap (they carry the coverage and the dates). The contract drawer's line for its vendor. */
+.vs-summary{margin:0 0 10px}
+.vs-only{margin-bottom:12px}
+.vs-sec{margin-bottom:14px}
+.vs-sec .panel-h{align-items:flex-start}
+.vs-head{min-width:0;flex:1}
+.vs-head h2{font-size:15px;font-weight:600;margin:0}
+.vs-sub{margin:2px 0 0;font-size:12.5px;color:var(--ink-3)}
+.vs-sub>span+span::before{content:" · "}
+.vs-sub a{white-space:nowrap}
+.vs-acts{display:flex;gap:6px;flex-wrap:wrap}
+.vs-none{margin:0;font-size:13px;color:var(--ink-2)}
+.vs-h3{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3);margin:4px 0 6px;display:flex;gap:6px;align-items:baseline}
+.vs-h3 span{font-weight:400;text-transform:none;letter-spacing:0}
+.vs-h3+.hint{margin:0 0 10px}
+.vs-list{list-style:none;margin:0 0 12px;padding:0}
+.vs-list>li{border-top:1px solid var(--line);padding:8px 0}
+.vs-list>li:first-child{border-top:0;padding-top:2px}
+.vs-row{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:start}
+.vs-what{min-width:0;font-size:13px;overflow-wrap:anywhere}
+.vs-what small{display:block;color:var(--ink-3);font-size:12px;margin-top:2px}
+.vs-eng-h{font-size:13px;font-weight:500;display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:4px}
+.vs-tr{display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:start;font-size:12.5px;color:var(--ink-2);margin-top:4px;overflow-wrap:anywhere}
+.vs-added{margin-top:10px}
+.vs-work td{vertical-align:top}
+.vs-foot{margin-top:6px}
+.vs-ct-line{margin:10px 0 0;font-size:13px;display:flex;gap:6px;align-items:flex-start}
+.vs-ct-line svg{width:15px;height:15px;flex:none;margin-top:2px;color:var(--ink-3)}
+/* The modals: fieldsets laid out like the form's labels; the covers choice shows only the picker it needs. */
+.vs-form fieldset{border:0;padding:0;margin:0;min-width:0;display:flex;flex-direction:column;gap:6px;font-size:12.5px;color:var(--ink-2)}
+.vs-form legend{padding:0;margin-bottom:4px;font-size:12.5px;color:var(--ink-2)}
+.vs-form .vs-cover-pick{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.vs-form select[multiple]{min-height:150px}
+.vs-form:not(:has(.vs-cover-pick input[value="models"]:checked)) .vs-models{display:none}
+.vs-form:not(:has(.vs-cover-pick input[value="line"]:checked)) .vs-line{display:none}
+.vs-eng-boxes{display:flex;flex-wrap:wrap;gap:6px;position:relative}
+.vs-eng-boxes input{position:absolute;opacity:0;width:1px;height:1px}
+.vs-form .vs-eng-boxes label{display:inline-flex;flex-direction:row;align-items:center;gap:0;min-height:32px;padding:4px 10px;border:1px solid var(--line-2);border-radius:999px;cursor:pointer;color:var(--ink);font-size:13px}
+.vs-eng-boxes input:checked+label{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+.vs-eng-boxes input:focus-visible+label{outline:2px solid var(--accent);outline-offset:2px}
+.vs-eng-boxes input:checked+label::before{content:"✓";margin-right:5px}
+/* A certificate number is one engineer's: hidden once two engineers are ticked (the form drops it then too). */
+.vs-form:has(.vs-eng-boxes input:checked ~ input:checked) .vs-cert{display:none}
+.vs-names input+input{margin-top:2px}
+.vs-states{line-height:1.45}
+@media (max-width:760px){
+  .vs-fill{display:none}
+  .vs-row{grid-template-columns:1fr auto}
+  .vs-row>.chip{grid-column:1/-1;justify-self:start}
+  .vs-acts .btn,.vs-row .btn{min-height:36px}
+  .vs-eng-boxes label{min-height:40px}
+}
