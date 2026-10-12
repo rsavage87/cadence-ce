@@ -231,8 +231,6 @@ def test_the_check_starts_the_day_after_it_is_due(ctx, today):
         assert len(gaps_of(program.build(period(day - timedelta(days=30), day, day), None), CHECK)) == checks, day
 
 
-@pytest.mark.xfail(strict=True, reason="apps.evaluations.services.next_due ends the next 12 months at add_months(the last end, 12), a day "
-                                       "early when they end on Feb 29: the check fires on the 90th day")
 def test_the_check_counts_90_days_from_a_february_29(ctx):
     on = date(2024, 5, 29)  # the 12 months after Mar 1, 2022 to Feb 28, 2023 ended on Feb 29, 2024: May 29 is the 90th day after
     approved(start=date(2022, 3, 1), today=on)

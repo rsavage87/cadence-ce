@@ -739,12 +739,12 @@ def test_approving_an_amendment_supersedes_the_earlier_version(ctx, today):
 def test_the_read_helpers(ctx, today, span):
     S, E = span
     assert services.next_due(today) is None and services.records_begin() is None
-    assert services.suggested_start(today).month == 1
+    assert services.suggested_start(today) == add_months(today.replace(day=1), -12)  # the 12 months ending last month
     older = approved(start=add_months(S, -24), today=today)
     ev = draft(today=today)
     assert services.previous_approved(ev) == older
     due = services.next_due(today)
-    assert due.due_on == add_months(older.period_end, 12) + 90 * DAY and due.after == older
+    assert due.due_on == services.period_end_of(older.period_end + DAY) + 90 * DAY and due.after == older
     assert due.overdue == (today > due.due_on)
     assert services.suggested_start(today) == E + DAY
     discarded = draft(start=add_months(S, -12), today=today)

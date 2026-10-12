@@ -168,6 +168,8 @@ def _clean_period(period_start, today: date) -> date:
         raise ValidationError({"period_start": "An evaluation's period starts on the first of a month."})
     if period_start < EARLIEST:
         raise ValidationError({"period_start": f"Choose a month from {EARLIEST.year} on."})
+    if period_start >= today:  # merge fix: a start after today can never have ended (and year 9999 has no end in a date)
+        raise ValidationError({"period_start": "An evaluation covers 12 months that have ended. Choose an earlier month."})
     end = period_end_of(period_start)
     if end >= today:
         raise ValidationError({"period_start": f"The 12 months from {_day(period_start)} end on {_day(end)}: an evaluation covers 12 months "
@@ -660,17 +662,20 @@ def next_due(today: date | None = None) -> NextDue | None:
     if last is None:
         return None
     today = today or timezone.localdate()
-    due = add_months(last.period_end, 12) + timedelta(days=DUE_AFTER_DAYS)
+    # merge fix: the next 12 months' own end (12 months from the day after, less a day), never 12 months from this end: from Feb 28 that
+    # would land on Feb 28 when the next period ends on Feb 29
+    due = period_end_of(last.period_end + timedelta(days=1)) + timedelta(days=DUE_AFTER_DAYS)
     return NextDue(due, today > due, last)
 
 
 def suggested_start(today: date | None = None) -> date:
-    """The month a new evaluation would start: the day after the latest live evaluation's period ends, else January of last year."""
+    """The month a new evaluation would start: the day after the latest live evaluation's period ends, else the 12 months ending at the
+    end of last month (merge fix: the screen's default; a new facility's last calendar year is mostly before Cadence)."""
     today = today or timezone.localdate()
     last = ProgramEvaluation.objects.filter(status__in=LIVE_STATUSES).order_by("-period_end").first()
     if last is not None:
         return last.period_end + timedelta(days=1)
-    return date(today.year - 1, 1, 1)
+    return add_months(today.replace(day=1), -12)
 
 
 def records_begin() -> date | None:

@@ -735,8 +735,6 @@ def test_the_role_matrix_shows_the_module(client, sign_in):
     assert "Program evaluation" in body and 'aria-label="CE manager, evaluations"' in body
 
 
-@pytest.mark.xfail(strict=True, reason="services.create_draft: a start in year 9999 raises ValueError (add_months past year 9999) instead "
-                                       "of a ValidationError in words; the web form refuses it first (forms_evaluations.NOT_ENDED)")
 def test_service_refuses_a_start_in_year_9999_in_words(ctx, today):
     from django.core.exceptions import ValidationError
 

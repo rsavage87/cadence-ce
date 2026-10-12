@@ -141,7 +141,7 @@ def _evaluation_name(r) -> str:
 
 
 def _evaluation_url(number, version) -> str:
-    return reverse("web:evaluation", args=[number]) if version == 1 else reverse("web:evaluation_version", args=[number, version])
+    return reverse("web:evaluation_version", args=[number, version])  # merge fix: the version changed, never the current one
 
 
 AREAS = {a.key: a for a in (

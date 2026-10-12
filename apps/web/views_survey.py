@@ -32,7 +32,7 @@ from apps.accounts import people
 from apps.accounts.models import Level, Module
 from apps.reports import permissions as rep_perms
 from apps.reports import survey as sv
-from apps.reports.survey import DEVICE, GAPS_SHOWN, INCIDENT, KIND_HELP, KIND_LABELS, KINDS, PREVIEW_ROWS, PRINT_ROWS, WORK_ORDER
+from apps.reports.survey import DEVICE, EVALUATION, GAPS_SHOWN, INCIDENT, KIND_HELP, KIND_LABELS, KINDS, PREVIEW_ROWS, PRINT_ROWS, WORK_ORDER
 
 from .decorators import web_view
 from .exports import csv_response
@@ -44,7 +44,8 @@ DRAWERS = frozenset({"wo", "asset", "pm_model", "contract", "incident"})
 KIND_CSS = {sv.GAP: "crit", sv.FINDING: "warn", sv.CHECK: "neutral"}
 # A table's link column: the page its key opens, and the area whose View the reader needs for the link (slice 28: an incident's
 # number links only for Incidents View; the binder refuses scoped users, so View is the whole rule here).
-LINK_VIEWS = {WORK_ORDER: ("web:wo", Module.WORKORDERS), DEVICE: ("web:asset", Module.EQUIPMENT), INCIDENT: ("web:incident", Module.INCIDENTS)}
+LINK_VIEWS = {WORK_ORDER: ("web:wo", Module.WORKORDERS), DEVICE: ("web:asset", Module.EQUIPMENT), INCIDENT: ("web:incident", Module.INCIDENTS),
+              EVALUATION: ("web:evaluation", Module.EVALUATIONS)}  # slice 32: a page of its own, never a drawer
 GAPS_COLUMNS = ["Section", "Kind", "Record", "Description", "Link"]
 
 
