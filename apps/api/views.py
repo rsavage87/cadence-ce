@@ -338,6 +338,8 @@ def _finding_words(wo, user, errors: dict, where: str = "") -> dict:
     investigation, a failed PM's repair, the facility's finding kept from a scoped user, another type, a status) keeps the service's."""
     if wo.type != WoType.REPAIR or errors.get("repair_finding") not in ([findings.REQUIRED], [findings.NOT_OFFERED]):
         return errors
+    if findings.facility_holds(wo, user, investigation=findings.is_investigation(wo), from_pm=findings.found_on_pm(wo)):
+        return {**errors, "repair_finding": [findings.FACILITY_RECORDED + " Leave repair_finding out."]}  # review fix: never their values
     named = ", ".join(f"\"{value}\" ({findings.label(value)})" for value in findings.choices_for(wo, user))
     return {**errors, "repair_finding": [f"Send repair_finding, what the repair found: one of {named}{where}."]}
 

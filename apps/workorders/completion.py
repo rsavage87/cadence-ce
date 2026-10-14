@@ -628,10 +628,23 @@ def _repair_finding(wo: WorkOrder, value, by, errors: dict):
     """What the repair found (slice 33, the module's rules), checked before anything is saved: the value to store, or KEEP to leave the
     finding stored as it is. Refusals keyed repair_finding in `errors`. `wo` is the row as locked: an incident adopting it as its
     investigation waits until this completion commits."""
+    from .scoping import is_scoped  # scoping imports the models; keep this module importable on its own
+
     sent = "" if value is vendor_services.KEEP or value is None else str(value).strip()
     if wo.type != WoType.REPAIR:
         if sent:
             errors["repair_finding"] = findings.NOT_A_REPAIR
+        return vendor_services.KEEP
+    investigation, from_pm = findings.is_investigation(wo), findings.found_on_pm(wo)
+    if findings.facility_holds(wo, by, investigation=investigation, from_pm=from_pm):
+        # review fix: a scoped user gets one answer whatever they send (the stored value included), so no refusal tells what is stored
+        if sent:
+            errors["repair_finding"] = findings.FACILITY_RECORDED
+        return vendor_services.KEEP
+    if (not sent and wo.repair_finding and is_scoped(by)
+            and wo.repair_finding not in findings.choices_for(wo, by, investigation=investigation, from_pm=from_pm)):
+        # review fix: one the repair's limits now refuse is asked for as if none were recorded, so a blank never tells it was there
+        errors["repair_finding"] = findings.REQUIRED
         return vendor_services.KEEP
     if sent and sent not in RepairFinding.values:
         errors["repair_finding"] = findings.NOT_OFFERED
@@ -639,16 +652,6 @@ def _repair_finding(wo: WorkOrder, value, by, errors: dict):
     stored = wo.repair_finding
     if not sent and not stored:
         errors["repair_finding"] = findings.REQUIRED
-        return vendor_services.KEEP
-    from .scoping import is_scoped  # scoping imports the models; keep this module importable on its own
-
-    investigation, from_pm = findings.is_investigation(wo), findings.found_on_pm(wo)
-    if (sent and stored and sent != stored and is_scoped(by)
-            and stored not in findings.choices_for(wo, by, investigation=investigation, from_pm=from_pm)
-            and stored in findings.choices_for(wo, None, investigation=investigation, from_pm=from_pm)):
-        # (merge fix 2: only while the repair's own limits still allow it; a finding they now refuse is chosen again, a vendor's too)
-        # merge fix: a judgment the facility recorded (use error, PM could have caught it) is never replaced from a vendor's account
-        errors["repair_finding"] = findings.FACILITY_RECORDED
         return vendor_services.KEEP
     wanted = sent or stored
     # Kept as stored, a scoped user's too: the facility's finding stays whatever their own choices, while the repair's limits allow it

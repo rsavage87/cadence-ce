@@ -55,8 +55,7 @@ HINTS = {
                  "problem found.",
     F.ENVIRONMENT: "Power, medical gas, network, or room conditions; no device fault.",
     F.DAMAGE: "Dropped, impact, or fluid.",
-    F.BATTERY: "The battery failed before it was due for replacement. One past due, or one the PM's battery test should have caught, is PM "
-               "could have caught it.",
+    F.BATTERY: "The battery failed before it was due for replacement.",
     F.ACCESSORY: "A cable, probe, lead, or disposable.",
     F.SOFTWARE: "A software, firmware, or configuration fault in the device.",
     F.WEAR: "Wore out or failed in normal use, and no other cause was found.",
@@ -114,6 +113,43 @@ def choices_for(wo, user=None, *, investigation: bool | None = None, from_pm: bo
                 continue
             out.append(str(value))
     return out
+
+
+# Said only where "PM could have caught it" is offered (review fix: never send a door to a choice it does not have).
+BATTERY_PM = " One past due, or one the PM's battery test should have caught, is PM could have caught it."
+
+
+def hint(value, choices) -> str:
+    """A finding's hint as the door offering `choices` words it."""
+    text = HINTS.get(value, "")
+    if value == F.BATTERY and F.PM_PREVENTABLE in choices:
+        text += BATTERY_PM
+    return text
+
+
+# Each choice as ORDER_WORDS names it (a phrase with no comma: the order reads as one list).
+ORDER_PHRASES = {F.SERVICE_INDUCED: "caused by earlier service", F.DAMAGE: "damaged in handling", F.ENVIRONMENT: "power or room conditions",
+                 F.PM_PREVENTABLE: "PM could have caught it", F.BATTERY: "battery", F.ACCESSORY: "accessory", F.SOFTWARE: "software",
+                 F.WEAR: "wore out"}
+
+
+def order_words(choices) -> str:
+    """ORDER_WORDS for the choices a door offers: the first of those that fits (review fix: never a choice it does not have). Every
+    choice offered: ORDER_WORDS itself."""
+    named = [ORDER_PHRASES[v] for v in ORDER if v in choices]
+    return f"When more than one fits, the first of: {', '.join(named)}." if len(named) > 1 else ""
+
+
+def facility_holds(wo, user, *, investigation: bool, from_pm: bool) -> bool:
+    """Whether the finding stored on `wo` is the facility's and stays as recorded whatever a scoped `user` sends: one they cannot choose
+    that the repair's own limits still allow (review fix: completion answers them the same whatever they send, so a refusal never tells
+    what is stored; the API's checklist and words, and the web's select, read this too)."""
+    from . import scoping
+
+    stored = wo.repair_finding
+    return (bool(stored) and scoping.is_scoped(user)
+            and stored not in choices_for(wo, user, investigation=investigation, from_pm=from_pm)
+            and stored in choices_for(wo, None, investigation=investigation, from_pm=from_pm))
 
 
 def label(value) -> str:

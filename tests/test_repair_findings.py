@@ -195,9 +195,13 @@ def test_a_scoped_user_records_only_what_it_sees_on_the_device(vent, vendor_user
 
 def test_a_scoped_user_leaves_the_facilitys_finding_as_stored(vent, manager, vendor_user):
     wo = done(repair(vent, vendor=VENDOR), repair_finding=F.USE_ERROR, by=manager)
-    # sent nothing, or the stored value sent back: kept, though it is not theirs to choose
-    for kept in ({"repair_finding": None}, {"repair_finding": ""}, {"repair_finding": F.USE_ERROR}):
+    # sent nothing: kept, though it is not theirs to choose; the stored value sent back is refused like any other (review fix: the
+    # answer never tells a vendor's account what the facility recorded)
+    for kept in ({"repair_finding": None}, {"repair_finding": ""}):
         assert done(reopened(wo), by=vendor_user, **kept).repair_finding == F.USE_ERROR, kept
+    reopened(wo)
+    assert refused(wo, repair_finding=F.USE_ERROR, by=vendor_user) == {"repair_finding": findings.FACILITY_RECORDED}
+    done(wo, by=vendor_user, repair_finding=None)
     reopened(wo)
     # merge fix: the facility's judgment is never replaced from a vendor's account, not even by one of its own observations
     for other in (F.PM_PREVENTABLE, F.WEAR):

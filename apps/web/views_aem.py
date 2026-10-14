@@ -104,26 +104,31 @@ def record_findings(user, dm, today) -> dict | None:
     completed repairs with no finding in the evidence's years (_unrecorded), RECORD_SHOWN at a time, each with the findings this user
     may record on it (findings.choices_for, with what makes a repair an incident's investigation or a failed PM's repair read for all
     of them at once) and whether they may record one (permissions.can_set_repair_finding: Approve once closed). None when not offered.
-    Three queries: the count, the rows, the incidents."""
+    Three queries: the count, the rows, the incidents; a fourth, the closed ones not listed, for a user without Work orders Approve."""
     if not pm_perms.can_decide_aem(user) or not user.has_level(wo_perms.MODULE, Level.EDIT) or is_scoped(user):
         return None
-    qs = _unrecorded(dm, today)
+    may = {status: wo_perms.can_set_repair_finding(user, SimpleNamespace(status=status)) for status in aem.DONE}
+    # review fix: only the repairs this user may record (a closed one needs Work orders Approve), so the list never fills with rows
+    # they cannot act on while ones they can are past the cut
+    every = _unrecorded(dm, today)
+    qs = every.filter(status__in=[s for s, ok in may.items() if ok])
     total = qs.count()
+    beyond = every.filter(status__in=[s for s, ok in may.items() if not ok]).count() if not all(may.values()) else 0  # closed: Approve
+    # Every finding's hint as an unscoped door words it (scoped users never reach this list; the battery hint keeps its PM sentence)
+    meanings = [(RepairFinding(v).label, findings.hint(v, RepairFinding.values)) for _label, values in findings.GROUPS for v in values]
     if not total:
-        return {"rows": [], "total": 0, "shown": 0}
+        return {"rows": [], "total": 0, "shown": 0, "beyond": beyond, "meanings": meanings}
     rows = list(qs.select_related("asset").annotate(from_pm=Exists(WorkOrder.objects.filter(pk=OuterRef("follow_up_of_id"), type=WoType.PM)))
                 .order_by("-completed_on", "-number")[:RECORD_SHOWN])
     investigations = set(Incident.objects.filter(work_order_id__in=[wo.pk for wo in rows]).exclude(status=IncidentStatus.IN_ERROR)
                          .values_list("work_order_id", flat=True))
-    may = {status: wo_perms.can_set_repair_finding(user, SimpleNamespace(status=status)) for status in aem.DONE}
     out = []
     for wo in rows:
-        allowed = set(findings.choices_for(wo, user, investigation=wo.pk in investigations, from_pm=wo.from_pm))
+        allowed = findings.choices_for(wo, user, investigation=wo.pk in investigations, from_pm=wo.from_pm)
         groups = [(label, [(v, RepairFinding(v).label) for v in values if str(v) in allowed]) for label, values in findings.GROUPS]
         out.append({"wo": wo, "groups": [(label, options) for label, options in groups if options], "may": may[wo.status],
                     "from_pm": wo.from_pm, "investigation": wo.pk in investigations})
-    meanings = [(RepairFinding(v).label, findings.HINTS[v]) for _label, values in findings.GROUPS for v in values]
-    return {"rows": out, "total": total, "shown": len(out), "meanings": meanings}
+    return {"rows": out, "total": total, "shown": len(out), "meanings": meanings, "beyond": beyond}
 
 
 def aem_tab(request, dm) -> dict:
@@ -154,7 +159,7 @@ def aem_tab(request, dm) -> dict:
         "can_end": can_decide and (approved is not None or legacy),
         "end_pk": approved.pk if approved is not None else dm.pk,
         "record": record_findings(user, dm, today),  # slice 33
-        "order_words": findings.ORDER_WORDS,
+        "order_words": findings.order_words(RepairFinding.values),
     }}
 
 

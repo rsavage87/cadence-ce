@@ -331,7 +331,8 @@ def test_a_stored_finding_the_repairs_limits_refuse_now_is_chosen_again_by_anyon
     assert "wf-kept" not in body and blank(body) == "Choose what was found" and chosen(body) == "" and offered(body) == OBSERVED
     assert "Found on a PM: choose what failed." in body and pm.number not in body
     r = client.post(url(wo), checked_post(resolution="Replaced the flow sensor", repair_finding=""), **HX)
-    assert findings.NOT_OFFERED in r.content.decode() and WorkOrder.objects.get(pk=wo.pk).status == WoStatus.IN_PROGRESS
+    # review fix: asked for as if none were recorded, so the answer never tells the facility had recorded one
+    assert findings.REQUIRED in r.content.decode() and WorkOrder.objects.get(pk=wo.pk).status == WoStatus.IN_PROGRESS
 
 
 def test_a_vendor_chooses_again_when_the_repairs_limits_refuse_the_facilitys_finding(vent, make_user):

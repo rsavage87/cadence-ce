@@ -357,8 +357,8 @@ def test_who_may_record_from_the_tab(client, make_user, ctx, unrecorded, monitor
     user = User.objects.create_user(username="reviewer@riverside.example", password="Test-Pass-2026-x", tenant=ctx, role=role)
     client.force_login(user)
     body = tab(client, monitor)
-    assert f'name="number" value="{plain.number}"' in body and f'name="number" value="{closed.number}"' not in body
-    assert "Closed: recording needs Work orders Approve" in body
+    assert f'name="number" value="{plain.number}"' in body and closed.number not in body
+    assert "1 closed repair with none is not listed: recording one needs Work orders Approve." in body  # review fix: never listed
     assert client.post(url, {"number": closed.number, "repair_finding": F.WEAR}, **HX).status_code == 403
     assert client.post(url, {"number": plain.number, "repair_finding": F.WEAR}, **HX).status_code == 200
     role.set_levels({Module.WORKORDERS: Level.VIEW})  # PM Approve alone: no list

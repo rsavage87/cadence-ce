@@ -47,9 +47,9 @@
   {% elif a.propose_note and not a.proposal and not a.excluded %}<div class="note" style="margin-top:10px">{{ a.propose_note }}</div>{% endif %}
 </div>
 
-{% if a.record.total %}{% with rec=a.record %}
-<div class="sec aem-record" id="aem-record"><h3>Record what was found <span>{{ rec.total }} completed repair{{ rec.total|pluralize }} with none</span></h3>
-  <div class="hint" style="margin-bottom:6px">This model's repairs completed in the last {{ a.history_years }} years with no finding recorded (completed before Cadence recorded findings, or imported) count as device failures until one is. Record what each found from its work order; its history says it was recorded later.{% if rec.shown < rec.total %} The latest {{ rec.shown }} are listed; recording one brings the next.{% endif %}</div>
+{% if a.record.total or a.record.beyond %}{% with rec=a.record %}
+<div class="sec aem-record" id="aem-record"><h3>Record what was found <span>{% if rec.total %}{{ rec.total }} completed repair{{ rec.total|pluralize }} with none{% else %}none you may record{% endif %}</span></h3>
+  <div class="hint" style="margin-bottom:6px">This model's repairs completed in the last {{ a.history_years }} years with no finding recorded (completed before Cadence recorded findings, or imported) count as device failures until one is. Record what each found from its work order; its history says it was recorded later.{% if rec.shown < rec.total %} The latest {{ rec.shown }} are listed; recording one brings the next.{% endif %}{% if rec.beyond %} {{ rec.beyond }} closed repair{{ rec.beyond|pluralize }} with none {{ rec.beyond|pluralize:"is,are" }} not listed: recording one needs Work orders Approve.{% endif %}</div>
   <div class="list">
   {% for r in rec.rows %}
     <div class="li static aem-rec"><div class="bd"><div class="t"><a class="link" href="{% url 'web:wo' r.wo.number %}" target="_blank" rel="noopener">{{ r.wo.number }}</a> <span class="muted">{{ r.wo.asset.tag }}</span></div>

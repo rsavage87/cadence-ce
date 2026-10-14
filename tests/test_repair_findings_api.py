@@ -213,7 +213,7 @@ def test_the_completion_checklist_offers_what_this_user_may_record(client, vent,
     client.force_login(make_user("technician"))
     in_house = repair(vent, tech=techs["dana"], start=False)
     checklist = get(client, in_house)["completion_checklist"]
-    assert checklist["findings"] == [{"value": v, "label": F(v).label, "hint": findings.HINTS[v]} for v in IN_HOUSE]
+    assert checklist["findings"] == [{"value": v, "label": F(v).label, "hint": findings.hint(v, IN_HOUSE)} for v in IN_HOUSE]
     assert checklist["findings"][1] == {"value": "use_error", "label": "Use error", "hint": findings.HINTS[F.USE_ERROR]}
     assert (checklist["found_on_pm"], checklist["finding_required"]) == (False, True)
     # an incident's investigation never records a use error; an incident recorded in error makes none

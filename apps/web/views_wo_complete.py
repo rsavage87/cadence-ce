@@ -170,9 +170,10 @@ def results_context(request, wo) -> dict:
         # Review fix: a repair not returned to use says reopening it returns the device only when completing it as checked would
         # (services.returns_device asked as if checked now: never a device retired, back in use, held, waiting, or held by another repair)
         "reopen_returns": is_repair and result == RepairCheck.NOT_RETURNED and _returns_if_checked(wo),
-        # Slice 33: the finding a reopened repair keeps unless another is chosen, never a scoped user's (the facility's record)
+        # Slice 33: the finding a reopened repair keeps unless another is chosen, never a scoped user's (the facility's record); only
+        # while this user may keep it (review fix: one the repair's limits now refuse is chosen again, and the note never says kept)
         "finding": (findings.label(wo.repair_finding) if is_repair and wo.repair_finding and wo.status in OPEN_STATUSES
-                    and not scoping.is_scoped(request.user) else ""),
+                    and not scoping.is_scoped(request.user) and wo.repair_finding in findings.choices_for(wo, request.user) else ""),
         "steps": steps,
         "follow_ups": list(scoping.work_orders(request.user, wo.follow_ups.order_by("opened_on", "number"))) if is_pm or is_inspection else [],
         "follow_up_of": follow_up_of if follow_up_of is not None and scoping.can_see_work_order(request.user, follow_up_of) else None,

@@ -6,8 +6,9 @@ workorders.services.set_repair_finding, the two writers of WorkOrder.repair_find
 The select (web/_wo_finding_select.html), on a repair: "What was found", one native select, so it needs no round trip on a phone: a
 blank "Choose what was found" first (nothing is preselected on a repair with none stored), then findings.GROUPS as optgroups, each
 limited to findings.choices_for(the repair, the user) (labels of at most 30 characters, so a phone's picker never cuts them). Under it
-the chosen one's hint (findings.HINTS: CSS :has shows the one chosen; without :has support the one the page was drawn with), and a
-"What each means" disclosure with every offered choice's hint and findings.ORDER_WORDS, the order to decide by. A failed PM's repair
+the chosen one's hint (findings.hint, worded for the choices offered: CSS :has shows the one chosen; without :has support the one the
+page was drawn with), and a "What each means" disclosure with every offered choice's hint and findings.order_words, the order to decide
+by among them. A failed PM's repair
 says "Found on PM <number>: choose what failed." (the PM's number only when the user may see it); an incident's investigation that use
 error is not offered on it (never the incident's number). For a user who sees the whole facility, the earlier service on the device
 before the repair was opened (`evidence`: its last PM, and any other repair or PM done in the EVIDENCE_DAYS before), the evidence for
@@ -100,7 +101,8 @@ def select_context(wo, user) -> dict:
     "options": [{"value", "label", "hint"}]}], "initial": the stored finding for a user who sees the whole facility (when still offered),
     "keep": KEEP_RECORDED for a scoped user with one stored they may choose, "locked": a scoped user's stored finding they cannot choose
     (no select), "from_pm": a failed PM's repair's words, "investigation": the investigation's words (a user who sees the whole facility),
-    "evidence": the earlier service (the same), "means": every offered choice with its hint, "order": findings.ORDER_WORDS}."""
+    "evidence": the earlier service (the same), "means": every offered choice with its hint (findings.hint), "order": the order to
+    decide by among the offered choices (findings.order_words)}."""
     scoped = scoping.is_scoped(user)
     pm = _failed_pm(wo)
     investigation = findings.is_investigation(wo)
@@ -111,7 +113,7 @@ def select_context(wo, user) -> dict:
     kept = bool(stored) and stored in findings.choices_for(wo, None, investigation=investigation, from_pm=pm is not None)
     groups = []
     for label, values in findings.GROUPS:
-        options = [{"value": str(v), "label": RepairFinding(v).label, "hint": findings.HINTS[v]} for v in values if v in choices]
+        options = [{"value": str(v), "label": RepairFinding(v).label, "hint": findings.hint(v, choices)} for v in values if v in choices]
         if options:
             groups.append({"label": label, "options": options})
     from_pm = ""
@@ -119,10 +121,11 @@ def select_context(wo, user) -> dict:
         from_pm = FOUND_ON_PM.format(number=pm.number) if scoping.can_see_work_order(user, pm) else FOUND_ON_A_PM
     return {"groups": groups, "choices": choices, "initial": "" if scoped or stored not in choices else stored,
             "keep": KEEP_RECORDED if scoped and kept and stored in choices else "",
-            "locked": scoped and kept and stored not in choices, "kept_words": FACILITY_KEPT,
+            "locked": findings.facility_holds(wo, user, investigation=investigation, from_pm=pm is not None),  # completion's rule
+            "kept_words": FACILITY_KEPT,
             "from_pm": from_pm, "investigation": INVESTIGATION if investigation and not scoped else "",
             "evidence": None if scoped else evidence(wo),
-            "means": [o for g in groups for o in g["options"]], "order": findings.ORDER_WORDS, "choose": CHOOSE}
+            "means": [o for g in groups for o in g["options"]], "order": findings.order_words(choices), "choose": CHOOSE}
 
 
 def picked(sel: dict, form, prefix: str) -> dict:

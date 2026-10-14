@@ -335,10 +335,10 @@ class WorkOrderSerializer(serializers.ModelSerializer):
         investigation, from_pm = known[wo.pk]
         choices = findings.choices_for(wo, user, investigation=investigation, from_pm=from_pm)
         stored, scoped = wo.repair_finding, scoping.is_scoped(user)
-        if stored and scoped and stored not in choices:
-            choices = []  # the facility's: it stays as recorded (findings.FACILITY_RECORDED refuses another)
+        if findings.facility_holds(wo, user, investigation=investigation, from_pm=from_pm):
+            choices = []  # the facility's: it stays as recorded (review fix: only while the repair's own limits allow it)
         keeps = bool(stored) and stored in findings.choices_for(wo, None if scoped else user, investigation=investigation, from_pm=from_pm)
-        return {"findings": [{"value": v, "label": findings.label(v), "hint": findings.HINTS[v]} for v in choices],
+        return {"findings": [{"value": v, "label": findings.label(v), "hint": findings.hint(v, choices)} for v in choices],
                 "found_on_pm": from_pm, "finding_required": not keeps}
 
     def _finding_hidden(self, wo) -> bool:
