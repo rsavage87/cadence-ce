@@ -387,6 +387,7 @@ def closed_endpoints(world, pump_recall, techs):
         ("post", f"{API}vendor-attestations/", {"vendor_names": ["Hamilton Medical"], "covers": "all", "reference": "LTR-1",
                                                 "received_on": day, "valid_from": day, "valid_through": day}),
         ("post", wo_url(w, "vendor-engineer/"), {"engineer_name": "Lee Park"}),
+        ("post", wo_url(w, "repair-finding/"), {"repair_finding": "wear"}),  # slice 33: what a repair found is the facility's record
         *evaluation_endpoints(world),
     ]
 

@@ -389,7 +389,8 @@ def test_the_api_and_the_modal_pass_the_finding_through(client, vent, techs, mak
     url = f"/api/v1/work-orders/{wo.id}/transition/"
     body = {"status": "completed", "resolution": "Fixed", "repair_check": "passed", "results": POST_REPAIR_ALL_PASS}
     r = client.post(url, body, content_type="application/json")
-    assert r.status_code == 400 and r.json() == {"repair_finding": [findings.REQUIRED]}
+    assert r.status_code == 400 and list(r.json()) == ["repair_finding"]  # the API names what to send (tests/test_repair_findings_api.py)
+    assert r.json()["repair_finding"][0].startswith("Send repair_finding, what the repair found: one of")
     r = client.post(url, {**body, "repair_finding": ["wear"]}, content_type="application/json")
     assert r.status_code == 400 and r.json() == {"repair_finding": ["Send this as text."]}
     r = client.post(url, {**body, "repair_finding": "accessory"}, content_type="application/json")
