@@ -99,7 +99,7 @@ def test_an_open_repair_reads_its_completion_checklist(client, vent, techs, make
         "never_na": [1, 5],
         "outcomes": [{"value": "passed", "label": "Checked: ready for use"}, {"value": "not_returned", "label": "Not returned to use"}],
         # slice 33: what the repair found (tests/test_repair_findings_api.py)
-        "findings": [{"value": v, "label": findings.label(v), "hint": findings.HINTS[v]} for v in findings.choices_for(wo)],
+        "findings": [{"value": v, "label": findings.label(v), "hint": findings.hint(v, findings.choices_for(wo))} for v in findings.choices_for(wo)],
         "found_on_pm": False, "finding_required": True,
     }
     assert [s["measure"] for s in checklist["steps"]] == [None, "Record Ω", "Record leakage µA", "Record leakage µA", None, None, None]
