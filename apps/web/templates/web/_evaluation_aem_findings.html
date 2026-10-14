@@ -1,0 +1,5 @@
+{# Slice 33: an AEM table row's findings cells (apps.evaluations.indicators._aem), on the page and the print. Context: r, a stored row. A row taken before Cadence recorded what repairs found has none of these keys: "Not counted then". PM-related only with enough findings recorded; the failures at approval only when the approved evidence counted them. #}
+{% if "failures" in r %}<td class="num">{{ r.failures_per_device_year|default_if_none:"—" }}<small>{{ r.failures }} failure{{ r.failures|pluralize }}</small></td>
+<td class="num">{% if r.evidence_failures_recorded %}{{ r.evidence_failures_per_device_year|default_if_none:"—" }}{% elif r.approved_on %}Not recorded then{% else %}—{% endif %}</td>
+<td class="num">{% if r.pm_related_enough %}{{ r.pm_related_per_device_year|default_if_none:"—" }}<small>{{ r.pm_related }} PM-related</small>{% else %}Not enough findings recorded{% endif %}<small>{{ r.coverage }}</small></td>
+{% else %}<td class="num">Not counted then</td><td class="num">Not counted then</td><td class="num">Not counted then</td>{% endif %}

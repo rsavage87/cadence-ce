@@ -313,7 +313,8 @@ def test_the_page_shows_the_head_the_figures_and_the_rest(client, sign_in, ev, s
     prev_start = year_before(span[0])
     assert f"The 12 months before<small>{services.period_label(prev_start, span[0] - timedelta(days=1))}</small>" in body
     assert f"counted {day(today)}, not approved" in body
-    assert "Not recorded in Cadence" in body and "Use errors and no problem found" in body
+    assert "Not recorded in Cadence" in body and "Equipment uptime and the cost of service ratio" in body
+    assert "Repairs with what was found recorded" in body and "Use-related (use error and damage)" in body  # slice 33: counted now
     assert "The survey binder's items for the period" in body and f"/reports/survey/?from={span[0].isoformat()}&amp;to={span[1].isoformat()}" in body
     assert "Left out for your role" not in body
     # the actions a director has on a draft

@@ -20,6 +20,7 @@ urlpatterns = [
     path("aem/<uuid:pk>/decide/", views_aem.aem_decide, name="pm_aem_decide"),
     path("aem/<uuid:pk>/withdraw/", views_aem.aem_withdraw, name="pm_aem_withdraw"),
     path("aem/<uuid:pk>/end/", views_aem.aem_end, name="pm_aem_end"),
+    path("models/<uuid:pk>/aem/finding/", views_aem.aem_record_finding, name="pm_aem_finding"),  # slice 33: Record what was found
     # part C: Auto-assign week (views_pm_week)
     path("week/assign/", views_pm_week.week_assign, name="pm_week_assign"),
 ]

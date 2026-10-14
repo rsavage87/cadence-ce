@@ -6,6 +6,9 @@ The math follows the mock's repContent; departures are noted inline. Everything 
 Slice 29, the counting rule (equipment.services.OWNED / WORK_ORDER_OWNED): all three are about the facility's own fleet and CE's
 program, so they count our devices and their work orders only. A rental, vendor loaner, or demo unit (its owner maintains it) is never
 in a compliance denominator nor overdue when missing, its repairs are no failures of our models, and it is never up for replacement.
+
+Slice 33: reliability by model counts failures by what each repair found (apps.workorders.findings.failure_q) beside every repair; the
+replacement score keeps counting every repair (the work happened; deferred, with the device drawer's note that shares its inputs).
 """
 from datetime import date, timedelta
 from decimal import Decimal
@@ -18,9 +21,13 @@ from apps.facility.services import compliance_targets, get_settings
 from apps.pm.dates import month_bounds
 from apps.pm.windows import ASSET_RISK, Windows, windows
 from apps.reports.services import TRAILING_DAYS
+from apps.workorders import findings
 from apps.workorders.models import LABOR_AMOUNT, PART_AMOUNT, LaborLine, PartLine, WorkOrder, WoStatus, WoType
 
 CLASS_ORDER = (RiskClass.LIFE_SUPPORT, RiskClass.HIGH, RiskClass.MEDIUM, RiskClass.LOW)
+DONE = (WoStatus.COMPLETED, WoStatus.CLOSED)
+# Slice 33: the findings that are never device failures (findings.NO_FAULT and OTHER_FAULT): left out of the failures, each counted
+LEFT_OUT = tuple(str(v) for v in (*findings.NO_FAULT, *findings.OTHER_FAULT))
 MTBF_LIMIT = 12
 REPAIR_RATE_FACTOR = 2  # the mock's x2: two 182-day halves make its year, the same base MTBF uses (n * 182 / repairs)
 REPLACE_LIMIT = 12
@@ -110,12 +117,33 @@ def report_compliance(today: date) -> dict:
 
 
 def report_mtbf(today: date) -> dict:
-    """Models with at least one repair opened in the trailing 182 days, ranked by repairs per device per year (the mock's x2 of the
-    six-month count). MTBF is fleet-level: device-days in the period over repairs. Turnaround and cost average the repairs that have
-    completed. Six queries whatever the fleet size: repairs and devices per model, a dates-only pass for turnaround, one grouped sum
-    each over labor and part lines for cost, and the models; no work order is instantiated."""
+    """Models with at least one repair opened in the trailing 182 days, ranked by failures per device per year (the mock's x2 of the
+    six-month count). MTBF is fleet-level: device-days in the period over failures. Turnaround and cost average the repairs that have
+    completed. Six queries whatever the fleet size: repairs, failures, and coverage, and devices, per model, a dates-only pass for
+    turnaround, one grouped sum each over labor and part lines for cost, and the models; no work order is instantiated.
+
+    Slice 33, what each repair found (apps.workorders.findings): "Repairs, 6 mo" stays every repair (the work happened); "Failures, 6
+    mo" counts those findings.failure_q counts (device faults, repairs with no finding recorded or not stated, and every open repair:
+    being worked on, it has no finding yet), and the rate, MTBF, flagged, and the ranking read failures. Use error, damage, an
+    accessory, power or room conditions, and no problem found are left out of them, never out of turnaround or cost: a model whose
+    repairs were all left out is listed with a rate of 0 and no MTBF. `left_out` counts them by finding and `coverage` says how many
+    of the window's completed repairs have a finding, for the note."""
     repairs, since = _repairs_in_window(today)
-    counts = {row["asset__device_model"]: row["n"] for row in repairs.order_by().values("asset__device_model").annotate(n=Count("id"))}
+    failure = findings.failure_q()
+    done_q = Q(status__in=DONE)
+    per_model = (repairs.order_by().values("asset__device_model")
+                 .annotate(n=Count("id"), failures=Count("id", filter=failure), completed=Count("id", filter=done_q),
+                           recorded=Count("id", filter=done_q & findings.recorded_q()),
+                           **{f"left_{v}": Count("id", filter=Q(repair_finding=v) & done_q) for v in LEFT_OUT}))
+    counts, failed, left_out = {}, {}, {v: 0 for v in LEFT_OUT}
+    completed = recorded = 0
+    for row in per_model:
+        counts[row["asset__device_model"]] = row["n"]
+        failed[row["asset__device_model"]] = row["failures"]
+        completed += row["completed"]
+        recorded += row["recorded"]
+        for v in LEFT_OUT:
+            left_out[v] += row[f"left_{v}"]
     models = []
     if counts:
         in_service = {row["device_model"]: row["n"] for row in
@@ -136,20 +164,26 @@ def report_mtbf(today: date) -> dict:
                 if row["work_order__asset__device_model"] in done:  # always true (same filter as `done`); guard the lookup anyway
                     done[row["work_order__asset__device_model"]]["cost"] += float(row["v"] or 0)
         for dm in DeviceModel.objects.filter(pk__in=counts):
-            n, reps, d = in_service.get(dm.pk, 0), counts[dm.pk], done.get(dm.pk)
-            rate = reps / n * REPAIR_RATE_FACTOR if n else None
-            models.append({"device_model": dm, "in_service": n, "repairs": reps, "rate": rate, "mtbf_days": n * TRAILING_DAYS / reps if n else None,
+            n, reps, fails, d = in_service.get(dm.pk, 0), counts[dm.pk], failed[dm.pk], done.get(dm.pk)
+            rate = fails / n * REPAIR_RATE_FACTOR if n else None
+            # No failures: no time between them to measure (a model whose repairs were all left out has rate 0 and no MTBF)
+            mtbf = n * TRAILING_DAYS / fails if n and fails else None
+            models.append({"device_model": dm, "in_service": n, "repairs": reps, "failures": fails, "rate": rate, "mtbf_days": mtbf,
                            "turnaround": d["turnaround"] / d["n"] if d else 0.0, "cost": d["cost"] / d["n"] if d else 0.0,
                            "flagged": rate is not None and rate > 1})
         # Highest failure rate first; models with nothing in service (a repair on a since-retired device) have no rate and go last.
-        models.sort(key=lambda m: (m["rate"] is None, -(m["rate"] or 0.0), -m["repairs"], m["device_model"].manufacturer, m["device_model"].model))
+        models.sort(key=lambda m: (m["rate"] is None, -(m["rate"] or 0.0), -m["failures"], -m["repairs"], m["device_model"].manufacturer,
+                                   m["device_model"].model))
     # The screen shows the top MTBF_LIMIT; the CSV (`rows`) carries every model with repairs, like the replacement list.
     return {
-        "columns": ["Manufacturer", "Model", "Device", "In service", "Repairs, 6 mo", "Repairs per device per year", "MTBF days", "Avg turnaround days",
-                    "Avg repair cost"],
-        "rows": [[m["device_model"].manufacturer, m["device_model"].model, m["device_model"].description, m["in_service"], m["repairs"], m["rate"],
-                  round(m["mtbf_days"]) if m["mtbf_days"] is not None else None, m["turnaround"], m["cost"]] for m in models],
+        "columns": ["Manufacturer", "Model", "Device", "In service", "Repairs, 6 mo", "Failures, 6 mo", "Failures per device per year", "MTBF days",
+                    "Avg turnaround days", "Avg repair cost"],
+        "rows": [[m["device_model"].manufacturer, m["device_model"].model, m["device_model"].description, m["in_service"], m["repairs"],
+                  m["failures"], m["rate"], round(m["mtbf_days"]) if m["mtbf_days"] is not None else None, m["turnaround"], m["cost"]] for m in models],
         "models": models[:MTBF_LIMIT], "total_models": len(models), "since": since,
+        # Slice 33: what the failures leave out, by finding (the note names each with its count), and the coverage of the findings
+        "left_out": [{"value": v, "label": findings.label(v), "n": left_out[v]} for v in LEFT_OUT if left_out[v]],
+        "left_out_total": sum(left_out.values()), "completed": completed, "recorded": recorded, "failure_rule": findings.FAILURE_RULE,
     }
 
 

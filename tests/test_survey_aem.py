@@ -90,7 +90,10 @@ def test_an_interval_in_force_with_its_approval_evidence_and_record_since(ctx, t
     assert rows_of(s, "in_force") == [[
         "Acme", "MX750", "High", 3, 12, 24, t(60), "EMC minutes, item 4", "Technician User", "Manager User", t(100),
         Decimal(str(ev["device_years"])), ev["repairs"], None if ev["repairs_per_device_year"] is None else Decimal(str(ev["repairs_per_device_year"])),
-        ev["pm_completed"], ev["pm_on_time"], ev.get("pm_window"), 2, 1]]  # slice 27: the evidence's PM window, as recorded
+        ev["pm_completed"], ev["pm_on_time"], ev.get("pm_window"), 2, 1,  # slice 27: the evidence's PM window, as recorded
+        # slice 33: the evidence counted failures, so failures since approval stand beside them (open repairs count)
+        ev["failures"], Decimal(str(aem.finding_figures(ev)["failures_per_device_year"])), aem.coverage_words(ev["findings_recorded"], ev["completed"]),
+        2]]
     assert _figures(s)["Models on AEM today"] == 1 and _figures(s)["Devices on AEM today"] == 3 and s.gaps == []
     assert MARKER not in repr([r for tbl in s.tables for r in tbl.rows()])
 
@@ -128,7 +131,8 @@ def test_an_interval_with_no_recorded_approval_is_a_gap_unless_the_model_is_excl
     assert [(g.kind, g.record, g.url) for g in gaps_of(s)] == [(GAP, "BD Alaris 8015 PCU", f"/pm/models/{pump_model.pk}/?tab=aem")]
     assert gaps_of(s)[0].text == ("BD Alaris 8015 PCU runs on a 18-month AEM interval with no recorded approval: ratify it from the "
                                   "model's AEM tab.")
-    assert rows_of(s, "in_force") == [["BD", "Alaris 8015 PCU", "High", 2, 12, 18, None, "No recorded approval", "", ""] + [None] * 9]
+    assert rows_of(s, "in_force") == [["BD", "Alaris 8015 PCU", "High", 2, 12, 18, None, "No recorded approval", "", ""] + [None] * 9
+                                      + [None, None, "", None]]  # slice 33: no evidence, no failures
     figures = _figures(s)
     assert figures["Models on AEM today"] == 1 and figures["Devices on AEM today"] == 2
     assert figures["Life-support models"] == 1 and figures["Imaging, radiologic, and laser models"] == 1 and figures["Excluded models on AEM"] == 0
@@ -147,7 +151,8 @@ def test_another_facilitys_aem_is_never_read(ctx, today, dept, monitor, people, 
                                    proposed_on=today - timedelta(days=20), decided_on=today - timedelta(days=10), decision_note="Theirs")
         create_work_order(asset=a, type=WoType.REPAIR, priority=Priority.NORMAL, problem="x", opened_on=today)
     s = section.build(period(today - timedelta(days=30), today), people["director"])
-    assert [r[1] for r in rows_of(s, "in_force")] == ["MX750"] and rows_of(s, "in_force")[0][-2:] == [0, 0]
+    assert [r[1] for r in rows_of(s, "in_force")] == ["MX750"] and rows_of(s, "in_force")[0][17:19] == [0, 0]
+    assert rows_of(s, "in_force")[0][-1] == 0  # slice 33: no failures since approval either
     assert [r[3] for r in rows_of(s, "decisions")] == []  # their approval is in the period; MX750's was 60 days ago
     assert _figures(s)["Models on AEM today"] == 1
 

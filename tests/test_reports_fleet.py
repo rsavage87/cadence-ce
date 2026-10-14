@@ -193,8 +193,10 @@ def test_mtbf_math_and_ranking(mtbf_data):
     assert o["device_model"] == mtbf_data["old_model"] and o["in_service"] == 0 and o["rate"] is None and o["mtbf_days"] is None and not o["flagged"]
     assert o["turnaround"] == 1.0 and o["cost"] == 82.0
     assert r["columns"][:3] == ["Manufacturer", "Model", "Device"]
-    assert r["rows"][0] == ["Hamilton Medical", "Hamilton-G5", "ICU ventilator", 2, 3, 3.0, 121, 4.0, 264.0]
-    assert r["rows"][2][5] is None and r["rows"][2][6] is None
+    # slice 33: repairs created without a finding (and open ones) are failures, so failures equal repairs here
+    assert (v["failures"], p["failures"], o["failures"]) == (3, 1, 1)
+    assert r["rows"][0] == ["Hamilton Medical", "Hamilton-G5", "ICU ventilator", 2, 3, 3, 3.0, 121, 4.0, 264.0]
+    assert r["rows"][2][6] is None and r["rows"][2][7] is None
 
 
 def test_mtbf_one_repair_on_two_devices_is_the_boundary(ctx, dept, vent_model, vent, client, signed_in, freeze_today):
@@ -207,7 +209,8 @@ def test_mtbf_one_repair_on_two_devices_is_the_boundary(ctx, dept, vent_model, v
     freeze_today(TODAY)
     signed_in("director")
     body = client.get("/reports/mtbf/").content.decode()
-    assert '<td class="num">2</td><td class="num">1</td><td class="num">1.00</td><td class="num">364</td>' in body and "num down" not in body
+    assert '<td class="num">2</td><td class="num">1</td><td class="num">1</td><td class="num">1.00</td><td class="num">364</td>' in body
+    assert "num down" not in body
 
 
 def test_mtbf_keeps_the_top_twelve(ctx, dept):
@@ -261,14 +264,16 @@ def test_mtbf_renders_the_table_and_hint(client, signed_in, mtbf_data, freeze_to
     assert r.status_code == 200
     body = r.content.decode()
     assert ('<td class="two">Hamilton Medical Hamilton-G5<small>ICU ventilator</small></td><td class="num">2</td><td class="num">3</td>'
-            '<td class="num down">3.00</td><td class="num">121</td><td class="num">4.0 d</td><td class="num">$264</td>') in body
+            '<td class="num">3</td><td class="num down">3.00</td><td class="num">121</td><td class="num">4.0 d</td><td class="num">$264</td>') in body
     assert '<td class="num">0.67</td><td class="num">546</td><td class="num">2.0 d</td><td class="num">$0</td>' in body
     assert '<td class="num">—</td><td class="num">—</td><td class="num">1.0 d</td><td class="num">$82</td>' in body
-    assert "Ranked by repairs per device per year; repairs opened since Mar 30, 2026." in body and "showing" not in body
+    assert "Ranked by failures per device per year; repairs opened since Mar 30, 2026." in body and "showing" not in body
     assert "The yearly rate doubles the six-month count per device in service" in body
+    assert "What was found is recorded on 0 of the 3 repairs completed in this window: the others count as failures." in body  # slice 33
     csv = csv_text(client.get("/reports/mtbf.csv"))
-    assert csv.startswith("Manufacturer,Model,Device,In service,\"Repairs, 6 mo\",Repairs per device per year,MTBF days,Avg turnaround days,Avg repair cost")
-    assert csv.splitlines()[1] == "Hamilton Medical,Hamilton-G5,ICU ventilator,2,3,3.00,121,4.00,264.00"
+    assert csv.startswith("Manufacturer,Model,Device,In service,\"Repairs, 6 mo\",\"Failures, 6 mo\",Failures per device per year,MTBF days,"
+                          "Avg turnaround days,Avg repair cost")
+    assert csv.splitlines()[1] == "Hamilton Medical,Hamilton-G5,ICU ventilator,2,3,3,3.00,121,4.00,264.00"
 
 
 def test_mtbf_renders_the_empty_state(client, signed_in, vent):

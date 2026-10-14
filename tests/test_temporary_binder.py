@@ -216,7 +216,8 @@ def test_the_aem_section_counts_our_devices(ctx, today, year, dept, pump, pump_m
     s = aem.build(year, None)
     assert figures(s)["Devices on AEM today"] == 1
     [row] = rows_of(s, "in_force")
-    assert row[3] == 1 and row[-2:] == [1, 0]  # active devices and repairs since approval: ours
+    assert row[3] == 1 and row[17:19] == [1, 0]  # active devices and repairs since approval: ours
+    assert row[-1] is None  # slice 33: evidence with no failures counted, so none since approval beside it
 
 
 def test_the_cover_names_what_is_still_not_covered():

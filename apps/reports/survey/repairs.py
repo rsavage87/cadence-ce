@@ -22,9 +22,16 @@ none is counted and listed, its checks being on paper or in the previous system.
 The two device checks are as of today, whenever their repair ended (the outcome exists only since slice 30). A device retired or
 returned to its owner since is never one; a missing device is the inventory's.
 
-Queries: three whatever the facility's size: the figures (grouped by outcome, imported or not), the devices whose last repair ended not
-returned to use (one query with subqueries, among the devices that have such a repair), and the table's rows when they are read. Nothing a
-requester typed (problem, resolution, notes) is read: the outcome, the report number (a token CE entered), and staff names.
+Slice 33, what each repair found (WorkOrder.repair_finding, apps.workorders.findings: one per repair, a choice, written only by
+completion and services.set_repair_finding): the table's "What was found" column, and a table of the period's repairs by finding (each with
+its group, whether it counts as a device failure by findings.FAILURE_RULE, and how many were opened from a failed PM), with "Not recorded"
+for repairs completed before Cadence recorded findings or imported. The coverage figure counts the repairs with a finding recorded (never
+not stated by the vendor). Never a gap or a check: a repair with no finding is counted, never chased one at a time.
+
+Queries: four whatever the facility's size: the figures (grouped by outcome, imported or not), the findings (grouped by finding: _findings,
+which the program evaluation reads too), the devices whose last repair ended not returned to use (one query with subqueries, among the
+devices that have such a repair), and the table's rows when they are read. Nothing a requester typed (problem, resolution, notes) is read:
+the outcome, the finding (a choice CE made), the report number (a token CE entered), and staff names.
 """
 from __future__ import annotations
 
@@ -32,7 +39,9 @@ from django.db.models import Count, Exists, Max, Min, OuterRef, Q, Subquery
 from django.urls import reverse
 
 from apps.equipment.models import Asset, AssetStatus, Ownership, RiskClass
-from apps.workorders.models import OPEN_STATUSES, InspectionResult, PmResult, RepairCheck, Source, WorkOrder, WoStatus, WoType
+from apps.pm.aem import found_on_pm_q
+from apps.workorders import findings
+from apps.workorders.models import OPEN_STATUSES, InspectionResult, PmResult, RepairCheck, RepairFinding, Source, WorkOrder, WoStatus, WoType
 from apps.workorders.repair_checks import checked_by, last_completed_first
 
 from . import CHECK, DEVICE, WORK_ORDER, Figure, Gap, Period, Section, Table
@@ -44,14 +53,20 @@ STILL_OUT = (AssetStatus.OUT_OF_SERVICE, AssetStatus.IN_REPAIR)  # out of use; a
 CHECKED = (RepairCheck.PASSED, RepairCheck.VENDOR_REPORT)  # the outcomes whose checks were done (checked_by names who)
 BEFORE = "Not recorded: completed before Cadence recorded checks"
 IMPORTED = "Not recorded: imported"
-COLUMNS = ["Work order", "Device", "Model", "Risk class", "Completed on", "Outcome", "Checked by", "Vendor report number"]
+COLUMNS = ["Work order", "Device", "Model", "Risk class", "Completed on", "Outcome", "Checked by", "Vendor report number", "What was found"]
+FINDING_COLUMNS = ["What was found", "Group", "Counts as a device failure", "Repairs", "Found on a PM"]
+NOT_RECORDED = "Not recorded"  # findings.label("") : completed before Cadence recorded findings, or imported
+# A finding's group as the binder words it (findings.GROUPS, and "" with not stated: no finding recorded)
+_FINDING_GROUP = {str(v): label for label, values in findings.GROUPS for v in values}
+_FAILURE = {str(v) for v in (*findings.RELIABILITY, *findings.UNKNOWN)}  # FAILURE_RULE, of a completed repair
 _OUTCOMES = dict(RepairCheck.choices)
 _CLASS_LABELS = dict(RiskClass.choices)
 _STATUS_WORDS = {AssetStatus.IN_SERVICE: "in service", AssetStatus.ON_LOAN: "on loan"}
 # The columns a row reads (staff-written, chosen, or names only: never the problem, the resolution, the requester, or notes)
 _ONLY = ("number", "completed_on", "repair_check", "checks_reference", "source", "vendor_service", "vendor_name", "assigned_to__name",
          "asset__tag", "asset__device_model__manufacturer", "asset__device_model__model", "asset__device_model__risk_class",
-         "vendor_engineer__name", "vendor_engineer__company", "vendor_engineer__company_key")  # slice 31: checked_by names the engineer
+         "vendor_engineer__name", "vendor_engineer__company", "vendor_engineer__company_key",  # slice 31: checked_by names the engineer
+         "repair_finding")  # slice 33
 
 
 def _day(d) -> str:
@@ -79,6 +94,27 @@ def _figures(repairs) -> dict:
     return out
 
 
+def _findings(repairs) -> dict:
+    """{finding ("" for none recorded): (how many, how many of them opened from a failed PM)} over `repairs`. One grouped query: the
+    binder's table and figures, and the program evaluation's findings indicators (apps.evaluations.indicators) read it."""
+    return {row["repair_finding"]: (row["n"], row["on_pm"]) for row in
+            repairs.order_by().values("repair_finding").annotate(n=Count("id"), on_pm=Count("id", filter=found_on_pm_q()))}
+
+
+def recorded_of(found: dict) -> int:
+    """The repairs with a finding recorded in _findings' counts (findings.recorded_q's rule: never blank, never not stated)."""
+    return sum(n for value, (n, _on_pm) in found.items() if value and value != RepairFinding.NOT_STATED)
+
+
+def _finding_rows(found: dict) -> list[list]:
+    """The period's repairs by finding, in findings.GROUPS' order, then those with none recorded: every finding listed, counted or not."""
+    rows = []
+    for value in [str(v) for _label, values in findings.GROUPS for v in values] + [""]:
+        n, on_pm = found.get(value, (0, 0))
+        rows.append([findings.label(value), _FINDING_GROUP.get(value, NOT_RECORDED), "Yes" if value in _FAILURE else "No", n, on_pm])
+    return rows
+
+
 def _rows(repairs):
     """Every repair completed in the period, in the order completed: one query, read as the CSV streams it."""
     qs = repairs.select_related("asset__device_model", "assigned_to", "vendor_engineer").only(*_ONLY).order_by("completed_on", "number")
@@ -89,7 +125,7 @@ def _rows(repairs):
         else:
             outcome = IMPORTED if wo.source == Source.IMPORTED else BEFORE
         yield [wo.number, wo.asset.tag, f"{dm.manufacturer} {dm.model}", _CLASS_LABELS.get(dm.risk_class, dm.risk_class), wo.completed_on,
-               outcome, checked_by(wo) if wo.repair_check in CHECKED else "", wo.checks_reference]
+               outcome, checked_by(wo) if wo.repair_check in CHECKED else "", wo.checks_reference, findings.label(wo.repair_finding)]
 
 
 def _not_returned_devices() -> list[dict]:
@@ -144,6 +180,9 @@ def build(period: Period, user) -> Section:
     repairs = _completed_in(period)
     found = _figures(repairs)
     total = sum(n for n, _first, _last in found.values())
+    by_finding = _findings(repairs)  # slice 33
+    recorded = recorded_of(by_finding)
+    finding_rows = _finding_rows(by_finding) if total else []  # no repairs: the table says so
     gaps = [_blank_check(*found[key], imported=key == IMPORTED) for key in (BEFORE, IMPORTED) if key in found]
     device_gaps, still_out, back = _device_checks(_not_returned_devices())
     gaps += device_gaps
@@ -160,9 +199,14 @@ def build(period: Period, user) -> Section:
         Figure("Imported from the previous system", count(IMPORTED), "no outcome recorded; counted, never a gap"),
         Figure("Still out of use after not returned", still_out, "today, with no repair open"),
         Figure("Back in use with no check since", back, "today, after a repair that ended not returned to use"),
+        Figure("What was found recorded", f"{recorded:,} of {total:,}", "repairs completed in the period with a finding (never not stated by "
+                                                                        "the vendor)"),
+        Figure("Found on a PM", sum(on_pm for _n, on_pm in by_finding.values()), "repairs opened from a failed PM"),
     ]
     tables = [
         Table("repairs", "Repairs completed in the period", COLUMNS, lambda: _rows(repairs), count=total, links={0: WORK_ORDER, 1: DEVICE},
+              empty="No repair was completed in this period."),
+        Table("findings", "Repairs by what was found", FINDING_COLUMNS, lambda: iter(finding_rows), count=len(finding_rows),
               empty="No repair was completed in this period."),
     ]
     notes = [
@@ -177,6 +221,8 @@ def build(period: Period, user) -> Section:
         "they are counted and listed, never gaps.",
         "A device back in use after its last repair ended not returned to use counts as checked when a PM (not failed) or a passed "
         "incoming inspection was completed on or after the day that repair ended. The devices are read as of today.",
+        "What was found: one finding per repair, chosen by the facility's CE staff (a vendor's account records only what it observed on "
+        "the device). Not recorded: completed before Cadence recorded findings, or imported. " + findings.FAILURE_RULE,
         "A repair counts on the day it was completed; one reopened since counts once it is completed again.",
         "Risk class is each model's class today.",
     ]

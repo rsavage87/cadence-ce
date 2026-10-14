@@ -41,6 +41,7 @@ from django.utils import timezone
 
 from apps.core.days import local_day
 from apps.equipment.models import Asset, AssetStatus, DeviceModel, Ownership, RiskClass
+from apps.workorders.models import WoStatus, WoType
 
 from .dates import add_months
 from .models import AemDecision, AemStatus
@@ -88,6 +89,57 @@ def _retired_on(asset_ids) -> dict:
     return out
 
 
+DONE = (WoStatus.COMPLETED, WoStatus.CLOSED)  # slice 33: a findings figure's coverage counts the completed repairs
+# Slice 33: a findings share is read only with enough findings recorded (finding_figures): at least this share of the completed
+# repairs, and at least this many of them; below either, NOT_ENOUGH, never a share drawn from a few.
+FINDINGS_COVERAGE_PCT = 75
+FINDINGS_MIN = 5
+NOT_RECORDED_THEN = "Not recorded then"  # evidence recorded before Cadence recorded what repairs found
+NOT_ENOUGH = "Not enough findings recorded"
+
+
+def found_on_pm_q(prefix: str = "") -> Q:
+    """Repairs opened from a failed PM (slice 33: completion's follow-up repair; findings.found_on_pm as a condition): found on PM."""
+    return Q(**{f"{prefix}follow_up_of__type": WoType.PM})
+
+
+def coverage_enough(recorded: int, completed: int) -> bool:
+    """Enough findings recorded to read a findings share: FINDINGS_COVERAGE_PCT of the completed repairs, and FINDINGS_MIN of them."""
+    return recorded >= FINDINGS_MIN and recorded * 100 >= FINDINGS_COVERAGE_PCT * completed
+
+
+def coverage_words(recorded: int, completed: int) -> str:
+    """"9 of the 41 completed repairs with a finding recorded"."""
+    return f"{recorded} of the {completed} completed repair{'' if completed == 1 else 's'} with a finding recorded"
+
+
+def _whole(value) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def finding_figures(ev) -> dict | None:
+    """The findings figures of an evidence dict (evidence(), or a decision's stored copy) as every reader shows them (the AEM tab, the
+    survey binder, the history), or None for evidence recorded before Cadence recorded what repairs found (no `failures`: NOT_RECORDED_THEN;
+    its repairs are never compared with failures). Failures and their rate per device-year (conservative: a repair with no finding
+    counts, so they need no coverage); the coverage (findings_recorded of completed, in words); PM-related with its share of the repairs
+    with a finding and its rate per device-year only when enough are recorded (coverage_enough; else `enough` False and None: NOT_ENOUGH);
+    found on PM. Read from the stored counts only, never recounted."""
+    if not isinstance(ev, dict) or "failures" not in ev:
+        return None
+    failures, recorded, completed, pm_related = (_whole(ev.get(k)) for k in ("failures", "findings_recorded", "completed", "pm_related"))
+    years = ev.get("device_years")
+    years = years if isinstance(years, (int, float)) and not isinstance(years, bool) and years > 0 else None
+    enough = coverage_enough(recorded, completed)
+    rule = ev.get("failure_rule")
+    return {
+        "failures": failures, "failures_per_device_year": round(failures / years, 2) if years else None,
+        "recorded": recorded, "completed": completed, "coverage": coverage_words(recorded, completed), "enough": enough,
+        "pm_related": pm_related, "pm_related_pct": round(pm_related * 100 / recorded) if enough else None,
+        "pm_related_per_device_year": round(pm_related / years, 2) if enough and years else None,
+        "found_on_pm": _whole(ev.get("found_on_pm")), "rule": rule if isinstance(rule, str) else "",
+    }
+
+
 def while_ours(day: str = "opened_on") -> Q:
     """Work orders on our devices, from the day each became ours (slice 29): never a rental's, vendor loaner's, or demo unit's (its
     owner maintains it), and a device the facility kept (equipment.services.keep_temporary_device) only from its kept_on, by the work
@@ -107,10 +159,19 @@ def evidence(dm: DeviceModel, today: date | None = None, *, w=None) -> dict:
 
     Slice 29: our devices only. A rental, vendor loaner, or demo unit of the model is its owner's to maintain, so neither its days
     nor its work orders are the facility's maintenance history; a device the facility kept counts from the day it was kept (kept_on:
-    its install date here, for its days, the oldest install, and its work orders, while_ours), and not at all on a day before."""
+    its install date here, for its days, the oldest install, and its work orders, while_ours), and not at all on a day before.
+
+    Slice 33, what each repair found (apps.workorders.findings), beside `repairs` (every repair, as before): `failures`, the repairs
+    that count as device failures by findings.failure_q (reliability findings, none recorded or not stated, and every open repair:
+    conservative), with the rule in words (`failure_rule`) so the snapshot keeps it; `completed`, the repairs completed (or closed),
+    and `findings_recorded`, those of them with a finding recorded (findings.recorded_q: never not stated): the coverage every
+    findings figure is read with (finding_figures); `pm_related`, completed repairs found PM could have caught it or caused by
+    earlier service (findings.PM_RELATED, whichever way the repair was opened); `found_on_pm`, repairs opened from a failed PM (open
+    ones too, whatever they found). All in the one aggregate; evidence recorded before slice 33 has none of these keys."""
     from apps.recalls.models import AlertMatch
     from apps.recalls.services import DONE_STATUSES
-    from apps.workorders.models import WorkOrder, WoStatus, WoType
+    from apps.workorders import findings
+    from apps.workorders.models import WorkOrder
 
     today = today or timezone.localdate()
     window = window_of(w).for_class(dm.risk_class)
@@ -145,8 +206,15 @@ def evidence(dm: DeviceModel, today: date | None = None, *, w=None) -> dict:
 
     in_window = {"opened_on__gte": since, "opened_on__lte": today}
     done_in_window = Q(type=WoType.PM, completed_on__gte=since, completed_on__lte=today)
+    repaired = Q(type=WoType.REPAIR, **in_window) & ~Q(status=WoStatus.CANCELLED)
+    completed = repaired & Q(status__in=DONE)
     counts = WorkOrder.objects.filter(while_ours(), asset__device_model=dm).aggregate(
-        repairs=Count("id", filter=Q(type=WoType.REPAIR, **in_window) & ~Q(status=WoStatus.CANCELLED)),
+        repairs=Count("id", filter=repaired),
+        failures=Count("id", filter=repaired & findings.failure_q()),
+        completed=Count("id", filter=completed),
+        findings_recorded=Count("id", filter=completed & findings.recorded_q()),
+        pm_related=Count("id", filter=completed & Q(repair_finding__in=[str(v) for v in findings.PM_RELATED])),
+        found_on_pm=Count("id", filter=repaired & found_on_pm_q()),
         pm_completed=Count("id", filter=done_in_window),
         pm_on_time=Count("id", filter=done_in_window & window.on_time_q(due="due_on", completed="completed_on")),
         recall_work_orders=Count("id", filter=Q(type=WoType.RECALL, **in_window) & ~Q(status=WoStatus.CANCELLED)),
@@ -162,6 +230,13 @@ def evidence(dm: DeviceModel, today: date | None = None, *, w=None) -> dict:
         "device_years": device_years,
         "repairs": counts["repairs"],
         "repairs_per_device_year": round(counts["repairs"] / device_years, 2) if device_years else None,
+        # slice 33: what the repairs found (finding_figures reads these; evidence from before has none of them)
+        "failures": counts["failures"],
+        "pm_related": counts["pm_related"],
+        "found_on_pm": counts["found_on_pm"],
+        "findings_recorded": counts["findings_recorded"],
+        "completed": counts["completed"],
+        "failure_rule": findings.FAILURE_RULE,
         "pm_completed": counts["pm_completed"],
         "pm_on_time": counts["pm_on_time"],
         "pm_on_time_pct": round(counts["pm_on_time"] * 100 / counts["pm_completed"]) if counts["pm_completed"] else None,

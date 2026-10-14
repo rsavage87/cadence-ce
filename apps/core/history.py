@@ -520,7 +520,11 @@ def _results_text(steps) -> str:
 
 
 def _evidence_text(ev) -> str:
-    """An AEM case's evidence (apps.pm.aem.evidence) in a sentence: the window, the devices, the repairs, the PMs on time."""
+    """An AEM case's evidence (apps.pm.aem.evidence) in a sentence: the window, the devices, the repairs, the PMs on time. Slice 33:
+    the device failures and the coverage of what the repairs found, and PM-related once enough are recorded (apps.pm.aem.finding_figures),
+    when the evidence counted them; evidence from before says nothing of them."""
+    from apps.pm.aem import finding_figures
+
     if not isinstance(ev, dict):
         raise ValueError
     devices = ev.get("devices_active", 0) + ev.get("devices_retired", 0)
@@ -529,6 +533,14 @@ def _evidence_text(ev) -> str:
     if ev.get("repairs_per_device_year") is not None:
         repairs += f" ({_number(ev['repairs_per_device_year'])} per device-year)"
     parts.append(repairs)
+    found = finding_figures(ev)  # slice 33: what the repairs found, when the evidence counted it (never said for evidence from before)
+    if found is not None:
+        failures = _plural(found["failures"], "device failure", "device failures")
+        if found["failures_per_device_year"] is not None:
+            failures += f" ({_number(found['failures_per_device_year'])} per device-year)"
+        parts.append(f"{failures}, what was found recorded on {found['recorded']} of {found['completed']} completed")
+        if found["enough"]:
+            parts.append(f"{_plural(found['pm_related'], 'PM-related', 'PM-related')} ({found['pm_related_pct']}% of those with a finding)")
     if ev.get("pm_on_time_pct") is not None:
         window = ev.get("pm_window")  # slice 27: the PM window "on time" was counted by (evidence from before it has none)
         parts.append(f"{ev['pm_on_time_pct']}% of PMs on time" + (f" ({window[:1].lower()}{window[1:]})" if window else ""))
