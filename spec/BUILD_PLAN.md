@@ -6,7 +6,7 @@ export and print, devices are added and changed in the product, reports and requ
 device model's PM program (risk score, procedure, AEM interval) is kept in the product, and the work itself (time, parts,
 what was done, a PM's results) is recorded on the work order; vendors and clinical requesters see only their own share; facilities
 build their own reports, and a label opens its device with Scan tag; the API covers what the screens do, by session or token; every record's changes and every access change can be read back;
-staff get the emails they choose about their own work; each facility works on its own clock; one person signs in once to every facility they work at; a facility brings its records over from the CMMS it is leaving; technicians work from their phones on My work; a survey binder gathers the evidence surveyors ask for; new equipment is inspected before its first use; each facility says when a PM counts as on time; a device suspected in a death or serious injury is held as evidence and reported on the Safe Medical Devices Act's clock; rentals, vendor loaners, and demo units are on the inventory while on site, inspected before use, and returned to their owners; every repair records its safety and functional checks before the device goes back into use; the facility keeps the evidence that the vendor staff who service its equipment were trained for it; and the program's yearly evaluation is drafted from Cadence's figures for the committee that approves it. What each slice deferred is noted in its row and below.
+staff get the emails they choose about their own work; each facility works on its own clock; one person signs in once to every facility they work at; a facility brings its records over from the CMMS it is leaving; technicians work from their phones on My work; a survey binder gathers the evidence surveyors ask for; new equipment is inspected before its first use; each facility says when a PM counts as on time; a device suspected in a death or serious injury is held as evidence and reported on the Safe Medical Devices Act's clock; rentals, vendor loaners, and demo units are on the inventory while on site, inspected before use, and returned to their owners; every repair records its safety and functional checks before the device goes back into use; the facility keeps the evidence that the vendor staff who service its equipment were trained for it; the program's yearly evaluation is drafted from Cadence's figures for the committee that approves it; and every repair records what it found, so use errors and failures PM could have prevented are counted apart. What each slice deferred is noted in its row and below.
 
 | # | Slice | Mock screen(s) | Code | Status |
 |---|-------|----------------|------|--------|
@@ -43,6 +43,7 @@ staff get the emails they choose about their own work; each facility works on it
 | 30 | Checks after a repair | (none: Mark completed on a repair; the binder) | `workorders` + `equipment` + `incidents` + `reports` + `web` + `api` | done (no Settings scope; checks after recall actions and upgrades, a drawer check for a hand return, analyzer calibration, and limit tables deferred) |
 | 31 | Contracted service and vendor staff | (none: Contracts, Vendor staff; who did the vendor's work on a work order; the binder) | new `vendors` + `workorders` + `contracts` + `reports` + `core` + `web` + `api` | done (a Vendor entity with aliases, linking accounts to engineers, imports, vendor scorecards, uploads, reminder emails, and an FSR date deferred) |
 | 32 | Program evaluation | (none: Reports, Program evaluation; its print; the binder's program section) | new `evaluations` + `accounts` + `reports` + `core` + `web` + `api` | done (writing the plan in Cadence, API writes, objectives linked to indicators, a repair finding for use errors, a year's uptime and cost of service ratio, a Settings cycle, quarterly reports, an all-facilities roll-up deferred) |
+| 33 | Repair findings | (none: Mark completed on a repair; the work order drawer; Reliability by model; the AEM tab; the binder; the evaluation) | `workorders` + `pm` + `reports` + `evaluations` + `incidents` + `web` + `api` | done (codes on a failed PM, an AEM-strategy determination, the replacement score, the import column, and the work order list CSV column deferred) |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.
@@ -494,3 +495,17 @@ The mock's export and print buttons work since slice 11, Add device since slice 
   Rules settled in review: a previous column counted from only part of its months says from when; a superseded version's approvals
   stay as recorded (correct the amendment's); the read-only API answers every write by an Edit holder with 405; the binder's table links
   open a drawer only for records that have one; the next evaluation is due 90 days after the next 12 months' own end (Feb 29).
+- Repair findings (slice 33, beyond the mock; the evaluation printed "use errors and no problem found: not recorded"). CMS asks AEM
+  failures recorded without operator error, and each malfunction judged preventable; DNV and The Joint Commission (2026) ask failures and
+  use errors reported and investigated. Every repair records what it found, one choice from Binseng Wang's evidence-based maintenance
+  codes as AAMI's CMMS failure code paper standardized them (no problem found, use error, power or room, damaged in handling, battery,
+  accessory, software, wore out, PM could have caught it, caused by earlier service; not stated by the vendor), required at completion,
+  never guessed for older repairs. One rule (`workorders/findings.py`) says who may choose what (a vendor's account only what it sees on
+  the device; an investigation never use error; a failed PM's repair never "PM could have caught it") and what counts as a failure (never
+  use error, damage, an accessory, power or room, or no problem found; unknown ones and open repairs do). MTBF counts failures beside
+  repairs; the AEM evidence, the AEM tab, the binder, and the evaluation show failures, PM-related failures, and use-related repairs
+  with their coverage, never a PM-related rate below 75% coverage. Deferred: codes on a failed PM (hidden, potential, evident), whether
+  the AEM strategy caused a failure, the replacement score, an import column, the work order list CSV column. Rules settled in review: a
+  vendor's account gets one answer whatever it sends while the facility's finding holds, so no refusal tells what is stored; a finding
+  the repair's own limits now refuse is chosen again, the API's checklist offering the vendor's observations; hints and the decision
+  order name only the choices a door offers; the AEM tab lists only the repairs this user may record.

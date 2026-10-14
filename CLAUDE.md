@@ -176,6 +176,14 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   closed; never scoped: `permissions.can_set_vendor_engineer`); the vendor's report number (`checks_reference`) on any vendor job (kept
   when omitted, refused in-house); `assign` only on open work orders, clearing the engineer when the work moves (by vendor_key);
   `repair_checks.checked_by(wo, user)` names the engineer;
+  slice 33: `WorkOrder.repair_finding` (`RepairFinding`: what a repair found, a choice; "use error", never "user error"), written only by
+  `complete_work_order` (required when nothing is stored, KEEP when omitted) and `services.set_repair_finding` (Edit; Approve once closed;
+  never scoped; "Recorded later" on one completed before findings); `findings.py` the one rule (groups partitioning every value; failures
+  are reliability findings, unknown ones, and every open repair: never use error, damage, an accessory, power or room conditions, or no
+  problem found; `choices_for(wo, user)` every door offers and the service enforces: a scoped user only observations, an investigation
+  never use error, a failed PM's repair never "PM could have caught it"; a scoped user never replaces the facility's finding while the
+  repair's limits allow it (`FACILITY_RECORDED`); `failure_q`, `recorded_q`); assign clears not stated when work leaves the vendor; an
+  incident's adoption clears a use error (`services.clear_use_error`);
   slice 29: no PM on a temporary device (`no_pm_message`), its incoming inspection on `inspections.TEMPORARY_INCOMING` and refused a
   pass while its owner's PM date is past (`owner_pm_refusal`), recall batches give its recall work order to its owner;
   slice 28, a device held as evidence (Asset.incident_hold): `change_status` refuses a start or completion (`HOLD_MOVES`) of any of its
@@ -193,7 +201,9 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   the device drawer's PM tab share it), 30-day outlook, 7-day workload, PM library); `services.create_pm_work_orders_for_day` and
   `assign_week` / `week_assignment_preview` (Auto-assign week; both take `lock_planner()` first; slice 28: the planner suggests nobody
   for a device held as evidence, `WeekAssignment.on_hold`, and its PMs are still opened, only never started); `aem.py` the AEM program
-  (`AemDecision`: evidence, propose, approve, reject, withdraw, end, the pull-in of next PMs; the only writer of
+  (`AemDecision`: evidence (slice 33: failures, PM-related, found on PM, and how many repairs had a finding, beside repairs: read with
+  `finding_figures`, coverage before any PM-related rate; evidence from before reads "not recorded then"; the AEM tab's "Record what was
+  found" list), propose, approve, reject, withdraw, end, the pull-in of next PMs; the only writer of
   `DeviceModel.aem_interval_months`; `exclusion()` says why a model never goes on AEM: life support, or the CMS mark); `procedures.py` (write and revise procedures, the checklist line format, `set_model_procedure`);
   `permissions.py` (View to see; Edit for procedures and AEM proposals; Approve to create a day's work orders and to decide or end
   AEM; Auto-assign week also needs work-order assign)
@@ -282,7 +292,8 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `forms_vendors.py`: the vendors merged by vendor_key with their attestations and engineers' training, `?vendor=` (the binder's gaps link
   here), Add engineer, Change engineer, Add training for one or several of a vendor's engineers, Add attestation, the engineer drawer, the
   contract drawer's vendor line), `views_wo_engineer.py` the work order's Field engineer row, its Change, and the completion modal's
-  "Who did the work" select (names only for a vendor's account), `views_evaluations.py` Reports' Program evaluation (slice 32, with
+  "Who did the work" select (names only for a vendor's account), `views_wo_finding.py` the work order's "What was found" row and its Change
+  (slice 33; the completion modal's finding select is `web/_wo_finding_select.html`, never shown to a scoped user), `views_evaluations.py` Reports' Program evaluation (slice 32, with
   `forms_evaluations.py` and `templatetags/evaluation_tags.py`: the list and next due, New evaluation, the page (figures cut to the
   reader, each narrative field saved on its own, objectives, approvals, actions by status and level, history), the committee's print),
   `views_temporary.py` loaners and rentals (slice 29, with `forms_temporary.py`: Add rental or
@@ -318,7 +329,9 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   repair fields (`_repair_words` rewords a missing outcome or results as what to send); slice 31: `views_vendors.py` /
   `serializers_vendors.py` vendor engineers, trainings, attestations (Contracts module, no scoped actions), a work order's
   `vendor_engineer`, `vendor_engineer_name`, and `engineer_choices` (retrieve only), the transition's `vendor_engineer` /
-  `engineer_name` / `checks_reference` (omitted keeps), the `vendor-engineer` action; slice 32: `views_evaluations.py` /
+  `engineer_name` / `checks_reference` (omitted keeps), the `vendor-engineer` action; slice 33: a work order's `repair_finding` and its
+  label (null for a scoped user), `completion_checklist`'s `findings` / `found_on_pm` / `finding_required`, the transition's
+  `repair_finding` (omitted keeps; a missing one names what to send), the `repair-finding` action; slice 32: `views_evaluations.py` /
   `serializers_evaluations.py` program evaluations, read only (the list without figures or text; by id or number, the figures cut to the
   reader); serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
   same thing and calls the same service; the API never imports apps.web. `tenancy.py` (`TenantAPIMixin`: the tenant from the session or

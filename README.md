@@ -222,6 +222,19 @@ to service waits for the repair's checks, and an incident's Return to use waits 
 after repair before return to use" section lists them. API clients that complete repairs send the outcome (and the checklist's results
 when checked): a work order's `completion_checklist` lists what to send.
 
+## Repair findings
+Every repair records what it found, as one choice: no problem found, use error, power / gas / network / room conditions, damaged in
+handling, battery, accessory or cable, software or firmware, wore out, PM could have caught it, caused by earlier service, or (on vendor
+service) not stated by the vendor. The codes follow the evidence-based maintenance codes clinical engineering uses, and "use error" is
+FDA's and IEC 62366's word. Mark completed asks it above the resolution, with a hint for each choice and the device's recent PM and
+repairs as evidence; a repair opened from a failed PM never reads "PM could have caught it" (the PM caught it). A vendor's own account
+records only what it sees on the device, never use error or the facility's judgments, and never sees the finding; an incident's
+investigation never records a use error (that stays in the facility's event report). The work order's "What was found" row corrects one
+or records it on a repair completed before findings existed. Use errors, damage, accessories, power or room conditions, and no problem
+found are not device failures: MTBF counts failures beside all repairs, the AEM evidence and the program evaluation show failures,
+PM-related failures, and use-related repairs with how many repairs have a finding recorded, and the survey binder lists each repair's
+finding. Custom reports' work orders source can show and group by it.
+
 ## Loaners and rentals
 Equipment on site that the facility does not own (rentals such as specialty beds or surge pumps, vendor loaners sent while one of ours
 is out for repair, demo or evaluation units) goes on the inventory while it is here: Equipment's "Add rental or loaner" (or "Vendor
