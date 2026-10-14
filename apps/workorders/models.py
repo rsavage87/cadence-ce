@@ -70,6 +70,24 @@ class RepairCheck(models.TextChoices):
     NOT_RETURNED = "not_returned", "Not returned to use"
 
 
+class RepairFinding(models.TextChoices):
+    """What a repair found (slice 33): one per repair, a choice, never free text (Binseng Wang's evidence-based maintenance codes, AAMI's
+    CMMS failure code field; "use error" as FDA and IEC 62366-1 word it, never "user error"). Written only by
+    completion.complete_work_order and services.set_repair_finding; blank on a repair completed before slice 33 or imported ("not
+    recorded"). apps.workorders.findings groups them and says which count as failures."""
+    NO_PROBLEM_FOUND = "no_problem_found", "No problem found"
+    USE_ERROR = "use_error", "Use error"
+    ENVIRONMENT = "environment", "Power, gas, network, room"
+    DAMAGE = "damage", "Damaged in handling"
+    BATTERY = "battery", "Battery failed"
+    ACCESSORY = "accessory", "Accessory or cable"
+    SOFTWARE = "software", "Software or firmware fault"
+    WEAR = "wear", "Wore out or failed in use"
+    PM_PREVENTABLE = "pm_preventable", "PM could have caught it"
+    SERVICE_INDUCED = "service_induced", "Caused by earlier service"
+    NOT_STATED = "not_stated", "Not stated by the vendor"
+
+
 class LateReason(models.TextChoices):
     """Why a PM missed its due date (slice 25, the survey binder): a choice, never free text (a note about it goes in the work order's
     notes, which the binder never prints). Recorded through workorders.services.set_late_reason, on a PM that missed its due date only
@@ -146,6 +164,9 @@ class WorkOrder(TenantModel):
     # completion.complete_work_order and services.set_vendor_engineer (cleared by assign when the work moves); the API keeps it read-only.
     vendor_engineer = models.ForeignKey("vendors.VendorEngineer", on_delete=models.PROTECT, null=True, blank=True, editable=False,
                                         related_name="work_orders", verbose_name="field engineer")
+    # Slice 33: what a repair found (RepairFinding; apps.workorders.findings). Written only by completion.complete_work_order and
+    # services.set_repair_finding; the API keeps it read-only.
+    repair_finding = models.CharField("what was found", max_length=20, choices=RepairFinding.choices, blank=True, editable=False)
     history = HistoricalRecords()
 
     class Meta:

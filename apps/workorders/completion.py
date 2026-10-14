@@ -140,6 +140,7 @@ from .models import (
     PmResult,
     Priority,
     RepairCheck,
+    RepairFinding,
     WorkOrder,
     WorkOrderNote,
     WorkOrderStatusHistory,
@@ -956,7 +957,7 @@ def result_note(result: str, done: Completion) -> str:
 def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str = "", inspection_result: str = "", repair_check: str = "",
                         checks_reference=vendor_services.KEEP, results=None, open_repair: bool = True, tag_out: bool | None = None,
                         signature: str | None = None, hours=None, late_reason=None, vendor_engineer=vendor_services.KEEP,
-                        engineer_name: str = "", by=None, today: date | None = None) -> Completion:
+                        engineer_name: str = "", repair_finding=vendor_services.KEEP, by=None, today: date | None = None) -> Completion:
     """Complete `wo` with its resolution and, for a PM, its result and checklist results (the module's rules); a PM still open is
     started first (starts_on_completion). `results` is one {"result": "pass" | "fail" | "na", "reading": "..."} per checklist step, in
     order. `hours` (None or blank: none) are logged with it, and `late_reason` (None or blank: none; slice 25) is recorded on a PM
@@ -1063,6 +1064,8 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
         note = result_note(inspection_result, done)
     elif is_repair:  # slice 30: saved with the completion (change_status saves the whole row)
         locked.repair_check, locked.checklist_results = repair_check, snapshot
+        if repair_finding is not vendor_services.KEEP and repair_finding in RepairFinding.values:  # slice 33 scaffold: wave 1 builds the rule
+            locked.repair_finding = repair_finding
         if repair_check == RepairCheck.NOT_RETURNED:
             # The repair holds the device out (marked tagged out) and services._on_completed never returns it; in use or in repair, it
             # moves out of service now, through equipment's status rules (the device's open work is locked already: lock_work).
