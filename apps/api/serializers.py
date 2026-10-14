@@ -1,4 +1,5 @@
 from django.db import models
+from django.db.models import Exists, OuterRef
 from django.utils import timezone
 from rest_framework import serializers
 
@@ -6,11 +7,13 @@ from apps.contracts.models import Contract
 from apps.credentials.models import Credential, Technician
 from apps.equipment import services as eq_services
 from apps.equipment.models import AddedAs, Asset, Department, DeviceModel, Ownership
+from apps.incidents.models import Incident
+from apps.incidents.models import Status as IncidentStatus
 from apps.recalls.models import Alert, AlertMatch
 from apps.recalls.services import progress as recall_progress
 from apps.vendors import services as vendor_services
+from apps.workorders import findings, repair_checks, scoping
 from apps.workorders import permissions as wo_perms
-from apps.workorders import repair_checks, scoping
 from apps.workorders.completion import checklist_of, checklist_signature, procedure_for, repair_outcomes
 from apps.workorders.models import OPEN_STATUSES, LaborLine, PartLine, RepairCheck, WorkOrder, WoStatus, WoType
 
@@ -236,6 +239,28 @@ class PartLineSerializer(serializers.ModelSerializer):
         fields = ["id", "description", "part_number", "quantity", "unit_cost", "po_number"]
 
 
+def finding_limits(rows) -> dict:
+    """Slice 33: {pk: (investigation, from_pm)} for the open repairs among `rows`, what limits the findings each offers
+    (findings.choices_for): an incident's investigation not recorded in error (findings.is_investigation), a repair opened from a
+    failed PM (findings.found_on_pm). The same two reads as those, for a page at once: one query, none without an open repair."""
+    ids = [w.pk for w in rows if w.type == WoType.REPAIR and w.status in OPEN_STATUSES]
+    if not ids:
+        return {}
+    read = WorkOrder.objects.filter(pk__in=ids).annotate(
+        investigation=Exists(Incident.objects.filter(work_order_id=OuterRef("pk")).exclude(status=IncidentStatus.IN_ERROR)),
+        from_pm=Exists(WorkOrder.objects.filter(pk=OuterRef("follow_up_of_id"), type=WoType.PM)))
+    return {pk: (investigation, from_pm) for pk, investigation, from_pm in read.values_list("pk", "investigation", "from_pm")}
+
+
+class WorkOrderListSerializer(serializers.ListSerializer):
+    """A page of work orders: what limits each open repair's findings read in one go (finding_limits, slice 33), not once per row."""
+
+    def to_representation(self, data):
+        items = list(data.all() if isinstance(data, models.manager.BaseManager) else data)
+        self.context["_finding_limits"] = finding_limits(items)
+        return super().to_representation(items)
+
+
 class WorkOrderSerializer(serializers.ModelSerializer):
     asset_tag = serializers.CharField(source="asset.tag", read_only=True)
     assigned_to_name = serializers.CharField(source="assigned_to.name", read_only=True, default=None)
@@ -252,15 +277,20 @@ class WorkOrderSerializer(serializers.ModelSerializer):
     vendor_engineer = serializers.SerializerMethodField()
     vendor_engineer_name = serializers.SerializerMethodField()
     engineer_choices = serializers.SerializerMethodField()
+    # Slice 33: what a repair found (RepairFinding; apps.workorders.findings), the facility's record: null for a scoped user and on
+    # other types. Written only by the transition to completed and POST {id}/repair-finding/.
+    repair_finding = serializers.SerializerMethodField()
+    repair_finding_label = serializers.SerializerMethodField()
 
     class Meta:
         model = WorkOrder
+        list_serializer_class = WorkOrderListSerializer
         fields = ["id", "number", "asset", "asset_tag", "type", "priority", "status", "source", "requester", "callback", "reported_location",
                   "assigned_to", "assigned_to_name", "vendor_service", "vendor_name", "opened_on", "due_on", "started_on", "completed_on",
                   "problem", "resolution", "estimated_hours", "tagged_out", "is_late", "total_cost", "labor_lines", "part_lines", "updated_at",
                   "pm_result", "checklist_results", "follow_up_of", "legacy_number", "late_reason", "late_reason_label", "inspection_result",
                   "inspection_result_label", "repair_check", "repair_check_label", "checks_reference", "completion_checklist", "vendor_engineer",
-                  "vendor_engineer_name", "engineer_choices"]
+                  "vendor_engineer_name", "engineer_choices", "repair_finding", "repair_finding_label"]
         # Slice 15: what a completion recorded (transition to completed, apps.workorders.completion) is read here, never written.
         # Slice 23: so is an imported work order's number in the previous system (apps.workorders.legacy sets it, once).
         # Slice 25: so is why a PM was late (the model field is editable=False): POST {id}/late-reason/ or the completion records it.
@@ -268,6 +298,7 @@ class WorkOrderSerializer(serializers.ModelSerializer):
         # Slice 30: so is how a repair ended (RepairCheck) and the vendor's service report number (both editable=False).
         # Slice 31: so is the vendor's engineer (editable=False; a method field here, as the user may read it), and the report number
         # is any vendor job's.
+        # Slice 33: so is what a repair found (editable=False; method fields here, as the user may read it).
         read_only_fields = ["number", "status", "started_on", "completed_on", "resolution", "pm_result", "checklist_results", "follow_up_of",
                             "legacy_number", "late_reason", "inspection_result", "repair_check", "checks_reference"]
 
@@ -277,7 +308,14 @@ class WorkOrderSerializer(serializers.ModelSerializer):
         null), the signature to send back with the results, the steps never "na" (numbered from 1), and the outcomes (repair_check, with
         their labels) this user may complete it with (completion.repair_outcomes: "vendor_report" only on vendor service, for a user who
         sees the whole facility). Null for any other type, and for a repair no longer open (its checks as recorded are in
-        checklist_results). Reads no rows: the checklist is Cadence's own, and the user's scope is on their role."""
+        checklist_results). The checklist reads no rows: it is Cadence's own, and the user's scope is on their role.
+
+        Slice 33, what the repair found (repair_finding): "findings", the values this user may send, each {"value", "label", "hint"}
+        (findings.choices_for, in the select's order); "found_on_pm", true when the repair was opened from a failed PM (the PM caught
+        it: choose what failed; never pm_preventable); "finding_required", true when nothing is recorded (or what is recorded may no
+        longer be kept), so the transition must send one; false: left out, the finding recorded stays. A scoped user offered none
+        ("findings" empty, not required): the facility recorded one they may not choose, and it stays as recorded. What limits the
+        choices is read once for a list's page (finding_limits), else for this repair alone."""
         if wo.type != WoType.REPAIR or wo.status not in OPEN_STATUSES:
             return None
         procedure = procedure_for(wo)
@@ -285,7 +323,41 @@ class WorkOrderSerializer(serializers.ModelSerializer):
         user = getattr(self.context.get("request"), "user", None)
         return {"name": procedure.name, "steps": [{"text": text, "measure": measure} for text, measure in steps],
                 "signature": checklist_signature(steps), "never_na": [n + 1 for n in repair_checks.NEVER_NA],
-                "outcomes": [{"value": value, "label": RepairCheck(value).label} for value in repair_outcomes(wo, user)]}
+                "outcomes": [{"value": value, "label": RepairCheck(value).label} for value in repair_outcomes(wo, user)],
+                **self._finding_part(wo, user)}
+
+    def _finding_part(self, wo, user) -> dict:
+        """Slice 33: completion_checklist's findings, found_on_pm, and finding_required for the open repair `wo` (completion's rule:
+        a value one of findings.choices_for; a scoped user leaves the facility's finding as stored)."""
+        known = self.context.setdefault("_finding_limits", {})
+        if wo.pk not in known:
+            known.update(finding_limits([wo]))
+        investigation, from_pm = known[wo.pk]
+        choices = findings.choices_for(wo, user, investigation=investigation, from_pm=from_pm)
+        stored, scoped = wo.repair_finding, scoping.is_scoped(user)
+        if stored and scoped and stored not in choices:
+            choices = []  # the facility's: it stays as recorded (findings.FACILITY_RECORDED refuses another)
+        keeps = bool(stored) and stored in findings.choices_for(wo, None if scoped else user, investigation=investigation, from_pm=from_pm)
+        return {"findings": [{"value": v, "label": findings.label(v), "hint": findings.HINTS[v]} for v in choices],
+                "found_on_pm": from_pm, "finding_required": not keeps}
+
+    def _finding_hidden(self, wo) -> bool:
+        """Slice 33: no finding to read: another type, or a scoped user (the finding is the facility's record)."""
+        return wo.type != WoType.REPAIR or scoping.is_scoped(self._user())
+
+    def get_repair_finding(self, wo):
+        """Slice 33: the finding recorded (a RepairFinding value; "" when none is), null for a scoped user and on other types."""
+        return None if self._finding_hidden(wo) else wo.repair_finding
+
+    def get_repair_finding_label(self, wo):
+        """Slice 33: the finding in words; "Not recorded" on a completed or closed repair with none (one completed before findings
+        were recorded, or imported: POST {id}/repair-finding/ records one), "" on an open or cancelled one with none; null as
+        repair_finding is."""
+        if self._finding_hidden(wo):
+            return None
+        if wo.repair_finding or wo.status in (WoStatus.COMPLETED, WoStatus.CLOSED):
+            return findings.label(wo.repair_finding)
+        return ""
 
     def _user(self):
         return getattr(self.context.get("request"), "user", None)

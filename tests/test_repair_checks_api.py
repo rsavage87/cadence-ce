@@ -19,7 +19,7 @@ from rest_framework.authtoken.models import Token
 
 from apps.equipment.models import Asset, AssetStatus
 from apps.tenants.context import tenant_context
-from apps.workorders import repair_checks
+from apps.workorders import findings, repair_checks
 from apps.workorders.completion import FAILED_CHECK, REPAIR_CHECK_ONLY, REPAIR_REVISED, checklist_of, checklist_signature
 from apps.workorders.models import Priority, RepairCheck, WorkOrder, WoStatus, WoType
 from apps.workorders.services import assign, change_status, create_work_order
@@ -98,6 +98,9 @@ def test_an_open_repair_reads_its_completion_checklist(client, vent, techs, make
         "signature": SIGNATURE,
         "never_na": [1, 5],
         "outcomes": [{"value": "passed", "label": "Checked: ready for use"}, {"value": "not_returned", "label": "Not returned to use"}],
+        # slice 33: what the repair found (tests/test_repair_findings_api.py)
+        "findings": [{"value": v, "label": findings.label(v), "hint": findings.HINTS[v]} for v in findings.choices_for(wo)],
+        "found_on_pm": False, "finding_required": True,
     }
     assert [s["measure"] for s in checklist["steps"]] == [None, "Record Ω", "Record leakage µA", "Record leakage µA", None, None, None]
     change_status(wo, WoStatus.IN_PROGRESS)  # open, started: the same

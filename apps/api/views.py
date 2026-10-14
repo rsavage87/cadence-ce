@@ -33,8 +33,8 @@ from apps.incidents import permissions as inc_perms
 from apps.incidents.models import Incident
 from apps.pm import permissions as pm_perms
 from apps.tenants.context import get_current_tenant
+from apps.workorders import findings, scoping
 from apps.workorders import permissions as wo_perms
-from apps.workorders import scoping
 from apps.workorders import services as wo_services
 from apps.workorders.models import OPEN_STATUSES, RepairCheck, WorkOrder, WoStatus, WoType
 
@@ -322,7 +322,24 @@ def _repair_words(wo, user, sent: str, errors: dict) -> dict:
         out["checklist"] = [f"Send results with \"passed\": one {{\"result\": \"pass\", \"fail\", or \"na\", \"reading\": \"...\"}} per step of "
                             f"the work order's completion_checklist, in order ({len(checklist_of(procedure_for(wo)))} steps), with a reading on "
                             f"each measured step that is not \"na\"; steps {never} are never \"na\"."]
-    return out
+    return _finding_words(wo, user, out, IN_CHECKLIST)
+
+
+# Slice 33: what a repair found, left out with none recorded or sent as one this user may not record, answered naming the values to
+# send. The modal's words ("Choose what the repair found", "Choose one of the findings listed") speak of its select.
+FINDING_RECORDED = ("What a repair found is recorded when it is completed: POST /api/v1/work-orders/{id}/transition/ with status completed and "
+                    "repair_finding, or afterwards with POST /api/v1/work-orders/{id}/repair-finding/.")
+IN_CHECKLIST = "; the work order's completion_checklist gives each one's hint"
+
+
+def _finding_words(wo, user, errors: dict, where: str = "") -> dict:
+    """A repair's finding refused as missing (findings.REQUIRED) or as not this user's to record (findings.NOT_OFFERED), in the API's
+    words: the values this user may send on it (findings.choices_for), each with its label. Every other refusal (an incident's
+    investigation, a failed PM's repair, the facility's finding kept from a scoped user, another type, a status) keeps the service's."""
+    if wo.type != WoType.REPAIR or errors.get("repair_finding") not in ([findings.REQUIRED], [findings.NOT_OFFERED]):
+        return errors
+    named = ", ".join(f"\"{value}\" ({findings.label(value)})" for value in findings.choices_for(wo, user))
+    return {**errors, "repair_finding": [f"Send repair_finding, what the repair found: one of {named}{where}."]}
 
 
 # Slice 31: where the vendor's engineer is named, for a write that sends one anywhere else (refused rather than dropped).
@@ -372,7 +389,10 @@ class WorkOrderViewSet(TenantViewSet):
 
     def perform_create(self, serializer):
         d = serializer.validated_data
-        self._refuse_engineer(self.request.data if hasattr(self.request.data, "get") else {})
+        body = self.request.data if hasattr(self.request.data, "get") else {}
+        self._refuse_engineer(body)
+        if body.get("repair_finding") not in (None, ""):  # slice 33: a new work order found nothing yet (refused, never dropped)
+            raise DRFValidationError({"repair_finding": [FINDING_RECORDED]})
         if (d.get("assigned_to") or d.get("vendor_service")) and not wo_perms.can_assign(self.request.user):
             raise PermissionDenied("Assigning work orders needs Approve access.")
         # Slice 26: a refusal is a 400 in the service's words (keyed type: a PM, or a second open incoming inspection, on a device
@@ -390,6 +410,7 @@ class WorkOrderViewSet(TenantViewSet):
         # slice 31: any vendor job's, not only a repair's
         "checks_reference": "The vendor's report number is recorded when it is completed: POST /api/v1/work-orders/{id}/transition/ with "
                             "status completed and checks_reference (vendor service).",
+        "repair_finding": FINDING_RECORDED,  # slice 33
     }
 
     @staticmethod
@@ -424,7 +445,9 @@ class WorkOrderViewSet(TenantViewSet):
         if sent is not None and sent != wo.inspection_result:
             raise DRFValidationError({"inspection_result": ["An incoming inspection's result is recorded when it is completed: POST "
                                                             "/api/v1/work-orders/{id}/transition/ with status completed and inspection_result."]})
-        for field in ("repair_check", "checks_reference"):  # slice 30: how a repair ended, likewise (editable=False)
+        # slice 30: how a repair ended, likewise (editable=False); slice 33: what it found (a GET's "" on a repair with none, or null on
+        # another type, sends back fine)
+        for field in ("repair_check", "checks_reference", "repair_finding"):
             sent = body.get(field)
             if sent is not None and sent != getattr(wo, field):
                 raise DRFValidationError({field: [self.RECORDED_AT_COMPLETION[field]]})
@@ -534,10 +557,15 @@ class WorkOrderViewSet(TenantViewSet):
           that name, added when there is none. Not both. A vendor's account chooses only among its own company's engineers (another id
           answers as an unknown one). "checks_reference", the vendor's report number, on any vendor job (required with
           "vendor_report"; refused on in-house work).
+        - a repair (slice 33): "repair_finding", what it found (a RepairFinding value: one of the completion_checklist's findings, the
+          ones this user may send): required when none is recorded (completion_checklist's finding_required); left out, null, or
+          blank, the finding recorded stays (a reopened repair keeps it). A vendor's account sends only what it observed on the device,
+          and leaves a finding the facility recorded as it is. Refused on any other type.
         "signature" (optional): the completion_checklist's (or the PM procedure checklist's) signature the results were typed against;
         a checklist revised since is refused. A text field sent as a list, number, or object is a 400 keyed by it. Refusals are a 400
-        keyed by field in the service's words, but a repair sent with no repair_check, or "passed" with no results: those name what to
-        send (_repair_words). Another move refuses vendor_engineer and engineer_name (NAME_ENGINEER)."""
+        keyed by field in the service's words, but a repair sent with no repair_check, or "passed" with no results, or with no
+        repair_finding when none is recorded, or one this user may not send: those name what to send (_repair_words). Another move
+        refuses vendor_engineer and engineer_name (NAME_ENGINEER), and repair_finding (FINDING_RECORDED)."""
         wo = self.get_object()
         if not hasattr(request.data, "get"):  # a JSON list or scalar body has no fields
             raise DRFValidationError({"detail": "Send the fields as a JSON object."})
@@ -586,6 +614,8 @@ class WorkOrderViewSet(TenantViewSet):
         for field in ("vendor_engineer", "engineer_name"):  # slice 31: named only by completing, or by vendor-engineer
             if request.data.get(field) not in (None, ""):
                 raise DRFValidationError({field: [NAME_ENGINEER]})
+        if request.data.get("repair_finding") not in (None, ""):  # slice 33: recorded only by completing, or by repair-finding
+            raise DRFValidationError({"repair_finding": [FINDING_RECORDED]})
         note = request.data.get("note")
         if note is not None and not isinstance(note, str):  # slice 28 review fix: a list, number, or object reached the service's strip (a 500)
             raise DRFValidationError({"note": ["Send this as text."]})
@@ -675,6 +705,38 @@ class WorkOrderViewSet(TenantViewSet):
             raise DRFValidationError({"vendor_engineer": ["Required: the engineer's id (one of the work order's engineer_choices), or null: not "
                                                           "named on the vendor's report. Or send engineer_name, someone else by name."]})
         _via_service(wo_services.set_vendor_engineer, wo, _engineer_value(body), engineer_name=name or "", by=request.user)
+        wo.refresh_from_db()
+        return Response(self.get_serializer(wo).data)
+
+    @action(detail=True, methods=["post"], url_path="repair-finding", url_name="repair-finding")
+    def repair_finding(self, request, pk=None):
+        """Slice 33, the drawer's "What was found" Change: record or correct what a completed or closed repair found, one completed
+        before findings were recorded (repair_finding_label "Not recorded") included: body {"repair_finding": "<RepairFinding value>"},
+        through wo_services.set_repair_finding (never blank: a finding is corrected, never taken away). Work orders Edit, Approve once
+        closed (permissions.can_set_repair_finding); never a scoped user (not in scoped_actions: the finding is the facility's record).
+        A refusal is a 400 keyed repair_finding: a missing value, or one not this user's to record here, names the values to send
+        (_finding_words); the rest in the service's words. Recorded in the work order's history ("What was found: <label>", or
+        "Recorded later: <label>")."""
+        wo = self.get_object()
+        if not wo_perms.can_set_repair_finding(request.user, wo):
+            raise PermissionDenied(f"{wo.number} is closed: recording what the repair found now needs Work orders Approve.")
+        body = request.data
+        if not hasattr(body, "keys"):  # a JSON list or scalar body has no fields
+            raise DRFValidationError({"detail": "Send the fields as a JSON object."})
+        unknown = sorted(set(body.keys()) - {"repair_finding", "csrfmiddlewaretoken"})
+        if unknown:
+            raise DRFValidationError({name: ["Unknown field."] for name in unknown})
+        value = body.get("repair_finding")
+        if value is not None and not isinstance(value, str):
+            raise DRFValidationError({"repair_finding": ["Send this as text."]})
+        if wo.type != WoType.REPAIR:  # before "send one": whatever is sent, another type records none (the service checks it locked)
+            raise DRFValidationError({"repair_finding": [findings.NOT_A_REPAIR]})
+        try:
+            wo_services.set_repair_finding(wo, value or "", by=request.user)
+        except ValidationError as e:
+            if not hasattr(e, "error_dict"):
+                raise DRFValidationError({"detail": " ".join(e.messages)}) from e
+            raise DRFValidationError(_finding_words(wo, request.user, e.message_dict)) from e
         wo.refresh_from_db()
         return Response(self.get_serializer(wo).data)
 
