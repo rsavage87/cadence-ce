@@ -199,8 +199,10 @@ def test_a_scoped_user_leaves_the_facilitys_finding_as_stored(vent, manager, ven
     for kept in ({"repair_finding": None}, {"repair_finding": ""}, {"repair_finding": F.USE_ERROR}):
         assert done(reopened(wo), by=vendor_user, **kept).repair_finding == F.USE_ERROR, kept
     reopened(wo)
-    assert refused(wo, repair_finding=F.PM_PREVENTABLE, by=vendor_user) == {"repair_finding": findings.NOT_OFFERED}
-    assert done(wo, repair_finding=F.WEAR, by=vendor_user).repair_finding == F.WEAR  # an observation of their own replaces it
+    # merge fix: the facility's judgment is never replaced from a vendor's account, not even by one of its own observations
+    for other in (F.PM_PREVENTABLE, F.WEAR):
+        assert refused(wo, repair_finding=other, by=vendor_user) == {"repair_finding": findings.FACILITY_RECORDED}, other
+    assert done(wo, repair_finding=F.WEAR, by=manager).repair_finding == F.WEAR  # the facility changes it
     stated = done(repair(vent, vendor=VENDOR), repair_finding=F.NOT_STATED, by=manager)
     assert done(reopened(stated), repair_finding=None, by=vendor_user).repair_finding == F.NOT_STATED
 

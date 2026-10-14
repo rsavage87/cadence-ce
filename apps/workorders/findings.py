@@ -74,6 +74,7 @@ INVESTIGATION = ("This repair is an incident's investigation: use error is never
                  "report). Choose what was found on the device.")
 FOUND_ON_PM = "This repair was opened from a failed PM: the PM caught it. Choose what failed."
 NOT_A_REPAIR = "Only a repair records what it found."
+FACILITY_RECORDED = "The facility's CE staff recorded what this repair found: it stays as they recorded it."  # a scoped user's change (merge fix)
 
 
 def is_investigation(wo) -> bool:
