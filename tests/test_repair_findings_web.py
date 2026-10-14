@@ -334,9 +334,6 @@ def test_a_stored_finding_the_repairs_limits_refuse_now_is_chosen_again_by_anyon
     assert findings.NOT_OFFERED in r.content.decode() and WorkOrder.objects.get(pk=wo.pk).status == WoStatus.IN_PROGRESS
 
 
-@pytest.mark.xfail(strict=True, reason="service bug (completion._repair_finding, the merge fix): FACILITY_RECORDED refuses a vendor's own "
-                                       "observation even when the repair's limits refuse the finding stored, which completion then requires "
-                                       "to be chosen again: the vendor's account can never complete the repair")
 def test_a_vendor_chooses_again_when_the_repairs_limits_refuse_the_facilitys_finding(vent, make_user):
     manager = make_user("manager")
     wo = done(repair(vent, vendor=VENDOR), repair_finding=F.PM_PREVENTABLE, by=manager)

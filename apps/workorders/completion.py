@@ -643,8 +643,10 @@ def _repair_finding(wo: WorkOrder, value, by, errors: dict):
     from .scoping import is_scoped  # scoping imports the models; keep this module importable on its own
 
     investigation, from_pm = findings.is_investigation(wo), findings.found_on_pm(wo)
-    if sent and stored and sent != stored and is_scoped(by) and stored not in findings.choices_for(
-            wo, by, investigation=investigation, from_pm=from_pm):
+    if (sent and stored and sent != stored and is_scoped(by)
+            and stored not in findings.choices_for(wo, by, investigation=investigation, from_pm=from_pm)
+            and stored in findings.choices_for(wo, None, investigation=investigation, from_pm=from_pm)):
+        # (merge fix 2: only while the repair's own limits still allow it; a finding they now refuse is chosen again, a vendor's too)
         # merge fix: a judgment the facility recorded (use error, PM could have caught it) is never replaced from a vendor's account
         errors["repair_finding"] = findings.FACILITY_RECORDED
         return vendor_services.KEEP
