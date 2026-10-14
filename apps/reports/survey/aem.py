@@ -16,6 +16,11 @@ beside it as recorded, never recounted.
 
 Slice 29: our devices only (a rental, vendor loaner, or demo unit of an AEM model is its owner's to maintain, never on AEM): the active
 devices counted (equipment.services.OWNED) and the work since approval (apps.pm.aem.while_ours: a kept device from the day it was kept).
+
+Slice 33, what each repair found (apps.workorders.findings): device failures since approval (findings.failure_q: a repair with no finding
+recorded, and every open one, counts) are printed beside the evidence's failures only when the evidence the committee approved counted
+them (apps.pm.aem.finding_figures); evidence recorded before then compares repairs with repairs, and both failure columns stay blank
+("not recorded then"), never failures beside an old decision's repairs. The coverage of the evidence's findings is printed as recorded.
 """
 from datetime import date
 from decimal import Decimal
@@ -28,6 +33,7 @@ from apps.core.history import who
 from apps.equipment.models import Asset, DeviceModel, Ownership, RiskClass
 from apps.pm import aem
 from apps.pm.models import AemDecision, AemStatus
+from apps.workorders import findings
 from apps.workorders.models import PmResult, WorkOrder, WoStatus, WoType
 
 from . import GAP, Figure, Gap, Period, Section, Table
@@ -39,7 +45,10 @@ _STATUS_LABELS = dict(AemStatus.choices)
 IN_FORCE_COLUMNS = ["Manufacturer", "Model", "Risk class", "Active devices", "OEM interval (months)", "AEM interval (months)", "Approved on",
                     "Minutes reference", "Proposed by", "Decided by", "Evidence as of", "Evidence: device-years", "Evidence: corrective repairs",
                     "Evidence: repairs per device-year", "Evidence: PMs completed", "Evidence: PMs on time", "Evidence: PM window",
-                    "Corrective repairs since approval", "Failed PMs since approval"]
+                    "Corrective repairs since approval", "Failed PMs since approval",
+                    # slice 33: blank for evidence recorded before Cadence recorded what repairs found
+                    "Evidence: device failures", "Evidence: failures per device-year", "Evidence: what was found recorded",
+                    "Device failures since approval"]
 DECISION_COLUMNS = ["Date", "Decision", "Manufacturer", "Model", "Interval (months)", "OEM interval (months)", "Proposed on",
                     "Minutes reference", "End reason", "By", "Status today"]
 
@@ -66,13 +75,15 @@ def _window_words(ev: dict) -> str | None:
 
 
 def _since_approval() -> dict:
-    """{model id: {"repairs", "failed"}} for every model with an approved decision: corrective repairs opened (not cancelled) and
-    PMs failed, from the committee's date. One grouped query over all of them (one approved decision per model)."""
+    """{model id: {"repairs", "failures", "failed"}} for every model with an approved decision: corrective repairs opened (not
+    cancelled), those of them that count as device failures (slice 33: findings.failure_q), and PMs failed, from the committee's date.
+    One grouped query over all of them (one approved decision per model)."""
     decided = F("asset__device_model__aem_decisions__decided_on")
     rows = (WorkOrder.objects.filter(aem.while_ours(), asset__device_model__aem_decisions__status=AemStatus.APPROVED,
                                      asset__device_model__aem_decisions__decided_on__isnull=False)
             .order_by().values("asset__device_model")
             .annotate(repairs=Count("id", filter=Q(type=WoType.REPAIR, opened_on__gte=decided) & ~Q(status=WoStatus.CANCELLED)),
+                      failures=Count("id", filter=Q(opened_on__gte=decided) & ~Q(status=WoStatus.CANCELLED) & findings.failure_q()),
                       failed=Count("id", filter=Q(type=WoType.PM, pm_result=PmResult.FAIL, completed_on__gte=decided))))
     return {row["asset__device_model"]: row for row in rows}
 
@@ -80,14 +91,17 @@ def _since_approval() -> dict:
 def _in_force_row(dm: DeviceModel, decision: AemDecision | None, since: dict) -> list:
     name = [dm.manufacturer, dm.model, _CLASS_LABELS.get(dm.risk_class, dm.risk_class), dm.active, dm.oem_pm_interval_months, dm.pm_interval_months]
     if decision is None:
-        return name + [None, NO_APPROVAL] + [""] * 2 + [None] * 9
+        return name + [None, NO_APPROVAL] + [""] * 2 + [None] * 9 + [None, None, "", None]
     ev = decision.evidence or {}
     as_of = ev.get("as_of")
     counts = since.get(dm.pk, {})
+    found = aem.finding_figures(ev)  # slice 33: None for evidence from before findings: no failures on either side
+    failures = [None, None, aem.NOT_RECORDED_THEN, None] if found is None else [
+        found["failures"], _number(found["failures_per_device_year"]), found["coverage"], counts.get("failures", 0)]
     return name + [decision.decided_on, decision.decision_note, _name(decision.proposed_by), _name(decision.decided_by),
                    date.fromisoformat(as_of) if isinstance(as_of, str) else None, _number(ev.get("device_years")), _number(ev.get("repairs")),
                    _number(ev.get("repairs_per_device_year")), _number(ev.get("pm_completed")), _number(ev.get("pm_on_time")), _window_words(ev),
-                   counts.get("repairs", 0), counts.get("failed", 0)]
+                   counts.get("repairs", 0), counts.get("failed", 0)] + failures
 
 
 def _events(period: Period) -> list[list]:
@@ -159,6 +173,9 @@ def build(period: Period, user) -> Section:
         "by its due date.",
         "Since approval: corrective repairs opened (not cancelled) and PMs that failed on the model's devices from the committee's date "
         "to today.",
+        "Device failures: " + findings.FAILURE_RULE + " Since approval they are printed only beside evidence that counted them; evidence "
+        "recorded before Cadence recorded what each repair found is compared repairs with repairs, and its failure columns read "
+        f"{aem.NOT_RECORDED_THEN.lower()}. What was found recorded is the evidence's coverage: how many of its completed repairs had one.",
         "Decisions in the period: approvals and rejections by the committee's date, withdrawals and ends by the day they happened.",
         "Risk class is each model's class today.",
     ]

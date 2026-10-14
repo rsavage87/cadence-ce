@@ -33,6 +33,7 @@ from apps.reports.permissions import survey_refusal
 from apps.reports.survey import CHECK, DEVICE, NOT_COVERED, WORK_ORDER, repairs
 from apps.tenants.context import tenant_context
 from apps.tenants.models import Tenant
+from apps.workorders import findings
 from apps.workorders.completion import complete_work_order
 from apps.workorders.models import PmResult, Priority, RepairCheck, Source, WorkOrder, WoStatus, WoType
 from apps.workorders.services import assign, change_status, create_work_order
@@ -109,17 +110,19 @@ def test_the_figures_the_table_and_the_checks_for_repairs_with_no_outcome(today,
     assert s.covers == f"Repairs completed {_day(T - 200 * DAY)} to {_day(T)}; devices as of today, {_day(T)}"
     assert figures(s) == {"Repairs completed": 6, "Checked: ready for use": 1, "Checked by the vendor": 1, "Not returned to use": 1,
                           "Completed before Cadence recorded checks": 2, "Imported from the previous system": 1,
-                          "Still out of use after not returned": 0, "Back in use with no check since": 0}
+                          "Still out of use after not returned": 0, "Back in use with no check since": 0,
+                          "What was found recorded": "6 of 6", "Found on a PM": 0}  # slice 33
     table = s.table("repairs")
     assert table.columns == repairs.COLUMNS and table.links == {0: WORK_ORDER, 1: DEVICE} and table.count == 6
     vent_row = ["CE-10001", "Hamilton Medical Hamilton-G5", CLASSES[RiskClass.LIFE_SUPPORT]]
+    found = findings.label(FINDING)  # slice 33: what each repair found
     assert rows_of(s, "repairs") == [
-        [before_1.number, *vent_row, T - 150 * DAY, "Not recorded: completed before Cadence recorded checks", "", ""],
-        [before_2.number, *vent_row, T - 140 * DAY, "Not recorded: completed before Cadence recorded checks", "", ""],
-        [imported.number, *vent_row, T - 130 * DAY, "Not recorded: imported", "", ""],
-        [checked.number, *vent_row, T - 100 * DAY, "Checked: ready for use", "Dana Whitfield", ""],
-        [vendor.number, *vent_row, T - 90 * DAY, "Checked by the vendor", VENDOR, "FSO-26-1182"],
-        [gone.number, "CE-10002", "BD Alaris 8015 PCU", CLASSES[RiskClass.HIGH], T - 80 * DAY, "Not returned to use", "", ""],
+        [before_1.number, *vent_row, T - 150 * DAY, "Not recorded: completed before Cadence recorded checks", "", "", found],
+        [before_2.number, *vent_row, T - 140 * DAY, "Not recorded: completed before Cadence recorded checks", "", "", found],
+        [imported.number, *vent_row, T - 130 * DAY, "Not recorded: imported", "", "", found],
+        [checked.number, *vent_row, T - 100 * DAY, "Checked: ready for use", "Dana Whitfield", "", found],
+        [vendor.number, *vent_row, T - 90 * DAY, "Checked by the vendor", VENDOR, "FSO-26-1182", found],
+        [gone.number, "CE-10002", "BD Alaris 8015 PCU", CLASSES[RiskClass.HIGH], T - 80 * DAY, "Not returned to use", "", "", found],
     ]
     # never a gap or a finding: one check for those completed before Cadence recorded checks, one apart for the imported
     assert [g.kind for g in s.gaps] == [CHECK, CHECK] and all(g.url == "" for g in s.gaps)
@@ -229,7 +232,7 @@ def test_nothing_a_requester_typed_and_a_fixed_number_of_queries(today, vent, pu
         blank(done(vent, T - (50 + n) * DAY), imported=bool(n % 2))
     done(pump, T - 10 * DAY, tech=techs["tom"], outcome=RepairCheck.NOT_RETURNED)
     eq.set_status(pump, AssetStatus.IN_SERVICE)
-    assert read() == small <= 3
+    assert read() == small <= 4  # slice 33: the findings, one grouped query
 
 
 def test_another_facilitys_repairs_stay_there(today, ctx, vent, techs, other_tenant):
@@ -273,7 +276,8 @@ def test_the_page_the_csv_and_the_api_serve_it(client, today, vent, techs, make_
     body = client.get("/reports/survey/").content.decode()
     assert 'id="sv-repairs"' in body and "Checks after repair before return to use" in body
     rows = csv_rows(client.get("/reports/survey/repairs/repairs.csv"))
-    assert rows[0] == repairs.COLUMNS and rows[1][0] == wo.number and rows[1][5:] == ["Checked by the vendor", VENDOR, "FSO-26-77"]
+    assert rows[0] == repairs.COLUMNS and rows[1][0] == wo.number
+    assert rows[1][5:] == ["Checked by the vendor", VENDOR, "FSO-26-77", findings.label(FINDING)]
     data = client.get("/api/v1/survey/repairs/").json()
     assert data["key"] == "repairs" and {f["label"]: f["value"] for f in data["figures"]}["Checked by the vendor"] == 1
 
@@ -291,7 +295,7 @@ def test_the_demo_shows_each_outcome(db):
         assert found["Completed before Cadence recorded checks"] == 0 and found["Imported from the previous system"] == 0
         assert s.gaps == []  # the bed found beyond repair was retired
         rows = rows_of(s, "repairs")
-        assert [r[5:] for r in rows if r[7]] == [["Checked by the vendor", r[6], seed_demo.VENDOR_REPORT_NUMBER] for r in rows if r[7]]
+        assert [r[5:8] for r in rows if r[7]] == [["Checked by the vendor", r[6], seed_demo.VENDOR_REPORT_NUMBER] for r in rows if r[7]]
         assert [r[2] for r in rows if r[5] == "Not returned to use"] == [f"Hillrom {seed_demo.NOT_RETURNED_MODEL}"]
 
 

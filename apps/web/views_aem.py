@@ -15,20 +15,36 @@ PM work orders moved too), then closes the modal after settle. Withdraw is a but
 
 End AEM's address takes the decision in force, or for an interval on file without a recorded approval, the model itself (both are
 UUIDs from separate tables, so one never stands for the other).
+
+Slice 33, what each repair found: the failure history shows the device failures, PM-related (only with enough findings recorded), and
+found on a PM, with the coverage (apps.pm.aem.finding_figures; evidence taken before reads "not recorded then", never failures beside
+its repairs). "Record what was found" lists the model's completed repairs with no finding in the evidence's years for PM Approve with
+Work orders Edit, one select each (findings.choices_for); a POST records one through workorders.services.set_repair_finding after
+workorders.permissions.can_set_repair_finding (Approve once closed; never scoped) and answers with the drawer, a refusal as a toast.
 """
 from datetime import date
+from types import SimpleNamespace
 
 from django.core.exceptions import PermissionDenied, ValidationError
+from django.db.models import Exists, OuterRef
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 from django_htmx.http import retarget, trigger_client_event
 
+from apps.accounts.models import Level
 from apps.equipment.models import RiskClass
 from apps.facility.services import get_settings
+from apps.incidents.models import Incident
+from apps.incidents.models import Status as IncidentStatus
 from apps.pm import aem
 from apps.pm import permissions as pm_perms
 from apps.pm.models import AemDecision, AemStatus
+from apps.workorders import findings
+from apps.workorders import permissions as wo_perms
+from apps.workorders.models import RepairFinding, WorkOrder, WoType
+from apps.workorders.scoping import is_scoped
+from apps.workorders.services import set_repair_finding
 
 from . import views_models
 from .decorators import web_view
@@ -58,13 +74,56 @@ def _get_decision(pk) -> AemDecision:
 
 
 def evidence_view(ev: dict | None) -> dict | None:
-    """The evidence dict (apps.pm.aem.evidence, stored as JSON) with its ISO dates as dates, for the templates."""
+    """The evidence dict (apps.pm.aem.evidence, stored as JSON) with its ISO dates as dates, for the templates; slice 33: `findings`,
+    its findings figures (aem.finding_figures: None for evidence recorded before Cadence recorded what repairs found)."""
     if not ev:
         return None
     out = dict(ev)
     for key, as_date in (("as_of", "as_of_on"), ("since", "since_on"), ("oldest_install", "oldest_on")):
         out[as_date] = date.fromisoformat(ev[key]) if ev.get(key) else None
+    out["findings"] = aem.finding_figures(ev)
+    out.update(not_recorded_then=aem.NOT_RECORDED_THEN, not_enough=aem.NOT_ENOUGH, coverage_pct=aem.FINDINGS_COVERAGE_PCT,
+               findings_min=aem.FINDINGS_MIN)
     return out
+
+
+# --- Record what was found (slice 33) ----------------------------------------------------------------------------------
+
+RECORD_SHOWN = 25  # the repairs listed at once; recording one brings the next
+
+
+def _unrecorded(dm, today):
+    """The model's completed (or closed) repairs with no finding recorded, opened in the evidence's years (aem.history_start, while
+    ours, as the evidence counts them), latest first."""
+    return (WorkOrder.objects.filter(aem.while_ours(), asset__device_model=dm, type=WoType.REPAIR, status__in=aem.DONE, repair_finding="",
+                                     opened_on__gte=aem.history_start(today), opened_on__lte=today))
+
+
+def record_findings(user, dm, today) -> dict | None:
+    """The tab's "Record what was found" list, for PM Approve (who prepares and decides AEM cases) holding Work orders Edit: the model's
+    completed repairs with no finding in the evidence's years (_unrecorded), RECORD_SHOWN at a time, each with the findings this user
+    may record on it (findings.choices_for, with what makes a repair an incident's investigation or a failed PM's repair read for all
+    of them at once) and whether they may record one (permissions.can_set_repair_finding: Approve once closed). None when not offered.
+    Three queries: the count, the rows, the incidents."""
+    if not pm_perms.can_decide_aem(user) or not user.has_level(wo_perms.MODULE, Level.EDIT) or is_scoped(user):
+        return None
+    qs = _unrecorded(dm, today)
+    total = qs.count()
+    if not total:
+        return {"rows": [], "total": 0, "shown": 0}
+    rows = list(qs.select_related("asset").annotate(from_pm=Exists(WorkOrder.objects.filter(pk=OuterRef("follow_up_of_id"), type=WoType.PM)))
+                .order_by("-completed_on", "-number")[:RECORD_SHOWN])
+    investigations = set(Incident.objects.filter(work_order_id__in=[wo.pk for wo in rows]).exclude(status=IncidentStatus.IN_ERROR)
+                         .values_list("work_order_id", flat=True))
+    may = {status: wo_perms.can_set_repair_finding(user, SimpleNamespace(status=status)) for status in aem.DONE}
+    out = []
+    for wo in rows:
+        allowed = set(findings.choices_for(wo, user, investigation=wo.pk in investigations, from_pm=wo.from_pm))
+        groups = [(label, [(v, RepairFinding(v).label) for v in values if str(v) in allowed]) for label, values in findings.GROUPS]
+        out.append({"wo": wo, "groups": [(label, options) for label, options in groups if options], "may": may[wo.status],
+                    "from_pm": wo.from_pm, "investigation": wo.pk in investigations})
+    meanings = [(RepairFinding(v).label, findings.HINTS[v]) for _label, values in findings.GROUPS for v in values]
+    return {"rows": out, "total": total, "shown": len(out), "meanings": meanings}
 
 
 def aem_tab(request, dm) -> dict:
@@ -94,6 +153,8 @@ def aem_tab(request, dm) -> dict:
         "can_withdraw": proposal is not None and (can_decide or (is_proposer and can_edit)),
         "can_end": can_decide and (approved is not None or legacy),
         "end_pk": approved.pk if approved is not None else dm.pk,
+        "record": record_findings(user, dm, today),  # slice 33
+        "order_words": findings.ORDER_WORDS,
     }}
 
 
@@ -251,3 +312,24 @@ def aem_end(request, pk):
     if not form.is_valid():
         return _end_modal(request, pk, decision, dm, form)
     return _saved(request, dm, f"AEM ended for {dm}: back on the OEM interval of {_months(dm.oem_pm_interval_months)}{_moved_note(moved)}", moved)
+
+
+# --- Record what was found (slice 33) ----------------------------------------------------------------------------------
+
+@require_POST
+@web_view(pm_perms.MODULE, pm_perms.VIEW_LEVEL)
+def aem_record_finding(request, pk):
+    """Record what one of the model's completed repairs found, from the tab's list (record_findings): PM Approve, and the work order's
+    own rule (permissions.can_set_repair_finding: Work orders Edit, Approve once closed; never scoped), through
+    workorders.services.set_repair_finding (its history says "Recorded later"). Answers with the drawer on the AEM tab, its failure
+    history counted again; a refusal is a toast, as Withdraw's."""
+    _require(pm_perms.can_decide_aem(request.user))
+    dm = views_models.get_model(pk)
+    wo = get_object_or_404(WorkOrder.objects.select_related("asset"), number=(request.POST.get("number") or "").strip(),
+                           asset__device_model=dm, type=WoType.REPAIR)  # tenant-scoped: another facility's number is a 404
+    _require(wo_perms.can_set_repair_finding(request.user, wo))
+    try:
+        set_repair_finding(wo, request.POST.get("repair_finding"), by=request.user)
+    except ValidationError as e:
+        return toast(_drawer(request, dm), " ".join(e.messages))
+    return toast(_drawer(request, dm), f"Recorded what {wo.number} found: {RepairFinding(wo.repair_finding).label}")

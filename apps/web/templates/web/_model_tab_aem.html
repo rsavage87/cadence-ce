@@ -3,7 +3,8 @@
    approved by the committee, or on file without a recorded approval), the open proposal with the actions this user may take, the
    live failure history, and every decision. Buttons appear only for users the views allow; the views check again. A model excluded
    from AEM (life support, or the CMS rule for imaging, radiologic, and medical laser equipment) says why in the interval section,
-   once, instead of offering Propose.{% endcomment %}
+   once, instead of offering Propose. Slice 33: "Record what was found" (a.record, views_aem.record_findings), the model's completed
+   repairs with no finding, one select each posting to views_aem.aem_record_finding.{% endcomment %}
 {% with a=aem %}
 <div class="sec"><h3>PM interval <span>OEM {{ a.oem }} month{{ a.oem|pluralize }}</span></h3>
 {% if a.life_support %}
@@ -45,6 +46,21 @@
   {% if a.can_propose %}<div style="margin-top:10px"><button class="btn sm primary" type="button" hx-get="{% url 'web:pm_aem_propose' dm.pk %}" hx-target="#modal-card">Propose an AEM interval</button></div>
   {% elif a.propose_note and not a.proposal and not a.excluded %}<div class="note" style="margin-top:10px">{{ a.propose_note }}</div>{% endif %}
 </div>
+
+{% if a.record.total %}{% with rec=a.record %}
+<div class="sec aem-record" id="aem-record"><h3>Record what was found <span>{{ rec.total }} completed repair{{ rec.total|pluralize }} with none</span></h3>
+  <div class="hint" style="margin-bottom:6px">This model's repairs completed in the last {{ a.history_years }} years with no finding recorded (completed before Cadence recorded findings, or imported) count as device failures until one is. Record what each found from its work order; its history says it was recorded later.{% if rec.shown < rec.total %} The latest {{ rec.shown }} are listed; recording one brings the next.{% endif %}</div>
+  <div class="list">
+  {% for r in rec.rows %}
+    <div class="li static aem-rec"><div class="bd"><div class="t"><a class="link" href="{% url 'web:wo' r.wo.number %}" target="_blank" rel="noopener">{{ r.wo.number }}</a> <span class="muted">{{ r.wo.asset.tag }}</span></div>
+      <div class="s" style="white-space:normal">Opened {{ r.wo.opened_on|date:"M j, Y" }}, completed {{ r.wo.completed_on|date:"M j, Y" }}{% if r.from_pm %}; found on a PM: choose what failed{% endif %}</div>
+      {% if r.may %}<form class="aem-rec-f" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px" hx-post="{% url 'web:pm_aem_finding' dm.pk %}" hx-target="#drawer"><input type="hidden" name="number" value="{{ r.wo.number }}"><select name="repair_finding" aria-label="What {{ r.wo.number }} found" required style="flex:1 1 200px;min-width:0;max-width:280px"><option value="">Choose what was found</option>{% for label, options in r.groups %}<optgroup label="{{ label }}">{% for value, name in options %}<option value="{{ value }}">{{ name }}</option>{% endfor %}</optgroup>{% endfor %}</select><button class="btn sm" type="submit">Record</button></form>{% else %}<div class="s" style="white-space:normal">Closed: recording needs Work orders Approve</div>{% endif %}</div>
+    </div>
+  {% endfor %}
+  </div>
+  <details class="aem-rec-help" style="margin-top:8px"><summary class="hint">What each means</summary><div class="hint" style="margin-top:4px">{{ a.order_words }}</div><dl class="dl" style="margin-top:6px">{% for name, hint in rec.meanings %}<div><dt>{{ name }}</dt><dd style="white-space:normal">{{ hint }}</dd></div>{% endfor %}</dl></details>
+</div>
+{% endwith %}{% endif %}
 
 <div class="sec"><h3>Decisions <span>{{ a.history|length }}</span></h3>
 {% if a.history %}<div class="list">

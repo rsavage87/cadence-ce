@@ -33,6 +33,9 @@ The rules:
 - Slice 29, rentals, vendor loaners, and demo units: the devices source's Status reads "Returned to owner" for one that went back
   (DeviceStatus; Retired is a device of ours retired), its "Whose" column and filter say whose a device is, and its PM interval is
   empty for one (its owner maintains it). The owner's agreement, PO, or RMA number is never offered: reports are emailed.
+- Slice 33: the work orders source's "Repair finding" column, grouping, and filter (FindingShown: what a repair found, a choice, never
+  free text; "Not recorded" for a repair with none; blank, "—", on any other type). Never beside who requested it: the requester is
+  never offered.
 
 Running returns what the standard reports return (apps.reports.services, REPORTS): "columns" (labels) and "rows" (plain values: str,
 int, float, date, bool, None; money as float, as the standard reports return it), plus what the screen needs: "kinds" (for alignment
@@ -91,6 +94,7 @@ from apps.workorders.models import (
     PartLine,
     PmResult,
     Priority,
+    RepairFinding,
     WorkOrder,
     WoStatus,
     WoType,
@@ -289,6 +293,30 @@ def _device_status(today):
                 output_field=CharField())
 
 
+class FindingShown(TextChoices):
+    """What a repair found as the work orders source shows, groups, and filters it (slice 33, apps.workorders.findings): its finding,
+    or "Not recorded" for a repair with none (completed before Cadence recorded findings, imported, or not completed yet); another type
+    of work order has none (blank: the column's "—"). A coded fact about the device, never free text: reports may carry it."""
+    NO_PROBLEM_FOUND = RepairFinding.NO_PROBLEM_FOUND.value, RepairFinding.NO_PROBLEM_FOUND.label
+    USE_ERROR = RepairFinding.USE_ERROR.value, RepairFinding.USE_ERROR.label
+    ENVIRONMENT = RepairFinding.ENVIRONMENT.value, RepairFinding.ENVIRONMENT.label
+    DAMAGE = RepairFinding.DAMAGE.value, RepairFinding.DAMAGE.label
+    BATTERY = RepairFinding.BATTERY.value, RepairFinding.BATTERY.label
+    ACCESSORY = RepairFinding.ACCESSORY.value, RepairFinding.ACCESSORY.label
+    SOFTWARE = RepairFinding.SOFTWARE.value, RepairFinding.SOFTWARE.label
+    WEAR = RepairFinding.WEAR.value, RepairFinding.WEAR.label
+    PM_PREVENTABLE = RepairFinding.PM_PREVENTABLE.value, RepairFinding.PM_PREVENTABLE.label
+    SERVICE_INDUCED = RepairFinding.SERVICE_INDUCED.value, RepairFinding.SERVICE_INDUCED.label
+    NOT_STATED = RepairFinding.NOT_STATED.value, RepairFinding.NOT_STATED.label
+    NOT_RECORDED = "not_recorded", "Not recorded"
+
+
+def _repair_finding(today):
+    """A work order's finding (FindingShown): a repair's, "not_recorded" for a repair with none, blank on any other type."""
+    return Case(When(type=WoType.REPAIR, repair_finding="", then=Value(FindingShown.NOT_RECORDED.value)),
+                When(type=WoType.REPAIR, then=F("repair_finding")), default=Value(""), output_field=CharField())
+
+
 def _pm_interval_ours(today):
     """_pm_interval for a device of ours; none for a rental, vendor loaner, or demo unit (slice 29: its owner maintains it, on no
     interval of ours)."""
@@ -372,6 +400,7 @@ WORK_ORDERS = SourceSpec(
         Column("total_cost", "Total cost", MONEY, _total_cost, agg=SUM),
         Column("pm_on_time", "PM on time", YESNO, _pm_on_time, agg=SHARE, windowed=True),
         Column("pm_result", "PM result", TEXT, "pm_result", group=True, choices=PmResult),
+        Column("repair_finding", "Repair finding", TEXT, _repair_finding, group=True, choices=FindingShown, blank="—"),  # slice 33
     ),
     filters=(
         Filter("type", "Type", "choice", "type", _choices(WoType)),
@@ -379,6 +408,7 @@ WORK_ORDERS = SourceSpec(
         Filter("priority", "Priority", "choice", "priority", _choices(Priority)),
         Filter("origin", "Opened from", "choice", "source", _choices(Origin)),
         Filter("risk_class", "Risk class", "choice", "asset__device_model__risk_class", _choices(RiskClass)),
+        Filter("repair_finding", "Repair finding", "choice", "repair_finding", _choices(FindingShown), value=_repair_finding),  # slice 33
         Filter("vendor_service", "Vendor service", "yesno", "vendor_service", YES_NO),
         Filter("technician", "Assigned technician", "technician", "assigned_to"),
         *_place_filters("asset__"),

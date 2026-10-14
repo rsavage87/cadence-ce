@@ -187,7 +187,8 @@ def test_work_order_columns_read_like_the_screens(world):
                    "Started": d(9, 21), "Completed": d(9, 25), "Days open": 5, "Assigned to": "Dana Whitfield", "Vendor service": False,
                    "Labor hours": 1.28}
     rest = by(run("work_orders", ["number", *second]), "Number", r1.number)
-    assert rest == {"Number": r1.number, "Labor cost": 102.94, "Parts cost": 91.03, "Total cost": 193.97, "PM on time": None, "PM result": None}
+    assert rest == {"Number": r1.number, "Labor cost": 102.94, "Parts cost": 91.03, "Total cost": 193.97, "PM on time": None, "PM result": None,
+                    "Repair finding": "Not recorded"}  # slice 33: a repair completed with no finding (through change_status)
     vendor = by(run("work_orders", ["number", "status", "assigned_to", "vendor_service", "days_open", "labor_cost", "total_cost"]), "Number", r2.number)
     assert vendor == {"Number": r2.number, "Status": "In progress", "Assigned to": "Acme Biomed", "Vendor service": True, "Days open": 4,
                       "Labor cost": 300.0, "Total cost": 420.0}  # open: opened to today

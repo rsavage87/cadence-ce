@@ -22,6 +22,13 @@ position at the period's end. The previous period's column, counted from Cadence
 one, counts the "period" indicators only.
 
 Read only, a fixed number of queries whatever the facility's size. Never text a requester typed; incidents as counts only.
+
+Slice 33, what each repair found (apps.workorders.findings): the repairs completed in the period with a finding recorded (n of N: the
+coverage), and no problem found, use-related (use error and damage), PM-related, and found on a PM, each a share of the repairs with a
+finding (None, "Not recorded", when none has one), from the binder's _findings; the AEM table adds device failures and PM-related per
+device-year with the coverage beside them (PM-related only with enough findings recorded: apps.pm.aem.coverage_enough), and the approved
+evidence's failure rate only when that evidence counted failures. A previous column from an approved evaluation whose snapshot has no
+value for an indicator reads "Not counted then" (NOT_COUNTED_THEN), never a blank that looks like nothing happened.
 """
 from __future__ import annotations
 
@@ -64,8 +71,22 @@ from apps.reports.survey import staff as binder_staff
 from apps.reports.survey import vendors as binder_vendors
 from apps.vendors.models import EngineerTraining, VendorAttestation, VendorEngineer
 from apps.vendors.rules import NONE as NOTHING_ON_FILE
+from apps.workorders import findings
 from apps.workorders.inspections import uses_before
-from apps.workorders.models import LABOR_AMOUNT, PART_AMOUNT, LaborLine, LateReason, PartLine, PmResult, RepairCheck, Source, WorkOrder, WoStatus, WoType
+from apps.workorders.models import (
+    LABOR_AMOUNT,
+    PART_AMOUNT,
+    LaborLine,
+    LateReason,
+    PartLine,
+    PmResult,
+    RepairCheck,
+    RepairFinding,
+    Source,
+    WorkOrder,
+    WoStatus,
+    WoType,
+)
 
 from . import permissions as perms
 
@@ -111,6 +132,8 @@ class Indicator:
 
 
 EQ, WO, PMS, CON = Module.EQUIPMENT, Module.WORKORDERS, Module.PM, Module.CONTRACTS
+FINDINGS_EMPTY = "Not recorded"  # slice 33: a findings share with no finding recorded in the period
+NOT_COUNTED_THEN = "Not counted then"  # slice 33: the previous column, from an approved snapshot that has no value for the indicator
 _FLEET_RULE = "The facility's own devices (owned, leased, or placed) not retired, by their model's risk class, as on the Overview."
 _PM_RULE = ("PMs due in the period, counted once completed or once their window closed; on time when completed within the PM window in "
             "force at the period's end. Risk class and AEM are the model's on the day the figures were taken.")
@@ -170,6 +193,19 @@ INDICATORS = (
               rule="Repairs completed in the period whose device was kept out of use."),
     Indicator("repairs_no_outcome", "repairs", "No checks after repair recorded", COUNT, needs=(WO,),
               rule="Repairs completed before Cadence recorded checks after a repair, or imported."),
+    # Slice 33: what the repairs found, each a share of the repairs with a finding recorded (never a share of the rest)
+    Indicator("repairs_finding_recorded", "repairs", "Repairs with what was found recorded", COUNT, needs=(WO,),
+              rule="Of the repairs completed in the period, those with a finding recorded; the others were completed before Cadence recorded "
+                   "findings, imported, or not stated by the vendor. The findings below are shares of these."),
+    Indicator("repairs_no_problem_found", "repairs", "No problem found", PCT, needs=(WO,), empty=FINDINGS_EMPTY,
+              rule="Of the repairs with a finding recorded, those whose fault could not be made to happen."),
+    Indicator("repairs_use_related", "repairs", "Use-related (use error and damage)", PCT, LOWER, needs=(WO,), empty=FINDINGS_EMPTY,
+              rule="Of the repairs with a finding recorded, use error (no device fault: how it was operated) and damage in handling. "
+                   "Counted by repair; who was involved is never recorded."),
+    Indicator("repairs_pm_related", "repairs", "PM-related", PCT, LOWER, needs=(WO,), empty=FINDINGS_EMPTY,
+              rule="Of the repairs with a finding recorded, those PM could have caught, or caused by earlier service."),
+    Indicator("repairs_found_on_pm", "repairs", "Found on a PM", PCT, needs=(WO,), empty=FINDINGS_EMPTY,
+              rule="Of the repairs with a finding recorded, those opened from a failed PM: the PM caught the fault."),
     # AEM program (the table per model is in tables.aem)
     Indicator("aem_models", "aem", "Models on AEM", COUNT, basis=TAKEN, needs=(PMS,),
               rule="Device models maintained on an interval other than the manufacturer's on the day the figures were taken."),
@@ -212,7 +248,6 @@ TABLE_NEEDS = {"aem": (PMS, WO)}
 TABLE_LABELS = {"aem": "AEM effectiveness by model"}
 # What Cadence does not record, said so it is never read as zero.
 NOT_RECORDED = (
-    "Use errors and no problem found: Cadence records no finding for a repair, so neither is counted here. They are not zero.",
     "Equipment uptime and the cost of service ratio for a year are not counted in this evaluation.",
 )
 # On AEM, for a PM work order (the binder's rule, DeviceModel.pm_interval_months): an AEM interval on file that differs from the
@@ -455,6 +490,18 @@ def _repairs(p: survey.Period, raw: dict) -> None:
     raw["repairs_vendor_checked"] = _count(outcome(RepairCheck.VENDOR_REPORT), total)
     raw["repairs_not_returned"] = _count(outcome(RepairCheck.NOT_RETURNED), total)
     raw["repairs_no_outcome"] = _count(outcome(binder_repairs.BEFORE) + outcome(binder_repairs.IMPORTED), total)
+    by_finding = binder_repairs._findings(done)  # slice 33: one grouped query, the binder's
+
+    def finding(*values) -> int:
+        return sum(by_finding.get(str(v), (0, 0))[0] for v in values)
+
+    recorded = binder_repairs.recorded_of(by_finding)
+    on_pm = sum(on_pm for value, (_n, on_pm) in by_finding.items() if value and value != RepairFinding.NOT_STATED)
+    raw["repairs_finding_recorded"] = _count(recorded, total)
+    raw["repairs_no_problem_found"] = _share(finding(RepairFinding.NO_PROBLEM_FOUND), recorded)
+    raw["repairs_use_related"] = _share(finding(*findings.USE_RELATED), recorded)
+    raw["repairs_pm_related"] = _share(finding(*findings.PM_RELATED), recorded)
+    raw["repairs_found_on_pm"] = _share(on_pm, recorded)
     lines = {"work_order__type": WoType.REPAIR, "work_order__status__in": DONE, "work_order__completed_on__gte": p.start,
              "work_order__completed_on__lte": p.end}
     labor = LaborLine.objects.filter(**lines).aggregate(v=Sum(LABOR_AMOUNT, output_field=MONEY_FIELD))["v"] or Decimal(0)
@@ -517,7 +564,13 @@ def _aem(p: survey.Period, raw: dict) -> list[dict]:
     """The models on AEM on the day taken (the binder's rule) and, per model, the year's figures: its devices in use, device-years in the
     period (each device of ours from its install date, or the day it was kept or added, to the day it was retired), corrective repairs
     completed in the period and per device-year, failed PMs, and the rate in the evidence the committee approved. Our devices only
-    (apps.pm.aem.while_ours). At most five queries."""
+    (apps.pm.aem.while_ours). At most five queries.
+
+    Slice 33: of those repairs, the device failures (findings.failure_q) and PM-related (findings.PM_RELATED), each per device-year,
+    with the coverage (findings recorded of the repairs completed); PM-related only with enough findings recorded
+    (apps.pm.aem.coverage_enough, else None and `pm_related_enough` False); and the approved evidence's failures per device-year only
+    when that evidence counted failures (apps.pm.aem.finding_figures), else None and `evidence_failures_recorded` False: never failures
+    beside an old decision's repairs."""
     ours = Q(assets__status__in=Asset.ACTIVE_STATUSES, assets__ownership=Ownership.OWNED)
     models = [dm for dm in DeviceModel.objects.annotate(active=Count("assets", filter=ours)).order_by("manufacturer", "model")
               if dm.pm_interval_months != dm.oem_pm_interval_months]
@@ -540,6 +593,10 @@ def _aem(p: survey.Period, raw: dict) -> list[dict]:
     counts = {row["asset__device_model"]: row for row in
               WorkOrder.objects.filter(pm_aem.while_ours("completed_on"), asset__device_model__in=ids).order_by().values("asset__device_model")
               .annotate(repairs=Count("id", filter=Q(type=WoType.REPAIR, status__in=DONE, **in_period)),
+                        failures=Count("id", filter=Q(status__in=DONE, **in_period) & findings.failure_q()),
+                        pm_related=Count("id", filter=Q(type=WoType.REPAIR, status__in=DONE, repair_finding__in=[str(v) for v in findings.PM_RELATED],
+                                                        **in_period)),
+                        recorded=Count("id", filter=Q(status__in=DONE, **in_period) & findings.recorded_q()),
                         failed=Count("id", filter=Q(type=WoType.PM, pm_result=PmResult.FAIL, **in_period)))}
     approved = {d.device_model_id: d for d in AemDecision.objects.filter(status=AemStatus.APPROVED, device_model_id__in=ids)}
     rows = []
@@ -549,12 +606,23 @@ def _aem(p: survey.Period, raw: dict) -> list[dict]:
         decision = approved.get(dm.pk)
         evidence = (decision.evidence or {}) if decision is not None else {}
         rate = evidence.get("repairs_per_device_year")
+        row = counts.get(dm.pk, {})
+        failures, pm_related, recorded = row.get("failures", 0), row.get("pm_related", 0), row.get("recorded", 0)
+        enough = pm_aem.coverage_enough(recorded, repairs)
+        found = pm_aem.finding_figures(evidence)  # None: the approved evidence counted no failures (or there is none)
         rows.append({"model": f"{dm.manufacturer} {dm.model}", "risk_class": RiskClass(dm.risk_class).label,
                      "oem_months": dm.oem_pm_interval_months, "aem_months": dm.pm_interval_months, "devices": dm.active,
                      "device_years": years, "repairs": repairs, "per_device_year": round(repairs / years, 2) if years else None,
-                     "failed_pms": counts.get(dm.pk, {}).get("failed", 0),
+                     "failed_pms": row.get("failed", 0),
                      "approved_on": decision.decided_on.isoformat() if decision is not None and decision.decided_on else None,
-                     "evidence_per_device_year": rate if isinstance(rate, (int, float)) and not isinstance(rate, bool) else None})
+                     "evidence_per_device_year": rate if isinstance(rate, (int, float)) and not isinstance(rate, bool) else None,
+                     # slice 33
+                     "failures": failures, "failures_per_device_year": round(failures / years, 2) if years else None,
+                     "pm_related": pm_related if enough else None,
+                     "pm_related_per_device_year": round(pm_related / years, 2) if enough and years else None,
+                     "pm_related_enough": enough, "findings_recorded": recorded, "coverage": pm_aem.coverage_words(recorded, repairs),
+                     "evidence_failures_recorded": found is not None,
+                     "evidence_failures_per_device_year": found["failures_per_device_year"] if found is not None else None})
     return rows
 
 
@@ -732,6 +800,9 @@ def _previous(period_start: date, today: date, versions: list, previous, begin: 
         data = previous.snapshot.data or {}
         values = {i["key"]: {"display": i.get("display", ""), "num": i.get("num"), "den": i.get("den"), "value": i.get("value")}
                   for i in data.get("indicators", []) if isinstance(i, dict) and i.get("key") in BY_KEY}
+        # Slice 33: an indicator that evaluation did not count (one added since) says so, never a blank read as nothing happening
+        for ind in INDICATORS:
+            values.setdefault(ind.key, {"display": NOT_COUNTED_THEN, "num": None, "den": None, "value": None, "not_counted": True})
         return {"source": "approved", "number": previous.number, "version": previous.version, "label": previous.label,
                 "period": {"start": previous.period_start.isoformat(), "end": previous.period_end.isoformat()},
                 "approved_on": previous.approved_on.isoformat() if previous.approved_on else None,
