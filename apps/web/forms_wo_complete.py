@@ -137,6 +137,9 @@ class CompleteForm(forms.Form):
     # Slice 30: a repair's outcome (RepairCheck) and the vendor's service report number (slice 31: on any vendor job); text, completion
     # checks them
     repair_check = forms.CharField(required=False)
+    # Slice 33: what a repair found (RepairFinding); text, completion checks the value (findings.choices_for) and keeps the one stored
+    # when none is sent. Wave 1 passes it through; the select and its hints are the modal's (wave 2).
+    repair_finding = forms.CharField(required=False)
     checks_reference = forms.CharField(required=False, widget=forms.TextInput(attrs={"maxlength": completion.REFERENCE_MAX, "autocomplete": "off",
                                                                                     "placeholder": "e.g. FSO-118204"}))
     open_repair = forms.BooleanField(required=False, initial=True)
@@ -173,7 +176,7 @@ class CompleteForm(forms.Form):
         self.steps, self.is_pm, self.is_inspection = list(steps), is_pm, is_inspection and not is_pm
         self.is_repair = is_repair and not (is_pm or is_inspection)
         if not self.is_repair:
-            del self.fields["repair_check"], self.fields["hold"], self.fields["shown_hold"]
+            del self.fields["repair_check"], self.fields["repair_finding"], self.fields["hold"], self.fields["shown_hold"]
         elif repair_default:
             self.fields["repair_check"].initial = repair_default
         self.offer_engineer, self.offer_reference, self.engineer = offer_engineer, offer_reference, {}
@@ -302,7 +305,8 @@ class CompleteForm(forms.Form):
         elif self.is_repair:
             # Slice 30: the steps with checked and ready for use only
             outcome = d["repair_check"].strip()
-            kwargs.update(repair_check=outcome, results=results if outcome == RepairCheck.PASSED else None)
+            kwargs.update(repair_check=outcome, results=results if outcome == RepairCheck.PASSED else None,
+                          repair_finding=d["repair_finding"])  # slice 33: blank keeps the finding stored (required when none is)
         if self.offer_reference:  # slice 31: any vendor job's report number, whatever the outcome (required with checked by the vendor)
             kwargs["checks_reference"] = d["checks_reference"]
         if self.offer_engineer:  # slice 31: who did the vendor's work (KEEP_CHOICE sends nothing: the engineer stored stays)

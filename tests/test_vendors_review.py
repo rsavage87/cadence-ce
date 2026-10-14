@@ -29,7 +29,7 @@ from django.db import connection
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
-from repair_fixtures import CHECKED, POST_REPAIR_ALL_PASS, checked_post
+from repair_fixtures import CHECKED, FINDING, POST_REPAIR_ALL_PASS, checked_post
 from survey_helpers import period, rows_of
 from vendor_fixtures import VENDOR, attestation, engineer, training, vendor_job
 
@@ -146,7 +146,8 @@ def post(client, url, body):
 
 
 def complete_api(client, wo, body):
-    return post(client, f"{WOS}{wo.id}/transition/", {"status": "completed", **body})
+    finding = {"repair_finding": FINDING} if wo.type == WoType.REPAIR else {}  # slice 33: what a repair found
+    return post(client, f"{WOS}{wo.id}/transition/", {"status": "completed", **finding, **body})
 
 
 def html(r) -> str:

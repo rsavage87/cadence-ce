@@ -512,11 +512,13 @@ def record_incident(*, asset, occurred_on=None, aware_on=None, outcome, affected
     open_work_order is True. Holding refuses a missing or retired device (record it without a hold). Numbered IN-<yy>-<nnnn>
     (Sequence "incident-<yy>"; a day before EARLIEST is refused). Sets report_due_on (due_date). After commit, notify.recorded(incident) when it has a clock.
 
-    An adopted work order keeps everything (assignee, time, tag-out, priority) and the incident never opens a second. The number is
+    An adopted work order keeps everything (assignee, time, tag-out, priority) and the incident never opens a second, but for a use error
+    stored as what it found (slice 33: a repair completed as one and reopened), which workorders.services.clear_use_error takes off,
+    audited in the work order's history: an investigation never records one. The number is
     taken first, then the work order is opened (or the adopted one locked), then the device's inspections and row (the hold): every
     record_incident takes the numbering first, so two never wait on each other's device. Refusals of the facts come together, keyed by
     field; holding a missing or retired device is keyed "hold", a work order that cannot be adopted "work_order"."""
-    from apps.workorders.services import lock_work
+    from apps.workorders.services import clear_use_error, lock_work
 
     today = today or timezone.localdate()
     adopting = work_order is not None
@@ -547,6 +549,7 @@ def record_incident(*, asset, occurred_on=None, aware_on=None, outcome, affected
         refusal = _adopt_refusal(wo, asset)
         if refusal:
             raise ValidationError({"work_order": refusal})
+        clear_use_error(wo, by=by)  # slice 33: an investigation never records a use error (a repair completed as one, then reopened)
     elif opening:
         lock_work(asset.pk)  # the device's work before the work order numbering, as a failed PM's completion takes them (review fix)
         wo = _open_work_order(asset, by=by, today=today, held=bool(hold))

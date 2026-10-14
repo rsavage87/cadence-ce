@@ -21,7 +21,7 @@ from django.core.management import call_command
 from django.utils import timezone
 from incident_fixtures import held_incident, make_incident
 from pg_helpers import as_app_role, needs_postgres
-from repair_fixtures import CHECKED, POST_REPAIR_ALL_PASS, checked_post, checked_repair, post_repair_results
+from repair_fixtures import CHECKED, FINDING, POST_REPAIR_ALL_PASS, checked_post, checked_repair, post_repair_results
 
 from apps.demo.management.commands import seed_demo
 from apps.equipment import services as eq
@@ -61,6 +61,7 @@ def errors_of(excinfo) -> dict:
 
 
 def refused(wo, **kwargs) -> dict:
+    kwargs.setdefault("repair_finding", FINDING)  # slice 33: what it found, so each refusal here is the checks' own
     with pytest.raises(ValidationError) as e:
         complete_work_order(wo, **kwargs)
     wo.refresh_from_db()
@@ -156,7 +157,7 @@ def test_the_visual_and_function_checks_are_never_na_and_the_electrical_ones_may
         "step_1": "Step 1 is never N/A after a repair: mark it pass or fail.", "step_5": "Step 5 is never N/A after a repair: mark it pass or fail."}
     # a door latch fixed at the bedside: the electrical tests did not apply
     results = post_repair_results("pass", "na", "na", "na", "pass", "na", "pass")
-    complete_work_order(wo, resolution="Replaced the door latch", repair_check=RepairCheck.PASSED, results=results)
+    complete_work_order(wo, resolution="Replaced the door latch", repair_check=RepairCheck.PASSED, repair_finding=FINDING, results=results)
     assert [s["result"] for s in wo.checklist_results] == ["pass", "na", "na", "na", "pass", "na", "pass"]
     assert [s["reading"] for s in wo.checklist_results] == [""] * 7
 
@@ -187,7 +188,7 @@ def test_a_repairs_resolution_stays_required_whatever_the_outcome(vent, techs):
 
 def test_checked_by_the_vendor_takes_their_report_number_and_no_steps(vent):
     wo = repair(vent, vendor="Hamilton Medical field service", tag_out=True)
-    vendor = {"resolution": "Vendor replaced the blower", "repair_check": RepairCheck.VENDOR_REPORT}
+    vendor = {"resolution": "Vendor replaced the blower", "repair_check": RepairCheck.VENDOR_REPORT, "repair_finding": FINDING}
     assert refused(wo, **vendor) == {"checks_reference": "Enter the vendor's service report or field service order number."}
     assert refused(wo, **vendor, checks_reference="FSO 123") == {
         "checks_reference": "Enter the vendor's service report or field service order number as it is printed, without spaces."}
@@ -238,7 +239,7 @@ def test_not_returned_takes_a_device_in_service_out_and_never_returns_it(vent, t
     wo = repair(vent, tech=techs["dana"])
     assert refused(wo, resolution="Beyond repair", repair_check=RepairCheck.NOT_RETURNED, results=POST_REPAIR_ALL_PASS) == {
         "checklist": "A device not returned to use records no checks: send no checklist with not returned to use."}
-    done = complete_work_order(wo, resolution="Cracked chassis: beyond economical repair", repair_check=RepairCheck.NOT_RETURNED)
+    done = complete_work_order(wo, resolution="Cracked chassis: beyond economical repair", repair_check=RepairCheck.NOT_RETURNED, repair_finding=FINDING)
     vent.refresh_from_db()
     assert vent.status == AssetStatus.OUT_OF_SERVICE and done.tagged_out and not done.returned and done.device_changed
     assert (wo.repair_check, wo.tagged_out, wo.checklist_results) == (RepairCheck.NOT_RETURNED, True, [])
@@ -248,12 +249,12 @@ def test_not_returned_takes_a_device_in_service_out_and_never_returns_it(vent, t
 
 def test_not_returned_keeps_a_tagged_out_or_in_repair_device_out_and_reopening_it_checked_returns_it(vent, pump, techs):
     tagged = repair(vent, tech=techs["dana"], tag_out=True)
-    done = complete_work_order(tagged, resolution="Waiting on a decision to replace", repair_check=RepairCheck.NOT_RETURNED)
+    done = complete_work_order(tagged, resolution="Waiting on a decision to replace", repair_check=RepairCheck.NOT_RETURNED, repair_finding=FINDING)
     vent.refresh_from_db()
     assert vent.status == AssetStatus.OUT_OF_SERVICE and not done.tagged_out and not done.device_changed
     Asset.objects.filter(pk=pump.pk).update(status=AssetStatus.IN_REPAIR)
     in_repair = repair(pump, tech=techs["dana"])
-    done = complete_work_order(in_repair, resolution="Beyond repair", repair_check=RepairCheck.NOT_RETURNED)
+    done = complete_work_order(in_repair, resolution="Beyond repair", repair_check=RepairCheck.NOT_RETURNED, repair_finding=FINDING)
     pump.refresh_from_db()
     assert pump.status == AssetStatus.OUT_OF_SERVICE and not done.tagged_out and done.device_changed and in_repair.tagged_out
     # reopened: the repair, still tagged out, holds the device out; completing it checked returns it
@@ -270,7 +271,7 @@ def test_not_returned_on_a_held_device_leaves_it_as_its_hold_keeps_it(vent, tech
     wo = incident.work_order
     assign(wo, technician=techs["dana"])
     change_status(wo, WoStatus.IN_PROGRESS)
-    complete_work_order(wo, resolution="Failed the bench test", repair_check=RepairCheck.NOT_RETURNED)
+    complete_work_order(wo, resolution="Failed the bench test", repair_check=RepairCheck.NOT_RETURNED, repair_finding=FINDING)
     vent.refresh_from_db()
     assert vent.incident_hold and vent.status == AssetStatus.OUT_OF_SERVICE
     assert last_note(wo) == "Not returned to use: CE-10001 stays out of service"
@@ -279,7 +280,7 @@ def test_not_returned_on_a_held_device_leaves_it_as_its_hold_keeps_it(vent, tech
 def test_not_returned_on_loan_takes_it_out_of_use(vent, techs):
     eq.set_status(vent, AssetStatus.ON_LOAN)
     wo = repair(vent, tech=techs["dana"])
-    assert complete_work_order(wo, resolution="Beyond repair", repair_check=RepairCheck.NOT_RETURNED).tagged_out
+    assert complete_work_order(wo, resolution="Beyond repair", repair_check=RepairCheck.NOT_RETURNED, repair_finding=FINDING).tagged_out
     vent.refresh_from_db()
     assert vent.status == AssetStatus.OUT_OF_SERVICE
 
@@ -451,7 +452,7 @@ def _investigated(vent, techs, **completion_kwargs):
     wo = incident.work_order
     assign(wo, technician=techs["dana"])
     change_status(wo, WoStatus.IN_PROGRESS)
-    complete_work_order(wo, resolution="Bench tested", **completion_kwargs)
+    complete_work_order(wo, resolution="Bench tested", **{"repair_finding": FINDING, **completion_kwargs})
     return incident, wo
 
 
@@ -480,7 +481,8 @@ def test_a_vendors_report_lets_it_return_and_a_completion_from_before_slice_30_d
     other = make_incident(pump, outcome=Outcome.NO_HARM, affected=Affected.NONE)
     assign(other.work_order, vendor_name="BD field service")
     change_status(other.work_order, WoStatus.IN_PROGRESS)
-    complete_work_order(other.work_order, resolution="Vendor bench test", repair_check=RepairCheck.VENDOR_REPORT, checks_reference="BD-77")
+    complete_work_order(other.work_order, resolution="Vendor bench test", repair_check=RepairCheck.VENDOR_REPORT, repair_finding=FINDING,
+                        checks_reference="BD-77")
     inc.release(other.holds.get(), Release.RETURN_TO_USE)
     pump.refresh_from_db()
     assert pump.status == AssetStatus.IN_SERVICE
@@ -500,7 +502,7 @@ def test_a_device_whose_last_repair_ended_not_returned_is_not_back_for_its_loane
         return eq.loaner_device_back(pump), Asset.objects.filter(eq.loaner_back_q(), pk=loaner.pk).exists()
 
     assert back() == (False, False)  # at the vendor
-    complete_work_order(wo, resolution="Beyond repair", repair_check=RepairCheck.NOT_RETURNED)
+    complete_work_order(wo, resolution="Beyond repair", repair_check=RepairCheck.NOT_RETURNED, repair_finding=FINDING)
     assert back() == (False, False) and pump.status == AssetStatus.OUT_OF_SERVICE
     eq.set_status(pump, AssetStatus.IN_SERVICE)  # put back by hand: nothing holds it, but its checks were never recorded
     assert back() == (False, False)
@@ -508,7 +510,7 @@ def test_a_device_whose_last_repair_ended_not_returned_is_not_back_for_its_loane
     complete_work_order(second, resolution="Replaced the pump module", **CHECKED)
     assert back() == (True, True)
     third = repair(pump, tech=techs["dana"])
-    complete_work_order(third, resolution="Beyond repair after all", repair_check=RepairCheck.NOT_RETURNED)
+    complete_work_order(third, resolution="Beyond repair after all", repair_check=RepairCheck.NOT_RETURNED, repair_finding=FINDING)
     eq.set_status(pump, AssetStatus.RETIRED)
     assert back() == (True, True)  # retired: the loaner can go
 
@@ -521,8 +523,8 @@ def test_the_api_completes_a_repair_with_its_checks(client, vent, techs, make_us
     wo = repair(vent, tech=techs["dana"], tag_out=True)
 
     def post(body):
-        return client.post(f"/api/v1/work-orders/{wo.id}/transition/", {"status": "completed", "resolution": "Fixed", **body},
-                           content_type="application/json")
+        return client.post(f"/api/v1/work-orders/{wo.id}/transition/", {"status": "completed", "resolution": "Fixed", "repair_finding": FINDING,
+                                                                        **body}, content_type="application/json")
 
     r = post({})
     assert r.status_code == 400 and "repair_check" in r.json()
@@ -541,11 +543,11 @@ def test_the_api_takes_a_vendors_report_number(client, vent, make_user):
     client.force_login(make_user("manager"))
     wo = repair(vent, vendor="Hamilton Medical field service")
     r = client.post(f"/api/v1/work-orders/{wo.id}/transition/", {"status": "completed", "resolution": "Vendor fixed it",
-                                                                 "repair_check": "vendor_report", "checks_reference": "FSO 9"},
+                                                                 "repair_check": "vendor_report", "checks_reference": "FSO 9", "repair_finding": FINDING},
                     content_type="application/json")
     assert r.status_code == 400 and list(r.json()) == ["checks_reference"]
     r = client.post(f"/api/v1/work-orders/{wo.id}/transition/", {"status": "completed", "resolution": "Vendor fixed it",
-                                                                 "repair_check": "vendor_report", "checks_reference": "FSO-9"},
+                                                                 "repair_check": "vendor_report", "checks_reference": "FSO-9", "repair_finding": FINDING},
                     content_type="application/json")
     wo.refresh_from_db()
     assert r.status_code == 200 and (wo.repair_check, wo.checks_reference) == (RepairCheck.VENDOR_REPORT, "FSO-9")
@@ -581,7 +583,7 @@ def test_the_modal_offers_the_vendors_report_on_vendor_service_to_ce_only(client
     assert 'value="vendor_report"' not in body  # (slice 31: the report number's field on a vendor job is the modal's own test's)
     client.force_login(make_user("manager", username="mgr2@riverside.example"))
     r = client.post(f"/work-orders/{wo.number}/complete/", {"resolution": "Vendor fixed it", "repair_check": "vendor_report",
-                                                             "checks_reference": "FSO-12", "step_1": "pass"}, **HX)
+                                                             "checks_reference": "FSO-12", "step_1": "pass", "repair_finding": FINDING}, **HX)
     wo.refresh_from_db()
     assert r.status_code == 200 and (wo.repair_check, wo.checks_reference, wo.checklist_results) == (RepairCheck.VENDOR_REPORT, "FSO-12", [])
 
@@ -627,7 +629,7 @@ def test_the_checks_under_the_policies(vent, pump, techs, make_user):
     with pytest.raises(ValidationError, match="with its checks after repair"):
         eq.set_status(vent, AssetStatus.IN_SERVICE)
     keep_open(other, results=post_repair_results("pass", "fail", *["pass"] * 5), by=make_user("technician"))
-    complete_work_order(other, resolution="Beyond repair", repair_check=RepairCheck.NOT_RETURNED)
+    complete_work_order(other, resolution="Beyond repair", repair_check=RepairCheck.NOT_RETURNED, repair_finding=FINDING)
     assert complete_work_order(wo, resolution="Fixed", **checked_repair(signature=SIGNATURE)).returned
     vent.refresh_from_db()
     pump.refresh_from_db()

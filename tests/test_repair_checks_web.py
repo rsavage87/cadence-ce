@@ -14,7 +14,7 @@ import pytest
 from django.utils import timezone
 from incident_fixtures import held_incident
 from pg_helpers import as_app_role, needs_postgres
-from repair_fixtures import CHECKED, checked_post
+from repair_fixtures import CHECKED, FINDING, checked_post
 
 from apps.accounts.models import Level, Role, User
 from apps.credentials.models import Technician
@@ -229,13 +229,13 @@ def test_not_returned_takes_a_device_in_use_out_and_the_toast_says_so(client, si
 def test_not_returned_on_a_device_already_out_says_it_stays_out(client, signed_in, vent, techs):
     wo = repair(vent, tech=techs["dana"], tag_out=True)
     signed_in("technician")
-    r = client.post(url(wo), {"repair_check": "not_returned", "resolution": "Beyond repair"}, **HX)
+    r = client.post(url(wo), {"repair_check": "not_returned", "resolution": "Beyond repair", "repair_finding": FINDING}, **HX)
     assert triggers(r)["toast"]["value"] == f"{wo.number} completed: Not returned to use: CE-10001 stays out of service"
 
 
 def test_a_reopened_repair_says_what_was_recorded_and_checked_returns_the_device(client, signed_in, vent, techs):
     wo = repair(vent, tech=techs["dana"])
-    complete_work_order(wo, resolution="Sent to the depot", repair_check=RepairCheck.NOT_RETURNED)
+    complete_work_order(wo, resolution="Sent to the depot", repair_check=RepairCheck.NOT_RETURNED, repair_finding=FINDING)
     change_status(wo, WoStatus.IN_PROGRESS)  # back from the depot, put right
     signed_in("technician")
     drawer = client.get(f"/work-orders/{wo.number}/", **HX).content.decode()
@@ -448,7 +448,7 @@ def test_my_works_complete_opens_the_same_modal(client, mine):
 
 @pytest.mark.parametrize("data, toast", [
     (checked_post(resolution="Replaced the flow sensor"), "Checked after repair"),
-    ({"repair_check": "not_returned", "resolution": "Beyond repair"}, "Not returned to use: CE-10001 tagged out of service"),
+    ({"repair_check": "not_returned", "resolution": "Beyond repair", "repair_finding": FINDING}, "Not returned to use: CE-10001 tagged out of service"),
 ])
 def test_from_my_work_a_completion_answers_without_the_drawer(client, mine, data, toast):
     r = client.post(url(mine), {**data, "from": "my_work"}, **HX)
@@ -516,11 +516,11 @@ def test_a_done_repair_prints_its_record(client, signed_in, vent, techs, today):
     assert f"<b>Checked: ready for use</b> · checked by Dana Whitfield · completed {day(today)}" in body and "0.12 Ω" in body
     assert '<span class="box"></span> Not returned to use' not in body
     vendor = repair(vent, vendor=VENDOR)
-    complete_work_order(vendor, resolution="Vendor fixed it", repair_check=RepairCheck.VENDOR_REPORT, checks_reference="FSO-118204")
+    complete_work_order(vendor, resolution="Vendor fixed it", repair_check=RepairCheck.VENDOR_REPORT, repair_finding=FINDING, checks_reference="FSO-118204")
     body = client.get(f"/print/work-orders/{vendor.number}/").content.decode()
     assert f'· checked by {VENDOR} · service report <span class="mono">FSO-118204</span>' in body
     gone = repair(vent, tech=techs["dana"])
-    complete_work_order(gone, resolution="Beyond repair", repair_check=RepairCheck.NOT_RETURNED)
+    complete_work_order(gone, resolution="Beyond repair", repair_check=RepairCheck.NOT_RETURNED, repair_finding=FINDING)
     body = client.get(f"/print/work-orders/{gone.number}/").content.decode()
     assert "CE-10001 did not go back into use after this repair, so no checks were recorded." in body and "checked by" not in body
     old = repair(vent, tech=techs["dana"])

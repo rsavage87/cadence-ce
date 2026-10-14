@@ -112,6 +112,20 @@ the vendor's report number (checks_reference) on any vendor job: optional (left 
 reopen), still required with "Checked by the vendor", refused on in-house work (REFERENCE_ONLY). Optional by design: the survey binder
 judges each vendor job by the evidence on file, the engineer's training or the vendor's attestation (apps.vendors.rules), and calls out
 the jobs no evidence covers.
+
+Slice 33, what a repair found (repair_finding, RepairFinding; apps.workorders.findings, the one rule), keyed repair_finding with the
+rest, never preselected:
+- Required when the repair has none stored (findings.REQUIRED), whatever the outcome (not returned to use takes one too). KEEP (left
+  out: the API), None, or blank keeps the finding stored: a reopened repair completed again keeps it unless another is chosen, and blank
+  never clears one.
+- A value is one of findings.choices_for(the repair as locked, the user): a scoped user (a vendor's or a requester's account) only the
+  observations, not stated by the vendor only on vendor service by a user who sees the whole facility, never use error on an
+  incident's investigation (findings.is_investigation, read after the repair's row is locked: an adoption waits for it), never "PM
+  could have caught it" on a failed PM's repair (findings.found_on_pm: the PM caught it). Refused in words: findings.INVESTIGATION or
+  findings.FOUND_ON_PM where that limit is why (the value is otherwise this user's to choose), else findings.NOT_OFFERED. A scoped user
+  who cannot choose the finding stored (the facility's) leaves it as stored: sent nothing, or the stored value sent back.
+- On any other type a finding is refused (findings.NOT_A_REPAIR). Stored with the completion (change_status saves the row, so the
+  work order's history has it). keep_open records no finding: the repair is not over.
 """
 import hashlib
 import json
@@ -129,7 +143,7 @@ from apps.pm.windows import window_of
 from apps.tenants.context import get_current_tenant
 from apps.vendors import services as vendor_services
 
-from . import costs, inspections, repair_checks, services
+from . import costs, findings, inspections, repair_checks, services
 from . import permissions as wo_perms
 from .models import (
     ALLOWED_TRANSITIONS,
@@ -599,6 +613,46 @@ def _reference(value, errors: dict, *, vendor_service: bool, repair_check: str |
     return text
 
 
+def finding_refusal(wo: WorkOrder, value: str, user=None, *, investigation: bool, from_pm: bool) -> str:
+    """Why `user` may not record `value` (a RepairFinding value) on the repair `wo` (slice 33), in words: findings.INVESTIGATION or
+    findings.FOUND_ON_PM where that limit is why (the value is otherwise this user's to choose), else findings.NOT_OFFERED. Shared by
+    complete_work_order and services.set_repair_finding."""
+    if value == RepairFinding.USE_ERROR and investigation and value in findings.choices_for(wo, user, investigation=False, from_pm=from_pm):
+        return findings.INVESTIGATION
+    if value == RepairFinding.PM_PREVENTABLE and from_pm and value in findings.choices_for(wo, user, investigation=investigation, from_pm=False):
+        return findings.FOUND_ON_PM
+    return findings.NOT_OFFERED
+
+
+def _repair_finding(wo: WorkOrder, value, by, errors: dict):
+    """What the repair found (slice 33, the module's rules), checked before anything is saved: the value to store, or KEEP to leave the
+    finding stored as it is. Refusals keyed repair_finding in `errors`. `wo` is the row as locked: an incident adopting it as its
+    investigation waits until this completion commits."""
+    sent = "" if value is vendor_services.KEEP or value is None else str(value).strip()
+    if wo.type != WoType.REPAIR:
+        if sent:
+            errors["repair_finding"] = findings.NOT_A_REPAIR
+        return vendor_services.KEEP
+    if sent and sent not in RepairFinding.values:
+        errors["repair_finding"] = findings.NOT_OFFERED
+        return vendor_services.KEEP
+    stored = wo.repair_finding
+    if not sent and not stored:
+        errors["repair_finding"] = findings.REQUIRED
+        return vendor_services.KEEP
+    from .scoping import is_scoped  # scoping imports the models; keep this module importable on its own
+
+    investigation, from_pm = findings.is_investigation(wo), findings.found_on_pm(wo)
+    wanted = sent or stored
+    # Kept as stored, a scoped user's too: the facility's finding stays whatever their own choices, while the repair's limits allow it
+    # (choices_for with no user); a stored finding those limits now refuse is chosen again.
+    keeping = wanted == stored and is_scoped(by)
+    if wanted in findings.choices_for(wo, None if keeping else by, investigation=investigation, from_pm=from_pm):
+        return vendor_services.KEEP if wanted == stored else wanted
+    errors["repair_finding"] = finding_refusal(wo, wanted, by, investigation=investigation, from_pm=from_pm)
+    return vendor_services.KEEP
+
+
 def _hold_out(repair: WorkOrder, asset, by, why: str, *, moves=KEEP_OUT_FROM, save: bool = True) -> bool:
     """Hold the device out on `repair` (slice 30: not returned to use, or keep_open's hold): the repair marked tagged out (completing it
     as checked later returns the device, as for a repair opened with the tag-out), and a device whose status is in `moves` (in use or
@@ -964,10 +1018,11 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
     completed after its due date. Slice 26: an incoming inspection takes `inspection_result` (InspectionResult) and, optionally, its
     checklist's `results`; `tag_out` also applies to its fail. Slice 30: a repair takes `repair_check` (RepairCheck), the post-repair
     checklist's `results` for passed, and `checks_reference` for vendor_report. Slice 31: vendor service takes `vendor_engineer` or
-    `engineer_name` and `checks_reference` (the module's Slice 31 paragraph; left out, the number on file stays). Raises
-    ValidationError: a plain message when the work order cannot be completed now, else a dict keyed by resolution, pm_result,
-    inspection_result, repair_check, checks_reference, checklist, step_<n>, reading_<n>, open_repair, hours, late_reason,
-    vendor_engineer, and engineer_name. `wo` is refreshed from the database afterwards (and its device with it)."""
+    `engineer_name` and `checks_reference` (the module's Slice 31 paragraph; left out, the number on file stays). Slice 33: a repair
+    takes `repair_finding` (RepairFinding; KEEP, None, or blank keeps the one stored, required when none is: the module's Slice 33
+    paragraph). Raises ValidationError: a plain message when the work order cannot be completed now, else a dict keyed by resolution,
+    pm_result, inspection_result, repair_check, checks_reference, checklist, step_<n>, reading_<n>, open_repair, hours, late_reason,
+    vendor_engineer, engineer_name, and repair_finding. `wo` is refreshed from the database afterwards (and its device with it)."""
     today = today or timezone.localdate()
     _check_tenant(wo)
     # The device's open work orders and this one first, in number order (its open inspections among them: two of its inspections
@@ -1028,6 +1083,7 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
     reinspect = is_inspection and inspection_result == InspectionResult.FAILED and asset.awaiting_inspection
     late = _late_reason(locked, late_reason, by, today, errors)
     engineer = vendor_services.engineer_choice(locked, vendor_engineer, engineer_name, by=by, errors=errors)  # slice 31
+    finding = _repair_finding(locked, repair_finding, by, errors)  # slice 33
     if errors:
         _log_hours(locked, hours, by, today, errors)  # its refusal too, so every problem is reported at once (a line goes back with the rest)
         raise ValidationError(errors)
@@ -1064,8 +1120,8 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
         note = result_note(inspection_result, done)
     elif is_repair:  # slice 30: saved with the completion (change_status saves the whole row)
         locked.repair_check, locked.checklist_results = repair_check, snapshot
-        if repair_finding is not vendor_services.KEEP and repair_finding in RepairFinding.values:  # slice 33 scaffold: wave 1 builds the rule
-            locked.repair_finding = repair_finding
+        if finding is not vendor_services.KEEP:  # slice 33: what it found, saved with the completion
+            locked.repair_finding = finding
         if repair_check == RepairCheck.NOT_RETURNED:
             # The repair holds the device out (marked tagged out) and services._on_completed never returns it; in use or in repair, it
             # moves out of service now, through equipment's status rules (the device's open work is locked already: lock_work).

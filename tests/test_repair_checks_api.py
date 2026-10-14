@@ -14,7 +14,7 @@ from django.db import connection
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from pg_helpers import as_app_role, needs_postgres
-from repair_fixtures import POST_REPAIR_ALL_PASS, post_repair_results
+from repair_fixtures import FINDING, POST_REPAIR_ALL_PASS, post_repair_results
 from rest_framework.authtoken.models import Token
 
 from apps.equipment.models import Asset, AssetStatus
@@ -66,7 +66,8 @@ def get(client, wo, **headers):
 
 
 def complete(client, wo, body, **headers):
-    return client.post(f"{API}{wo.id}/transition/", {"status": "completed", **body}, content_type="application/json", **headers)
+    finding = {"repair_finding": FINDING} if wo.type == WoType.REPAIR else {}  # slice 33: what it found, so each answer here is the checks'
+    return client.post(f"{API}{wo.id}/transition/", {"status": "completed", **finding, **body}, content_type="application/json", **headers)
 
 
 def refused(client, wo, body, **headers) -> dict:

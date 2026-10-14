@@ -31,6 +31,12 @@ Slice 30, checks after a repair (apps.workorders.repair_checks, completion.compl
 use (RepairCheck.NOT_RETURNED) never returns its device (returns_device, _on_completed's rule); one completed as checked, or with the
 vendor's report, returns it as a repair always has. While a repair holds the device out (holding_repairs, or a device in repair with an
 open repair) the device's status never goes in service or on loan by hand (equipment.services.repair_hold_message).
+
+Slice 33, what a repair found (WorkOrder.repair_finding; apps.workorders.findings): completion.complete_work_order records it, and
+set_repair_finding records or corrects it afterwards on a completed or closed repair (one completed before findings were recorded too).
+Two writes keep a stored finding true to the repair: assign clears "not stated by the vendor" when the work leaves that vendor
+(vendors.rules.vendor_key, as for the vendor's report number), and clear_use_error takes a use error off a repair an incident adopts as
+its investigation (an investigation never records one: who erred stays in the facility's event report).
 """
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -53,6 +59,7 @@ from .models import (
     LateReason,
     Priority,
     RepairCheck,
+    RepairFinding,
     ServiceRequest,
     Source,
     Urgency,
@@ -326,7 +333,8 @@ def assign(wo: WorkOrder, technician=None, vendor_name: str = "", by=None) -> Wo
     """Assign an open work order to a technician or to vendor service. Flags credential overrides in the status history. Slice 31: only
     an open one (a completed or closed work order keeps who did it; the drawer refused already, now the API does too), and the
     vendor's engineer it names, and the vendor's report number, are cleared when the work moves in-house or to another vendor
-    (apps.vendors.rules.vendor_key): they were that vendor's visit (review fix: a re-completion keeps a number left out)."""
+    (apps.vendors.rules.vendor_key): they were that vendor's visit (review fix: a re-completion keeps a number left out). Slice 33:
+    so is a finding of "not stated by the vendor" (a reopened repair's): that vendor's report was silent, not the next one's."""
     from apps.credentials.services import qualification
     from apps.vendors.rules import vendor_key
 
@@ -334,12 +342,13 @@ def assign(wo: WorkOrder, technician=None, vendor_name: str = "", by=None) -> Wo
     # is locked in between): a caller's copy read before a completion or a Change committed would move completed work, or keep an
     # engineer on work that moved.
     stored = (WorkOrder.objects.select_for_update().filter(pk=wo.pk)
-              .values("status", "vendor_service", "vendor_name", "vendor_engineer_id", "checks_reference").first())
+              .values("status", "vendor_service", "vendor_name", "vendor_engineer_id", "checks_reference", "repair_finding").first())
     if stored is None:
         raise ValidationError("Choose a work order from this facility.")
     if stored["status"] not in OPEN_STATUSES:
         raise ValidationError("Only open work orders can be reassigned.")
     wo.status, wo.vendor_engineer_id, wo.checks_reference = stored["status"], stored["vendor_engineer_id"], stored["checks_reference"]
+    wo.repair_finding = stored["repair_finding"]
     note = ""
     vendor_name = (vendor_name or "").strip()  # a stray space from the API would keep it from its company's share (apps.workorders.scoping)
     if len(vendor_name) > VENDOR_NAME_MAX:
@@ -360,6 +369,9 @@ def assign(wo: WorkOrder, technician=None, vendor_name: str = "", by=None) -> Wo
         if wo.checks_reference:
             wo.checks_reference = ""  # review fix: nor is the earlier vendor's report this one's (completion keeps a number left out)
             fields.append("checks_reference")
+        if wo.repair_finding == RepairFinding.NOT_STATED:
+            wo.repair_finding = ""  # slice 33: that vendor's report named no cause; the work's next completion records what was found
+            fields.append("repair_finding")
     wo.save(update_fields=fields)
     WorkOrderStatusHistory.objects.create(tenant=wo.tenant, work_order=wo, from_status=wo.status, to_status=wo.status, changed_by=by, note=note)
     if technician is not None and not vendor_name:
@@ -442,6 +454,77 @@ def set_vendor_engineer(wo: WorkOrder, engineer=None, *, engineer_name: str = ""
             locked.__dict__.pop("_change_reason", None)
     wo.vendor_engineer = locked.vendor_engineer
     return locked
+
+
+# --- what a repair found (slice 33) -----------------------------------------------------------------
+
+def _reason_max() -> int:
+    return WorkOrder.history.model._meta.get_field("history_change_reason").max_length  # 100: longer is a database error on PostgreSQL
+
+
+def _save_finding(wo: WorkOrder, value: str, reason: str, by) -> None:
+    """Save `value` as what the repair `wo` (its row locked) found, with `reason` in its history (cut to the column), as `by`."""
+    wo.repair_finding = value
+    wo._change_reason = reason[:_reason_max()]
+    if by is not None:
+        wo._history_user = by
+    try:
+        wo.save(update_fields=["repair_finding", "updated_at"])
+    finally:  # simple_history reads them on every save: never let them reach a later one of this copy
+        wo.__dict__.pop("_change_reason", None)
+        wo.__dict__.pop("_history_user", None)
+
+
+@transaction.atomic
+def set_repair_finding(wo: WorkOrder, finding: str, *, by=None) -> WorkOrder:
+    """Record or correct what the repair `wo` found (RepairFinding; apps.workorders.findings) once it is completed or closed, one
+    completed before findings were recorded (or imported) included. Never on an open, cancelled, or other work order, never blank (a
+    finding is corrected, never taken away: completing requires one), never a scoped user's (the facility's record: a vendor's or a
+    requester's account records one only when completing), and only one of findings.choices_for(the repair as locked, `by`): an
+    incident's investigation never use error, a failed PM's repair never "PM could have caught it", not stated by the vendor only on
+    vendor service. Refusals keyed repair_finding in findings' words. The caller checks the level (permissions.can_set_repair_finding:
+    Edit; Approve once closed). Locks as completing does: the device's open work and this one in number order (lock_work), then reads
+    the row. Audited in the work order's history: "What was found: <label>", or "Recorded later: <label>" when none was recorded,
+    within the history's 100 characters. Returns the row; `wo.repair_finding` says the same."""
+    from . import findings, scoping
+    from .completion import finding_refusal  # completion imports this module
+
+    if scoping.is_scoped(by):
+        raise ValidationError({"repair_finding": "The facility's CE staff record what a repair found after it is completed."})
+    value = str(finding if finding is not None else "").strip()
+    if not value:
+        raise ValidationError({"repair_finding": findings.REQUIRED})
+    if value not in RepairFinding.values:
+        raise ValidationError({"repair_finding": findings.NOT_OFFERED})
+    lock_work(wo.asset_id, wo.pk)
+    locked = WorkOrder.objects.select_for_update().get(pk=wo.pk)
+    if locked.type != WoType.REPAIR:
+        raise ValidationError({"repair_finding": findings.NOT_A_REPAIR})
+    if locked.status == WoStatus.CANCELLED:
+        raise ValidationError({"repair_finding": f"{locked.number} was cancelled: it records no finding."})
+    if locked.status not in (WoStatus.COMPLETED, WoStatus.CLOSED):
+        raise ValidationError({"repair_finding": f"{locked.number} is not completed yet: record what was found when completing it."})
+    investigation, from_pm = findings.is_investigation(locked), findings.found_on_pm(locked)
+    if value not in findings.choices_for(locked, by, investigation=investigation, from_pm=from_pm):
+        raise ValidationError({"repair_finding": finding_refusal(locked, value, by, investigation=investigation, from_pm=from_pm)})
+    if value != locked.repair_finding:
+        label = RepairFinding(value).label
+        _save_finding(locked, value, f"What was found: {label}" if locked.repair_finding else f"Recorded later: {label}", by)
+    wo.repair_finding = locked.repair_finding
+    return locked
+
+
+USE_ERROR_CLEARED = "What was found cleared: an incident's investigation records no use error"
+
+
+def clear_use_error(wo: WorkOrder, *, by=None) -> bool:
+    """An open repair an incident adopts as its investigation (apps.incidents.services.record_incident, which holds the row locked,
+    after lock_work) never keeps a use error (a repair completed as one and reopened): cleared, audited (USE_ERROR_CLEARED), so its
+    next completion records what was found on the device. True when one was cleared."""
+    if wo.repair_finding != RepairFinding.USE_ERROR:
+        return False
+    _save_finding(wo, "", USE_ERROR_CLEARED, by)
+    return True
 
 
 # --- taking work (slice 24) -------------------------------------------------------------------------

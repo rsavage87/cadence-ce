@@ -20,7 +20,7 @@ from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from incident_fixtures import held_incident, investigated
 from pg_helpers import as_app_role, needs_postgres
-from repair_fixtures import POST_REPAIR_ALL_PASS
+from repair_fixtures import FINDING, POST_REPAIR_ALL_PASS
 from survey_helpers import gaps_of, period, rows_of
 
 from apps.accounts.models import Level, Module, Role, User
@@ -61,7 +61,7 @@ def done(asset, on, *, tech=None, vendor="", outcome=RepairCheck.PASSED, referen
     assign(wo, technician=tech, vendor_name=vendor)
     change_status(wo, WoStatus.IN_PROGRESS, as_of=on - DAY)
     extra = {"results": POST_REPAIR_ALL_PASS} if outcome == RepairCheck.PASSED else {"checks_reference": reference} if reference else {}
-    complete_work_order(wo, resolution=SECRET, repair_check=outcome, today=on, **extra)
+    complete_work_order(wo, resolution=SECRET, repair_check=outcome, repair_finding=FINDING, today=on, **extra)
     wo.refresh_from_db()
     return wo
 

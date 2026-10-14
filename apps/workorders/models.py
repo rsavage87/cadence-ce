@@ -73,8 +73,9 @@ class RepairCheck(models.TextChoices):
 class RepairFinding(models.TextChoices):
     """What a repair found (slice 33): one per repair, a choice, never free text (Binseng Wang's evidence-based maintenance codes, AAMI's
     CMMS failure code field; "use error" as FDA and IEC 62366-1 word it, never "user error"). Written only by
-    completion.complete_work_order and services.set_repair_finding; blank on a repair completed before slice 33 or imported ("not
-    recorded"). apps.workorders.findings groups them and says which count as failures."""
+    completion.complete_work_order and services.set_repair_finding (and cleared only by services.assign, not stated when the work
+    leaves that vendor, and services.clear_use_error, a use error on a repair an incident adopts); blank on a repair completed before
+    slice 33 or imported ("not recorded"). apps.workorders.findings groups them and says which count as failures."""
     NO_PROBLEM_FOUND = "no_problem_found", "No problem found"
     USE_ERROR = "use_error", "Use error"
     ENVIRONMENT = "environment", "Power, gas, network, room"
@@ -165,7 +166,7 @@ class WorkOrder(TenantModel):
     vendor_engineer = models.ForeignKey("vendors.VendorEngineer", on_delete=models.PROTECT, null=True, blank=True, editable=False,
                                         related_name="work_orders", verbose_name="field engineer")
     # Slice 33: what a repair found (RepairFinding; apps.workorders.findings). Written only by completion.complete_work_order and
-    # services.set_repair_finding; the API keeps it read-only.
+    # services.set_repair_finding (cleared by services.assign and services.clear_use_error); the API keeps it read-only.
     repair_finding = models.CharField("what was found", max_length=20, choices=RepairFinding.choices, blank=True, editable=False)
     history = HistoricalRecords()
 

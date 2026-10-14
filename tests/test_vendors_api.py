@@ -17,7 +17,7 @@ from django.db import connection
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from pg_helpers import as_app_role, needs_postgres
-from repair_fixtures import POST_REPAIR_ALL_PASS
+from repair_fixtures import FINDING, POST_REPAIR_ALL_PASS
 from rest_framework.authtoken.models import Token
 from vendor_fixtures import attestation, engineer, training, vendor_job
 
@@ -55,7 +55,8 @@ def patch(client, url, body, **headers):
 
 
 def complete(client, wo, body, **headers):
-    return post(client, f"{WOS}{wo.id}/transition/", {"status": "completed", **body}, **headers)
+    finding = {"repair_finding": FINDING} if wo.type == WoType.REPAIR else {}  # slice 33: what a repair found
+    return post(client, f"{WOS}{wo.id}/transition/", {"status": "completed", **finding, **body}, **headers)
 
 
 def name_engineer(client, wo, body, **headers):

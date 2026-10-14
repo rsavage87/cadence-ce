@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 from django.utils import timezone
 from pg_helpers import as_app_role, needs_postgres
-from repair_fixtures import CHECKED, checked_post
+from repair_fixtures import CHECKED, FINDING, checked_post
 from vendor_fixtures import VENDOR, attestation, engineer, training, vendor_job
 
 from apps.equipment.models import Asset, DeviceModel, RiskClass
@@ -261,7 +261,7 @@ def test_a_reopened_job_prefills_its_engineer_and_choosing_again_replaces_it(cli
 def test_the_report_number_is_kept_whatever_the_outcome(client, signed_in, monitor):
     wo = vendor_wo(monitor)
     signed_in("manager")
-    client.post(url(wo), {"repair_check": "not_returned", "resolution": "Beyond repair", "checks_reference": "FSO-9"}, **HX)
+    client.post(url(wo), {"repair_check": "not_returned", "resolution": "Beyond repair", "checks_reference": "FSO-9", "repair_finding": FINDING}, **HX)
     wo.refresh_from_db()
     assert (wo.repair_check, wo.checks_reference) == (RepairCheck.NOT_RETURNED, "FSO-9")
 

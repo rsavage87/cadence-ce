@@ -56,6 +56,13 @@ work, with "Cadence's records begin" on the day the demo's work starts, and no p
 before end). Two of this period's objectives with their results, one for the next period, and two parts of the text (EVALUATION_*:
 plain words about the program as a whole). A draft, so the demo can refresh its figures, send it to committee, print the committee's
 copy, and record the approval. Constants only: nothing is drawn from the demo's generators. The North Campus has none.
+
+Slice 33: every repair the demo completes records what it found (repair_finding, apps.workorders.findings). A drawn resolution says
+it through REPAIR_FINDINGS (a constant map: no new draw, so every later draw is as before; one of REPAIR_RESOLUTIONS, the same length as
+it was, now reads as a use error, so the figures by finding have one), and each fixed repair names its own: the failed PM's repair wore
+out (found on that PM: never "PM could have caught it"), the vendor's closed repair states a finding from their report, the closed
+incident's investigation found no problem (the device met its specifications), the bed beyond repair and the repair done during the
+credential's lapse wore out. No work order is added.
 """
 import random
 from datetime import date, datetime, time, timedelta
@@ -114,6 +121,7 @@ from apps.workorders.models import (
     PmResult,
     Priority,
     RepairCheck,
+    RepairFinding,
     ServiceRequest,
     Source,
     Urgency,
@@ -195,21 +203,32 @@ VENDOR_WORK = [
     ("Cios Spin", 4, "open", "Error code on startup"),
 ]
 VENDOR_RESOLUTION = "Vendor replaced the main board under contract and verified operation per OEM procedure."
+VENDOR_FINDING = RepairFinding.WEAR  # slice 33: the cause their report states (never "not stated")
 PROBLEMS = ["Battery will not hold charge", "Occlusion alarm with no occlusion", "Screen flickers intermittently", "Error code on startup",
             "Pump door latch loose", "No waveform on lead II"]
 # Every demo procedure's checklist; the electrical safety step records the leakage current (slice 15 records each PM's results).
 CHECKLIST = ["Visual inspection and cleaning", {"text": "Electrical safety test per IEC 62353", "measure": "leakage µA, limit 100"},
              "Functional test per service manual", "Alarm verification", "Apply PM sticker and document"]
 VISUAL, LEAKAGE = 0, 1  # the steps a minor repair and the failed PM touch
-REPAIR_RESOLUTIONS = ["Replaced faulty component and verified per OEM procedure", "Calibrated and functionally tested, returned to service",
+REPAIR_RESOLUTIONS = ["Replaced faulty component and verified per OEM procedure", "Settings corrected, no device fault; showed unit staff the setup",
                       "Cleaned connector and reseated cable, passed functional test", "Replaced battery, runtime test passed",
                       "Firmware updated, verified operation", "No fault found on bench, monitored 24 h and returned"]
+# Slice 33: what each drawn resolution found (complete_work_order's repair_finding): read from the resolution, never drawn.
+REPAIR_FINDINGS = {
+    "Replaced faulty component and verified per OEM procedure": RepairFinding.WEAR,
+    "Settings corrected, no device fault; showed unit staff the setup": RepairFinding.USE_ERROR,
+    "Cleaned connector and reseated cable, passed functional test": RepairFinding.ACCESSORY,
+    "Replaced battery, runtime test passed": RepairFinding.BATTERY,
+    "Firmware updated, verified operation": RepairFinding.SOFTWARE,
+    "No fault found on bench, monitored 24 h and returned": RepairFinding.NO_PROBLEM_FOUND,
+}
 MINOR_REPAIRS = ["Visual inspection: replaced a worn power cord strain relief", "Visual inspection: tightened a loose pole clamp",
                  "Visual inspection: replaced a cracked battery door latch", "Visual inspection: replaced a missing caster cap"]
 MINOR_REPAIR_SHARE = 0.08  # of the demo's completed PMs; the rest pass, but for one that fails (the first eligible life-support PM)
 FAIL_BEFORE_DAYS = 60  # the failed PM is at least this old, so its repair is done and the device back in service
 FAILED_READING = "184 µA"
 FAIL_REPAIR = "Replaced the line cord (open ground conductor). Leakage 38 µA after repair; electrical safety and functional tests passed."
+FAIL_REPAIR_FINDING = RepairFinding.WEAR  # slice 33: the PM caught it (found on PM); what failed: the cord's ground conductor
 
 # Slice 22: Kim's second facility. Its slug is the demo's with "-north"; its name the demo's first word's ("Riverside North Campus").
 NORTH_SUFFIX = "-north"
@@ -251,6 +270,7 @@ LAPSE = ("Tom Okafor", Scope.CATEGORY, "Beds & stretchers")
 LAPSE_EXPIRED_DAYS_AGO, LAPSE_WORK_DAYS_AGO, LAPSE_RENEWED_DAYS_AGO = 75, 66, 45
 LAPSE_PROBLEM = "Bed exit alarm does not sound"
 LAPSE_RESOLUTION = "Replaced the bed exit sensor; alarm verified in every position."
+LAPSE_FINDING = RepairFinding.WEAR  # slice 33
 # Two models risk-scored with the Settings rubric (each score in its class's band): model, (function, physical, maintenance, incidents),
 # reviewed days ago. The second's yearly review is overdue (the binder's inventory lists it as the facility's own check).
 RISK_SCORES = [("Hamilton-G5", (10, 5, 3, 0), 90), ("R Series Plus", (10, 4, 3, 0), 425)]
@@ -268,6 +288,7 @@ CLOSED_INCIDENT_STEPS = {"started": 1, "completed": 2, "decided": 5, "released":
 CLOSED_INCIDENT_REFERENCE = "SE-{yy}-0377"
 CLOSED_INCIDENT_RESOLUTION = ("Bench tested per the service manual: NIBP and SpO2 accuracy against the simulator, alarms, and electrical "
                               "safety all within specification. No device fault found.")
+CLOSED_INCIDENT_FINDING = RepairFinding.NO_PROBLEM_FOUND  # slice 33: an investigation never records a use error
 INCIDENT_CLEAR_DAYS = 30  # an incident's device has no PM due within this many days of the seed's today (none is missed while held)
 
 # Slice 29, Riverside's rentals, vendor loaners, and demo units (_temporary_devices), oldest first: tag (a temporary sticker's range),
@@ -300,6 +321,7 @@ NOT_RETURNED_OPENED_DAYS_AGO, NOT_RETURNED_DONE_DAYS_AGO = 20, 18
 NOT_RETURNED_PROBLEM = "Bed will not raise or lower"
 NOT_RETURNED_RESOLUTION = ("Lift actuator seized and the base frame cracked at a weld. Beyond economical repair: not returned to use, "
                            "recommended for retirement.")
+NOT_RETURNED_FINDING = RepairFinding.WEAR  # slice 33
 NOT_RETURNED_RETIRED = "Beyond economical repair"
 
 # Slice 31, vendor staff (_vendor_staff), fictional people. Engineers: name, company (as the contracts name the vendor). Trainings:
@@ -457,7 +479,8 @@ class Command(BaseCommand):
                     if done <= today - timedelta(days=1):
                         change_status(wo, "in_progress", as_of=d)
                         if not is_pm:
-                            complete_work_order(wo, resolution=outcomes.choice(REPAIR_RESOLUTIONS), today=done, **CHECKED)
+                            resolution = outcomes.choice(REPAIR_RESOLUTIONS)
+                            complete_work_order(wo, resolution=resolution, repair_finding=REPAIR_FINDINGS[resolution], today=done, **CHECKED)
                         elif failed_pm is None and day <= -FAIL_BEFORE_DAYS and self._can_fail(a):
                             failed_pm = self._failed_pm(wo, done)
                         else:
@@ -579,7 +602,8 @@ class Command(BaseCommand):
                     if is_pm:
                         self._completed_pm(wo, done, outcomes)
                     else:
-                        complete_work_order(wo, resolution=outcomes.choice(REPAIR_RESOLUTIONS), today=done, **CHECKED)
+                        resolution = outcomes.choice(REPAIR_RESOLUTIONS)
+                        complete_work_order(wo, resolution=resolution, repair_finding=REPAIR_FINDINGS[resolution], today=done, **CHECKED)
                     change_status(wo, "closed", as_of=done)
         devices = sum(n for _model, n in NORTH_FLEET)
         self.stdout.write(self.style.SUCCESS(f"Seeded {north.name}: {devices} devices, {len(techs)} technicians. {kim.email} directs it too: "
@@ -663,7 +687,8 @@ class Command(BaseCommand):
         wo = incident.work_order
         assign(wo, technician=technician)
         change_status(wo, "in_progress", as_of=on["started"])
-        complete_work_order(wo, resolution=CLOSED_INCIDENT_RESOLUTION, today=on["completed"], **CHECKED)  # checked: it may return to use
+        complete_work_order(wo, resolution=CLOSED_INCIDENT_RESOLUTION, repair_finding=CLOSED_INCIDENT_FINDING, today=on["completed"],
+                            **CHECKED)  # checked: it may return to use
         change_status(wo, "closed", as_of=on["completed"])
         incident_services.record_finding(incident, Finding.MET_SPECS, by=technician.user)
         incident_services.decide(incident, outcome=Outcome.NO_HARM, basis=Basis.NOT_SERIOUS, decided_on=on["decided"],
@@ -712,7 +737,8 @@ class Command(BaseCommand):
         wo = create_work_order(asset=bed, type=WoType.REPAIR, priority=Priority.NORMAL, problem=NOT_RETURNED_PROBLEM, requester="Unit staff",
                                opened_on=opened, assigned_to=qualified_technicians(bed, opened)[0][0])
         change_status(wo, "in_progress", as_of=opened)
-        complete_work_order(wo, resolution=NOT_RETURNED_RESOLUTION, repair_check=RepairCheck.NOT_RETURNED, today=done)
+        complete_work_order(wo, resolution=NOT_RETURNED_RESOLUTION, repair_check=RepairCheck.NOT_RETURNED, repair_finding=NOT_RETURNED_FINDING,
+                            today=done)
         change_status(wo, "closed", as_of=done)
         equipment.set_status(Asset.objects.get(pk=bed.pk), AssetStatus.RETIRED, note=NOT_RETURNED_RETIRED, today=today)
 
@@ -731,7 +757,7 @@ class Command(BaseCommand):
                                opened_on=opened, assigned_to=technician)
         change_status(wo, "in_progress", as_of=opened)
         LaborLine.objects.create(work_order=wo, technician=technician, worked_on=done, hours=Decimal("1.25"), rate=82)
-        complete_work_order(wo, resolution=LAPSE_RESOLUTION, today=done, **CHECKED)
+        complete_work_order(wo, resolution=LAPSE_RESOLUTION, repair_finding=LAPSE_FINDING, today=done, **CHECKED)
         change_status(wo, "closed", as_of=done)
         renewed = today - timedelta(days=LAPSE_RENEWED_DAYS_AGO)
         renew_credential(credential, today=renewed)
@@ -881,7 +907,7 @@ class Command(BaseCommand):
             credentialed = qualified_technicians(repair.asset, done)
             assign(repair, technician=credentialed[0][0] if credentialed else wo.assigned_to)
         change_status(repair, "in_progress", as_of=done)
-        complete_work_order(repair, resolution=FAIL_REPAIR, today=done + timedelta(days=2), **CHECKED)
+        complete_work_order(repair, resolution=FAIL_REPAIR, repair_finding=FAIL_REPAIR_FINDING, today=done + timedelta(days=2), **CHECKED)
         change_status(repair, "closed", as_of=done + timedelta(days=2))
         return wo
 
@@ -924,7 +950,7 @@ class Command(BaseCommand):
             if state == "closed":
                 done = opened + timedelta(days=3)
                 LaborLine.objects.create(work_order=wo, worked_on=done, hours=Decimal("2.5"), rate=labor_rates()["vendor"], description="Vendor service")
-                complete_work_order(wo, resolution=VENDOR_RESOLUTION, repair_check=RepairCheck.VENDOR_REPORT,
+                complete_work_order(wo, resolution=VENDOR_RESOLUTION, repair_check=RepairCheck.VENDOR_REPORT, repair_finding=VENDOR_FINDING,
                                     checks_reference=VENDOR_REPORT_NUMBER, vendor_engineer=engineer, today=done)
                 change_status(wo, "closed", as_of=done)
 

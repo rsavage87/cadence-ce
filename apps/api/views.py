@@ -511,7 +511,7 @@ class WorkOrderViewSet(TenantViewSet):
     # The completion's text fields (transition to completed): a list, number, or object in one is refused keyed by it, never read as
     # its Python text ("['passed']") and answered with a refusal about something else (slice 30).
     COMPLETION_TEXT = ("resolution", "pm_result", "inspection_result", "repair_check", "checks_reference", "signature", "late_reason",
-                       "engineer_name")  # slice 31
+                       "engineer_name", "repair_finding")  # slice 31; slice 33
 
     @action(detail=True, methods=["post"])
     def transition(self, request, pk=None):
@@ -571,6 +571,8 @@ class WorkOrderViewSet(TenantViewSet):
                 kwargs["checks_reference"] = d.get("checks_reference") or ""
             if "vendor_engineer" in d:  # slice 31: left out, the engineer named stays (completion's KEEP)
                 kwargs["vendor_engineer"] = _engineer_value(d)
+            if "repair_finding" in d:  # slice 33: left out, the finding stored stays (completion's KEEP; required when none is)
+                kwargs["repair_finding"] = d.get("repair_finding") or ""
             for flag in ("open_repair", "tag_out"):
                 if flag in d:
                     kwargs[flag] = str(d[flag]).lower() in ("1", "true", "on", "yes")

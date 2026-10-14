@@ -21,7 +21,7 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 from incoming_fixtures import in_use_device, waiting_device
 from pg_helpers import as_app_role, needs_postgres
-from repair_fixtures import CHECKED, post_repair_results
+from repair_fixtures import CHECKED, FINDING, post_repair_results
 from survey_helpers import period
 
 from apps.equipment import services as eq
@@ -240,7 +240,7 @@ def _drawer(client, wo) -> str:
 
 def test_reopening_returns_it_is_said_only_while_the_device_is_out_of_service_or_in_repair(client, vent, techs, make_user):
     wo = repair(vent, tech=techs["dana"])
-    complete_work_order(wo, resolution="Cracked chassis: beyond economical repair", repair_check=RepairCheck.NOT_RETURNED)
+    complete_work_order(wo, resolution="Cracked chassis: beyond economical repair", repair_check=RepairCheck.NOT_RETURNED, repair_finding=FINDING)
     client.force_login(make_user("manager"))
     vent.refresh_from_db()
     assert vent.status == AssetStatus.OUT_OF_SERVICE
@@ -260,7 +260,7 @@ def test_reopening_returns_it_is_said_only_while_the_device_is_out_of_service_or
 def test_reopening_returns_it_is_never_said_for_a_retired_device(client, vent, techs, make_user):
     """The seed's smart bed: not returned to use, then retired, the repair closed."""
     wo = repair(vent, tech=techs["dana"])
-    complete_work_order(wo, resolution="Frame cracked: replace the bed", repair_check=RepairCheck.NOT_RETURNED)
+    complete_work_order(wo, resolution="Frame cracked: replace the bed", repair_check=RepairCheck.NOT_RETURNED, repair_finding=FINDING)
     eq.set_status(vent, AssetStatus.RETIRED)
     change_status(wo, WoStatus.CLOSED)
     client.force_login(make_user("manager"))
@@ -306,7 +306,7 @@ def _two_tagged_out(vent, techs):
 def test_the_lower_number_completed_second_not_returned_is_the_last(vent, techs, today, loaner):
     first, second = _two_tagged_out(vent, techs)
     complete_work_order(second, resolution="Replaced the flow sensor", **CHECKED)  # the other repair still holds it out
-    complete_work_order(first, resolution="Blower failed: beyond repair", repair_check=RepairCheck.NOT_RETURNED)
+    complete_work_order(first, resolution="Blower failed: beyond repair", repair_check=RepairCheck.NOT_RETURNED, repair_finding=FINDING)
     vent.refresh_from_db()
     assert first.completed_on == second.completed_on == today and vent.status == AssetStatus.OUT_OF_SERVICE
     done = WorkOrder.objects.filter(asset=vent, type=WoType.REPAIR)
@@ -323,7 +323,7 @@ def test_the_lower_number_completed_second_not_returned_is_the_last(vent, techs,
 
 def test_the_lower_number_completed_second_checked_is_the_last(vent, techs, today, loaner):
     first, second = _two_tagged_out(vent, techs)
-    complete_work_order(second, resolution="Blower failed: sent to the depot", repair_check=RepairCheck.NOT_RETURNED)
+    complete_work_order(second, resolution="Blower failed: sent to the depot", repair_check=RepairCheck.NOT_RETURNED, repair_finding=FINDING)
     vent.refresh_from_db()
     assert vent.status == AssetStatus.OUT_OF_SERVICE
     done = complete_work_order(first, resolution="Replaced the blower", **CHECKED)
@@ -344,7 +344,7 @@ def test_an_earlier_day_still_comes_first_whatever_was_recorded_when(vent, techs
     early = create_work_order(asset=vent, type=WoType.REPAIR, priority=Priority.NORMAL, problem="Alarm", opened_on=today - timedelta(days=3))
     assign(early, technician=techs["dana"])
     change_status(early, WoStatus.IN_PROGRESS, as_of=today - timedelta(days=2))
-    complete_work_order(early, resolution="Fixed", repair_check=RepairCheck.NOT_RETURNED, today=today - timedelta(days=1))
+    complete_work_order(early, resolution="Fixed", repair_check=RepairCheck.NOT_RETURNED, repair_finding=FINDING, today=today - timedelta(days=1))
     assert (late.completed_on, early.completed_on) == (today, today - timedelta(days=1))
     done = WorkOrder.objects.filter(asset=vent, type=WoType.REPAIR)
     assert list(repair_checks.last_completed_first(done).values_list("number", flat=True)) == [late.number, early.number]
@@ -360,7 +360,7 @@ def test_the_review_fixes_under_the_policies(client, tenant, vent, vent_model, t
     keep_open(held, results=post_repair_results(*FAILED_LEAKAGE))
     first, second = _two_tagged_out(vent, techs)
     complete_work_order(second, resolution="Replaced the flow sensor", **CHECKED)
-    complete_work_order(first, resolution="Beyond repair", repair_check=RepairCheck.NOT_RETURNED)
+    complete_work_order(first, resolution="Beyond repair", repair_check=RepairCheck.NOT_RETURNED, repair_finding=FINDING)
     client.force_login(director)
     as_app_role()
     device.refresh_from_db()
