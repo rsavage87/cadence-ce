@@ -1,0 +1,12 @@
+{% comment %}The work order drawer's "What was found" row (slice 33, views_wo_finding.drawer_context, under "what_found"): on a completed or
+   closed repair, for a user who sees the whole facility only (the finding is the facility's record). The finding's label, or "Not
+   recorded" with why (completed before Cadence recorded findings, or imported); whether it counts as a device failure; Change ("Record"
+   when none is recorded) for whoever may set it (Work orders Edit, Approve once closed). Inside the drawer's <dl>, spanning both
+   columns.{% endcomment %}
+{% with r=what_found %}{% if r %}
+<div id="wo-finding" class="wo-finding"><dt>What was found</dt><dd>
+  <span class="wo-finding-what">{% if r.value %}{{ r.label }}{% else %}<span class="muted">{{ r.label }}</span>{% endif %}
+    {% if r.can_change %}<button class="btn sm" type="button" hx-get="{% url 'web:wo_finding' wo.number %}" hx-target="#modal-card">{% if r.value %}Change{% else %}Record{% endif %}</button>{% endif %}</span>
+  <span class="hint">{% if r.why %}{{ r.why }}. {% endif %}{{ r.counting }}.</span>
+</dd></div>
+{% endif %}{% endwith %}

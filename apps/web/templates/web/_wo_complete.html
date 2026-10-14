@@ -22,7 +22,9 @@
    open (views_wo_complete.wo_keep_open) with the hold-out box, ticked by default.
    Slice 31: vendor service of any type asks who did the work (web/_wo_engineer_select.html: names only for a vendor's own account)
    and, for a user who sees the whole facility, the vendor's report number beside it, shown whatever the outcome (required with
-   checked by the vendor). Neither blocks completion.{% endcomment %}
+   checked by the vendor). Neither blocks completion.
+   Slice 33: a repair asks what was found after its checks, directly above the resolution, whatever the outcome
+   (web/_wo_finding_select.html, views_wo_finding); required when none is stored, so a missing one is focused first.{% endcomment %}
 <div class="modal-h wc-h"><h2>Complete {{ wo.number }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
 {% if blocker %}
 <div class="form"><div class="full note">{{ blocker }}</div></div>
@@ -114,6 +116,7 @@
       {% if form.inspection_result.errors %}<span class="err">{{ form.inspection_result.errors|striptags }}</span>{% endif %}
     </div>
     {% endif %}
+    {% if finding %}{% include "web/_wo_finding_select.html" %}{% endif %}{# slice 33: what the repair found #}
     <label class="full">Resolution{{ form.resolution }}{% if form.resolution.errors %}<span class="err">{{ form.resolution.errors|striptags }}</span>{% endif %}</label>
     {% if is_inspection and result_required %}
     <div class="full wc-fail wc-insp-fail">

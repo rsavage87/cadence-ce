@@ -2,6 +2,7 @@
 {# The work order drawer's PM results (slice 15, part B): the result and the checklist as recorded. Context: views_wo_complete.results_context. #}
 {# Slice 26: an incoming inspection's result, who inspected it and when, its steps, and its re-inspection; "Opened from" by the type of the work order it follows. #}
 {# Slice 30: a repair's "Checks after repair": how it ended, who checked and when, the steps and readings, or the vendor's report number, or not returned to use; a reopened repair says what was recorded, and one completed with no outcome says none was. #}
+{# Slice 33: a reopened repair's note names the finding it keeps (r.finding: a user who sees the whole facility only); a completed one's is the drawer's "What was found" row (web/_wo_finding_row.html). #}
 {% with r=pm_record %}
   {% if r.kind == "repair" %}
   {% if r.show %}
@@ -23,7 +24,7 @@
     {% endif %}
   </div>
   {% elif r.reopened %}
-  <div class="sec"><div class="note">Reopened. When last completed this repair was recorded as {{ r.words }}; completing it again records its checks after repair anew.</div></div>
+  <div class="sec"><div class="note">Reopened. When last completed this repair was recorded as {{ r.words }}; completing it again records its checks after repair anew.{% if r.finding %} What was found: {{ r.finding }}, kept unless another is chosen.{% endif %}</div></div>
   {% elif r.unrecorded %}
   <div class="sec"><div class="note wr-none">{{ r.unrecorded }}.</div></div>
   {% endif %}

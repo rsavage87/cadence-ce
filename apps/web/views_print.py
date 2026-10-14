@@ -24,6 +24,11 @@ Slice 31: vendor service of any type prints its field engineer (the vendor's eng
 vendors.services.engineer_shown; "Not named" once done) and the vendor's report number, with a line to write each on while it is
 open; who checked a repair or an inspection names the engineer (checked_by, for the reader). Names only: no training or attestation
 on paper (a vendor's own account prints its work orders too).
+
+Slice 33: a repair prints what was found (apps.workorders.findings): while it is open, a box per finding the reader may record on it
+(findings.choices_for, in findings.GROUPS; a scoped reader whose stored finding is the facility's, "Recorded by the facility"); once done,
+the finding, or "Not recorded", for a reader who sees the whole facility only (the finding is the facility's record: nothing on a
+scoped reader's print).
 """
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -35,9 +40,9 @@ from apps.accounts.models import Level, Module
 from apps.equipment.models import Asset
 from apps.facility.services import asset_request_url, get_settings
 from apps.vendors.services import engineer_shown
-from apps.workorders import completion, inspections, scoping
+from apps.workorders import completion, findings, inspections, scoping
 from apps.workorders import services as wo_services
-from apps.workorders.models import OPEN_STATUSES, LaborLine, PartLine, RepairCheck, Source, WorkOrder, WoType
+from apps.workorders.models import OPEN_STATUSES, LaborLine, PartLine, RepairCheck, RepairFinding, Source, WorkOrder, WoType
 from apps.workorders.repair_checks import NEVER_NA, POST_REPAIR, checked_by
 
 from .decorators import web_view
@@ -155,6 +160,28 @@ def repair_checks_print(wo, user=None) -> dict | None:
             "unrecorded": done and not wo.repair_check, "imported": wo.source == Source.IMPORTED}
 
 
+def finding_print(wo, user=None) -> dict | None:
+    """What a repair found on paper (slice 33), or None for another type, a cancelled repair, or a done one printed by a scoped reader.
+    Open: `groups`, a box per finding `user` may record (findings.choices_for, in findings.GROUPS), or `kept` when a scoped reader's stored
+    finding is the facility's (it stays as recorded). Done: the finding's `label` ("Not recorded" when none was), `recorded`, `imported`."""
+    if wo.type != WoType.REPAIR:
+        return None
+    is_open, done = wo.status in OPEN_STATUSES, wo.status in completion.DONE_STATUSES
+    scoped = scoping.is_scoped(user)
+    if done and not scoped:
+        return {"open": False, "recorded": bool(wo.repair_finding), "label": findings.label(wo.repair_finding),
+                "imported": wo.source == Source.IMPORTED}
+    if not is_open:
+        return None
+    investigation, from_pm = findings.is_investigation(wo), findings.found_on_pm(wo)
+    choices = findings.choices_for(wo, user, investigation=investigation, from_pm=from_pm)
+    stored = wo.repair_finding
+    if scoped and stored and stored not in choices and stored in findings.choices_for(wo, None, investigation=investigation, from_pm=from_pm):
+        return {"open": True, "kept": True, "groups": []}  # the facility's, kept while the repair's own limits allow it (completion's rule)
+    groups = [{"label": label, "options": [RepairFinding(v).label for v in values if v in choices]} for label, values in findings.GROUPS]
+    return {"open": True, "kept": False, "groups": [g for g in groups if g["options"]]}
+
+
 @web_view(Module.WORKORDERS, Level.VIEW, scoped=True)
 def wo_print(request, number):
     # Scoped like the drawer's lookup (views.get_wo): another tenant's number, or one outside a scoped user's share, is a 404.
@@ -189,6 +216,7 @@ def wo_print(request, number):
         "is_inspection": is_inspection, "checked": is_pm or is_inspection, "incoming": incoming,
         "inspector": inspector(wo, user) if is_inspection else "",
         "repair_checks": repair_checks_print(wo, user),  # slice 30
+        "finding": finding_print(wo, user),  # slice 33: what the repair found
         "field_engineer": engineer_shown(wo, user) if wo.vendor_service else "",  # slice 31: names only, as this reader may read them
         "past_due_days": (today - wo.due_on).days if is_open and wo.due_on < today else 0,
         # The procedure on file (never the incoming checklist, which is no procedure: no code, source, or revision to print)

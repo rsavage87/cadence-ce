@@ -1306,6 +1306,47 @@ td small.tmp-late{color:var(--crit)}
   .ev-figs small.ev-rule{max-width:none}
 }
 
+/* slice 33: repair findings (web/_wo_finding_select.html in the completion modal, above the resolution, and the drawer's Change; the
+   drawer's row, web/_wo_finding_row.html). One native select; under it the chosen finding's hint (CSS :has shows the one chosen, one rule
+   per stable slug; without :has support the one the page was drawn with, .on), then the PM and earlier-service lines and the "What each
+   means" disclosure. The drawer's row spans both columns of its details, its Change at the label's right. */
+.wc-find{display:flex;flex-direction:column;gap:4px;min-width:0}
+.wc-find .hint{font-size:12px}
+.wf-hint{display:none}
+.wf-hint.on{display:inline}
+@supports selector(:has(*)){
+  .wc-find .wf-hint.on{display:none}
+  .wc-find:has(option[value="no_problem_found"]:checked) .wf-hint[data-for="no_problem_found"],
+  .wc-find:has(option[value="use_error"]:checked) .wf-hint[data-for="use_error"],
+  .wc-find:has(option[value="environment"]:checked) .wf-hint[data-for="environment"],
+  .wc-find:has(option[value="damage"]:checked) .wf-hint[data-for="damage"],
+  .wc-find:has(option[value="battery"]:checked) .wf-hint[data-for="battery"],
+  .wc-find:has(option[value="accessory"]:checked) .wf-hint[data-for="accessory"],
+  .wc-find:has(option[value="software"]:checked) .wf-hint[data-for="software"],
+  .wc-find:has(option[value="wear"]:checked) .wf-hint[data-for="wear"],
+  .wc-find:has(option[value="pm_preventable"]:checked) .wf-hint[data-for="pm_preventable"],
+  .wc-find:has(option[value="service_induced"]:checked) .wf-hint[data-for="service_induced"],
+  .wc-find:has(option[value="not_stated"]:checked) .wf-hint[data-for="not_stated"]{display:inline}
+}
+.wf-from-pm{color:var(--ink-2);font-weight:500}
+.wf-means summary{cursor:pointer;color:var(--accent);font-size:12.5px;width:max-content;max-width:100%}
+.wf-means>p{margin:6px 0}
+.wf-means dl{display:grid;gap:4px;margin:0;font-size:12px}
+.wf-means dl div{display:grid;grid-template-columns:minmax(0,11em) minmax(0,1fr);gap:8px}
+.wf-means dt{color:var(--ink);font-weight:500}
+.wf-means dd{margin:0;color:var(--ink-2)}
+.wf-audit{margin:0}
+.dl .wo-finding{grid-column:1/-1;display:grid;gap:3px}
+.dl .wo-finding dd{overflow:visible;white-space:normal;display:flex;flex-direction:column;gap:4px}
+.wo-finding-what{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px}
+.wo-finding .hint{font-weight:400}
+@media (max-width:760px){
+  .wf-form .form select{min-height:44px;font-size:16px}
+  .wf-means summary{min-height:44px;display:flex;align-items:center}
+  .wf-means dl div{grid-template-columns:1fr;gap:0}
+  .wo-finding-what .btn{min-height:44px}
+}
+
 /* Slice 11: printing app pages */
 /* What the browser prints of an app page (the Overview's Export button calls window.print(); any other screen prints from the
    browser's menu): the page's content on white, in the light theme whatever the screen shows, with chart and chip colours kept.

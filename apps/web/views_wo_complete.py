@@ -73,6 +73,16 @@ sees the whole facility, the vendor's report number beside it, whatever the outc
 vendor). Both go to complete_work_order (vendor_engineer / engineer_name through forms_wo_complete.engineer_kwargs, checks_reference);
 neither blocks completion, and a refusal comes back keyed vendor_engineer, engineer_name, or checks_reference with the rest. Keep open
 names no engineer. results_context's "Checked by" names the engineer as this user may read it (repair_checks.checked_by(wo, user)).
+
+Slice 33, what a repair found (apps.workorders.findings): a repair's modal asks "What was found" after the checks, directly above the
+resolution, whatever the outcome (views_wo_finding's select: findings.choices_for this user and repair, in findings.GROUPS; the chosen
+one's hint; "What each means"; a failed PM's repair's "Found on PM <number>: choose what failed."; for a user who sees the whole
+facility the device's earlier service, the evidence for "PM could have caught it" and "Caused by earlier service"). Required when none
+is stored (completion's rule), so it is focused before the resolution when missing; a reopened repair's finding is prefilled for a user
+who sees the whole facility, and a scoped user never sees it (their blank keeps it; one they cannot choose is "Recorded by the
+facility" with no select). Refusals come back keyed repair_finding with the rest, the values kept; Mark the rest pass keeps the choice;
+My work's Complete is this modal. results_context carries the drawer's "What was found" row (views_wo_finding.drawer_context, under
+"what_found": a user who sees the whole facility only), and a reopened repair's note names the finding it keeps for that user.
 """
 import copy
 
@@ -86,12 +96,12 @@ from apps.equipment.models import AssetStatus
 from apps.equipment.services import owner_maintains, status_label
 from apps.incidents import services as inc_services
 from apps.pm.windows import windows
-from apps.workorders import completion, costs, inspections, repair_checks, scoping
+from apps.workorders import completion, costs, findings, inspections, repair_checks, scoping
 from apps.workorders import permissions as wo_perms
 from apps.workorders import services as wo_services
 from apps.workorders.models import OPEN_STATUSES, InspectionResult, PmResult, RepairCheck, ServiceRequest, Source, WoStatus, WoType
 
-from . import views_wo_engineer, views_wo_late
+from . import views_wo_engineer, views_wo_finding, views_wo_late
 from .decorators import web_view
 from .forms_wo_complete import STEP_CHOICES, CompleteForm
 from .htmx import toast
@@ -132,7 +142,8 @@ def results_context(request, wo) -> dict:
     it and when, and its re-inspection; a work order opened from another names it by that one's type (a failed PM or inspection).
     Slice 30: a repair's checks after it (kind "repair"): its outcome, who checked (repair_checks.checked_by: the vendor on vendor
     service, else the technician assigned) and when, the steps as recorded or the vendor's report number; `unrecorded` words a repair
-    completed with no outcome (before slice 30, or imported)."""
+    completed with no outcome (before slice 30, or imported). Slice 33: the drawer's "What was found" row (views_wo_finding, under
+    "what_found"), and a reopened repair's finding (`finding`) for a user who sees the whole facility."""
     is_pm, is_inspection, is_repair = wo.type == WoType.PM, wo.type == WoType.INSPECTION, wo.type == WoType.REPAIR
     follow_up_of = wo.follow_up_of if wo.follow_up_of_id else None
     result = wo.inspection_result if is_inspection else wo.pm_result if is_pm else wo.repair_check if is_repair else ""
@@ -159,11 +170,15 @@ def results_context(request, wo) -> dict:
         # Review fix: a repair not returned to use says reopening it returns the device only when completing it as checked would
         # (services.returns_device asked as if checked now: never a device retired, back in use, held, waiting, or held by another repair)
         "reopen_returns": is_repair and result == RepairCheck.NOT_RETURNED and _returns_if_checked(wo),
+        # Slice 33: the finding a reopened repair keeps unless another is chosen, never a scoped user's (the facility's record)
+        "finding": (findings.label(wo.repair_finding) if is_repair and wo.repair_finding and wo.status in OPEN_STATUSES
+                    and not scoping.is_scoped(request.user) else ""),
         "steps": steps,
         "follow_ups": list(scoping.work_orders(request.user, wo.follow_ups.order_by("opened_on", "number"))) if is_pm or is_inspection else [],
         "follow_up_of": follow_up_of if follow_up_of is not None and scoping.can_see_work_order(request.user, follow_up_of) else None,
         "follow_up_of_kind": "incoming inspection" if follow_up_of is not None and follow_up_of.type == WoType.INSPECTION else "PM",
-    }, **views_wo_late.late_context(request, wo)}  # slice 25: the "Why late" row (web/_wo_late.html), under "why_late"
+    }, **views_wo_late.late_context(request, wo),  # slice 25: the "Why late" row (web/_wo_late.html), under "why_late"
+        **views_wo_finding.drawer_context(request, wo)}  # slice 33: the "What was found" row (web/_wo_finding_row.html), under "what_found"
 
 
 # --- the modal -----------------------------------------------------------------------------------------------------------------
@@ -221,12 +236,14 @@ def _inspection_offers(wo, user, today=None) -> dict:
 def _repair_offers(wo, user) -> dict:
     """A repair's outcomes as the modal offers them (slice 30): those `user` may choose (completion.repair_outcomes), each with what it
     does to the device (_repair_hints); the one chosen to begin with (checked and ready for use, unless the vendor's report is offered:
-    then the user chooses); and "If a check fails" (_keep_offer)."""
+    then the user chooses); and "If a check fails" (_keep_offer). Slice 33: what was found (views_wo_finding.select_context, under
+    "finding_select")."""
     outcomes = completion.repair_outcomes(wo, user)
     vendor = RepairCheck.VENDOR_REPORT in outcomes
     return {"own_repair": None, "other_repair": None, "offer_open_repair": False, "offer_tag_out": False,
             "repair_outcomes": outcomes, "offer_vendor_report": vendor, "repair_default": "" if vendor else RepairCheck.PASSED,
-            "repair_hints": _repair_hints(wo, user), **_keep_offer(wo, user)}
+            "repair_hints": _repair_hints(wo, user), **_keep_offer(wo, user),
+            "finding_select": views_wo_finding.select_context(wo, user)}
 
 
 def _held_words(asset, user) -> str:
@@ -381,7 +398,8 @@ def _form_kwargs(wo, steps, offers, hours, late) -> dict:
             "is_inspection": wo.type == WoType.INSPECTION, "kept_pass": offers.get("kept_pass", False),  # slice 26
             "is_repair": wo.type == WoType.REPAIR, "repair_default": offers.get("repair_default", ""),  # slice 30
             "offer_engineer": offers.get("engineer_select") is not None, "engineer_initial": offers.get("engineer_initial", ""),  # slice 31
-            "offer_reference": offers.get("offer_reference", False), "reference_initial": offers.get("reference_initial", "")}
+            "offer_reference": offers.get("offer_reference", False), "reference_initial": offers.get("reference_initial", ""),
+            "finding_initial": (offers.get("finding_select") or {}).get("initial", "")}  # slice 33
 
 
 def _late(request, wo, today) -> dict:
@@ -451,6 +469,9 @@ def _modal(request, wo, form=None, *, steps=(), offers=None, hours=None, late=No
         # Slice 31: who did the vendor's work, as the form holds it
         "engineer": (views_wo_engineer.picked((offers or {})["engineer_select"], form, "wc")
                      if form is not None and (offers or {}).get("engineer_select") is not None and "vendor_engineer" in form.fields else None),
+        # Slice 33: what the repair found, as the form holds it
+        "finding": (views_wo_finding.picked((offers or {})["finding_select"], form, "wc")
+                    if form is not None and (offers or {}).get("finding_select") is not None and "repair_finding" in form.fields else None),
     })
     if reason and from_my_work(request):  # review fix: a card offered a move the work order no longer allows; the list is behind
         trigger_client_event(response, "wo-changed", {})

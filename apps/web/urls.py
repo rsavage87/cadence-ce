@@ -15,6 +15,7 @@ from . import (
                views_wo_complete,
                views_wo_costs,
                views_wo_engineer,
+               views_wo_finding,
                views_wo_late,
 )
 
@@ -71,6 +72,7 @@ urlpatterns = [
     path("work-orders/<str:number>/keep-open/", views_wo_complete.wo_keep_open, name="wo_keep_open"),  # slice 30: a check after repair failed
     path("work-orders/<str:number>/late-reason/", views_wo_late.wo_late_reason, name="wo_late_reason"),  # slice 25: why a PM was late
     path("work-orders/<str:number>/engineer/", views_wo_engineer.wo_engineer, name="wo_engineer"),  # slice 31: the field engineer's Change
+    path("work-orders/<str:number>/finding/", views_wo_finding.wo_finding, name="wo_finding"),  # slice 33: what a repair found, its Change
     path("work-orders/<str:number>/waiting/", views_my_work.wo_waiting, name="wo_waiting"),  # slice 24: Waiting on parts from My work, with a note
     path("pm/", include("apps.web.urls_pm")),
     path("contracts/vendors/", include("apps.web.urls_vendors")),  # slice 31: the Vendor staff tab

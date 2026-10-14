@@ -33,6 +33,13 @@ only with checked by the vendor; it is now sent whatever the outcome (the box sh
 it with checked by the vendor. engineer_kwargs turns the select into the service's vendor_engineer and engineer_name (EngineerForm,
 the drawer's Change, reads it too); "Someone else" with no name is refused here, keyed engineer_name, since the service would read an
 empty name as not named.
+
+Slice 33, what a repair found (repair_finding, RepairFinding; apps.workorders.findings): text, completion checks the value against
+findings.choices_for and keeps the finding stored when none is sent (required when none is). The select (web/_wo_finding_select.html,
+views_wo_finding) sits directly above the resolution, after the checks, so it comes before "resolution" in LAYOUT_TAIL: a missing one
+gets the focus first. `finding_initial` is the value to begin with (the finding stored, for a user who sees the whole facility: a
+reopened repair completed again); "Mark the rest pass" carries the choice (filled() keeps every field). FindingForm is the drawer's
+Change (views_wo_finding.wo_finding), for workorders.services.set_repair_finding.
 """
 import re
 
@@ -56,7 +63,7 @@ RESULT_CHOICES = [
 STEP_CHOICES = [(completion.PASS, "Pass"), (completion.FAIL, "Fail"), (completion.NA, "N/A")]
 # The fields after the checklist, in the modal's order: a form sent back with errors focuses the first one on screen. Slice 25: the
 # late reason comes first (late_first) or last (focus_first_error).
-LAYOUT_TAIL = ("pm_result", "inspection_result", "resolution", "open_repair", "hours")
+LAYOUT_TAIL = ("pm_result", "inspection_result", "repair_finding", "resolution", "open_repair", "hours")  # slice 33: the finding above the resolution
 LAYOUT_REPAIR = ("repair_check",)  # slice 30: a repair's outcome comes before its checklist
 LAYOUT_VENDOR = ("vendor_engineer", "engineer_name", "checks_reference")  # slice 31: then who did the vendor's work, and their report
 OTHER = "other"  # slice 31: the select's "Someone else" (the name typed in engineer_name)
@@ -126,6 +133,15 @@ class EngineerForm(forms.Form):
         service_errors(self, error)
 
 
+class FindingForm(forms.Form):
+    """The drawer's Change of what a repair found (slice 33, views_wo_finding): the completion modal's select, for
+    workorders.services.set_repair_finding (which checks the value: blank, or one not offered, is refused in its words)."""
+    repair_finding = forms.CharField(required=False)
+
+    def add_service_errors(self, error):
+        service_errors(self, error)
+
+
 class CompleteForm(forms.Form):
     resolution = forms.CharField(required=False, strip=False, widget=forms.Textarea(attrs={"rows": 3, "maxlength": completion.RESOLUTION_MAX}))
     # Text, not a number field: apps.workorders.costs says what a valid number of hours is. inputmode brings up the number pad.
@@ -138,7 +154,7 @@ class CompleteForm(forms.Form):
     # checks them
     repair_check = forms.CharField(required=False)
     # Slice 33: what a repair found (RepairFinding); text, completion checks the value (findings.choices_for) and keeps the one stored
-    # when none is sent. Wave 1 passes it through; the select and its hints are the modal's (wave 2).
+    # when none is sent. The select and its hints: web/_wo_finding_select.html (views_wo_finding).
     repair_finding = forms.CharField(required=False)
     checks_reference = forms.CharField(required=False, widget=forms.TextInput(attrs={"maxlength": completion.REFERENCE_MAX, "autocomplete": "off",
                                                                                     "placeholder": "e.g. FSO-118204"}))
@@ -160,7 +176,7 @@ class CompleteForm(forms.Form):
 
     def __init__(self, *args, steps=(), is_pm=False, is_inspection=False, kept_pass=False, offer_open_repair=False, offer_tag_out=False,
                  offer_hours=False, offer_late_reason=False, late_first=False, late_recorded="", is_repair=False, repair_default="",
-                 offer_engineer=False, engineer_initial="", offer_reference=False, reference_initial="", **kwargs):
+                 offer_engineer=False, engineer_initial="", offer_reference=False, reference_initial="", finding_initial="", **kwargs):
         """`steps`: the checklist the modal shows, as completion.checklist_of gives it. The two offers say whether the failed-PM
         options are on screen: an option that is not offered is not taken from the post (a new repair is opened; no tag-out).
         `offer_hours`: the Hours box is on screen; without it no hours are taken from the post. `offer_late_reason` (slice 25): the
@@ -170,15 +186,20 @@ class CompleteForm(forms.Form):
         passed: Passed is chosen to begin with). Slice 30: `is_repair`, a repair (its outcome, and its checks after it as `steps`);
         `repair_default`, the outcome chosen to begin with ("" for none). Slice 31: `offer_engineer`, vendor service (who did the work,
         the engineer stored as `engineer_initial`: the select's value to begin with); `offer_reference`, the vendor's report number box
-        (any vendor job, for a user who sees the whole facility), with the number stored as `reference_initial` (a reopened job)."""
+        (any vendor job, for a user who sees the whole facility), with the number stored as `reference_initial` (a reopened job).
+        Slice 33: `finding_initial`, a repair's finding to begin with (views_wo_finding.select_context's: the one stored, never a scoped
+        user's)."""
         kwargs.setdefault("auto_id", "wc-%s")
         super().__init__(*args, **kwargs)
         self.steps, self.is_pm, self.is_inspection = list(steps), is_pm, is_inspection and not is_pm
         self.is_repair = is_repair and not (is_pm or is_inspection)
         if not self.is_repair:
             del self.fields["repair_check"], self.fields["repair_finding"], self.fields["hold"], self.fields["shown_hold"]
-        elif repair_default:
-            self.fields["repair_check"].initial = repair_default
+        else:
+            if repair_default:
+                self.fields["repair_check"].initial = repair_default
+            if finding_initial:  # slice 33: a reopened repair's finding, prefilled
+                self.fields["repair_finding"].initial = finding_initial
         self.offer_engineer, self.offer_reference, self.engineer = offer_engineer, offer_reference, {}
         if offer_engineer:
             self.fields["vendor_engineer"].initial = engineer_initial

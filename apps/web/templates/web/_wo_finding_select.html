@@ -1,0 +1,34 @@
+{% comment %}What a repair found (slice 33, views_wo_finding.select_context / picked, under "finding"): the completion modal's (above the
+   resolution) and the drawer's Change. One native select: a blank "Choose what was found" (a scoped user's "Keep what was recorded" when
+   one they may choose is stored, never named), then findings.GROUPS as optgroups limited to the choices this user may record on this
+   repair. Under it the chosen one's hint (CSS :has shows the one chosen; without :has support, the one the page was drawn with), a
+   failed PM's repair's "Found on PM ...", an investigation's word on use error, the device's earlier service for a user who sees the
+   whole facility, and "What each means" (every offered choice's hint and the order to decide by). A scoped user's stored finding they
+   cannot choose has no select: it stays as the facility recorded it. `f.prefix` keeps the ids apart ("wc" in the completion modal,
+   "wf" in Change).{% endcomment %}
+{% with f=finding %}
+<div class="full wc-find" id="{{ f.prefix }}-find">
+  {% if f.locked %}
+  <div class="wc-label">What was found</div>
+  <div class="hint wf-kept">{{ f.kept_words }}</div>
+  {% else %}
+  <label class="fld" for="{{ f.prefix }}-repair_finding">What was found
+    <select id="{{ f.prefix }}-repair_finding" name="repair_finding" aria-describedby="{{ f.prefix }}-find-hint{% if f.error %} {{ f.prefix }}-repair_finding_error{% endif %}"{% if f.error %} aria-invalid="true"{% endif %}{% if f.focus %} autofocus{% endif %}>
+      <option value=""{% if not f.value %} selected{% endif %}>{% if f.keep %}{{ f.keep }}{% else %}{{ f.choose }}{% endif %}</option>
+      {% for g in f.groups %}<optgroup label="{{ g.label }}">{% for o in g.options %}<option value="{{ o.value }}"{% if o.value == f.value %} selected{% endif %}>{{ o.label }}</option>{% endfor %}</optgroup>{% endfor %}
+    </select>
+  </label>
+  <span class="hint wf-hints" id="{{ f.prefix }}-find-hint">{% for o in f.means %}<span class="wf-hint{% if o.value == f.value %} on{% endif %}" data-for="{{ o.value }}">{{ o.hint }}</span>{% endfor %}</span>
+  {% endif %}
+  {% if f.error %}<span class="err" id="{{ f.prefix }}-repair_finding_error">{{ f.error }}</span>{% endif %}
+  {% if f.from_pm %}<span class="hint wf-from-pm">{{ f.from_pm }}</span>{% endif %}
+  {% if f.investigation %}<span class="hint wf-inv">{{ f.investigation }}</span>{% endif %}
+  {% with ev=f.evidence %}{% if ev %}<span class="hint wf-evidence">Earlier service on {{ ev.tag }} before this repair was opened {{ ev.day|date:"M j, Y" }}: {% if ev.last_pm %}last PM {{ ev.last_pm.completed_on|date:"M j, Y" }}, {{ ev.last_pm.number }}{% elif ev.last_pm_on %}last PM {{ ev.last_pm_on|date:"M j, Y" }}, from the device's record{% else %}no PM on record{% endif %}; {% if ev.recent %}in the {{ ev.days }} days before, {% for w in ev.recent %}{{ w.kind }} {{ w.number }} done {{ w.completed_on|date:"M j, Y" }}{% if not forloop.last %}; {% endif %}{% endfor %}{% else %}no other repair or PM in the {{ ev.days }} days before{% endif %}.</span>{% endif %}{% endwith %}
+  {% if not f.locked %}
+  <details class="wf-means"><summary>What each means</summary>
+    <p class="hint">{{ f.order }}</p>
+    <dl>{% for o in f.means %}<div><dt>{{ o.label }}</dt><dd>{{ o.hint }}</dd></div>{% endfor %}</dl>
+  </details>
+  {% endif %}
+</div>
+{% endwith %}
