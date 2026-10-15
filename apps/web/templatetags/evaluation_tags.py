@@ -10,3 +10,9 @@ register = template.Library()
 @register.filter
 def reads_evaluations(user) -> bool:
     return bool(user is not None and user.is_authenticated) and perms.can_view(user)
+
+
+@register.filter
+def reads_vendor_reviews(user) -> bool:
+    """Slice 34: the Contracts screen's Reviews tab, for Evaluations View with Contracts View, never a scoped user."""
+    return bool(user is not None and user.is_authenticated) and perms.can_view_reviews(user)

@@ -733,7 +733,7 @@ def test_junk_is_never_a_500(client, sign_in, ev, method, path, data):
 def test_the_role_matrix_shows_the_module(client, sign_in):
     sign_in("director")
     body = html(client.get("/users/roles/"))
-    assert "Program evaluation" in body and 'aria-label="CE manager, evaluations"' in body
+    assert ">Evaluations<" in body and 'aria-label="CE manager, evaluations"' in body  # slice 34: the module's label (program and vendors)
 
 
 def test_service_refuses_a_start_in_year_9999_in_words(ctx, today):

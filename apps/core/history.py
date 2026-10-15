@@ -186,6 +186,12 @@ AREAS = {a.key: a for a in (
     Area("evaluation_approvals", "Program evaluation approvals", "evaluations.EvaluationApproval", "evaluations",
          _safe(lambda r: f"{_evaluation_name(r.evaluation)} · approval"), _safe(lambda r: _evaluation_url(r.evaluation.number, r.evaluation.version)),
          select=("evaluation",)),
+    # Slice 34: the vendor reviews and the committees they were reported to (the views also need Contracts View)
+    Area("vendor_reviews", "Vendor reviews", "evaluations.VendorReview", "evaluations", _safe(lambda r: f"{r.number} · {(r.vendor_names or [''])[0]}"),
+         _safe(lambda r: reverse("web:vendor_review", args=[r.number]))),
+    Area("vendor_review_reports", "Vendor review reports", "evaluations.VendorReviewReport", "evaluations",
+         _safe(lambda r: f"{r.review.number} · report"), _safe(lambda r: reverse("web:vendor_review", args=[r.review.number])),
+         select=("review",)),
 )}
 ACCESS = Area("access", "Access", "accounts.AccessEvent", "users", _safe(lambda e: str(e.user) if e.user_id else ""))
 ALL_AREAS = {**AREAS, ACCESS.key: ACCESS}
@@ -253,6 +259,9 @@ HIDE = {
     "evaluations.programevaluation": {"number", "version", "created_by"},
     "evaluations.evaluationobjective": {"evaluation", "position", "carried_from"},
     "evaluations.evaluationapproval": {"evaluation"},
+    # Slice 34: the record's own name and the stored keys; a report's review is in its name
+    "evaluations.vendorreview": {"number", "vendor_keys", "vendor_key", "created_by"},
+    "evaluations.vendorreviewreport": {"review"},
 }
 
 # Labels that read better than the verbose names, per model; `_label` falls back to the verbose name.
@@ -301,6 +310,19 @@ LABELS = {
     "evaluations.evaluationobjective": {"text": "Objective", "target": "Target", "result": "Result", "comment": "Comment"},
     "evaluations.evaluationapproval": {"body_name": "Committee", "meeting_on": "Meeting", "chair_name": "Chair", "chair_title": "Chair's title",
                                        "minutes_reference": "Minutes", "recorded_by": "Recorded by"},
+    # Slice 34 (the criteria as apps.evaluations.models.CRITERIA words them)
+    "evaluations.vendorreview": {"vendor_names": "Vendor names", "period_start": "Period starts", "period_end": "Period ends", "snapshot": "Figures",
+                                 "rating_timeliness": "Timeliness", "rating_quality": "Quality of work", "rating_documentation": "Documentation",
+                                 "rating_staff_evidence": "Staff evidence", "rating_user_satisfaction": "User satisfaction",
+                                 "rating_invoices": "Invoices", "stated_in_contract": "Expectations stated in the contract",
+                                 "uptime_target_pct": "Uptime target", "uptime_reported_pct": "Uptime reported by the vendor",
+                                 "uptime_lowest_pct": "Lowest system's uptime", "systems_below": "Systems below the guarantee",
+                                 "systems_total": "Systems", "response_target_pct": "Response target",
+                                 "response_reported_pct": "Response reported by the vendor", "vendor_report_reference": "Vendor's report",
+                                 "overall": "Overall", "decision": "Decision", "plan_due_on": "Plan due", "plan_result": "Plan result",
+                                 "plan_closed_on": "Plan closed", "summary": "Summary", "signed_on": "Signed off",
+                                 "approver_name": "Approved by", "approver_title": "Approver's title", "signed_by": "Sign-off recorded by"},
+    "evaluations.vendorreviewreport": {"meeting_on": "Meeting", "minutes_reference": "Minutes", "recorded_by": "Recorded by"},
     "accounts.role": {"is_system": "System role", "scope": "What its users see"},
     "facility.facilitysettings": {"portal_require_callback": "Portal: callback number required", "portal_hotline": "Portal: hotline",
                                   "portal_confirmation": "Portal: confirmation", "portal_email_domains": "Portal: email domains",
@@ -417,6 +439,7 @@ _NAMERS = {
     "vendors.vendorengineer": lambda o: f"{o.name} ({o.company})",
     "evaluations.programevaluation": lambda o: o.number if o.version == 1 else f"{o.number} v{o.version}",
     "evaluations.evaluationsnapshot": lambda o: f"Figures taken {o.taken_on:%b} {o.taken_on.day}, {o.taken_on.year}",
+    "evaluations.vendorreviewsnapshot": lambda o: f"Figures taken {o.taken_on:%b} {o.taken_on.day}, {o.taken_on.year}",
 }
 
 

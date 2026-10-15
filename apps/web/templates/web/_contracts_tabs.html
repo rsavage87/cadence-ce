@@ -1,5 +1,6 @@
-{# The Contracts screen's tabs (slice 31): the contracts, and the vendors' staff (their attestations and their engineers' training on file). Context: contracts_tab ("vendors" on the Vendor staff tab; anything else is the contracts). #}
+{% load evaluation_tags %}{# The Contracts screen's tabs (slice 31): the contracts, and the vendors' staff (their attestations and their engineers' training on file); slice 34: the vendors' reviews, for Evaluations View with Contracts View. Context: contracts_tab ("vendors" on the Vendor staff tab, "reviews" on the Reviews tab; anything else is the contracts). #}
 <div class="tabs page-tabs" role="tablist">
-  <a class="tab{% if contracts_tab != 'vendors' %} active{% endif %}" role="tab" href="{% url 'web:contracts' %}"{% if contracts_tab != 'vendors' %} aria-current="page"{% endif %}>Contracts</a>
+  <a class="tab{% if contracts_tab != 'vendors' and contracts_tab != 'reviews' %} active{% endif %}" role="tab" href="{% url 'web:contracts' %}"{% if contracts_tab != 'vendors' and contracts_tab != 'reviews' %} aria-current="page"{% endif %}>Contracts</a>
   <a class="tab{% if contracts_tab == 'vendors' %} active{% endif %}" role="tab" href="{% url 'web:vendor_staff' %}"{% if contracts_tab == 'vendors' %} aria-current="page"{% endif %}>Vendor staff</a>
+  {% if request.user|reads_vendor_reviews %}<a class="tab{% if contracts_tab == 'reviews' %} active{% endif %}" role="tab" href="{% url 'web:vendor_reviews' %}"{% if contracts_tab == 'reviews' %} aria-current="page"{% endif %}>Reviews</a>{% endif %}
 </div>

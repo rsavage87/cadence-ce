@@ -119,7 +119,8 @@ class Gap:
 LINK_NEEDS = {"settings": Module.SETTINGS, "pm_model": Module.PM, "asset": Module.EQUIPMENT, "wo": Module.WORKORDERS, "recalls": Module.RECALLS,
               "credentials": Module.USERS, "incidents": Module.INCIDENTS, "incident": Module.INCIDENTS,
               "vendor_staff": Module.CONTRACTS,  # slice 31: the Contracts screen's Vendor staff tab (it refuses scoped users, as the binder does)
-              "evaluations": Module.EVALUATIONS, "evaluation": Module.EVALUATIONS, "evaluation_version": Module.EVALUATIONS}  # slice 32
+              "evaluations": Module.EVALUATIONS, "evaluation": Module.EVALUATIONS, "evaluation_version": Module.EVALUATIONS,  # slice 32
+              "vendor_reviews": Module.EVALUATIONS, "vendor_review": Module.EVALUATIONS}  # slice 34 (the views also need Contracts View)
 
 
 def gap_links(user) -> Callable[[Gap], str]:
@@ -229,7 +230,8 @@ NOT_COVERED = [
     # Slice 31 keeps the contracted services and the evidence on file for vendor staff (the Contracted service and vendor staff section).
     "Vendor staff's badges, immunizations, and background checks (the facility's vendor credentialing system), and the vendors' own "
     "training records and competence assessments behind their statements",
-    "The yearly evaluation of each contracted service, and contracted services outside clinical engineering",
+    # Slice 34 keeps the review of each contracted service vendor (Contracts, Reviews; the vendors section's last review and checks).
+    "Contracted services outside clinical engineering",
 ]
 
 

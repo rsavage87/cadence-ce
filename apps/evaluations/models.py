@@ -181,3 +181,170 @@ class EvaluationApproval(TenantModel):
 
     def __str__(self):
         return f"{self.evaluation.label} · approval"
+
+
+# --- slice 34: the review of each contracted service vendor ------------------------------------------------------------------------
+#
+# The facility's yearly review of a service vendor (CMS A-0084: every contracted service evaluated through QAPI; The Joint Commission's
+# governing body assesses contracted services and acts on problems; DNV each contractor at defined intervals): figures from Cadence's own
+# records of the vendor's work for a 12-month period (apps.evaluations.vendor_figures; never uptime or response computed from its dates),
+# the reviewer's ratings and the vendor's own reported figures, a decision, a corrective plan followed to its result, the sign-off, and
+# the committees it was reported to. Standalone: never slice 32's ProgramEvaluation models or services. Every write goes through
+# apps.evaluations.vendor_reviews. Never shown to a scoped user (a vendor's account never sees its review); the summary is staff-written,
+# length-limited, never emailed.
+
+REPORT_REFERENCE_VALIDATOR = reference_token("Enter the vendor's report reference as it is printed, without spaces (UPT-2026-Q4).")
+REVIEW_SUMMARY_MAX = 2000
+REVIEW_PRIVACY_WARNING = "About the vendor's service as a whole: no patient, requester, engineer, or incident details."
+
+
+class ReviewStatus(models.TextChoices):
+    DRAFT = "draft", "Draft"
+    APPROVED = "approved", "Signed off"
+    WITHDRAWN = "withdrawn", "Withdrawn"
+    DISCARDED = "discarded", "Discarded"
+
+
+# The statuses whose period counts: no vendor key in two of these with overlapping periods (vendor_reviews checks it under its lock).
+LIVE_REVIEW_STATUSES = (ReviewStatus.DRAFT, ReviewStatus.APPROVED)
+
+
+class Rating(models.TextChoices):
+    MET = "met", "Met"
+    PARTLY = "partly", "Partly met"
+    NOT_MET = "not_met", "Not met"
+    NA = "na", "Not applicable"
+
+
+# The criteria the reviewer rates (field, label, what it covers): the review's fixed rating fields, the form, the page, the print, and
+# the history read this tuple.
+CRITERIA = (
+    ("rating_timeliness", "Timeliness", "Time with the vendor, PMs assigned to it done on time, the vendor's reported response."),
+    ("rating_quality", "Quality of work", "Repeat repairs, checks after repair, the vendor's reported uptime."),
+    ("rating_documentation", "Documentation", "Service report numbers, engineers named, checks and findings recorded."),
+    ("rating_staff_evidence", "Staff evidence", "Training or the vendor's attestation on file for the work it did."),
+    ("rating_user_satisfaction", "User satisfaction", "What the units and CE staff who work with the vendor report."),
+    ("rating_invoices", "Invoices", "Invoices accurate and on time."),
+)
+CRITERIA_FIELDS = tuple(f for f, _label, _help in CRITERIA)
+
+
+class StatedInContract(models.TextChoices):
+    YES = "yes", "Yes"
+    PARTLY = "partly", "Partly"
+    NO = "no", "No"
+
+
+class Overall(models.TextChoices):
+    MEETS = "meets", "Meets expectations"
+    PARTIALLY = "partially", "Partially meets expectations"
+    DOES_NOT_MEET = "does_not_meet", "Does not meet expectations"
+
+
+class Decision(models.TextChoices):
+    RENEW = "renew", "Renew"
+    RENEW_CHANGES = "renew_changes", "Renew with changes"
+    CORRECTIVE_PLAN = "corrective_plan", "Corrective action plan"
+    REPLACE = "replace", "Replace or end the contract"
+    IN_HOUSE = "in_house", "Bring the service in-house"
+
+
+class PlanResult(models.TextChoices):
+    MET = "met", "Plan met"
+    NOT_MET = "not_met", "Plan not met"
+    CONTRACT_ENDED = "contract_ended", "Contract ended"
+
+
+class ReportBody(models.TextChoices):
+    QUALITY = "quality", "Quality oversight (QAPI)"
+    GOVERNING = "governing", "Governing body"
+
+
+class VendorReview(TenantModel):
+    number = models.CharField(max_length=20, editable=False, help_text="VR-26-0001 (Sequence 'vendor-review-<yy>', yy from the period's end)")
+    vendor_names = models.JSONField(default=list, help_text="The vendor's names as work orders and contracts spell it, the first shown")
+    vendor_keys = models.JSONField(default=list, editable=False, help_text="apps.vendors.rules.vendor_key of each name: services only")
+    vendor_key = models.CharField(max_length=120, editable=False, help_text="The first name's key (the approved review's constraint)")
+    period_start = models.DateField()
+    period_end = models.DateField(help_text="12 months after the start, less a day; ended before the review is drafted")
+    status = models.CharField(max_length=12, choices=ReviewStatus.choices, default=ReviewStatus.DRAFT, editable=False)
+    snapshot = models.ForeignKey("VendorReviewSnapshot", on_delete=models.PROTECT, null=True, blank=True, related_name="+", editable=False)
+    # The reviewer's ratings (CRITERIA) and the rest of the review
+    rating_timeliness = models.CharField(max_length=10, choices=Rating.choices, blank=True)
+    rating_quality = models.CharField(max_length=10, choices=Rating.choices, blank=True)
+    rating_documentation = models.CharField(max_length=10, choices=Rating.choices, blank=True)
+    rating_staff_evidence = models.CharField(max_length=10, choices=Rating.choices, blank=True)
+    rating_user_satisfaction = models.CharField(max_length=10, choices=Rating.choices, blank=True)
+    rating_invoices = models.CharField(max_length=10, choices=Rating.choices, blank=True)
+    stated_in_contract = models.CharField("expectations stated in the contract", max_length=10, choices=StatedInContract.choices, blank=True)
+    # The vendor's own reported figures (Cadence never computes uptime or response from its dates)
+    uptime_target_pct = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    uptime_reported_pct = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    uptime_lowest_pct = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, help_text="The lowest system's")
+    systems_below = models.PositiveSmallIntegerField(null=True, blank=True, help_text="Systems below the guarantee")
+    systems_total = models.PositiveSmallIntegerField(null=True, blank=True)
+    response_target_pct = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    response_reported_pct = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    vendor_report_reference = models.CharField(max_length=40, blank=True, validators=[REPORT_REFERENCE_VALIDATOR])
+    overall = models.CharField(max_length=15, choices=Overall.choices, blank=True)
+    decision = models.CharField(max_length=20, choices=Decision.choices, blank=True)
+    plan_due_on = models.DateField(null=True, blank=True)
+    plan_result = models.CharField(max_length=15, choices=PlanResult.choices, blank=True, editable=False)
+    plan_closed_on = models.DateField(null=True, blank=True, editable=False)
+    summary = models.TextField(blank=True)
+    # The sign-off
+    signed_on = models.DateField(null=True, blank=True, editable=False)
+    approver_name = models.CharField(max_length=120, blank=True)
+    approver_title = models.CharField(max_length=120, blank=True)
+    signed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+", editable=False,
+                                  help_text="Who recorded the sign-off in Cadence")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    history = HistoricalRecords()
+
+    class Meta:
+        ordering = ["-period_end", "number"]
+        constraints = [
+            models.UniqueConstraint(fields=["tenant", "number"], name="uniq_vendor_review_number_per_tenant"),
+            models.UniqueConstraint(fields=["tenant", "vendor_key", "period_start"], condition=models.Q(status="approved"),
+                                    name="uniq_approved_vendor_review_per_period"),
+        ]
+        indexes = [models.Index(fields=["tenant", "status"]), models.Index(fields=["tenant", "vendor_key"])]
+
+    def __str__(self):
+        return self.number
+
+    @property
+    def vendor(self) -> str:
+        return (self.vendor_names or [""])[0]
+
+
+class VendorReviewSnapshot(TenantModel):
+    """The figures for a review's vendor and period as taken on one day (apps.evaluations.vendor_figures.snapshot). Immutable and without
+    history: a refresh adds a new row and the review points at it."""
+    review = models.ForeignKey(VendorReview, on_delete=models.CASCADE, related_name="snapshots")
+    taken_at = models.DateTimeField()
+    taken_on = models.DateField()
+    taken_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    data = models.JSONField(default=dict, help_text='{"schema": 1, ...}: vendor_figures.snapshot\'s shape')
+
+    class Meta:
+        ordering = ["-taken_at"]
+
+    def __str__(self):
+        return f"{self.review.number} figures {self.taken_on}"
+
+
+class VendorReviewReport(TenantModel):
+    """One committee a signed-off review was reported to, as its minutes record it (the quality program, the governing body)."""
+    review = models.ForeignKey(VendorReview, on_delete=models.PROTECT, related_name="reports")
+    body = models.CharField(max_length=12, choices=ReportBody.choices)
+    meeting_on = models.DateField()
+    minutes_reference = models.CharField(max_length=40, blank=True, validators=[MINUTES_VALIDATOR])
+    recorded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    history = HistoricalRecords()
+
+    class Meta:
+        ordering = ["meeting_on", "created_at"]
+
+    def __str__(self):
+        return f"{self.review.number} · report"

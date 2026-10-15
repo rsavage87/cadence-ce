@@ -438,7 +438,8 @@ def test_the_cover_names_what_is_still_not_covered():
     assert "The competence of contracted vendor staff" not in NOT_COVERED
     assert ("Vendor staff's badges, immunizations, and background checks (the facility's vendor credentialing system), and the vendors' own "
             "training records and competence assessments behind their statements") in NOT_COVERED
-    assert "The yearly evaluation of each contracted service, and contracted services outside clinical engineering" in NOT_COVERED
+    assert "Contracted services outside clinical engineering" in NOT_COVERED  # slice 34 reviews each contracted service vendor
+    assert not any("yearly evaluation of each contracted service" in item for item in NOT_COVERED)
 
 
 def test_the_staff_section_points_vendor_service_here(today, vent):

@@ -30,3 +30,28 @@ def can_approve(user) -> bool:
 
 def can_see_figures(user) -> bool:
     return can_view(user) and user.has_level(FIGURES_MODULE, Level.VIEW)
+
+
+# --- slice 34: vendor reviews ---------------------------------------------------------------------------------------------------------
+# A vendor review is an evaluation (Edit drafts and writes, records a corrective plan's result; Approve signs off, withdraws, records the
+# committees it was reported to) of a contracted service, so seeing one also needs Contracts View, the screen it lives on. The figures
+# need Reports View and Work orders View too, all or nothing (apps.evaluations.vendor_figures). Never a scoped user: a vendor's account
+# never sees its review.
+def _contracts(user) -> bool:
+    return user.has_level(Module.CONTRACTS, Level.VIEW)
+
+
+def can_view_reviews(user) -> bool:
+    return can_view(user) and _contracts(user)
+
+
+def can_edit_reviews(user) -> bool:
+    return can_edit(user) and _contracts(user)
+
+
+def can_approve_reviews(user) -> bool:
+    return can_approve(user) and _contracts(user)
+
+
+def can_see_vendor_figures(user) -> bool:
+    return can_view_reviews(user) and user.has_level(FIGURES_MODULE, Level.VIEW) and user.has_level(Module.WORKORDERS, Level.VIEW)

@@ -17,7 +17,7 @@ class Module(models.TextChoices):
     USERS = "users", "Users and access"
     SETTINGS = "settings", "Settings"
     INCIDENTS = "incidents", "Incidents"  # slice 28: device incidents (apps.incidents)
-    EVALUATIONS = "evaluations", "Program evaluation"  # slice 32: the program's annual evaluation (apps.evaluations)
+    EVALUATIONS = "evaluations", "Evaluations"  # slice 32: the program's annual evaluation; slice 34: vendor reviews (apps.evaluations)
 
 
 class Level(models.IntegerChoices):
