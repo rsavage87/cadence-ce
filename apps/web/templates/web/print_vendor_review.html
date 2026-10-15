@@ -1,0 +1,138 @@
+{% extends "web/print_base.html" %}
+{% comment %}A vendor review for the contract owner's file (slice 34, views_vendor_reviews.vendor_review_print): the stamp ("Draft", "Signed
+   off <day> by <name, title>", withdrawn, discarded) and who recorded the sign-off in Cadence; the vendor's names and the period; the
+   figures through their gate (vendor_figures.cut: a copy printed by someone who cannot see them says they are left out); the ratings,
+   the vendor's own figures, the overall rating, the decision and its plan, the summary; the committees it was reported to. Each sheet
+   repeats the review, the period, and the stamp. Cadence rates nothing: the figures come from its records of the vendor's work, dated
+   when entered.{% endcomment %}
+{% block title %}{{ r.number }} vendor review{% endblock %}
+{% block page_style %}<style>
+@page{size:letter;margin:.5in}
+.vrp-run{font-size:10.5px;color:var(--muted);margin:0 0 10px;padding-bottom:4px;border-bottom:1px solid var(--line-2)}
+.vrp-stamp{display:inline-block;font-size:15px;font-weight:700;letter-spacing:.02em;padding:4px 12px;border:2px solid var(--ink);border-radius:4px;margin:0 0 12px}
+.vrp-stamp.draft{border-style:dashed;color:var(--ink-2)}
+.vrp-stamp.approved{color:var(--ok);border-color:var(--ok)}
+.vrp-stamp.withdrawn,.vrp-stamp.discarded{color:var(--muted);border-color:var(--muted)}
+.vrp-out{display:block;font-size:13px;font-weight:700;color:var(--bad);border:2px solid var(--bad);border-radius:4px;padding:4px 12px;margin:0 0 12px}
+.vrp-cover h1{font-size:22px;margin-bottom:4px}
+.vrp-sub{color:var(--ink-2);margin-bottom:14px}
+.vrp-cover dl.kv{margin:10px 0 12px}
+.vrp-hint{color:var(--muted);font-size:11px;margin:4px 0 8px}
+.vrp-lines{padding-left:18px;margin:6px 0}
+.vrp-lines li{margin:3px 0}
+.vrp-prose{margin:2px 0 10px}
+.vrp-none{color:var(--muted);margin:2px 0 10px}
+table.vrp td{overflow-wrap:anywhere}
+table.vrp td small,table.vrp th small{display:block;font-size:10.5px;font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0}
+table.vrp td.fig{width:40%}
+table.vrp td.val{white-space:nowrap}
+table.vrp ul{margin:0;padding-left:14px}
+table.vrp tr.vrp-grp th{font-size:12.5px;text-transform:none;letter-spacing:0;color:var(--ink);padding-top:12px;border-bottom:1.5px solid var(--ink)}
+table.vrp thead{display:table-header-group}
+</style>{% endblock %}
+{% block bar_title %}{{ r.number }} · {{ r.vendor }} · {{ period }}{% endblock %}
+{% block bar_hint %}The review for the contract's file. Print it, or choose Save as PDF in the print dialog.{% endblock %}
+{% block sheets %}
+<main>
+<section class="sheet vrp-cover">
+  <p class="vrp-stamp {{ r.status }}">{{ stamp }}</p>
+  {% if not fig.shown %}<p class="vrp-out">Figures left out of this copy</p>{% endif %}
+  <h1>Contracted service review</h1>
+  <p class="vrp-sub">{{ request.tenant.name }} · Clinical Engineering · {{ r.vendor }} · {{ period }}</p>
+  <dl class="kv">
+    <div><dt>Facility</dt><dd>{{ request.tenant.name }}</dd></div>
+    <div><dt>Vendor</dt><dd>{{ r.vendor_names|join:", " }}</dd></div>
+    <div><dt>Period</dt><dd>{{ period }}</dd></div>
+    <div><dt>Review</dt><dd>{{ r.number }}</dd></div>
+    <div><dt>Status</dt><dd>{{ r.get_status_display }}</dd></div>
+    <div><dt>Figures taken</dt><dd>{{ fig.taken_on|default:"Not taken" }}</dd></div>
+    {% if r.signed_on %}<div><dt>Signed off</dt><dd>{{ r.signed_on|date:"M j, Y" }}{% if approver %} by {{ approver }}{% endif %}</dd></div>
+    <div><dt>Recorded in Cadence by</dt><dd>{{ recorded_by|default:"—" }}</dd></div>{% endif %}
+    <div><dt>Previous review</dt><dd>{% if previous %}{{ previous.r.number }}, {{ previous.period }}: {{ previous.overall }}; {{ previous.decision }}{% if previous.plan %} ({{ previous.plan.words }}){% endif %}{% else %}None signed off before{% endif %}</dd></div>
+  </dl>
+  <p class="vrp-hint">{{ figures_note }} The ratings and the decision are the reviewer's.</p>
+
+  <h2>Overall and decision</h2>
+  <table class="vrp">
+    <tbody>
+      <tr><td class="fig">Overall</td><td>{{ r.get_overall_display|default:"Not chosen" }}</td></tr>
+      <tr><td class="fig">Decision</td><td>{{ r.get_decision_display|default:"Not chosen" }}</td></tr>
+      {% if plan %}<tr><td class="fig">Corrective action plan</td><td>{{ plan.words }}</td></tr>{% endif %}
+    </tbody>
+  </table>
+
+  <h2>Ratings</h2>
+  <table class="vrp">
+    <thead><tr><th>Criterion</th><th>Rating</th></tr></thead>
+    <tbody>
+      {% for b in blocks %}{% if b.key == "ratings" %}{% for x in b.read.rows %}<tr><td class="fig">{{ x.label }}<small>{{ x.help }}</small></td><td>{{ x.words|default:"Not rated" }}</td></tr>{% endfor %}
+      <tr><td class="fig">Expectations stated in the contract</td><td>{{ b.read.stated|default:"Not recorded" }}</td></tr>{% endif %}{% endfor %}
+    </tbody>
+  </table>
+
+  <h2>The vendor's own figures</h2>
+  {% for b in blocks %}{% if b.key == "reported" %}{% if b.read.lines %}<ul class="vrp-lines">{% for line in b.read.lines %}<li>{{ line }}</li>{% endfor %}</ul>{% else %}<p class="vrp-none">Not recorded.</p>{% endif %}{% endif %}{% endfor %}
+  <p class="vrp-hint">As the vendor's own uptime and response reports give them: Cadence never computes uptime or response from its dates.</p>
+
+  <h2>Summary</h2>
+  {% if r.summary %}<div class="vrp-prose">{{ r.summary|linebreaksbr }}</div>{% else %}<p class="vrp-none">Not written.</p>{% endif %}
+
+  <h2>Reported to</h2>
+  {% if reports %}
+  <table class="vrp">
+    <thead><tr><th>Committee</th><th>Meeting</th><th>Minutes</th><th>Recorded by</th></tr></thead>
+    <tbody>{% for x in reports %}<tr><td>{{ x.body }}</td><td class="val">{{ x.meeting }}</td><td>{{ x.rep.minutes_reference|default:"—" }}</td><td>{{ x.rep.recorded_by|default:"—" }}</td></tr>{% endfor %}</tbody>
+  </table>
+  {% else %}<p class="vrp-none">None recorded.</p>{% endif %}
+</section>
+
+<section class="sheet">
+  <p class="vrp-run">{{ r.number }} · {{ r.vendor }} · {{ period }} · {{ stamp }}{% if fig.taken %} · figures taken {{ fig.taken_on }}{% endif %}</p>
+  <h1>Figures</h1>
+  {% if not fig.shown %}
+  <p>Left out of this copy: the figures are shown only with {{ fig.needs }}, and {{ request.user }}, who printed it, does not have them all. Someone who has them should print the copy for the file.</p>
+  {% elif not fig.taken %}
+  <p class="vrp-none">No figures taken.</p>
+  {% else %}
+  <p class="vrp-hint">{{ figures_note }}{% if fig.names %} The vendor as Cadence writes it: {{ fig.names|join:", " }}.{% endif %}{% if fig.as_of %} PMs judged by the windows in force on {{ fig.as_of }}{% if fig.window_high %} (life support and high risk: {{ fig.window_high|lower }}; medium and low risk: {{ fig.window_other|lower }}){% endif %}.{% endif %}{% if fig.provisional %} Provisional until {{ fig.provisional }}: repeat repairs and PMs of the period could still change when the figures were taken.{% endif %}</p>
+  {% if fig.groups %}
+  <table class="vrp">
+    <thead><tr><th>Figure</th><th class="num">Value</th><th>Breakdown</th></tr></thead>
+    {% for g in fig.groups %}
+    <tbody>
+      <tr class="vrp-grp"><th colspan="3" scope="rowgroup">{{ g.label }}</th></tr>
+      {% for f in g.rows %}<tr>
+        <td class="fig">{{ f.label }}{% if f.taken %} (on {{ fig.taken_on }}){% endif %}{% if f.rule %}<small>{{ f.rule }}</small>{% endif %}</td>
+        <td class="num val">{{ f.display }}{% if f.detail %}<small>{{ f.detail }}</small>{% endif %}</td>
+        <td>{% if f.splits %}<ul>{% for s in f.splits %}<li>{{ s.label }}: {{ s.display }}{% if s.detail %} ({{ s.detail }}){% endif %}</li>{% endfor %}</ul>{% else %}—{% endif %}</td>
+      </tr>{% endfor %}
+    </tbody>
+    {% endfor %}
+  </table>
+  {% endif %}
+  <h2>Contracts in the period, as Cadence held them</h2>
+  {% if fig.contracts %}
+  <table class="vrp">
+    <thead><tr><th>Contract</th><th>Type and coverage</th><th>Term</th><th>Counted for</th><th class="num">Days</th><th class="num">Cost for the period</th><th class="num">Devices today</th></tr></thead>
+    <tbody>{% for c in fig.contracts %}{% for v in c.versions %}<tr><td>{% if forloop.first %}{{ c.reference }}{% if c.deleted %}<small>Deleted since</small>{% endif %}{% else %}<small>then</small>{% endif %}</td><td>{{ v.type_label }}<small>{{ v.coverage_label }}</small></td><td>{{ v.term }}</td><td>{{ v.counted }}</td><td class="num">{{ v.days }}</td><td class="num">${{ v.cost|floatformat:"2g" }}</td><td class="num">{% if forloop.first %}{% if c.devices_today is not None %}{{ c.devices_today }}{% else %}—{% endif %}{% endif %}</td></tr>{% endfor %}{% endfor %}</tbody>
+  </table>
+  {% else %}<p class="vrp-none">No contract naming the vendor was in force on any day of the period.</p>{% endif %}
+  {% if fig.repeats %}
+  <h2>Repeat repairs to check</h2>
+  <table class="vrp">
+    <thead><tr><th>The vendor's repair</th><th>Completed</th><th>The later repair</th><th>Opened</th><th class="num">Days after</th><th>What was found</th></tr></thead>
+    <tbody>{% for p in fig.repeats %}<tr><td>{{ p.repair }}</td><td class="val">{{ p.completed }}</td><td>{{ p.later }}</td><td class="val">{{ p.opened }}</td><td class="num">{{ p.days }}</td><td>{{ p.finding_label }}</td></tr>{% endfor %}</tbody>
+  </table>
+  {% endif %}
+  {% if fig.not_recorded %}
+  <h2>Not recorded in Cadence</h2>
+  <ul class="vrp-lines">{% for line in fig.not_recorded %}<li>{{ line }}</li>{% endfor %}</ul>
+  {% endif %}
+  {% if fig.notes %}
+  <h2>How to read them</h2>
+  <ul class="vrp-lines">{% for line in fig.notes %}<li>{{ line }}</li>{% endfor %}</ul>
+  {% endif %}
+  {% endif %}
+</section>
+</main>
+{% endblock %}

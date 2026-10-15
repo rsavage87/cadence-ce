@@ -1,0 +1,28 @@
+{% load web %}
+{% comment %}The corrective action plan's result (slice 34, views_vendor_reviews.vendor_review_plan; vendor_reviews.record_plan_result,
+   Edit): met, not met, or the contract ended, and the day it closed (from the sign-off to today). Recording again replaces it (its
+   history keeps the earlier); Clear the result (a separate form) reopens the plan when the result was entered in error.{% endcomment %}
+<div class="modal-h"><h2>The plan's result · {{ r.number }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+<form id="vr-plan-form" hx-post="{{ action }}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" method="post" action="{{ action }}" novalidate>{% csrf_token %}
+  <div class="form">
+    <p class="full hint">{{ r.vendor }}'s corrective action plan{% if plan %}: {{ plan.short }}{% endif %}. Record how it ended, closed on a day from the sign-off ({{ signed }}) to today.</p>
+    {% if form.non_field_errors %}<div class="full">{% for e in form.non_field_errors %}<span class="err" role="alert">{{ e }}</span>{% endfor %}</div>{% endif %}
+    <label>Result
+      <select name="plan_result"{% if form.plan_result.errors %} aria-invalid="true"{% endif %}>
+        <option value="">Choose the result</option>
+        {% for v, l in results %}<option value="{{ v }}"{% if form.is_bound %}{% if v == form.data.plan_result %} selected{% endif %}{% elif v == form.initial.plan_result %} selected{% endif %}>{{ l }}</option>{% endfor %}
+      </select>
+      {% for e in form.plan_result.errors %}<span class="err" role="alert">{{ e }}</span>{% endfor %}
+    </label>
+    <label>Closed on<input type="date" name="plan_closed_on" value="{% if form.is_bound %}{{ form.data.plan_closed_on }}{% else %}{{ form.initial.plan_closed_on }}{% endif %}" max="{{ today|date:'Y-m-d' }}"{% if form.plan_closed_on.errors %} aria-invalid="true"{% endif %}>
+      {% for e in form.plan_closed_on.errors %}<span class="err" role="alert">{{ e }}</span>{% endfor %}
+    </label>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Save the result</button></div>
+</form>
+{% if r.plan_result %}
+<form class="vr-clear" hx-post="{{ action }}" hx-target="#modal-card" method="post" action="{{ action }}" hx-confirm="Clear the plan's result, entered in error? The plan is open again; its history keeps the result.">{% csrf_token %}
+  <input type="hidden" name="plan_result" value=""><input type="hidden" name="plan_closed_on" value="">
+  <div class="modal-f"><span class="hint">Entered in error?</span><button class="btn danger" type="submit">Clear the result</button></div>
+</form>
+{% endif %}

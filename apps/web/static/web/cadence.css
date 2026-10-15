@@ -1347,6 +1347,112 @@ td small.tmp-late{color:var(--crit)}
   .wo-finding-what .btn{min-height:44px}
 }
 
+/* slice 34: vendor reviews (Contracts, Reviews: web/vendor_reviews.html, _vendor_review_*.html). The tab's table (the vendor's names,
+   contracts, and plan lines small under their cell; cards on a phone), its filters; the review's page reuses slice 32's .ev layout: the
+   head's facts, the figures (one table, a row group per group; each figure's breakdown a short list; the counting rules shown by the
+   switch: CSS :has, always without it), the contracts and repeat repairs tables, the reviewer's blocks (the ratings as a list with their
+   chips; the inputs in a grid, the summary full width), and the modals (the spellings and periods as checkboxes and radios). The
+   contract drawer's review line. Theme tokens only. */
+.vr-actions a.btn{text-decoration:none}
+.vr-shows{margin:0 0 10px}
+.vr-shows .vr-n{font-variant-numeric:tabular-nums;color:var(--ink-3);margin-left:2px}
+.vr-shows .pill.active .vr-n{color:inherit}
+.vr-only,.vr-refusal{margin-bottom:12px}
+.vr-tbl td{vertical-align:top}
+.vr-tbl td.vr-wrap{white-space:normal;overflow-wrap:anywhere;min-width:140px}
+.vr-tbl td small{display:block;font-size:12px;color:var(--ink-3);margin-top:2px;white-space:normal}
+.vr-tbl td.nw{white-space:nowrap}
+.vr-tbl .vr-name{font-weight:600}
+.vr-tbl .vr-ct{display:block}
+.vr-tbl .vr-ct+.vr-ct{margin-top:3px}
+.vr-tbl small.vr-plan{color:var(--ink-2)}
+.vr-tbl small.vr-late,.vr-late{color:var(--crit);font-weight:500}
+.vr-tbl td.vr-act{text-align:right;white-space:nowrap}
+.vr-spelling,.vr-foot{margin-top:8px}
+.vr-new-panel{margin-bottom:14px}
+:is(.vr-new-form,.vr-batch-form) fieldset{border:0;padding:0;margin:0;min-width:0;display:flex;flex-direction:column;gap:6px;font-size:12.5px;color:var(--ink-2)}
+:is(.vr-new-form,.vr-batch-form) legend{padding:0;margin-bottom:4px;font-size:12.5px;color:var(--ink-2)}
+.vr-new-form fieldset input[type=text]{font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line-2);border-radius:6px;padding:7px 9px;width:100%;min-width:0}
+.vr-other-h{margin-top:4px}
+.vr-none{margin:0}
+.vr-check,.vr-radio,.form label.vr-check,.form label.vr-radio{display:flex;flex-direction:row;align-items:flex-start;gap:8px;font-size:13px;color:var(--ink);cursor:pointer;min-width:0}
+.vr-check input,.vr-radio input[type=radio],.form .vr-check input,.form .vr-radio input[type=radio]{width:auto;margin:3px 0 0;flex:none}
+.vr-check span,.vr-radio span{min-width:0;overflow-wrap:anywhere}
+.vr-check small,.vr-radio small{display:block;font-size:12px;color:var(--ink-3)}
+.vr-radio-other{flex-wrap:wrap}
+.vr-radio-other input[type=date],.form .vr-radio-other input[type=date]{width:auto;padding:5px 8px;margin-left:auto}
+.vr-linkbtn{font:inherit;color:var(--accent);background:none;border:0;padding:0;cursor:pointer;text-decoration:underline}
+.vr-batch{max-height:320px;overflow:auto}
+.vr-batch-row{padding:6px 0;border-top:1px solid var(--line)}
+.vr-batch-row:first-of-type{border-top:0}
+.vr-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px 18px;margin:0;font-size:13px}
+.vr-facts div{min-width:0}
+.vr-facts dt{font-size:11.5px;color:var(--ink-3)}
+.vr-facts dd{margin:0;overflow-wrap:anywhere}
+.vr-facts dd small{display:block;font-size:12px;color:var(--ink-3)}
+.vr-sign-refusal,.vr-refresh-refusal{margin:0}
+.vr-gate{margin:0}
+.vr-fig-note{margin-bottom:6px}
+.vr-pm-line{margin:0;flex:1 1 320px}
+.vr-figs col.vr-c-fig{width:44%}
+.vr-figs col.vr-c-val{width:16%}
+.vr-figs col.vr-c-split{width:40%}
+.vr-figs td.vr-splits{white-space:normal;font-size:12.5px;color:var(--ink-2)}
+.vr-figs td.vr-splits ul{list-style:none;margin:0;padding:0;display:grid;gap:2px}
+.vr-figs small.vr-rule{display:none;margin-top:2px;max-width:60ch}
+@supports selector(:has(*)){
+  #vr-figures:has(.vr-rules-on:checked) .vr-figs small.vr-rule{display:block}
+}
+@supports not selector(:has(*)){
+  .vr-figs small.vr-rule{display:block}
+  .vr-figs-sec .ev-rules-tog{display:none}
+}
+.vr-cts td,.vr-reps td{vertical-align:top}
+.vr-cts td small{display:block;font-size:11.5px;color:var(--ink-3)}
+.vr-field{min-width:0}
+.vr-ratings,.vr-lines{list-style:none;margin:0;padding:0}
+.vr-ratings li{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:7px 0;border-top:1px solid var(--line);font-size:13px}
+.vr-ratings li:first-child{border-top:0;padding-top:2px}
+.vr-crit{min-width:0;overflow-wrap:anywhere}
+.vr-crit small{display:block;font-size:12px;color:var(--ink-3)}
+.vr-lines li{font-size:13px;padding:2px 0;overflow-wrap:anywhere}
+.vr-decision{margin-top:2px}
+.vr-stray{margin:6px 0 0;color:var(--warn)}
+.vr-privacy{margin:0}
+.vr-inputs{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+.vr-inputs label{display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--ink-2);min-width:0}
+.vr-inputs label.vr-wide{grid-column:1/-1}
+.vr-inputs :is(textarea,input,select){font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line-2);border-radius:6px;padding:7px 9px;width:100%;min-width:0}
+.vr-inputs textarea{resize:vertical;min-height:140px}
+.vr-inputs :is(textarea,input,select)[aria-invalid="true"]{border-color:var(--crit)}
+.vr-blockers{margin:4px 0 0;padding-left:18px}
+.vr-clear .modal-f{justify-content:flex-end;align-items:center;gap:8px;border-top:0;padding-top:0}
+.vs-ct-line.vr-ct-line.warn a{color:var(--warn)}
+@media (max-width:760px){
+  /* the vendors as cards on a phone: the vendor across, then each cell with its heading */
+  .vr-tbl,.vr-tbl tbody,.vr-tbl tr,.vr-tbl td{display:block}
+  .vr-tbl thead{display:none}
+  .vr-tbl tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 12px;padding:10px 12px;border-bottom:1px solid var(--line)}
+  .vr-tbl td{padding:0;border:0;white-space:normal;min-width:0}
+  .vr-tbl td.vr-wrap{min-width:0}
+  .vr-tbl td:first-child{grid-column:1/-1}
+  .vr-tbl td[data-label]::before{content:attr(data-label);display:block;font-size:11px;color:var(--ink-3)}
+  .vr-tbl td:first-child::before{display:none}
+  .vr-tbl td.vr-act{grid-column:1/-1;text-align:left}
+  .vr-tbl td.vr-act .btn,.vr-shows .pill{min-height:40px;display:inline-flex;align-items:center}
+  .vr-figs,.vr-figs tbody,.vr-figs tr,.vr-figs td,.vr-figs th{display:block}
+  .vr-figs thead,.vr-figs colgroup{display:none}
+  .vr-figs tr{display:grid;grid-template-columns:minmax(0,1fr);gap:4px;padding:9px 12px;border-bottom:1px solid var(--line)}
+  .vr-figs tr.ev-grp-h{display:block;padding:0}
+  .vr-figs td{padding:0;border:0;text-align:left;white-space:normal}
+  .vr-figs td[data-label]::before{content:attr(data-label);display:block;font-size:11px;color:var(--ink-3)}
+  .vr-inputs{grid-template-columns:1fr}
+  .vr-inputs :is(textarea,input,select),.vr-new-form fieldset input[type=text]{font-size:16px;min-height:44px}
+  .vr-check,.vr-radio,.form label.vr-check,.form label.vr-radio{min-height:40px;align-items:center}
+  .vr-radio-other input[type=date],.form .vr-radio-other input[type=date]{margin-left:0;width:100%;min-height:44px;font-size:16px}
+  .vr-facts{grid-template-columns:1fr}
+}
+
 /* Slice 11: printing app pages */
 /* What the browser prints of an app page (the Overview's Export button calls window.print(); any other screen prints from the
    browser's menu): the page's content on white, in the light theme whatever the screen shows, with chart and chip colours kept.

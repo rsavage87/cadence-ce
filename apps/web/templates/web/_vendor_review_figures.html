@@ -1,0 +1,86 @@
+{% comment %}The review's figures (slice 34, views_vendor_reviews.figures_context over vendor_figures.cut): all of them, or none for a
+   reader without Evaluations, Contracts, Reports, and Work orders View (said in words). By group, each figure with its value, what it is
+   out of, and what holds something of its breakdown; each counting rule small under its label, shown by the "How each figure is counted"
+   switch (CSS :has; always shown without it); the contracts as Cadence held them; the repeat repairs to check; what Cadence does not
+   record; how to read them. Nothing here is rated. Refresh figures (Edit, a draft) takes them again, or says why this person cannot.{% endcomment %}
+<section id="vr-figures" class="panel ev-sec vr-figs-sec" aria-labelledby="vr-figures-h">
+  <div class="panel-h">
+    <h2 id="vr-figures-h">Figures</h2>
+    <span class="sub">{% if fig.taken %}Taken {{ fig.taken_on }}{% if fig.taken_by and fig.shown %} by {{ fig.taken_by }}{% endif %}{% else %}Not taken yet{% endif %}</span>
+    {% if acts.refresh and not refresh_refusal %}<div class="actions"><button class="btn sm" type="button" hx-post="{% url 'web:vendor_review_refresh' r.number %}" hx-target="#vr-body" hx-swap="outerHTML" hx-disabled-elt="this" hx-confirm="Take the figures for {{ period }} again, as of today? The figures shown now are replaced.">Refresh figures</button></div>{% endif %}
+  </div>
+  <div class="panel-b">
+    {% if refresh_refusal %}<p class="note vr-refresh-refusal">{{ refresh_refusal }}</p>{% endif %}
+    {% if not fig.shown %}
+    <div class="note warn vr-gate" role="status">The figures are shown only with {{ fig.needs }}: your role does not have them all. The ratings and the decision below are the reviewer's.</div>
+    {% elif not fig.taken %}
+    <div class="empty ev-empty">No figures taken.</div>
+    {% else %}
+    <p class="hint vr-fig-note">{{ figures_note }}{% if fig.names %} The vendor as Cadence writes it: {{ fig.names|join:", " }}.{% endif %}</p>
+    <div class="ev-figs-bar">
+      {% if fig.as_of %}<p class="hint vr-pm-line">PMs judged by the windows in force on {{ fig.as_of }}{% if fig.window_high %} (life support and high risk: {{ fig.window_high|lower }}; medium and low risk: {{ fig.window_other|lower }}){% endif %}{% if fig.target_other %}; the facility's PM target then was 100% for life support and high risk and {{ fig.target_other }} for the rest{% endif %}.</p>{% endif %}
+      <label class="tog ev-rules-tog"><input type="checkbox" class="vr-rules-on"><span class="sw"></span>How each figure is counted</label>
+    </div>
+    {% if fig.groups %}
+    <div class="tbl-wrap ev-figs-wrap">
+      <table class="ev-figs vr-figs">
+        <colgroup><col class="vr-c-fig"><col class="vr-c-val"><col class="vr-c-split"></colgroup>
+        <thead><tr><th>Figure</th><th class="num">Value</th><th>Breakdown</th></tr></thead>
+        {% for g in fig.groups %}
+        <tbody class="ev-grp" id="vr-g-{{ g.key }}">
+          <tr class="ev-grp-h"><th colspan="3" scope="rowgroup">{{ g.label }}</th></tr>
+          {% for f in g.rows %}<tr id="vr-fig-{{ f.key }}">
+            <td class="ev-wrap"><span class="ev-ind">{{ f.label }}</span>{% if f.taken %} <span class="muted">on {{ fig.taken_on }}</span>{% endif %}{% if f.rule %}<small class="vr-rule">{{ f.rule }}</small>{% endif %}</td>
+            <td class="num" data-label="Value"><b>{{ f.display }}</b>{% if f.detail %}<small>{{ f.detail }}</small>{% endif %}</td>
+            <td class="vr-splits" data-label="Breakdown">{% if f.splits %}<ul>{% for s in f.splits %}<li>{{ s.label }}: <b>{{ s.display }}</b>{% if s.detail %} <span class="muted">({{ s.detail }})</span>{% endif %}</li>{% endfor %}</ul>{% else %}<span class="muted">—</span>{% endif %}</td>
+          </tr>{% endfor %}
+        </tbody>
+        {% endfor %}
+      </table>
+    </div>
+    {% endif %}
+
+    <h3 class="ev-group">Contracts in the period, as Cadence held them</h3>
+    {% if fig.contracts %}
+    <div class="tbl-wrap ev-figs-wrap">
+      <table class="ev-figs vr-cts">
+        <thead><tr><th>Contract</th><th>Type and coverage</th><th>Term</th><th>Counted for</th><th class="num">Days</th><th class="num">Cost for the period</th><th class="num">Devices today</th></tr></thead>
+        <tbody>{% for c in fig.contracts %}{% for v in c.versions %}<tr>
+          <td class="ev-wrap">{% if forloop.first %}<b>{{ c.reference }}</b>{% if c.deleted %} <span class="chip neutral">Deleted since</span>{% endif %}{% else %}<span class="muted">then</span>{% endif %}{% if v.vendor %}<small>{{ v.vendor }}</small>{% endif %}</td>
+          <td class="ev-wrap">{{ v.type_label }}<small>{{ v.coverage_label }}</small></td>
+          <td class="ev-wrap">{{ v.term }}</td>
+          <td class="ev-wrap">{{ v.counted }}</td>
+          <td class="num">{{ v.days }}</td>
+          <td class="num">${{ v.cost|floatformat:"2g" }}<small>of ${{ v.annual_cost|floatformat:"2g" }} a year</small></td>
+          <td class="num">{% if forloop.first %}{% if c.devices_today is not None %}{{ c.devices_today }}{% else %}—{% endif %}{% endif %}</td>
+        </tr>{% endfor %}{% endfor %}</tbody>
+      </table>
+    </div>
+    {% else %}<p class="muted ev-none">No contract naming the vendor was in force on any day of the period.</p>{% endif %}
+
+    {% if fig.repeats %}
+    <h3 class="ev-group">Repeat repairs to check</h3>
+    <div class="tbl-wrap ev-figs-wrap">
+      <table class="ev-figs vr-reps">
+        <thead><tr><th>The vendor's repair</th><th>Completed</th><th>The later repair</th><th>Opened</th><th class="num">Days after</th><th>What was found</th></tr></thead>
+        <tbody>{% for p in fig.repeats %}<tr>
+          <td>{% if p.repair_url %}<a class="tag" href="{{ p.repair_url }}">{{ p.repair }}</a>{% else %}{{ p.repair }}{% endif %}</td><td class="nw">{{ p.completed }}</td>
+          <td>{% if p.later_url %}<a class="tag" href="{{ p.later_url }}">{{ p.later }}</a>{% else %}{{ p.later }}{% endif %}</td><td class="nw">{{ p.opened }}</td>
+          <td class="num">{{ p.days }}</td><td class="ev-wrap">{{ p.finding_label }}</td>
+        </tr>{% endfor %}</tbody>
+      </table>
+    </div>
+    <p class="hint">Each later repair is matched to the vendor's last repair of the same device before it. Information for the reviewer: Cadence does not say who caused it.</p>
+    {% endif %}
+
+    {% if fig.not_recorded %}
+    <h3 class="ev-group">Not recorded in Cadence</h3>
+    <ul class="ev-not">{% for line in fig.not_recorded %}<li>{{ line }}</li>{% endfor %}</ul>
+    {% endif %}
+    {% if fig.notes %}
+    <h3 class="ev-group">How to read them</h3>
+    <ul class="ev-not">{% for line in fig.notes %}<li>{{ line }}</li>{% endfor %}</ul>
+    {% endif %}
+    {% endif %}
+  </div>
+</section>

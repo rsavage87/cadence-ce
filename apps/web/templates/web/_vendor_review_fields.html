@@ -1,0 +1,9 @@
+{% comment %}What the reviewer records (slice 34): the ratings, the vendor's own figures, the overall rating and decision, and the
+   summary, a block each, written and saved on its own (views_vendor_reviews.vendor_review_field) while the review is a draft and the
+   reader has Edit. Prefilled from the vendor's previous signed-off review when the draft was made.{% endcomment %}
+<section id="vr-fields" class="panel ev-sec" aria-labelledby="vr-fields-h">
+  <div class="panel-h"><h2 id="vr-fields-h">The review</h2><span class="sub">The reviewer's ratings and decision; Cadence rates nothing</span></div>
+  <div class="panel-b">
+    {% for b in blocks %}{% include "web/_vendor_review_field.html" with b=b editing=False write=acts.write %}{% endfor %}
+  </div>
+</section>

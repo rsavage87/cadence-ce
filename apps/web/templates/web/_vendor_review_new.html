@@ -1,0 +1,43 @@
+{% load web %}
+{% comment %}New review (slice 34, views_vendor_reviews.vendor_review_new; vendor_reviews.create_review, Edit and the figures' gate): the
+   vendor's spellings (the chosen vendor's ticked, more typed: a vendor spelled differently is another vendor with no history) and the
+   last day of its 12 months (the vendor's next 12 months, last month's end, yesterday, each contract's last full year, or a day typed).
+   In the modal (`modal`) choosing a vendor re-draws the form for it, keeping what was typed, and the form posts by HTMX; on the tab
+   (opened directly) it posts as a plain form. A refusal shows on the field it names with what was typed kept; a person who cannot take
+   the figures is told why, and offered no Draft button.{% endcomment %}
+{% if modal %}<div class="modal-h"><h2 id="vr-new-h">New review</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% else %}<div class="panel-h"><h2 id="vr-new-h">New review</h2></div>{% endif %}
+{% if draft_refusal %}
+<div class="form"><div class="full note warn" role="alert">{{ draft_refusal }}</div></div>
+{% if modal %}<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>{% endif %}
+{% else %}
+<form id="vr-new-form" class="vr-new-form" method="post" action="{% url 'web:vendor_review_new' %}"{% if modal %} hx-post="{% url 'web:vendor_review_new' %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]"{% endif %} novalidate>{% csrf_token %}
+  <div class="form">
+    <p class="full hint">A review covers 12 months that have ended. Drafting it takes Cadence's figures for the vendor (it can take a few seconds); you rate it after, and someone with Evaluations Approve signs it off.</p>
+    {% if form.non_field_errors %}<div class="full">{% for e in form.non_field_errors %}<span class="err" role="alert">{{ e }}</span>{% endfor %}</div>{% endif %}
+    <label class="full">Vendor
+      <select name="vendor"{% if modal %} hx-get="{% url 'web:vendor_review_new' %}" hx-trigger="change" hx-target="#modal-card" hx-include="closest form"{% endif %}>
+        <option value="">Choose the vendor</option>
+        {% for v in vendors %}<option value="{{ v.key }}"{% if v.selected %} selected{% endif %}>{{ v.name }}</option>{% endfor %}
+      </select>
+      {% if not modal %}<span class="hint">Choose the vendor, then <button class="vr-linkbtn" type="submit" formmethod="get" formaction="{% url 'web:vendor_review_new' %}" formnovalidate>show its spellings</button>.</span>{% endif %}
+    </label>
+    <fieldset class="full vr-names"{% if form.vendor_names.errors %} aria-invalid="true"{% endif %}>
+      <legend>The names it goes by in your contracts and work orders</legend>
+      {% for n in names %}<label class="vr-check"><input type="checkbox" name="names" value="{{ n.name }}"{% if n.ticked %} checked{% endif %}><span>{{ n.name }}</span></label>{% empty %}<p class="hint vr-none">Choose the vendor to tick its spellings, or type them below.</p>{% endfor %}
+      <span class="vr-other-h">Another spelling of the same vendor</span>
+      {% for o in others %}<input type="text" name="other_names" value="{{ o }}" list="vr-known" aria-label="Another spelling" autocomplete="off" spellcheck="false">{% endfor %}
+      <datalist id="vr-known">{% for k in known %}<option value="{{ k }}">{% endfor %}</datalist>
+      {% if form.vendor_names.errors %}{% for e in form.vendor_names.errors %}<span class="err" role="alert">{{ e }}</span>{% endfor %}{% endif %}
+      <span class="hint">{{ spelling_note }}</span>
+    </fieldset>
+    <fieldset class="full vr-periods"{% if form.period_end.errors %} aria-invalid="true"{% endif %}>
+      <legend>The 12 months it covers, by their last day</legend>
+      {% for p in presets %}<label class="vr-radio"><input type="radio" name="period" value="{{ p.value }}"{% if p.active %} checked{% endif %}><span>{{ p.label }}<small>{{ p.period }}</small></span></label>{% endfor %}
+      <label class="vr-radio vr-radio-other"><input type="radio" name="period" value="other"{% if other_active %} checked{% endif %}><span>Another day<small>A contract's anniversary, or any day that has ended</small></span><input type="date" name="period_end" value="{{ period_end }}" max="{{ today|date:'Y-m-d' }}" aria-label="The last day of the 12 months"></label>
+      {% for e in form.period_end.errors %}<span class="err" role="alert">{{ e }}</span>{% endfor %}{% for e in form.period.errors %}<span class="err" role="alert">{{ e }}</span>{% endfor %}
+    </fieldset>
+  </div>
+  <div class="modal-f">{% if modal %}<button class="btn" type="button" data-act="close-modal">Cancel</button>{% else %}<a class="btn" href="{% url 'web:vendor_reviews' %}">Cancel</a>{% endif %}<button class="btn primary" type="submit">Draft it</button></div>
+</form>
+{% endif %}

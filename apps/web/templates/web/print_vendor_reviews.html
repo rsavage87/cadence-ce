@@ -1,0 +1,74 @@
+{% extends "web/print_base.html" %}
+{% comment %}The contracted services summary (slice 34, views_vendor_reviews.vendor_reviews_print): the governing body's document, as of
+   today. Every vendor with a contract in force: its contracts (reference, coverage, term), its last signed-off review (number, 12 months,
+   sign-off), overall, decision, plan status, and the committees that review went to, and when the next is due; the vendors with a
+   contract and no signed-off review; the corrective action plans still open; the other vendors with work (a review of them is
+   optional). No review's summary and no figures: each review's own print carries them.{% endcomment %}
+{% block title %}Contracted services summary{% endblock %}
+{% block page_style %}<style>
+@page{size:letter landscape;margin:.45in}
+.vrs-sub{color:var(--ink-2);margin-bottom:12px}
+.vrs-hint{color:var(--muted);font-size:11px;margin:4px 0 8px}
+.vrs-none{color:var(--muted);margin:2px 0 10px}
+table.vrs td{overflow-wrap:anywhere}
+table.vrs td small{display:block;font-size:10.5px;color:var(--muted)}
+table.vrs td.nw{white-space:nowrap}
+table.vrs thead{display:table-header-group}
+table.vrs ul{margin:0;padding-left:14px}
+.vrs-late{color:var(--bad);font-weight:600}
+@media print{.sheet{width:auto}}
+@media screen{.sheet{width:min(11in,100%)}}
+</style>{% endblock %}
+{% block bar_title %}Contracted services summary · as of {{ as_of }}{% endblock %}
+{% block bar_hint %}The governing body's document. Print it, or choose Save as PDF in the print dialog.{% endblock %}
+{% block sheets %}
+<main>
+<section class="sheet">
+  <h1>Contracted services summary</h1>
+  <p class="vrs-sub">{{ request.tenant.name }} · Clinical Engineering · as of {{ as_of }}</p>
+  <p class="vrs-hint">Every vendor with a service contract in force, with the facility's last review of its service, the decision, and the committees the review went to. The ratings and decisions are the facility's reviewers'; Cadence rates nothing. Contracted services outside clinical engineering are not here.</p>
+
+  <h2>Vendors with a contract in force</h2>
+  {% if in_force %}
+  <table class="vrs">
+    <thead><tr><th>Vendor</th><th>Contracts</th><th>Last review</th><th>Overall</th><th>Decision and plan</th><th>Reported to</th><th>Next due</th></tr></thead>
+    <tbody>{% for x in in_force %}<tr>
+      <td><b>{{ x.name }}</b>{% if x.also %}<small>Also written {{ x.also|join:", " }}</small>{% endif %}</td>
+      <td><ul>{% for c in x.contracts %}<li>{{ c.c.reference }}<small>{{ c.coverage }} · {{ c.term }}</small></li>{% endfor %}</ul></td>
+      <td>{% if x.last %}{{ x.last.r.number }}<small>{{ x.last.period }}</small><small>Signed off {{ x.last.signed }}{% if x.approver %} by {{ x.approver }}{% endif %}</small>{% else %}<span class="vrs-late">Not reviewed</span>{% endif %}</td>
+      <td>{% if x.last %}{{ x.last.overall }}{% else %}—{% endif %}</td>
+      <td>{% if x.last %}{{ x.last.decision }}{% if x.last.plan %}<small{% if x.last.plan.overdue %} class="vrs-late"{% endif %}>{{ x.last.plan.words }}</small>{% endif %}{% else %}—{% endif %}</td>
+      <td>{% for rep in x.reports %}<small>{{ rep.body }} {{ rep.meeting }}{% if rep.minutes %} · minutes {{ rep.minutes }}{% endif %}</small>{% empty %}{% if x.last %}<small>Not reported yet</small>{% else %}—{% endif %}{% endfor %}</td>
+      <td class="nw">{{ x.next_due|default:"—" }}{% if x.overdue %}<small class="vrs-late">Overdue</small>{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table>
+  {% else %}<p class="vrs-none">No service contract is in force today.</p>{% endif %}
+
+  <h2>Contracted vendors not reviewed</h2>
+  {% if not_reviewed %}
+  <table class="vrs">
+    <thead><tr><th>Vendor</th><th>Contracts</th><th>Review due by</th></tr></thead>
+    <tbody>{% for x in not_reviewed %}<tr><td>{{ x.name }}</td><td>{% for c in x.contracts %}{{ c.c.reference }} ({{ c.term }}){% if not forloop.last %}; {% endif %}{% endfor %}</td><td class="nw">{{ x.next_due|default:"—" }}</td></tr>{% endfor %}</tbody>
+  </table>
+  {% else %}<p class="vrs-none">Every vendor with a contract in force has a signed-off review.</p>{% endif %}
+
+  <h2>Corrective action plans open</h2>
+  {% if open_plans %}
+  <table class="vrs">
+    <thead><tr><th>Review</th><th>Vendor</th><th>Plan</th></tr></thead>
+    <tbody>{% for p in open_plans %}<tr><td>{{ p.r.number }}</td><td>{{ p.vendor }}</td><td{% if p.plan.overdue %} class="vrs-late"{% endif %}>{{ p.plan.words }}</td></tr>{% endfor %}</tbody>
+  </table>
+  {% else %}<p class="vrs-none">None.</p>{% endif %}
+
+  {% if others %}
+  <h2>Other vendors with work here</h2>
+  <p class="vrs-hint">No contract in force today; a contract in the last 12 months, or vendor service work completed in them. A review of them is optional.</p>
+  <table class="vrs">
+    <thead><tr><th>Vendor</th>{% if others.0.jobs is not None %}<th class="num">Jobs in the last 12 months</th>{% endif %}<th>Last review</th></tr></thead>
+    <tbody>{% for x in others %}<tr><td>{{ x.name }}</td>{% if x.jobs is not None %}<td class="num">{{ x.jobs }}</td>{% endif %}<td>{% if x.last %}{{ x.last.r.number }}, {{ x.last.overall|lower }}; {{ x.last.decision|lower }}{% else %}Not reviewed{% endif %}</td></tr>{% endfor %}</tbody>
+  </table>
+  {% endif %}
+  <p class="vrs-hint">A review is due {{ due_after }} days after the 12 months after the last signed-off review end, or by the end of a contract in force, whichever comes first.</p>
+</section>
+</main>
+{% endblock %}

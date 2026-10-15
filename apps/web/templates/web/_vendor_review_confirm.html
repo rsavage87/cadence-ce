@@ -1,0 +1,11 @@
+{% load web %}
+{% comment %}Withdraw and Discard (slice 34, views_vendor_reviews): what it does in words, and the service's refusal in the modal when it
+   is refused.{% endcomment %}
+<div class="modal-h"><h2>{{ title }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+<form hx-post="{{ action }}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" method="post" action="{{ action }}">{% csrf_token %}
+  <div class="form">
+    {% for w in words %}<p class="full">{{ w }}</p>{% endfor %}
+    {% if error %}<div class="full note warn" role="alert">{{ error }}</div>{% endif %}
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn {% if danger %}danger{% else %}primary{% endif %}" type="submit">{{ button }}</button></div>
+</form>

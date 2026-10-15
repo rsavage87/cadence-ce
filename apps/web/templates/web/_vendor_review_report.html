@@ -1,0 +1,27 @@
+{% load web %}
+{% comment %}Record a committee report for one review, or correct one (slice 34, views_vendor_reviews.vendor_review_report_new /
+   vendor_review_report; vendor_reviews.record_report / correct_report, Approve): the committee, the day it met (on or after the
+   sign-off, not after today), the minutes' reference. The service's refusals come back on the field they name, what was typed kept.{% endcomment %}
+<div class="modal-h"><h2>{% if report %}Correct the report{% else %}Record a report of {{ r.number }}{% endif %}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+<form id="vr-report-form" hx-post="{{ action }}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" method="post" action="{{ action }}" novalidate>{% csrf_token %}
+  <div class="form">
+    <p class="full hint">{% if report %}Its history keeps what it said before.{% else %}A committee that received the review signed off on {{ signed }}, as its minutes record it. Several reviews at one meeting: Record a report to committee on the Reviews tab.{% endif %}</p>
+    {% if form.non_field_errors %}<div class="full">{% for e in form.non_field_errors %}<span class="err" role="alert">{{ e }}</span>{% endfor %}</div>{% endif %}
+    {% for e in form.reviews.errors %}<div class="full"><span class="err" role="alert">{{ e }}</span></div>{% endfor %}
+    <label class="full">Committee
+      <select name="body"{% if form.body.errors %} aria-invalid="true"{% endif %}>
+        <option value="">Choose the committee</option>
+        {% for v, l in bodies %}<option value="{{ v }}"{% if v == body %} selected{% endif %}>{{ l }}</option>{% endfor %}
+      </select>
+      {% for e in form.body.errors %}<span class="err" role="alert">{{ e }}</span>{% endfor %}
+    </label>
+    <label>Meeting day<input type="date" name="meeting_on" value="{{ meeting_on }}" max="{{ today|date:'Y-m-d' }}"{% if form.meeting_on.errors %} aria-invalid="true"{% endif %}>
+      {% for e in form.meeting_on.errors %}<span class="err" role="alert">{{ e }}</span>{% endfor %}
+    </label>
+    <label>Minutes reference<input type="text" name="minutes_reference" value="{{ minutes }}" autocomplete="off" spellcheck="false"{% if form.minutes_reference.errors %} aria-invalid="true"{% endif %}>
+      <span class="hint">As the committee files its minutes, without spaces. Optional.</span>
+      {% for e in form.minutes_reference.errors %}<span class="err" role="alert">{{ e }}</span>{% endfor %}
+    </label>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">{% if report %}Save{% else %}Record the report{% endif %}</button></div>
+</form>

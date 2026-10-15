@@ -1,0 +1,28 @@
+{% load web %}
+{% comment %}The committees a signed-off review was reported to (slice 34), as their minutes record them: Record a report (Approve, signed
+   off), Correct and Remove one entered in error (Approve; a withdrawn review's reports can be corrected). The services check again; a
+   refusal shows at the top. Several reviews at once: the Reviews tab's Record a report to committee.{% endcomment %}
+<section id="vr-reports" class="panel ev-sec" aria-labelledby="vr-reports-h">
+  <div class="panel-h"><h2 id="vr-reports-h">Reported to</h2><span class="sub">The committees that received it, as their minutes record</span>
+    {% if acts.report %}<div class="actions"><button class="btn sm" type="button" hx-get="{% url 'web:vendor_review_report_new' r.number %}" hx-target="#modal-card">Record a report</button></div>{% endif %}
+  </div>
+  <div class="panel-b">
+    {% if reports_refusal %}<div class="note warn" role="alert">{{ reports_refusal }}</div>{% endif %}
+    {% if reports %}
+    <ul class="ev-apps">
+      {% for x in reports %}<li class="ev-app">
+        <div class="ev-app-b">
+          <p class="ev-app-t">{{ x.body }}</p>
+          <p class="hint">Met {{ x.meeting }}{% if x.rep.minutes_reference %} · minutes {{ x.rep.minutes_reference }}{% endif %}{% if x.rep.recorded_by %} · recorded by {{ x.rep.recorded_by }}{% endif %}</p>
+        </div>
+        {% if acts.correct %}<div class="ev-obj-a">
+          <button class="btn sm" type="button" hx-get="{% url 'web:vendor_review_report' r.number x.rep.pk %}" hx-target="#modal-card">Correct</button>
+          <button class="btn sm danger" type="button" hx-post="{% url 'web:vendor_review_report_remove' r.number x.rep.pk %}" hx-target="#vr-reports" hx-swap="outerHTML" hx-confirm="Remove this report, entered in error? Its history keeps it.">Remove</button>
+        </div>{% endif %}
+      </li>{% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted ev-none">None recorded.{% if r.status == "draft" %} Sign it off, then record the committees it goes to.{% elif r.status == "approved" %} Record each committee that receives it once it has met: the quality oversight committee (QAPI), the governing body.{% endif %}</p>
+    {% endif %}
+  </div>
+</section>

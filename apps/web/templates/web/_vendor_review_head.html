@@ -1,0 +1,34 @@
+{% load web %}
+{% comment %}The review's head (slice 34): its number, vendor, 12 months, status and stamp, when the figures were taken; the actions its
+   status and the reader's levels allow (views_vendor_reviews.actions_for; each service checks again): Print, Sign off (it carries the
+   snapshot id the page was drawn with), Plan result, Withdraw, Discard; the vendor's names, the sign-off and who recorded it in Cadence,
+   the plan, and the previous signed-off review of the vendor; the provisional line (a figures' fact: only for a reader who sees them).{% endcomment %}
+<div id="vr-head" class="ev-head vr-head">
+  <div class="page-head">
+    <div>
+      <p class="ev-crumb"><a class="link" href="{% url 'web:contracts' %}">Service contracts</a> · <a class="link" href="{{ list_url }}">Reviews</a></p>
+      <h1>{{ r.number }} · {{ r.vendor }} <span class="chip {{ status_css }}">{{ r.get_status_display }}</span></h1>
+      <p class="sub">{{ period }} · {{ stamp }}{% if fig.taken %} · figures taken {{ fig.taken_on }}{% endif %}</p>
+    </div>
+    <div class="actions vr-actions">
+      <a class="btn" href="{{ print_url }}" target="_blank" rel="noopener" title="The review for the contract's file, for paper or saved as a PDF">{% icon "print" %} Print</a>
+      {% if acts.sign and not sign_refusal %}<button class="btn primary" type="button" hx-get="{% url 'web:vendor_review_sign_off' r.number %}?snapshot={{ fig.snapshot_id }}" hx-target="#modal-card">Sign off</button>{% endif %}
+      {% if acts.plan %}<button class="btn{% if plan and plan.open %} primary{% endif %}" type="button" hx-get="{% url 'web:vendor_review_plan' r.number %}" hx-target="#modal-card">Plan result</button>{% endif %}
+      {% if acts.withdraw %}<button class="btn danger" type="button" hx-get="{% url 'web:vendor_review_withdraw' r.number %}" hx-target="#modal-card">Withdraw</button>{% endif %}
+      {% if acts.discard %}<button class="btn danger" type="button" hx-get="{% url 'web:vendor_review_discard' r.number %}" hx-target="#modal-card">Discard</button>{% endif %}
+    </div>
+  </div>
+  {% if refusal %}<div class="note warn vr-refusal" role="alert">{{ refusal }}</div>{% endif %}
+  {% if sign_refusal %}<p class="note vr-sign-refusal">{{ sign_refusal }}</p>{% endif %}
+  {% if r.status == "draft" %}<div class="note ev-state">A draft: rate the vendor and record the decision below, then someone with Evaluations Approve signs it off with the figures shown here.</div>{% endif %}
+  {% if r.status == "withdrawn" %}<div class="note ev-state">Withdrawn: kept readable, with the committees it was reported to. It is no longer {{ r.vendor }}'s last review, and its 12 months are free for another review.</div>{% endif %}
+  {% if r.status == "discarded" %}<div class="note ev-state">Discarded: kept, and listed nowhere.</div>{% endif %}
+  <dl class="vr-facts">
+    <div><dt>Vendor names</dt><dd>{{ r.vendor_names|join:", " }}</dd></div>
+    <div><dt>Period</dt><dd>{{ period }}</dd></div>
+    {% if r.signed_on %}<div><dt>Signed off</dt><dd>{{ r.signed_on|date:"M j, Y" }}{% if approver %} by {{ approver }}{% endif %}{% if recorded_by %}<small>Recorded in Cadence by {{ recorded_by }}</small>{% endif %}</dd></div>{% endif %}
+    {% if plan %}<div><dt>Corrective action plan</dt><dd><span class="chip {{ plan.css }}">{{ plan.words }}</span></dd></div>{% endif %}
+    <div><dt>Previous review</dt><dd>{% if previous %}<a class="link" href="{{ previous.url }}">{{ previous.r.number }}</a>, {{ previous.period }}: {{ previous.overall }}; {{ previous.decision }}{% if previous.plan %} ({{ previous.plan.words }}){% endif %}{% else %}<span class="muted">None signed off before these 12 months</span>{% endif %}</dd></div>
+  </dl>
+  {% if fig.shown and fig.provisional %}<ul class="ev-lines"><li><span class="chip warn">Provisional</span> Provisional until {{ fig.provisional }}: repeat repairs and PMs of the period can still change. {% if r.status == "draft" %}Refresh the figures after that day.{% endif %}</li></ul>{% endif %}
+</div>

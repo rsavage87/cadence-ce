@@ -25,6 +25,7 @@ from .forms import parse_uuid
 from .forms_contracts import STATUS_CHOICES, ContractForm, contract_choices, edit_contract_initial, new_contract_initial, parse_contract_filters
 from .htmx import PAGE_SIZE, is_partial, toast
 from .views import asset_drawer_context
+from .views_vendor_reviews import review_line
 from .views_vendors import vendor_line
 
 DRAWER = "web/_contract_drawer.html"
@@ -77,6 +78,7 @@ def _drawer_context(request, contract, edit=False, form=None) -> dict:
     can_history = history_tabs.allowed(request.user, "contracts")
     url = reverse("web:contract", args=[contract.pk])
     hist = history_tabs.context(request, contract, "contracts", url, tab=False) if can_history and request.GET.get("history") else {}
+    today = timezone.localdate()
     return {
         "can_history": can_history, "hist_url": f"{url}?history=1", **hist,
         "c": contract, "st": ct.contract_status(contract), "models": ct.covered_models(contract), "n": n, "lst": lst,
@@ -86,7 +88,9 @@ def _drawer_context(request, contract, edit=False, form=None) -> dict:
         "can_edit": can_edit, "can_delete": request.user.has_level(Module.CONTRACTS, Level.FULL),
         "can_view_asset": request.user.has_level(Module.EQUIPMENT, Level.VIEW),
         # Slice 31: what is on file for the contract's vendor's staff, linking to the Vendor staff tab filtered to it
-        "vendor_line": vendor_line(contract.vendor, timezone.localdate()),
+        "vendor_line": vendor_line(contract.vendor, today),
+        # Slice 34: the vendor's last review and when the next is due (Evaluations View with Contracts View; None for anyone else)
+        "review_line": review_line(request.user, contract.vendor, today),
     }
 
 

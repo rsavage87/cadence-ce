@@ -1,0 +1,32 @@
+{% load web %}
+{% comment %}Record a report to committee (slice 34, views_vendor_reviews.vendor_reviews_report; vendor_reviews.record_report, Approve):
+   one meeting of one committee that received several signed-off reviews, as its minutes record it, all or nothing. The reviews offered
+   are each vendor's last and those signed off in the last `months` months; ticked, each vendor's last not yet reported to the committee
+   chosen (choosing another re-draws the ticks, keeping the day and the minutes). Refusals on the field they name, what was ticked kept.{% endcomment %}
+<div class="modal-h"><h2>Record a report to committee</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+<form id="vr-batch-form" class="vr-batch-form" hx-post="{% url 'web:vendor_reviews_report' %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    <p class="full hint">One meeting that received the reviews ticked, as its minutes record it. The meeting is on or after each review's sign-off and not after today.</p>
+    {% if form.non_field_errors %}<div class="full">{% for e in form.non_field_errors %}<span class="err" role="alert">{{ e }}</span>{% endfor %}</div>{% endif %}
+    <label>Committee
+      <select name="body" hx-get="{% url 'web:vendor_reviews_report' %}" hx-trigger="change" hx-target="#modal-card" hx-include="closest form">
+        {% for v, l in bodies %}<option value="{{ v }}"{% if v == body %} selected{% endif %}>{{ l }}</option>{% endfor %}
+      </select>
+      {% for e in form.body.errors %}<span class="err" role="alert">{{ e }}</span>{% endfor %}
+    </label>
+    <label>Meeting day<input type="date" name="meeting_on" value="{{ meeting_on }}" max="{{ today|date:'Y-m-d' }}"{% if form.meeting_on.errors %} aria-invalid="true"{% endif %}>
+      {% for e in form.meeting_on.errors %}<span class="err" role="alert">{{ e }}</span>{% endfor %}
+    </label>
+    <label class="full">Minutes reference<input type="text" name="minutes_reference" value="{{ minutes }}" autocomplete="off" spellcheck="false"{% if form.minutes_reference.errors %} aria-invalid="true"{% endif %}>
+      <span class="hint">As the committee files its minutes, without spaces (GB-2026-03). Optional.</span>
+      {% for e in form.minutes_reference.errors %}<span class="err" role="alert">{{ e }}</span>{% endfor %}
+    </label>
+    <fieldset class="full vr-batch"{% if form.reviews.errors %} aria-invalid="true"{% endif %}>
+      <legend>The reviews it received</legend>
+      {% for x in rows %}<label class="vr-check vr-batch-row"><input type="checkbox" name="reviews" value="{{ x.id }}"{% if x.ticked %} checked{% endif %}><span><b>{{ x.r.number }}</b> {{ x.r.vendor }} · {{ x.period }}<small>Signed off {{ x.signed }} · {{ x.overall }} · {{ x.decision }}{% if x.reported %} · reported to {{ x.reported }}{% else %} · not reported yet{% endif %}{% if not x.last %} · not the vendor's last review{% endif %}</small></span></label>
+      {% empty %}<p class="hint">No review is signed off yet: a committee receives signed-off reviews.</p>{% endfor %}
+      {% for e in form.reviews.errors %}<span class="err" role="alert">{{ e }}</span>{% endfor %}
+    </fieldset>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button>{% if rows %}<button class="btn primary" type="submit">Record the report</button>{% endif %}</div>
+</form>

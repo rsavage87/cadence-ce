@@ -1,0 +1,45 @@
+{% comment %}One block of the reviewer's fields (slice 34, views_vendor_reviews.block): read, or written (`editing`: Edit on a draft) and
+   saved on its own by HTMX into this element (vendor_reviews.update_review: the block's fields, all or none). A refusal keeps what was
+   typed, with the words on the field they name. The summary says what it is for and that it is never emailed.{% endcomment %}
+<div class="ev-field vr-field" id="vr-f-{{ b.key }}">
+  <div class="ev-field-h"><h3>{{ b.label }}</h3>{% if write and not editing %}<button class="btn sm" type="button" hx-get="{{ b.url }}?edit=1" hx-target="#vr-f-{{ b.key }}" hx-swap="outerHTML">Edit</button>{% endif %}</div>
+  {% if editing %}
+  <form class="ev-field-form" method="post" action="{{ b.url }}" hx-post="{{ b.url }}" hx-target="#vr-f-{{ b.key }}" hx-swap="outerHTML" hx-disabled-elt="find button[type=submit]" novalidate>{% csrf_token %}
+    {% if b.help %}<p class="hint">{{ b.help }}</p>{% endif %}
+    {% if b.key == "summary" %}<p class="note vr-privacy" role="note">{{ privacy }} It is printed with the review and never emailed.</p>{% endif %}
+    {% if b.error %}<p class="err" role="alert">{{ b.error }}</p>{% endif %}
+    <div class="vr-inputs vr-in-{{ b.key }}">
+      {% for i in b.inputs %}
+      <label class="{% if i.kind == 'textarea' %}vr-wide{% endif %}"><span>{{ i.label }}</span>
+        {% if i.kind == "select" %}<select name="{{ i.name }}"{% if i.error %} aria-invalid="true"{% endif %}><option value="">{{ i.blank }}</option>{% for v, l in i.choices %}<option value="{{ v }}"{% if v == i.value %} selected{% endif %}>{{ l }}</option>{% endfor %}</select>
+        {% elif i.kind == "textarea" %}<textarea name="{{ i.name }}" rows="8"{% if i.error %} aria-invalid="true"{% endif %}>{{ i.value }}</textarea><span class="hint">At most {{ b.summary_max }} characters.</span>
+        {% elif i.kind == "number" %}<input type="number" name="{{ i.name }}" value="{{ i.value }}" min="0" step="{{ i.step }}"{% if i.max %} max="{{ i.max }}"{% endif %} inputmode="decimal"{% if i.error %} aria-invalid="true"{% endif %}>
+        {% else %}<input type="{{ i.kind }}" name="{{ i.name }}" value="{{ i.value }}" autocomplete="off"{% if i.error %} aria-invalid="true"{% endif %}>{% endif %}
+        {% if i.help and b.key != "ratings" %}<span class="hint">{{ i.help }}</span>{% endif %}
+        {% if i.error %}<span class="err" role="alert">{{ i.error }}</span>{% endif %}
+      </label>
+      {% endfor %}
+    </div>
+    <div class="ev-field-f"><button class="btn sm" type="button" hx-get="{{ b.url }}" hx-target="#vr-f-{{ b.key }}" hx-swap="outerHTML">Cancel</button><button class="btn sm primary" type="submit">Save</button></div>
+  </form>
+  {% else %}
+  {% if b.error %}<p class="err" role="alert">{{ b.error }}</p>{% endif %}
+  {% if b.key == "ratings" %}
+  <ul class="vr-ratings">
+    {% for x in b.read.rows %}<li><span class="vr-crit">{{ x.label }}<small>{{ x.help }}</small></span>{% if x.words %}<span class="chip {{ x.css }}">{{ x.words }}</span>{% else %}<span class="muted">Not rated</span>{% endif %}</li>{% endfor %}
+    <li><span class="vr-crit">Expectations stated in the contract<small>Whether the contract states these expectations.</small></span>{% if b.read.stated %}<span>{{ b.read.stated }}</span>{% else %}<span class="muted">Not recorded</span>{% endif %}</li>
+  </ul>
+  {% elif b.key == "reported" %}
+  {% if b.read.lines %}<ul class="vr-lines">{% for line in b.read.lines %}<li>{{ line }}</li>{% endfor %}</ul>{% else %}<p class="muted ev-none">{{ b.help }} Not recorded yet.</p>{% endif %}
+  {% elif b.key == "decision" %}
+  <dl class="vr-facts vr-decision">
+    <div><dt>Overall</dt><dd>{% if b.read.overall %}<span class="chip {{ b.read.overall_css }}">{{ b.read.overall }}</span>{% else %}<span class="muted">Not chosen</span>{% endif %}</dd></div>
+    <div><dt>Decision</dt><dd>{% if b.read.decision %}{{ b.read.decision }}{% else %}<span class="muted">Not chosen</span>{% endif %}</dd></div>
+    {% if b.read.plan %}<div><dt>Plan</dt><dd><span class="chip {{ b.read.plan.css }}">{{ b.read.plan.words }}</span></dd></div>{% endif %}
+  </dl>
+  {% if b.read.stray_due %}<p class="hint vr-stray">A plan due day ({{ b.read.stray_due }}) is set without a corrective action plan: clear it, or choose a corrective action plan, before signing off.</p>{% endif %}
+  {% else %}
+  {% if b.read.text %}<div class="ev-prose">{{ b.read.text|linebreaksbr }}</div>{% else %}<p class="muted ev-none">Not written yet.</p>{% endif %}
+  {% endif %}
+  {% endif %}
+</div>

@@ -1,0 +1,24 @@
+{% extends "web/base.html" %}
+{% load web %}
+{% comment %}The Contracts screen's Reviews tab (slice 34, views_vendor_reviews): the vendors with their last review and when the next is
+   due (with New review's form on the page when its address was opened directly), or one review's page (#vr-body and its parts).{% endcomment %}
+{% block title %}{% if r %}{{ r.number }} · {% endif %}Reviews · Service contracts{% endblock %}
+{% block content %}
+{% if r %}{% include "web/_vendor_review_body.html" %}{% else %}
+<div class="page-head">
+  <div><h1>Service contracts</h1><p class="sub">Reviews: the facility's yearly review of each contracted service vendor, with Cadence's records of its work, a decision, and the committees it went to</p></div>
+  <div class="actions vr-actions">
+    <a class="btn" href="{{ summary_url }}" target="_blank" rel="noopener" title="Every vendor with a contract in force, its last review, decision, and plan: the governing body's document, for paper or saved as a PDF">{% icon "print" %} Summary</a>
+    {% if can_report %}<button class="btn" type="button" hx-get="{% url 'web:vendor_reviews_report' %}" hx-target="#modal-card">Record a report to committee</button>{% endif %}
+    {% if can_new %}<a class="btn primary" href="{% url 'web:vendor_review_new' %}" hx-get="{% url 'web:vendor_review_new' %}" hx-target="#modal-card">{% icon "plus" %} New review</a>{% endif %}
+  </div>
+</div>
+{% include "web/_contracts_tabs.html" %}
+{% if refusal %}<div class="note warn vr-refusal" role="alert">{{ refusal }}</div>{% endif %}
+{% if new %}
+<section class="panel ev-new-panel vr-new-panel" aria-labelledby="vr-new-h">{% include "web/_vendor_review_new.html" with form=new.form vendors=new.vendors row=new.row names=new.names others=new.others known=new.known presets=new.presets other_active=new.other_active period_end=new.period_end draft_refusal=new.draft_refusal modal=False %}</section>
+{% endif %}
+{% include "web/_vendor_review_list.html" %}
+<p class="hint vr-foot">The next review is due {{ due_after }} days after the 12 months after the last signed-off review end, or by the end of a contract in force, whichever comes first (a review whose 12 months ended within the year before that contract ends covers its renewal). Cadence keeps the reviewers' ratings and decisions and its own records of each vendor's work; it rates nothing. Contracted services outside clinical engineering are not here.</p>
+{% endif %}
+{% endblock %}

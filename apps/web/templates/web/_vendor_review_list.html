@@ -1,0 +1,38 @@
+{% load web %}
+{% comment %}The Reviews tab's list (slice 34, views_vendor_reviews.list_context over vendor_reviews.vendors_list): the vendors by the day
+   their next review is due, each with its names, its contracts in force, its last signed-off review (number, overall, decision, plan
+   status), a draft, and when the next is due, or Not reviewed (optional for a vendor with no contract). The filters (Every vendor, Not
+   reviewed) swap this element; ?vendor= shows one vendor. New review (Edit) per row opens the modal with the vendor's spellings.{% endcomment %}
+<div id="vr-list" class="vr-list">
+  <div class="pills vr-shows" role="group" aria-label="Show">
+    {% for s in shows %}<a class="pill{% if s.active %} active{% endif %}" href="{{ s.url }}" hx-get="{{ s.url }}" hx-target="#vr-list" hx-swap="outerHTML" hx-push-url="true"{% if s.active %} aria-current="true"{% endif %}>{{ s.label }} <span class="vr-n">{{ s.n }}</span></a>{% endfor %}
+  </div>
+  {% if vendor %}<div class="note vr-only">Showing {{ vendor_shown }} only. <a class="link" href="{{ all_url }}" hx-get="{{ all_url }}" hx-target="#vr-list" hx-swap="outerHTML" hx-push-url="true">Show every vendor</a></div>{% endif %}
+  <section class="panel" aria-label="Vendors">
+    {% if rows %}
+    <div class="tbl-wrap flat">
+      <table class="vr-tbl">
+        <thead><tr><th>Vendor</th><th>Contracts in force</th><th>Last review</th><th>Overall</th><th>Decision and plan</th><th>Next due</th>{% if can_new %}<th aria-label="Actions"></th>{% endif %}</tr></thead>
+        <tbody>
+          {% for x in rows %}<tr class="vr-row" id="vr-v-{{ forloop.counter }}">
+            <td class="vr-wrap" data-label="Vendor"><b class="vr-name">{{ x.name }}</b>{% if x.also %}<small>Also written {{ x.also|join:", " }}</small>{% endif %}{% if x.jobs %}<small>{{ x.jobs }} vendor job{{ x.jobs|pluralize }} completed in the last 12 months</small>{% endif %}</td>
+            <td class="vr-wrap" data-label="Contracts in force">{% for c in x.contracts %}<span class="vr-ct"><a class="link" href="{{ c.url }}">{{ c.c.reference }}</a> <small>to {{ c.ends }}</small></span>{% empty %}<span class="muted">None in force</span>{% endfor %}</td>
+            <td class="vr-wrap" data-label="Last review">{% if x.last %}<a class="tag" href="{{ x.last.url }}">{{ x.last.r.number }}</a><small>Signed off {{ x.last.signed }}</small>{% else %}<span class="chip {% if x.expected %}warn{% else %}neutral{% endif %}">Not reviewed</span>{% if not x.expected %}<small>No contract: a review is optional</small>{% endif %}{% endif %}{% if x.draft %}<small>Draft <a class="link" href="{{ x.draft.url }}">{{ x.draft.r.number }}</a></small>{% endif %}</td>
+            <td data-label="Overall">{% if x.last %}<span class="chip {{ x.last.overall_css }}">{{ x.last.overall }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+            <td class="vr-wrap" data-label="Decision and plan">{% if x.last %}{{ x.last.decision }}{% if x.last.plan %}<small class="vr-plan{% if x.last.plan.overdue %} vr-late{% endif %}">{{ x.last.plan.words }}</small>{% endif %}{% else %}<span class="muted">—</span>{% endif %}{% if x.open_plan %}<small class="vr-plan{% if x.open_plan.overdue %} vr-late{% endif %}">{{ x.open_plan_r.number }}: {{ x.open_plan.words }}</small>{% endif %}</td>
+            <td class="nw" data-label="Next due">{% if x.next_due %}{{ x.next_due }}{% if x.overdue %} <span class="chip crit">Overdue</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
+            {% if can_new %}<td class="vr-act"><button class="btn sm" type="button" hx-get="{{ x.new_url }}" hx-target="#modal-card" aria-label="New review of {{ x.name }}">New review</button></td>{% endif %}
+          </tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% elif vendor_unknown %}
+    <div class="empty">No contract, vendor job, or review here names {{ vendor }}.</div>
+    {% elif show == "not_reviewed" %}
+    <div class="empty">Every vendor here has a signed-off review.</div>
+    {% else %}
+    <div class="empty">No vendors yet. A vendor shows here once a contract in force, a vendor service work order completed in the last 12 months, or a review names it.</div>
+    {% endif %}
+  </section>
+  <p class="hint vr-spelling">{{ spelling_note }}</p>
+</div>

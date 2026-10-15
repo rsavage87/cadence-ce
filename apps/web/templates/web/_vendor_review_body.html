@@ -1,0 +1,11 @@
+{% comment %}One vendor review's page (slice 34, views_vendor_reviews.vendor_review): the head with its actions, the figures (through their
+   gate), the reviewer's fields, the committees it was reported to, and History. Each part is its own element and partial
+   (views_vendor_reviews.PARTS); an action that changes the status or the figures swaps this whole element.{% endcomment %}
+{% if request.htmx %}<title>{{ r.number }} · Reviews · Service contracts · {{ request.tenant.name }}</title>{% endif %}{# only in a swapped fragment, at its root: htmx retitles the document from it #}
+<div id="vr-body" class="ev vr">
+  {% include "web/_vendor_review_head.html" %}
+  {% include "web/_vendor_review_figures.html" %}
+  {% include "web/_vendor_review_fields.html" %}
+  {% include "web/_vendor_review_reports.html" %}
+  {% if can_history %}<section class="panel ev-sec" aria-label="History"><div class="panel-b">{% include "web/_history_section.html" %}</div></section>{% endif %}
+</div>
