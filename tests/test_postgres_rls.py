@@ -20,6 +20,7 @@ from apps.reports import survey
 from apps.reports.services import REPORTS
 from apps.tenants.context import tenant_context
 from apps.tenants.models import Tenant
+from apps.web import views_vendor_reviews
 from apps.workorders.models import WorkOrder
 
 pytestmark = needs_postgres
@@ -245,6 +246,57 @@ def test_the_program_evaluation_screens_under_the_policies(client, seeded):
                 reverse("web:evaluation_print", args=[ev.number])]:
         r = client.get(url)
         assert r.status_code == 200, (url, r.status_code)
+
+
+def _seeded_vendor_review(tenant):
+    from apps.evaluations.models import VendorReview
+
+    with tenant_context(tenant):
+        return VendorReview.objects.select_related("snapshot").get()
+
+
+def test_the_vendor_review_api_under_the_policies(client, seeded):
+    """Slice 34: the seeded Philips review over the API as the runtime role: the list, and the review by number with its fields, its
+    figures (Kim may see them all), and the previous review (none)."""
+    from apps.demo.management.commands import seed_demo
+
+    review = _seeded_vendor_review(seeded)
+    client.force_login(User.objects.get(username="kim@riverside.example"))
+    as_app_role()
+    listed = client.get("/api/v1/vendor-reviews/").json()
+    assert [r["number"] for r in listed["results"]] == [review.number] and listed["results"][0]["status"] == "approved"
+    r = client.get(f"/api/v1/vendor-reviews/{review.number}/")
+    assert r.status_code == 200, r.content
+    data = r.json()
+    assert data["summary"] == seed_demo.VENDOR_REVIEW_FIELDS["summary"] and data["signed_by_name"] == "Rob Feldman"
+    assert data["figures"]["left_out"] == [] and data["figures"]["figures"] == review.snapshot.data["figures"] and data["previous"] is None
+    assert client.get("/api/v1/vendor-reviews/?vendor=philips%20field%20service").json()["count"] == 1
+
+
+# Wave 2A builds the Reviews tab's screens behind the scaffold's names; until it is merged they are the scaffold's stubs (this test is
+# then expected to fail, strictly: it runs for real, unmarked, the moment the stubs are gone).
+SCREENS_PENDING = "Scaffold: wave 2A builds the screens" in (views_vendor_reviews.__doc__ or "")
+
+
+@pytest.mark.xfail(SCREENS_PENDING, reason="slice 34 wave 2A's screens are not merged yet", strict=True)
+def test_the_vendor_review_screens_under_the_policies(client, seeded):
+    """Slice 34: the seeded review's screens as the runtime role: the Reviews tab, the review's page and print, the contracted services
+    summary print, and the Philips contract's drawer with its review line."""
+    from django.urls import reverse
+
+    from apps.contracts.models import Contract
+
+    review = _seeded_vendor_review(seeded)
+    with tenant_context(seeded):
+        philips = Contract.objects.get(vendor="Philips")
+    client.force_login(User.objects.get(username="kim@riverside.example"))
+    as_app_role()
+    for url in [reverse("web:vendor_reviews"), reverse("web:vendor_review", args=[review.number]),
+                reverse("web:vendor_review_print", args=[review.number]), reverse("web:vendor_reviews_print"),
+                reverse("web:contract", args=[philips.pk])]:
+        r = client.get(url)
+        assert r.status_code == 200, (url, r.status_code)
+        assert review.number in r.content.decode(), url
 
 
 def test_changing_things_under_the_policies(client, seeded):

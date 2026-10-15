@@ -28,6 +28,7 @@ from apps.accounts.models import Level, Module, Role, User
 from apps.contracts.models import Contract, ContractType, Coverage
 from apps.demo.management.commands import seed_demo
 from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, RiskClass
+from apps.evaluations.models import VendorReview
 from apps.reports import survey
 from apps.reports.permissions import SURVEY_NEEDS, survey_refusal
 from apps.reports.survey import CHECK, DEVICE, GAP, NOT_COVERED, WORK_ORDER, staff, vendors
@@ -382,7 +383,7 @@ def test_nothing_a_requester_typed_and_a_fixed_number_of_queries(today, monitor,
     small = read()
     jobs(45)
     WorkOrder.objects.filter(pk__in=WorkOrder.objects.order_by("number").values("pk")[:4]).update(source=Source.IMPORTED)
-    assert read() == small <= 6
+    assert read() == small <= 7  # slice 34: the signed-off vendor reviews
 
 
 def test_another_facilitys_records_stay_there(today, ctx, monitor, other_tenant):
@@ -470,13 +471,22 @@ def test_the_page_the_csv_and_the_api_serve_it(client, today, monitor, make_user
 
 
 def test_the_demo_shows_one_gap_for_philips(db):
+    """Slice 34 on purpose: the demo's signed-off Philips review is Philips's last review, and with it signed off the section's check
+    names the other vendors under contract today, none of them reviewed."""
     call_command("seed_demo", stdout=StringIO())
     with tenant_context(Tenant.objects.get(slug="riverside")):
         today = timezone.localdate()
         s = vendors.build(survey.default_period(today), None)
+        others = sorted({c.vendor for c in Contract.objects.filter(start_on__lte=today, end_on__gte=today)} - {"Philips"}, key=str.casefold)
+        assert len(others) == 5 and seed_demo.TECHCARE in others  # the demo's other five contracts' vendors (the seed's draws)
         assert [(g.kind, g.text, g.url, g.record) for g in s.gaps] == [
             (GAP, "Philips: 1 job in the period with no training or attestation on file covering it", "/contracts/vendors/?vendor=Philips",
-             "Philips")]
+             "Philips"),
+            (CHECK, f"5 vendors with a contract in force on {fmt(today)} have no signed-off review: {', '.join(others[:4])}, and {others[4]}. "
+                    "Review each in Contracts, Reviews, or be ready to explain.", "/contracts/reviews/?show=not_reviewed", "Vendor reviews")]
+        review = VendorReview.objects.get()
+        assert (vendor_row(s, "Philips")["Last review"], vendor_row(s, "Philips")["Last review signed off"]) == (review.number, today)
+        assert vendor_row(s, seed_demo.TECHCARE)["Last review"] == ""
         (job,) = rows_of(s, "jobs")
         repair = WorkOrder.objects.get(checks_reference=seed_demo.VENDOR_REPORT_NUMBER)
         expired = today - timedelta(days=seed_demo.TRAINING_EXPIRED_DAYS_AGO)

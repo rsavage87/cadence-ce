@@ -7,6 +7,7 @@ narrow every row to the share, so a record outside it is a 404 as another facili
 from datetime import date, timedelta
 
 import pytest
+from django.utils import timezone
 from evaluation_fixtures import draft as evaluation_draft
 
 from apps.accounts.models import DataScope, Level, Module, Role, User
@@ -18,10 +19,12 @@ from apps.api.views_evaluations import ProgramEvaluationViewSet
 from apps.api.views_facilities import FacilityViewSet
 from apps.api.views_incidents import IncidentViewSet
 from apps.api.views_scan import ScanViewSet
+from apps.api.views_vendor_reviews import VendorReviewViewSet
 from apps.api.views_work import WorkOrderLaborViewSet, WorkOrderNoteViewSet, WorkOrderPartViewSet
 from apps.contracts.models import Contract, ContractType
 from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, RiskClass
-from apps.evaluations.models import ProgramEvaluation
+from apps.evaluations import vendor_reviews
+from apps.evaluations.models import ProgramEvaluation, VendorReview
 from apps.incidents.models import Affected, Incident, Outcome
 from apps.incidents.services import record_incident
 from apps.tenants.context import tenant_context
@@ -82,8 +85,13 @@ def world(ctx, dept, vent, pump, pump_model, techs):
     incident = record_incident(asset=vent, outcome=Outcome.NO_HARM, affected=Affected.NONE, hold=False)
     # Slice 32: a draft program evaluation of last year (its figures cover the vendor's and the unit's devices among the rest)
     evaluation = evaluation_draft()
+    # Slice 34: a draft review of a contracted vendor, on its contract before this one (ended yesterday)
+    Contract.objects.create(reference="SC-ACME-0", vendor="Acme Biomedical", type=ContractType.OEM, start_on=TODAY - timedelta(days=400),
+                            end_on=TODAY - timedelta(days=1))
+    vendor_review = vendor_reviews.create_review(vendor_names=["Acme Biomedical"], period_end=timezone.localdate() - timedelta(days=1), by=None)
     return {"assets": {"vent": vent, "pump": pump, "card_mon": card_mon, "card_pump": card_pump}, "wos": wos, "cardio": cardio,
-            "icu": dept, "monitor": monitor, "contract": contract, "incident": incident, "evaluation": evaluation}
+            "icu": dept, "monitor": monitor, "contract": contract, "incident": incident, "evaluation": evaluation,
+            "vendor_review": vendor_review}
 
 
 @pytest.fixture
@@ -389,7 +397,18 @@ def closed_endpoints(world, pump_recall, techs):
         ("post", wo_url(w, "vendor-engineer/"), {"engineer_name": "Lee Park"}),
         ("post", wo_url(w, "repair-finding/"), {"repair_finding": "wear"}),  # slice 33: what a repair found is the facility's record
         *evaluation_endpoints(world),
+        *vendor_review_endpoints(world),
     ]
+
+
+def vendor_review_endpoints(world):
+    """Slice 34: the vendor review endpoints (apps/api/views_vendor_reviews.py), read-only and never a scoped user's: a vendor's account
+    never reads its review."""
+    r = world["vendor_review"]
+    return [("get", f"{API}vendor-reviews/", None), ("get", f"{API}vendor-reviews/{r.id}/", None),
+            ("get", f"{API}vendor-reviews/{r.number}/", None), ("get", f"{API}vendor-reviews/?vendor=Acme%20Biomedical", None),
+            ("post", f"{API}vendor-reviews/", {"vendor_names": ["Acme Biomedical"]}),
+            ("patch", f"{API}vendor-reviews/{r.id}/", {"summary": "x"})]
 
 
 def evaluation_endpoints(world):
@@ -442,6 +461,7 @@ def test_every_other_endpoint_refuses_a_scoped_role_with_full_levels(client, per
     incident = Incident.objects.get(pk=world["incident"].pk)
     assert (incident.status, incident.event_log, incident.finding, incident.reportable, incident.holds.count()) == ("open", "", "", None, 0)
     assert ProgramEvaluation.objects.get(pk=world["evaluation"].pk).summary == "" and ProgramEvaluation.objects.count() == 1  # slice 32
+    assert VendorReview.objects.get(pk=world["vendor_review"].pk).summary == "" and VendorReview.objects.count() == 1  # slice 34
 
 
 @pytest.mark.parametrize("who", ["vendor", "requester"])
@@ -491,3 +511,5 @@ def test_only_work_orders_and_devices_opt_in():
     assert IncidentViewSet.scoped_actions == frozenset()
     # Slice 32: nor the program evaluation, which covers the whole facility
     assert ProgramEvaluationViewSet.scoped_actions == frozenset()
+    # Slice 34: nor a vendor review (a vendor's account never reads its own)
+    assert VendorReviewViewSet.scoped_actions == frozenset()

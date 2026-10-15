@@ -50,6 +50,7 @@ GAPS_SHOWN = 50  # a section's gaps listed on the screen; all of them in the gap
 WORK_ORDER, DEVICE = "work_order", "device"
 INCIDENT = "incident"  # slice 28: an incident's number (web:incident), linked for Incidents View only
 EVALUATION = "evaluation"  # slice 32: a program evaluation's number (web:evaluation: its version of record), linked for Program evaluation View only
+VENDOR_REVIEW = "vendor_review"  # slice 34: a vendor review's number (web:vendor_review: a page of its own), linked for Evaluations View only
 
 
 @dataclass(frozen=True)
@@ -159,7 +160,7 @@ class Table:
     columns: list[str]
     rows: Callable[[], Iterable[list]]  # lazy: every row, plain values (str, int, Decimal, float, date, None)
     count: int | None = None  # how many rows, when the section knows it cheaply (else the page says "see the CSV")
-    links: dict[int, str] = field(default_factory=dict)  # {column index: WORK_ORDER, DEVICE, INCIDENT, or EVALUATION}
+    links: dict[int, str] = field(default_factory=dict)  # {column index: WORK_ORDER, DEVICE, INCIDENT, EVALUATION, or VENDOR_REVIEW}
     printed: bool = True  # False: the print shows the count and points to the CSV (the inventory's every device)
     empty: str = "None in this period."
 

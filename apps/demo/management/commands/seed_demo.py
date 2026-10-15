@@ -63,6 +63,15 @@ it was, now reads as a use error, so the figures by finding have one), and each 
 out (found on that PM: never "PM could have caught it"), the vendor's closed repair states a finding from their report, the closed
 incident's investigation found no problem (the device met its specifications), the bed beyond repair and the repair done during the
 credential's lapse wore out. No work order is added.
+
+Slice 34: Riverside has one signed-off review of a contracted service vendor (Contracts, Reviews): Philips, for the 12 months ending
+yesterday (its closed monitor repair inside them), drafted through apps.evaluations.vendor_reviews by the CE manager just before the
+program evaluation (so that one stays made last), its figures taken then. Every criterion rated (staff evidence not met: the engineer
+named on that repair had no training on file for it, and Philips has no attestation), partially meets expectations, a corrective action
+plan due VENDOR_REVIEW_PLAN_DAYS after the sign-off with no result yet, the vendor's reported response, and a summary about the vendor's
+service as a whole (VENDOR_REVIEW_*: no counts, no engineer, patient, requester, or incident). Signed off today by the CE manager. The
+survey binder's vendors section shows its number in Philips's last review, and its check names the other vendors under contract with
+no signed-off review. Constants only: nothing is drawn from the demo's generators. The North Campus has none.
 """
 import random
 from datetime import date, datetime, time, timedelta
@@ -93,7 +102,8 @@ from apps.equipment.models import (
     UseBeforeInspection,
 )
 from apps.evaluations import services as evaluations
-from apps.evaluations.models import ObjectiveKind, ObjectiveResult
+from apps.evaluations import vendor_reviews
+from apps.evaluations.models import Decision, ObjectiveKind, ObjectiveResult, Overall, Rating, StatedInContract
 from apps.facility.models import PmWindow
 from apps.facility.services import labor_rates, update_settings
 from apps.incidents import notify as incident_notify
@@ -360,6 +370,23 @@ EVALUATION_REVIEW_OBJECTIVES = [
 ]
 EVALUATION_NEXT_OBJECTIVES = [("Bring the mean repair turnaround within the facility's target", "3 days or less")]
 
+# Slice 34, the Philips review (_vendor_review): the vendor's names as its contract and work orders write them, the CE manager's ratings
+# and the rest of the review (the vendor's reported response from its quarterly service report; never uptime or response computed from
+# Cadence's dates), and the corrective action plan's due day, in days after the sign-off. The summary is about the vendor's service as a
+# whole: no counts (the figures have them), no engineer, patient, requester, or incident.
+VENDOR_REVIEW_NAMES = [VENDOR_COMPANY]
+VENDOR_REVIEW_FIELDS = {
+    "rating_timeliness": Rating.MET, "rating_quality": Rating.MET, "rating_documentation": Rating.MET,
+    "rating_staff_evidence": Rating.NOT_MET, "rating_user_satisfaction": Rating.MET, "rating_invoices": Rating.MET,
+    "stated_in_contract": StatedInContract.PARTLY, "response_target_pct": Decimal("95.00"), "response_reported_pct": Decimal("97.50"),
+    "vendor_report_reference": "PHL-QSR-0917", "overall": Overall.PARTIALLY, "decision": Decision.CORRECTIVE_PLAN,
+    "summary": "Philips's service on the patient monitors was timely and its service reports were on file for the work it did. The "
+               "evidence that its field staff were trained fell short: no training on file covered all of its work, and no attestation "
+               "is on file. Philips is asked for a written attestation covering the patient monitors it services, by the plan's due day.",
+    "approver_name": "Rob Feldman", "approver_title": "Clinical Engineering Manager",
+}
+VENDOR_REVIEW_PLAN_DAYS = 90
+
 
 def _noon(day: date) -> datetime:
     """Noon of `day` in the current time zone (the facility's, inside tenant_context): a backdated timestamp's moment."""
@@ -525,6 +552,7 @@ class Command(BaseCommand):
             self._late_reasons(today)
             self._incidents(today, domain)
             self._not_returned(today)
+            self._vendor_review(today, domain)  # slice 34: before the program evaluation, which stays made last
             self._program_evaluation(today, domain)  # slice 32: last, so its figures count everything above
         devices = len(assets) + len(NEW_DEVICES) + len(TEMPORARY_DEVICES)
         self.stdout.write(self.style.SUCCESS(f"Seeded {tenant.name}: {devices} devices, {len(techs)} technicians. Sign in as {kim} / DemoPass-2026"))
@@ -953,6 +981,17 @@ class Command(BaseCommand):
                 complete_work_order(wo, resolution=VENDOR_RESOLUTION, repair_check=RepairCheck.VENDOR_REPORT, repair_finding=VENDOR_FINDING,
                                     checks_reference=VENDOR_REPORT_NUMBER, vendor_engineer=engineer, today=done)
                 change_status(wo, "closed", as_of=done)
+
+    @staticmethod
+    def _vendor_review(today: date, domain: str) -> None:
+        """Slice 34: Philips's review for the 12 months ending yesterday, through apps.evaluations.vendor_reviews as the Reviews tab
+        writes one: drafted by the CE manager (its figures taken now), each of VENDOR_REVIEW_FIELDS recorded, the corrective action
+        plan due VENDOR_REVIEW_PLAN_DAYS after today, and signed off today on the figures it holds. Constants only."""
+        manager = User.objects.get(username=f"{EVALUATION_AUTHOR}@{domain}")  # the CE manager: Evaluations Approve, Contracts Edit
+        review = vendor_reviews.create_review(vendor_names=VENDOR_REVIEW_NAMES, period_end=today - timedelta(days=1), by=manager, today=today)
+        review = vendor_reviews.update_review(review, by=manager, plan_due_on=today + timedelta(days=VENDOR_REVIEW_PLAN_DAYS),
+                                              **VENDOR_REVIEW_FIELDS)
+        vendor_reviews.sign_off(review, snapshot_id=review.snapshot_id, signed_on=today, by=manager, today=today)
 
     @staticmethod
     def _program_evaluation(today: date, domain: str) -> None:
