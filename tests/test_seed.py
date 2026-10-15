@@ -281,6 +281,59 @@ def test_seed_demo_drafts_last_years_program_evaluation(db):
         assert ProgramEvaluation.objects.count() == 1
 
 
+def test_seed_demo_signs_off_a_philips_review(db):
+    """Slice 34: one signed-off review of Philips for the 12 months ending yesterday (its closed monitor repair inside them), drafted
+    and signed off today by the CE manager through apps.evaluations.vendor_reviews, just before the program evaluation (which stays made
+    last), every field from VENDOR_REVIEW_FIELDS, its corrective action plan due VENDOR_REVIEW_PLAN_DAYS ahead with no result. Its
+    figures are what vendor_figures counts now (never constants), and its summary holds no count. Riverside only; a second run adds
+    nothing."""
+    from django.utils import timezone
+
+    from apps.evaluations import vendor_figures
+    from apps.evaluations import vendor_reviews as vr
+    from apps.evaluations.models import ProgramEvaluation, ReviewStatus, VendorReview, VendorReviewSnapshot
+    from apps.reports.survey import default_period, vendors
+
+    call_command("seed_demo", stdout=StringIO())
+    with tenant_context(Tenant.objects.get(slug="riverside")):
+        today = timezone.localdate()
+        manager = User.objects.get(username=f"{seed_demo.EVALUATION_AUTHOR}@riverside.example")
+        review = VendorReview.objects.select_related("snapshot").get()
+        end = today - timedelta(days=1)
+        assert (review.vendor_names, review.vendor_keys, review.period_start, review.period_end) == (
+            seed_demo.VENDOR_REVIEW_NAMES, ["philips"], vr.period_start_of(end), end)
+        assert (review.status, review.signed_on, review.signed_by, review.created_by, manager.role.slug) == (
+            ReviewStatus.APPROVED, today, manager, manager, "manager")
+        assert review.number == f"VR-{end:%y}-0001" and {h.history_user_id for h in review.history.all()} == {manager.pk}
+        assert {f: getattr(review, f) for f in seed_demo.VENDOR_REVIEW_FIELDS} == seed_demo.VENDOR_REVIEW_FIELDS
+        assert (review.plan_due_on, review.plan_result, review.plan_closed_on) == (
+            today + timedelta(days=seed_demo.VENDOR_REVIEW_PLAN_DAYS), "", None)
+        assert not any(ch.isdigit() for ch in review.summary)  # the figures have the counts
+        repair = WorkOrder.objects.get(checks_reference=seed_demo.VENDOR_REPORT_NUMBER)
+        assert review.period_start <= repair.completed_on <= review.period_end and repair.vendor_name == "Philips"
+        # the figures as taken, counted again now (one snapshot: taken when drafted, signed off on it)
+        assert VendorReviewSnapshot.objects.count() == 1 and (review.snapshot.taken_on, review.snapshot.taken_by) == (today, manager)
+        fresh = vendor_figures.snapshot(review.vendor_keys, review.period_start, review.period_end, today=today)
+        assert review.snapshot.data == fresh
+        jobs = vendor_figures.by_key(fresh)["jobs_completed"]
+        assert jobs["value"] == WorkOrder.objects.filter(vendor_service=True, vendor_name="Philips", status__in=("completed", "closed"),
+                                                         completed_on__range=(review.period_start, review.period_end)).count() >= 1
+        assert vendor_figures.by_key(fresh)["contracts_in_period"]["value"] >= 1
+        # made before the program evaluation, which stays last
+        ev = ProgramEvaluation.objects.select_related("snapshot").get()
+        assert review.created_at < ev.created_at and review.snapshot.taken_at < ev.snapshot.taken_at
+        # the binder: Philips's last review, and a plan not yet due
+        s = vendors.build(default_period(today), None)
+        rows = {r[0]: r for r in s.table("vendors").rows()}
+        assert rows["Philips"][-2:] == [review.number, today]
+        assert not any("corrective action plan" in g.text or "no signed-off review of the 12 months" in g.text for g in s.gaps)
+    with tenant_context(Tenant.objects.get(slug="riverside-north")):
+        assert not VendorReview.objects.exists()
+    call_command("seed_demo", stdout=StringIO())  # a second run adds nothing
+    with tenant_context(Tenant.objects.get(slug="riverside")):
+        assert VendorReview.objects.count() == 1 and VendorReviewSnapshot.objects.count() == 1
+
+
 def test_a_database_seeded_before_slice_22_gets_the_north_campus(db, monkeypatch):
     monkeypatch.setattr(seed_demo.Command, "_north_campus", lambda self, tenant, opts: None)
     call_command("seed_demo", stdout=StringIO())
