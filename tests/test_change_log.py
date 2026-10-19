@@ -138,7 +138,9 @@ def test_a_role_sees_only_the_areas_it_can_view(client, auditor, world):
     r = client.get(LOG)
     seen = {"devices", "device_models", "roles", "access"}  # the device, its model, the facility's roles (added with it), Kim's change
     assert {e.area for e in r.context["entries"]} == seen
-    assert [k for k, _ in r.context["areas"]] == ["devices", "device_models", "credentials", "roles", "access"]
+    # slice 35: test equipment, its calibrations and reviews (Equipment View); the work orders' uses also need Work orders View
+    assert [k for k, _ in r.context["areas"]] == ["devices", "device_models", "credentials", "roles", "test_equipment", "calibrations",
+                                                 "tolerance_reviews", "access"]
     html = r.content.decode()
     assert 'value="contracts"' not in html and "SC-2291" not in html
     dropped = client.get(LOG + "?area=contracts")  # an area the role cannot view is dropped, as the lists drop a filter

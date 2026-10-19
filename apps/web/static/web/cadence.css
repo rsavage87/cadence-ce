@@ -1173,6 +1173,9 @@ td small.tmp-late{color:var(--crit)}
   .vs-eng-boxes label{min-height:40px}
 }
 
+/* Slice 35 A: the Equipment screen's Test equipment tab and an item's drawer. Wave 2A owns this block, up to the A end marker. */
+/* Slice 35 A: end */
+
 /* Slice 31: field engineer (web/_wo_engineer_select.html in the completion modal and the drawer's Change; the drawer's row). On vendor
    service the completion modal asks who did the work beside the vendor's report number (side by side, one column on a phone), the
    number shown whatever the outcome; "Someone else"'s name box shows with it (all of it without :has support). */
@@ -1458,6 +1461,10 @@ td small.tmp-late{color:var(--crit)}
   .vr-radio-other input[type=date],.form .vr-radio-other input[type=date]{margin-left:0;width:100%;min-height:44px;font-size:16px}
   .vr-facts{grid-template-columns:1fr}
 }
+
+/* Slice 35 B: test equipment on the work order (the completion modal's picker, the drawer's row and its Change). Wave 2B owns
+   this block, up to the B end marker; keep it before the printing section. */
+/* Slice 35 B: end */
 
 /* Slice 11: printing app pages */
 /* What the browser prints of an app page (the Overview's Export button calls window.print(); any other screen prints from the

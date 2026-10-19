@@ -51,6 +51,7 @@ WORK_ORDER, DEVICE = "work_order", "device"
 INCIDENT = "incident"  # slice 28: an incident's number (web:incident), linked for Incidents View only
 EVALUATION = "evaluation"  # slice 32: a program evaluation's number (web:evaluation: its version of record), linked for Evaluations View only
 VENDOR_REVIEW = "vendor_review"  # slice 34: a vendor review's number (web:vendor_review: a page of its own), linked for Evaluations View only
+TEST_EQUIPMENT = "test_equipment"  # slice 35: a test equipment item's tag (web:test_equipment_item: its drawer), linked for Equipment View
 
 
 @dataclass(frozen=True)
@@ -121,7 +122,8 @@ LINK_NEEDS = {"settings": Module.SETTINGS, "pm_model": Module.PM, "asset": Modul
               "credentials": Module.USERS, "incidents": Module.INCIDENTS, "incident": Module.INCIDENTS,
               "vendor_staff": Module.CONTRACTS,  # slice 31: the Contracts screen's Vendor staff tab (it refuses scoped users, as the binder does)
               "evaluations": Module.EVALUATIONS, "evaluation": Module.EVALUATIONS, "evaluation_version": Module.EVALUATIONS,  # slice 32
-              "vendor_reviews": Module.EVALUATIONS, "vendor_review": Module.EVALUATIONS}  # slice 34 (the views also need Contracts View)
+              "vendor_reviews": Module.EVALUATIONS, "vendor_review": Module.EVALUATIONS,  # slice 34 (the views also need Contracts View)
+              "test_equipment": Module.EQUIPMENT, "test_equipment_item": Module.EQUIPMENT}  # slice 35 (the views refuse scoped users)
 
 
 def gap_links(user) -> Callable[[Gap], str]:
@@ -160,7 +162,7 @@ class Table:
     columns: list[str]
     rows: Callable[[], Iterable[list]]  # lazy: every row, plain values (str, int, Decimal, float, date, None)
     count: int | None = None  # how many rows, when the section knows it cheaply (else the page says "see the CSV")
-    links: dict[int, str] = field(default_factory=dict)  # {column index: WORK_ORDER, DEVICE, INCIDENT, EVALUATION, or VENDOR_REVIEW}
+    links: dict[int, str] = field(default_factory=dict)  # {column index: WORK_ORDER, DEVICE, INCIDENT, EVALUATION, VENDOR_REVIEW, or TEST_EQUIPMENT}
     printed: bool = True  # False: the print shows the count and points to the CSV (the inventory's every device)
     empty: str = "None in this period."
 
@@ -218,8 +220,12 @@ NOT_COVERED = [
     # Slice 32 keeps the program's annual evaluation (Reports, Program evaluation; the Program and policies section lists those approved).
     "The facility's written medical equipment management plan itself (an evaluation records the version reviewed)",
     # Slice 30 keeps the checks after a repair work order (the Checks after repair section); these it does not.
-    "Checks after a recall action or software upgrade; devices returned to service by hand without a repair work order; calibration of "
-    "electrical safety analyzers; a medical physicist's evaluation of imaging equipment after a major repair",
+    "Checks after a recall action or software upgrade; devices returned to service by hand without a repair work order; a medical "
+    "physicist's evaluation of imaging equipment after a major repair",
+    # Slice 35 keeps the CE department's test equipment, its certificates' records, and the work done with it (the Test equipment section).
+    "The vendors' own test equipment (their service reports carry it)",
+    "The calibration certificates themselves (Cadence records each one's number, provider, and result)",
+    "Checks of test equipment between calibrations, and in-house verification against a reference standard",
     # Slice 28 keeps CE's part of device incidents (the Device incidents section); the rest is the facility's own MDR program.
     "The facility's written MDR procedures, its annual report (Form FDA 3419), and the deliberations and report copies in its own event "
     "files; incidents involving equipment not in Cadence (disposables, implants, patients' own devices)",
@@ -237,7 +243,7 @@ NOT_COVERED = [
 
 
 def _sections():
-    from . import aem, incidents, inspections, inventory, maintenance, program, recalls, repairs, staff, vendors
+    from . import aem, incidents, inspections, inventory, maintenance, program, recalls, repairs, staff, testequipment, vendors
 
     return [
         ("program", "Program and policies", program.build),
@@ -246,6 +252,7 @@ def _sections():
         ("aem", "Alternate equipment maintenance (AEM)", aem.build),
         ("inspections", "Incoming inspection before first use", inspections.build),
         (repairs.KEY, repairs.TITLE, repairs.build),  # slice 30
+        (testequipment.KEY, testequipment.TITLE, testequipment.build),  # slice 35
         ("recalls", "Recalls and safety alerts", recalls.build),
         ("incidents", "Device incidents", incidents.build),  # slice 28
         ("staff", "Technician qualifications", staff.build),

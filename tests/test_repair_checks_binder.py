@@ -266,8 +266,9 @@ def test_the_section_follows_incoming_inspections_and_needs_work_orders_and_equi
 
 def test_the_cover_names_what_is_still_not_covered():
     assert not any("Checks done after a repair" in item for item in NOT_COVERED)
-    assert ("Checks after a recall action or software upgrade; devices returned to service by hand without a repair work order; calibration "
-            "of electrical safety analyzers; a medical physicist's evaluation of imaging equipment after a major repair") in NOT_COVERED
+    assert ("Checks after a recall action or software upgrade; devices returned to service by hand without a repair work order; a medical "
+            "physicist's evaluation of imaging equipment after a major repair") in NOT_COVERED  # slice 35 keeps the test equipment's calibration
+    assert not any("calibration of electrical safety analyzers" in item for item in NOT_COVERED)
 
 
 def test_the_page_the_csv_and_the_api_serve_it(client, today, vent, techs, make_user):

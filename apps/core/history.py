@@ -196,6 +196,19 @@ AREAS = {a.key: a for a in (
     Area("vendor_review_reports", "Vendor review reports", "evaluations.VendorReviewReport", "evaluations",
          _safe(lambda r: f"{r.review.number} · report"), _safe(lambda r: reverse("web:vendor_review", args=[r.review.number])),
          select=("review",), also=("contracts",)),
+    # Slice 35: the CE department's test equipment, its calibrations and tolerance reviews (Equipment View), and which test equipment
+    # each work order recorded (Work orders View and Equipment View).
+    Area("test_equipment", "Test equipment", "testequipment.TestEquipment", "equipment", _safe(lambda r: r.tag),
+         _safe(lambda r: reverse("web:test_equipment_item", args=[r.tag]))),
+    Area("calibrations", "Test equipment calibrations", "testequipment.Calibration", "equipment",
+         _safe(lambda r: f"{r.test_equipment.tag} · calibration {r.certificate}"),
+         _safe(lambda r: reverse("web:test_equipment_item", args=[r.test_equipment.tag])), select=("test_equipment",)),
+    Area("tolerance_reviews", "Test equipment tolerance reviews", "testequipment.ToleranceReview", "equipment",
+         _safe(lambda r: f"{r.calibration.test_equipment.tag} · review of calibration {r.calibration.certificate}"),
+         _safe(lambda r: reverse("web:test_equipment_item", args=[r.calibration.test_equipment.tag])), select=("calibration__test_equipment",)),
+    Area("test_equipment_uses", "Test equipment used", "testequipment.TestEquipmentUse", "workorders",
+         _safe(lambda r: f"{_wo_number(r)} · {r.test_equipment.tag}"), _safe(_wo_url), select=("work_order", "test_equipment"),
+         also=("equipment",)),
 )}
 ACCESS = Area("access", "Access", "accounts.AccessEvent", "users", _safe(lambda e: str(e.user) if e.user_id else ""))
 ALL_AREAS = {**AREAS, ACCESS.key: ACCESS}
@@ -272,6 +285,11 @@ HIDE = {
     # Slice 34: the record's own name and the stored keys; a report's review is in its name
     "evaluations.vendorreview": {"number", "vendor_keys", "vendor_key", "created_by"},
     "evaluations.vendorreviewreport": {"review"},
+    # Slice 35 (the item, the calibration, and the work order are in each record's name)
+    "testequipment.testequipment": {"tag_key", "created_by"},
+    "testequipment.calibration": {"test_equipment"},
+    "testequipment.tolerancereview": {"calibration", "work_orders"},
+    "testequipment.testequipmentuse": {"work_order", "test_equipment"},
 }
 
 # Labels that read better than the verbose names, per model; `_label` falls back to the verbose name.
@@ -334,6 +352,15 @@ LABELS = {
                                  "plan_closed_on": "Plan closed", "summary": "Summary", "signed_on": "Signed off",
                                  "approver_name": "Approved by", "approver_title": "Approver's title", "signed_by": "Sign-off recorded by"},
     "evaluations.vendorreviewreport": {"body": "Committee", "meeting_on": "Meeting", "minutes_reference": "Minutes", "recorded_by": "Recorded by"},
+    # Slice 35
+    "testequipment.testequipment": {"tag": "Tag", "kind": "Kind", "serial": "Serial number", "program": "Certificates",
+                                    "interval_months": "Interval", "status_reason": "Why", "status_since": "Since", "held_by": "Held by"},
+    "testequipment.calibration": {"calibrated_on": "Calibrated", "due_on": "Due", "provider": "Provider", "certificate": "Certificate number",
+                                  "accreditation": "Accreditation mark", "as_found": "As found", "adjusted": "Adjusted", "result": "Result",
+                                  "recorded_by": "Recorded by", "entered_in_error": "Entered in error",
+                                  "entered_in_error_by": "Marked in error by", "entered_in_error_on": "Marked in error on"},
+    "testequipment.tolerancereview": {"basis": "Decision", "quality_reference": "Quality record", "decided_on": "Decided",
+                                      "decided_by": "Decided by", "window_start": "After", "window_end": "Through", "work_count": "Work orders"},
     "accounts.role": {"is_system": "System role", "scope": "What its users see"},
     "facility.facilitysettings": {"portal_require_callback": "Portal: callback number required", "portal_hotline": "Portal: hotline",
                                   "portal_confirmation": "Portal: confirmation", "portal_email_domains": "Portal: email domains",
@@ -379,6 +406,7 @@ KINDS = {
     "vendors.engineertraining": {"model_ids": "device_models"},
     "vendors.vendorattestation": {"model_ids": "device_models", "vendor_names": "names"},
     # Slice 34: a review's vendor names as a list in words, the vendor's reported figures as percentages
+    "testequipment.testequipment": {"interval_months": "months"},  # slice 35
     "evaluations.vendorreview": {"vendor_names": "names", "uptime_target_pct": "percent", "uptime_reported_pct": "percent",
                                  "uptime_lowest_pct": "percent", "response_target_pct": "percent", "response_reported_pct": "percent"},
 }

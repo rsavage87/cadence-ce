@@ -85,6 +85,7 @@ SURVEY_NEEDS = {
     "aem": ((Module.PM, Level.VIEW),),
     "inspections": ((Module.EQUIPMENT, Level.VIEW), (Module.WORKORDERS, Level.VIEW)),
     "repairs": ((Module.WORKORDERS, Level.VIEW), (Module.EQUIPMENT, Level.VIEW)),  # slice 30: checks after a repair
+    "testequipment": ((Module.EQUIPMENT, Level.VIEW), (Module.WORKORDERS, Level.VIEW)),  # slice 35: test equipment and the work done with it
     "recalls": ((Module.RECALLS, Level.VIEW),),
     "incidents": ((Module.INCIDENTS, Level.VIEW),),  # slice 28: facts about a health event (CLAUDE.md non-negotiable 6)
     "staff": ((Module.USERS, Level.VIEW), (Module.WORKORDERS, Level.VIEW)),

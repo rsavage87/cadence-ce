@@ -121,7 +121,7 @@ def _tag_refused(tag: str) -> bool:
         TAG_VALIDATOR(tag)
     except ValidationError:
         return True
-    return tag.lower() in eq.RESERVED_TAGS
+    return tag.lower() in eq.RESERVED_TAGS or eq.is_test_equipment_tag(tag)  # slice 35: a test equipment item's tag
 
 
 class _Later:

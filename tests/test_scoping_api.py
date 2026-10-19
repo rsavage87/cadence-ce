@@ -20,6 +20,7 @@ from apps.api.views_evaluations import ProgramEvaluationViewSet
 from apps.api.views_facilities import FacilityViewSet
 from apps.api.views_incidents import IncidentViewSet
 from apps.api.views_scan import ScanViewSet
+from apps.api.views_testequipment import TestEquipmentViewSet
 from apps.api.views_vendor_reviews import VendorReviewViewSet
 from apps.api.views_work import WorkOrderLaborViewSet, WorkOrderNoteViewSet, WorkOrderPartViewSet
 from apps.contracts.models import Contract, ContractType
@@ -514,3 +515,5 @@ def test_only_work_orders_and_devices_opt_in():
     assert ProgramEvaluationViewSet.scoped_actions == frozenset()
     # Slice 34: nor a vendor review (a vendor's account never reads its own)
     assert VendorReviewViewSet.scoped_actions == frozenset()
+    # Slice 35: nor the CE department's test equipment
+    assert TestEquipmentViewSet.scoped_actions == frozenset()

@@ -32,7 +32,20 @@ from apps.accounts import people
 from apps.accounts.models import Level, Module
 from apps.reports import permissions as rep_perms
 from apps.reports import survey as sv
-from apps.reports.survey import DEVICE, EVALUATION, GAPS_SHOWN, INCIDENT, KIND_HELP, KIND_LABELS, KINDS, PREVIEW_ROWS, PRINT_ROWS, VENDOR_REVIEW, WORK_ORDER
+from apps.reports.survey import (
+    DEVICE,
+    EVALUATION,
+    GAPS_SHOWN,
+    INCIDENT,
+    KIND_HELP,
+    KIND_LABELS,
+    KINDS,
+    PREVIEW_ROWS,
+    PRINT_ROWS,
+    TEST_EQUIPMENT,
+    VENDOR_REVIEW,
+    WORK_ORDER,
+)
 
 from .decorators import web_view
 from .exports import csv_response
@@ -40,13 +53,14 @@ from .htmx import is_partial
 from .views_reports import refused
 
 # The record pages a gap or a table cell opens in the drawer over the binder (by URL name); any other page opens on its own.
-DRAWERS = frozenset({"wo", "asset", "pm_model", "contract", "incident"})
+DRAWERS = frozenset({"wo", "asset", "pm_model", "contract", "incident", "test_equipment_item"})  # slice 35: a test equipment item's drawer
 KIND_CSS = {sv.GAP: "crit", sv.FINDING: "warn", sv.CHECK: "neutral"}
 # A table's link column: the page its key opens, and the area whose View the reader needs for the link (slice 28: an incident's
 # number links only for Incidents View; the binder refuses scoped users, so View is the whole rule here).
 LINK_VIEWS = {WORK_ORDER: ("web:wo", Module.WORKORDERS), DEVICE: ("web:asset", Module.EQUIPMENT), INCIDENT: ("web:incident", Module.INCIDENTS),
               EVALUATION: ("web:evaluation", Module.EVALUATIONS),  # slice 32: a page of its own, never a drawer
-              VENDOR_REVIEW: ("web:vendor_review", Module.EVALUATIONS)}  # slice 34: a page of its own; the binder's vendors section needs Contracts View
+              VENDOR_REVIEW: ("web:vendor_review", Module.EVALUATIONS),  # slice 34: a page of its own; the binder's vendors section needs Contracts View
+              TEST_EQUIPMENT: ("web:test_equipment_item", Module.EQUIPMENT)}  # slice 35: the item's drawer
 GAPS_COLUMNS = ["Section", "Kind", "Record", "Description", "Link"]
 
 

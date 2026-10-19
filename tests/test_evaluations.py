@@ -791,8 +791,8 @@ def test_each_figure_on_a_small_facility(world, today):
     assert shown("repair_spend") == (214.0, None, "$214.00", True) and f["repair_spend"]["target_display"] == "$1,200.00"
     assert f["aem_models"]["value"] == 2
     assert data["not_recorded"] == list(indicators.NOT_RECORDED)
-    assert set(data["binder_gaps"]) == {"program", "inventory", "maintenance", "aem", "inspections", "repairs", "recalls", "incidents",
-                                        "staff", "vendors"}
+    assert set(data["binder_gaps"]) == {"program", "inventory", "maintenance", "aem", "inspections", "repairs", "testequipment", "recalls",
+                                        "incidents", "staff", "vendors"}
     assert data["binder_gaps"]["staff"] == {"gap": 0, "finding": 1, "check": 0}
     for i in data["indicators"]:  # every stored indicator reads on its own
         assert {"label", "group", "unit", "needs", "rule", "display", "basis"} <= set(i) and i["label"]

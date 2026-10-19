@@ -10,7 +10,7 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.db import models, transaction
+from django.db import IntegrityError, models, transaction
 from django.db.models import Case, Count, Exists, F, OuterRef, Q, Subquery, Value, When
 from django.db.models.functions import Coalesce
 from django.db.models.lookups import Exact
@@ -230,6 +230,33 @@ NEW_DEVICE_STATUSES = (AssetStatus.IN_SERVICE, AssetStatus.OUT_OF_SERVICE)  # a 
 # /equipment/new/ adds a device, so no device can be tagged "new"; "." and ".." are path segments browsers rewrite, so a device
 # tagged that way could never be opened.
 RESERVED_TAGS = {"new", ".", ".."}
+TAGS_LOCK = "tags"  # slice 35: the facility's tag lock (a Sequence row that never counts): devices and test equipment share the tags
+
+
+def lock_tags() -> None:
+    """Hold the facility's tag lock until the transaction ends (slice 35): a device's tag and a test equipment item's tag are one
+    sticker space, unique in any letter case across both tables, so create_asset (and through it add_temporary_device, the devices
+    import, and the API) and apps.testequipment.services.add_test_equipment take it first, then check both tables, then insert. A row
+    of its own that nothing else locks, taken before anything else (as pm.services.lock_planner); SQLite runs one writer at a time."""
+    from apps.core.models import Sequence
+    from apps.tenants.context import get_current_tenant
+
+    tenant = get_current_tenant()
+    if tenant is None:
+        raise RuntimeError("lock_tags() needs a tenant context")
+    try:
+        with transaction.atomic():  # a savepoint: two first-ever requests may both try to create the row
+            Sequence.unscoped.get_or_create(tenant=tenant, key=TAGS_LOCK)  # unscoped + explicit tenant, as Sequence.next
+    except IntegrityError:
+        pass
+    Sequence.unscoped.select_for_update().get(tenant=tenant, key=TAGS_LOCK)  # unscoped + explicit tenant, as Sequence.next
+
+
+def is_test_equipment_tag(tag: str) -> bool:
+    """Whether a test equipment item has `tag` in any letter case (slice 35): a device never takes it."""
+    from apps.testequipment.models import TestEquipment
+
+    return TestEquipment.objects.filter(tag_key=(tag or "").strip().casefold()).exists()
 
 # Status changes the drawer and API allow, from -> to. "In repair" is reached through work orders, never set by hand; retiring
 # and reinstating need more (permissions.RETIRE_LEVEL) because retiring cancels the device's open PM work orders.
@@ -695,8 +722,24 @@ def create_asset(*, tag, device_model, department, serial="", room="", installed
     _check_dates(installed_on=installed_on, warranty_end=warranty_end, last_pm_on=last_pm_on, today=today)
     _check_numbers(acquisition_cost=acquisition_cost, condition=condition)
     _check_next_pm(next_pm_on, today)
-    if Asset.objects.filter(tag__iexact=tag).exists():
-        raise ValidationError({"tag": f"{tag} is already on another device."})
+    with transaction.atomic():
+        lock_tags()  # slice 35: the tags are shared with test equipment; checked and inserted under the facility's tag lock
+        if Asset.objects.filter(tag__iexact=tag).exists():
+            raise ValidationError({"tag": f"{tag} is already on another device."})
+        if is_test_equipment_tag(tag):
+            raise ValidationError({"tag": f"{tag} is test equipment's tag."})
+        return _create_asset(tag=tag, device_model=device_model, department=department, serial=serial, room=room,
+                             installed_on=installed_on, acquisition_cost=acquisition_cost, warranty_end=warranty_end, condition=condition,
+                             last_pm_on=last_pm_on, next_pm_on=next_pm_on, notes=notes, status=status, by=by, today=today,
+                             added_on=added_on, added_as=added_as, waiting=waiting, temporary=temporary, inspection_due=inspection_due,
+                             ownership=ownership, owner=owner, owner_reference=owner_reference, arrived_on=arrived_on,
+                             due_back_on=due_back_on, owner_pm_due_on=owner_pm_due_on, stands_in_for=stands_in_for)
+
+
+def _create_asset(*, tag, device_model, department, serial, room, installed_on, acquisition_cost, warranty_end, condition, last_pm_on,
+                  next_pm_on, notes, status, by, today, added_on, added_as, waiting, temporary, inspection_due, ownership, owner,
+                  owner_reference, arrived_on, due_back_on, owner_pm_due_on, stands_in_for) -> Asset:
+    """create_asset's insert, its checks done and the tag lock held."""
     no_pm = waiting or temporary  # slice 26: its PM clock starts at the pass; slice 29: its owner maintains it
     asset = Asset(tag=tag, device_model=device_model, department=department, serial=_clean_text(serial, 80), room=_clean_text(room, 40),
                   installed_on=installed_on, acquisition_cost=acquisition_cost, warranty_end=warranty_end, condition=condition,

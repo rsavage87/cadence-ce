@@ -1,0 +1,5 @@
+{% load testequipment_tags %}{# The Equipment screen's tabs (slice 35): the devices, and the CE department's test equipment. Shown only to whoever may open the Test equipment tab (Equipment View, never a scoped user: a vendor's or a requester's account sees no tabs). Context: equipment_tab ("test_equipment" on the Test equipment tab; anything else is the devices). #}
+{% if request.user|reads_test_equipment %}<div class="tabs page-tabs" role="tablist">
+  <a class="tab{% if equipment_tab != 'test_equipment' %} active{% endif %}" role="tab" href="{% url 'web:equipment' %}"{% if equipment_tab != 'test_equipment' %} aria-current="page"{% endif %}>Devices</a>
+  <a class="tab{% if equipment_tab == 'test_equipment' %} active{% endif %}" role="tab" href="{% url 'web:test_equipment' %}"{% if equipment_tab == 'test_equipment' %} aria-current="page"{% endif %}>Test equipment</a>
+</div>{% endif %}

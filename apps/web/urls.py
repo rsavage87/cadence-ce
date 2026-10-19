@@ -17,6 +17,7 @@ from . import (
                views_wo_engineer,
                views_wo_finding,
                views_wo_late,
+               views_wo_test_equipment,
 )
 
 app_name = "web"
@@ -73,6 +74,7 @@ urlpatterns = [
     path("work-orders/<str:number>/late-reason/", views_wo_late.wo_late_reason, name="wo_late_reason"),  # slice 25: why a PM was late
     path("work-orders/<str:number>/engineer/", views_wo_engineer.wo_engineer, name="wo_engineer"),  # slice 31: the field engineer's Change
     path("work-orders/<str:number>/finding/", views_wo_finding.wo_finding, name="wo_finding"),  # slice 33: what a repair found, its Change
+    path("work-orders/<str:number>/test-equipment/", views_wo_test_equipment.wo_test_equipment, name="wo_test_equipment"),  # slice 35
     path("work-orders/<str:number>/waiting/", views_my_work.wo_waiting, name="wo_waiting"),  # slice 24: Waiting on parts from My work, with a note
     path("pm/", include("apps.web.urls_pm")),
     path("contracts/vendors/", include("apps.web.urls_vendors")),  # slice 31: the Vendor staff tab
@@ -82,6 +84,7 @@ urlpatterns = [
     path("users/credentials/", include("apps.web.urls_credentials")),
     path("recalls/", include("apps.web.urls_recalls")),
     path("incidents/", include("apps.web.urls_incidents")),  # slice 28: device incidents
+    path("test-equipment/", include("apps.web.urls_testequipment")),  # slice 35: the CE department's test equipment
     path("reports/", include("apps.web.urls_reports")),
     path("settings/", include("apps.web.urls_settings")),
     path("export/", include("apps.web.urls_exports")),
