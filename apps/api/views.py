@@ -10,6 +10,9 @@ except the actions a view names in `scoped_actions` (ModulePermission). Work ord
 querysets to the user's share, so a row outside it is a 404, as another facility's is, and search and ordering only sort that share.
 """
 
+import uuid
+
+from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import ProtectedError
@@ -33,6 +36,8 @@ from apps.incidents import permissions as inc_perms
 from apps.incidents.models import Incident
 from apps.pm import permissions as pm_perms
 from apps.tenants.context import get_current_tenant
+from apps.testequipment import services as te_services
+from apps.testequipment.models import TestEquipmentUse
 from apps.workorders import findings, scoping
 from apps.workorders import permissions as wo_perms
 from apps.workorders import services as wo_services
@@ -41,6 +46,7 @@ from apps.workorders.models import OPEN_STATUSES, RepairCheck, WorkOrder, WoStat
 from . import serializers as s
 from .base import TenantViewSet, _refuse_on_create, _via_service
 from .permissions import ModulePermission
+from .serializers_testequipment import shows_test_equipment
 from .tenancy import TenantAPIMixin
 
 
@@ -359,6 +365,37 @@ def _engineer_value(body):
     return value or None
 
 
+# Slice 35: which test equipment a work order recorded (apps.testequipment), for a write that sends it anywhere else (refused rather than
+# dropped), and its one shape: a list of item ids as text.
+TEST_EQUIPMENT_RECORDED = ("The test equipment used is recorded when the work order is completed (POST /api/v1/work-orders/{id}/transition/ "
+                           "with status completed and test_equipment), or afterwards with POST /api/v1/work-orders/{id}/test-equipment/.")
+TEST_EQUIPMENT_IDS = "Send test_equipment as a list of ids, each as text (GET /api/v1/test-equipment/ lists them), [] for none."
+TEST_EQUIPMENT_KEPT = " Left out, the test equipment the work order recorded stays."
+
+
+def _test_equipment_ids(value):
+    """The test_equipment a body sent (slice 35): a list of ids as text (the services check each one), or None for anything else (null,
+    text, a number, an object, a list holding one): the caller's 400, keyed test_equipment."""
+    if isinstance(value, list) and all(isinstance(v, str) for v in value):
+        return value
+    return None
+
+
+def _ids_sent_back(value):
+    """The item ids in a test_equipment an edit sent back (slice 35): the field as a GET returned it ([{"id", "tag", "words"}]) or a list
+    of ids, as a set of UUIDs; None when it is neither."""
+    if not isinstance(value, list):
+        return None
+    out = set()
+    for v in value:
+        v = v.get("id") if isinstance(v, dict) else v
+        try:
+            out.add(uuid.UUID(v.strip()))
+        except (AttributeError, TypeError, ValueError):
+            return None
+    return out
+
+
 class WorkOrderViewSet(TenantViewSet):
     model, module, serializer_class = WorkOrder, "workorders", s.WorkOrderSerializer
     search_fields = ["number", "legacy_number", "asset__tag", "problem", "requester"]
@@ -395,6 +432,8 @@ class WorkOrderViewSet(TenantViewSet):
         self._refuse_engineer(body)
         if body.get("repair_finding") not in (None, ""):  # slice 33: a new work order found nothing yet (refused, never dropped)
             raise DRFValidationError({"repair_finding": [FINDING_RECORDED]})
+        if body.get("test_equipment") not in (None, []):  # slice 35: nor used any test equipment yet
+            raise DRFValidationError({"test_equipment": [TEST_EQUIPMENT_RECORDED]})
         if (d.get("assigned_to") or d.get("vendor_service")) and not wo_perms.can_assign(self.request.user):
             raise PermissionDenied("Assigning work orders needs Approve access.")
         # Slice 26: a refusal is a 400 in the service's words (keyed type: a PM, or a second open incoming inspection, on a device
@@ -454,6 +493,7 @@ class WorkOrderViewSet(TenantViewSet):
             if sent is not None and sent != getattr(wo, field):
                 raise DRFValidationError({field: [self.RECORDED_AT_COMPLETION[field]]})
         self._refuse_engineer(body, wo)  # slice 31: the vendor's engineer, likewise
+        self._refuse_test_equipment(body, wo)  # slice 35: the test equipment it recorded, likewise
         changed = [f for f, v in d.items() if v != getattr(wo, f)]
         self._check_investigation_change(wo, changed)
         self._check_repair_hold_change(wo, changed)
@@ -463,6 +503,21 @@ class WorkOrderViewSet(TenantViewSet):
         if "asset" in changed and (wo.labor_lines.exists() or wo.part_lines.exists()):
             raise DRFValidationError({"asset": [f"{wo.number} has labor or parts on file for {wo.asset.tag}; it stays with that device."]})
         serializer.save()
+
+    def _refuse_test_equipment(self, body, wo):
+        """Slice 35: the test equipment a work order recorded is read-only here (a method field; written by completing and by POST
+        {id}/test-equipment/): an edit that sends other items is refused rather than dropped, so a client never thinks it was saved.
+        Sending back what a GET returned (the list, or its ids; null for a reader who does not read test equipment) is fine."""
+        if "test_equipment" not in body:
+            return
+        sent = body.get("test_equipment")
+        if not shows_test_equipment(self.request.user):
+            if sent is not None:
+                raise DRFValidationError({"test_equipment": [TEST_EQUIPMENT_RECORDED]})
+            return
+        recorded = set(TestEquipmentUse.objects.filter(work_order=wo).values_list("test_equipment_id", flat=True))
+        if _ids_sent_back(sent) != recorded:
+            raise DRFValidationError({"test_equipment": [TEST_EQUIPMENT_RECORDED]})
 
     def _check_investigation_change(self, wo, changed):
         """Slice 28 review fix: an incident's investigation (any incident's Incident.work_order, whatever its status: the file keeps
@@ -563,11 +618,18 @@ class WorkOrderViewSet(TenantViewSet):
           ones this user may send): required when none is recorded (completion_checklist's finding_required); left out, null, or
           blank, the finding recorded stays (a reopened repair keeps it). A vendor's account sends only what it observed on the device,
           and leaves a finding the facility recorded as it is. Refused on any other type.
+        - any type (slice 35, optional): "test_equipment", the test equipment used, a list of item ids as text (GET
+          /api/v1/test-equipment/), never preselected: it replaces what the work order recorded ([] clears it; left out, it stays: a
+          reopened work order keeps its own). A new item must be in use (or its status changed today); one the work order recorded
+          already stays whatever its status, and stays on once a calibration dated on or after the day of the work is on file. Refused
+          on imported work, on vendor service but for a repair completed with an outcome other than "vendor_report", and from a scoped
+          user (a non-empty list). The work order's test_equipment then reads each item with its words on the day of the work.
         "signature" (optional): the completion_checklist's (or the PM procedure checklist's) signature the results were typed against;
         a checklist revised since is refused. A text field sent as a list, number, or object is a 400 keyed by it. Refusals are a 400
         keyed by field in the service's words, but a repair sent with no repair_check, or "passed" with no results, or with no
         repair_finding when none is recorded, or one this user may not send: those name what to send (_repair_words). Another move
-        refuses vendor_engineer and engineer_name (NAME_ENGINEER), and repair_finding (FINDING_RECORDED)."""
+        refuses vendor_engineer and engineer_name (NAME_ENGINEER), repair_finding (FINDING_RECORDED), and test_equipment, whatever its
+        value (TEST_EQUIPMENT_RECORDED)."""
         wo = self.get_object()
         if not hasattr(request.data, "get"):  # a JSON list or scalar body has no fields
             raise DRFValidationError({"detail": "Send the fields as a JSON object."})
@@ -589,6 +651,11 @@ class WorkOrderViewSet(TenantViewSet):
             engineer = d.get("vendor_engineer")
             if engineer is not None and not isinstance(engineer, str):
                 not_text["vendor_engineer"] = [ENGINEER_ID]
+            test_equipment = te_services.KEEP  # slice 35: left out, the test equipment recorded stays (completion's KEEP)
+            if "test_equipment" in d:
+                test_equipment = _test_equipment_ids(d.get("test_equipment"))
+                if test_equipment is None:
+                    not_text["test_equipment"] = [TEST_EQUIPMENT_IDS + TEST_EQUIPMENT_KEPT]
             if not_text:
                 raise DRFValidationError(not_text)
             kwargs = {"resolution": d.get("resolution") or "", "pm_result": d.get("pm_result") or "", "results": d.get("results"),
@@ -596,7 +663,8 @@ class WorkOrderViewSet(TenantViewSet):
                       "repair_check": d.get("repair_check") or "",
                       "signature": d.get("signature") or None,  # blank or left out: not checked, as before slice 30
                       "late_reason": d.get("late_reason"),  # slice 25: why a PM completed after its due date was late, optional
-                      "engineer_name": d.get("engineer_name") or ""}  # slice 31: someone else, by name
+                      "engineer_name": d.get("engineer_name") or "",  # slice 31: someone else, by name
+                      "test_equipment": test_equipment}  # slice 35
             if "checks_reference" in d:  # slice 31: left out, the vendor's report number on file stays (completion's KEEP)
                 kwargs["checks_reference"] = d.get("checks_reference") or ""
             if "vendor_engineer" in d:  # slice 31: left out, the engineer named stays (completion's KEEP)
@@ -618,6 +686,8 @@ class WorkOrderViewSet(TenantViewSet):
                 raise DRFValidationError({field: [NAME_ENGINEER]})
         if request.data.get("repair_finding") not in (None, ""):  # slice 33: recorded only by completing, or by repair-finding
             raise DRFValidationError({"repair_finding": [FINDING_RECORDED]})
+        if "test_equipment" in request.data:  # slice 35: recorded only by completing, or by test-equipment ([] would clear it)
+            raise DRFValidationError({"test_equipment": [TEST_EQUIPMENT_RECORDED]})
         note = request.data.get("note")
         if note is not None and not isinstance(note, str):  # slice 28 review fix: a list, number, or object reached the service's strip (a 500)
             raise DRFValidationError({"note": ["Send this as text."]})
@@ -633,11 +703,16 @@ class WorkOrderViewSet(TenantViewSet):
 
     def perform_destroy(self, instance):
         """Slice 28: an incident's investigation (Incident.work_order, PROTECT) stays with the incident's file, which is never deleted:
-        a 400 in words, never a 500. The incident's number only for Incidents View (the delete needs Work orders Full, not that)."""
+        a 400 in words, never a 500. The incident's number only for Incidents View (the delete needs Work orders Full, not that).
+        Slice 35: so does a work order with test equipment recorded (TestEquipmentUse.work_order, PROTECT: the record of the work done
+        with it, which a tolerance review reads), in its own words (testequipment.services.delete_refusal); an incident's words first."""
         try:
             instance.delete()
         except ProtectedError as e:
-            numbers = sorted(o.number for o in e.protected_objects if isinstance(o, Incident))
+            protected = list(e.protected_objects)
+            if not any(isinstance(o, Incident) for o in protected) and any(isinstance(o, TestEquipmentUse) for o in protected):
+                raise DRFValidationError({"detail": te_services.delete_refusal(instance)}) from None
+            numbers = sorted(o.number for o in protected if isinstance(o, Incident))
             which = "an incident"
             if numbers and inc_perms.can_view(self.request.user):
                 which = f"incident {numbers[0]}" if len(numbers) == 1 else f"incidents {', '.join(numbers)}"
@@ -739,6 +814,36 @@ class WorkOrderViewSet(TenantViewSet):
             if not hasattr(e, "error_dict"):
                 raise DRFValidationError({"detail": " ".join(e.messages)}) from e
             raise DRFValidationError(_finding_words(wo, request.user, e.message_dict)) from e
+        wo.refresh_from_db()
+        return Response(self.get_serializer(wo).data)
+
+    @action(detail=True, methods=["post"], url_path="test-equipment", url_name="test-equipment")
+    def test_equipment(self, request, pk=None):
+        """Slice 35, the drawer's "Test equipment" Change: record or correct which test equipment a completed or closed work order
+        recorded: body {"test_equipment": [item ids as text]} (GET /api/v1/test-equipment/ lists them), replacing the set ([] clears it),
+        through wo_services.set_test_equipment. An item added need only not have been retired before the day of the work (it is judged on
+        that day: its words say how it stood); one already recorded stays on once a calibration dated on or after that day is on file.
+        Refused on imported work and vendor service (but a repair the facility checked). Work orders Edit, Approve once closed
+        (permissions.can_set_test_equipment); never a scoped user (not in scoped_actions: the facility's test equipment is never theirs).
+        A refusal is a 400 keyed test_equipment in the service's words. Each item added or taken off is in the work order's history
+        ("Recorded after completion", "Taken off after completion")."""
+        wo = self.get_object()
+        if not wo_perms.can_set_test_equipment(request.user, wo):
+            raise PermissionDenied(f"{wo.number} is closed: recording the test equipment used now needs Work orders Approve."
+                                   if wo.status == WoStatus.CLOSED else te_services.SET_PERMISSION)
+        body = request.data
+        if not hasattr(body, "keys"):  # a JSON list or scalar body has no fields
+            raise DRFValidationError({"detail": "Send the fields as a JSON object."})
+        unknown = sorted(set(body.keys()) - {"test_equipment", "csrfmiddlewaretoken"})
+        if unknown:
+            raise DRFValidationError({name: ["Unknown field."] for name in unknown})
+        ids = _test_equipment_ids(body.get("test_equipment"))
+        if ids is None:
+            raise DRFValidationError({"test_equipment": [TEST_EQUIPMENT_IDS]})
+        try:
+            _via_service(wo_services.set_test_equipment, wo, ids, by=request.user)
+        except DjangoPermissionDenied as e:  # closed meanwhile: the service checks the level on the locked row
+            raise PermissionDenied(str(e) or te_services.SET_PERMISSION) from e
         wo.refresh_from_db()
         return Response(self.get_serializer(wo).data)
 
