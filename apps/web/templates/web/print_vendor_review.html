@@ -113,7 +113,7 @@ table.vrp thead{display:table-header-group}
   <h2>Contracts in the period, as Cadence held them</h2>
   {% if fig.contracts %}
   <table class="vrp">
-    <thead><tr><th>Contract</th><th>Type and coverage</th><th>Term</th><th>Counted for</th><th class="num">Days</th><th class="num">Cost for the period</th><th class="num">Devices today</th></tr></thead>
+    <thead><tr><th>Contract</th><th>Type and coverage</th><th>Term</th><th>Counted for</th><th class="num">Days</th><th class="num">Cost for the period</th><th class="num">Devices on {{ fig.taken_on }}</th></tr></thead>
     <tbody>{% for c in fig.contracts %}{% for v in c.versions %}<tr><td>{% if forloop.first %}{{ c.reference }}{% if c.deleted %}<small>Deleted since</small>{% endif %}{% else %}<small>then</small>{% endif %}</td><td>{{ v.type_label }}<small>{{ v.coverage_label }}</small></td><td>{{ v.term }}</td><td>{{ v.counted }}</td><td class="num">{{ v.days }}</td><td class="num">${{ v.cost|floatformat:"2g" }}</td><td class="num">{% if forloop.first %}{% if c.devices_today is not None %}{{ c.devices_today }}{% else %}—{% endif %}{% endif %}</td></tr>{% endfor %}{% endfor %}</tbody>
   </table>
   {% else %}<p class="vrp-none">No contract naming the vendor was in force on any day of the period.</p>{% endif %}

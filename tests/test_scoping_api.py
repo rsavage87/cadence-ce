@@ -9,6 +9,7 @@ from datetime import date, timedelta
 import pytest
 from django.utils import timezone
 from evaluation_fixtures import draft as evaluation_draft
+from vendor_review_days import ended
 
 from apps.accounts.models import DataScope, Level, Module, Role, User
 from apps.api import urls as api_urls
@@ -88,7 +89,7 @@ def world(ctx, dept, vent, pump, pump_model, techs):
     # Slice 34: a draft review of a contracted vendor, on its contract before this one (ended yesterday)
     Contract.objects.create(reference="SC-ACME-0", vendor="Acme Biomedical", type=ContractType.OEM, start_on=TODAY - timedelta(days=400),
                             end_on=TODAY - timedelta(days=1))
-    vendor_review = vendor_reviews.create_review(vendor_names=["Acme Biomedical"], period_end=timezone.localdate() - timedelta(days=1), by=None)
+    vendor_review = vendor_reviews.create_review(vendor_names=["Acme Biomedical"], period_end=ended(timezone.localdate() - timedelta(days=1)), by=None)
     return {"assets": {"vent": vent, "pump": pump, "card_mon": card_mon, "card_pump": card_pump}, "wos": wos, "cardio": cardio,
             "icu": dept, "monitor": monitor, "contract": contract, "incident": incident, "evaluation": evaluation,
             "vendor_review": vendor_review}

@@ -34,7 +34,7 @@
     <fieldset class="full vr-periods"{% if form.period_end.errors %} aria-invalid="true"{% endif %}>
       <legend>The 12 months it covers, by their last day</legend>
       {% for p in presets %}<label class="vr-radio"><input type="radio" name="period" value="{{ p.value }}"{% if p.active %} checked{% endif %}><span>{{ p.label }}<small>{{ p.period }}</small></span></label>{% endfor %}
-      <label class="vr-radio vr-radio-other"><input type="radio" name="period" value="other"{% if other_active %} checked{% endif %}><span>Another day<small>A contract's anniversary, or any day that has ended</small></span><input type="date" name="period_end" value="{{ period_end }}" max="{{ today|date:'Y-m-d' }}" aria-label="The last day of the 12 months"></label>
+      <div class="vr-radio vr-radio-other"><label class="vr-radio-pick"><input type="radio" name="period" value="other" id="vr-period-other"{% if other_active %} checked{% endif %}><span>Another day<small>A contract's anniversary, or any day that has ended</small></span></label><input type="date" name="period_end" value="{{ period_end }}" max="{{ today|date:'Y-m-d' }}" aria-label="The last day of the 12 months" data-chooses="vr-period-other"></div>
       {% for e in form.period_end.errors %}<span class="err" role="alert">{{ e }}</span>{% endfor %}{% for e in form.period.errors %}<span class="err" role="alert">{{ e }}</span>{% endfor %}
     </fieldset>
   </div>

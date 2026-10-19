@@ -21,6 +21,7 @@ import pytest
 from django.utils import timezone
 from django.utils.html import escape
 from pg_helpers import as_app_role, needs_postgres
+from vendor_review_days import ended
 
 from apps.accounts.models import Level, Module, Role, User, create_default_roles
 from apps.contracts import services as contract_services
@@ -115,7 +116,7 @@ def today(ctx):
 
 @pytest.fixture
 def span(today):
-    end = today.replace(day=1) - DAY
+    end = ended(today.replace(day=1) - DAY)
     return vr.period_start_of(end), end
 
 
@@ -266,12 +267,19 @@ def test_new_review_offers_the_vendors_spellings_and_the_periods(client, sign_in
     assert f'<input type="checkbox" name="names" value="{PHILIPS}" checked>' in body
     last = today.replace(day=1) - DAY
     assert f'value="{last.isoformat()}" checked' in body and "Last month&#x27;s end" in body
-    assert f'value="{(today - DAY).isoformat()}"' in body and "Yesterday" in body
+    if vr.leap_feb_28(today - DAY):  # Feb 29: yesterday ends no 12 months, and Feb 29 has not ended
+        assert f'value="{(today - DAY).isoformat()}"' not in body and "Yesterday" not in body
+    elif today.day == 1:  # on the 1st yesterday is last month's end: one choice, by its first label
+        assert body.count(f'value="{last.isoformat()}"') == 1 and "Yesterday" not in body
+    else:
+        assert f'value="{(today - DAY).isoformat()}"' in body and "Yesterday" in body
     assert "Up to SC-PHIL&#x27;s" not in body  # its anniversary's eve is last month's end: offered once
     assert "is another vendor, with no history here" in body
     renewed = contract(PHILIPS, today - 100 * DAY, today + 265 * DAY, reference="SC-PHIL2")
     body = html(client.get(f"{BASE}new/?vendor=philips", **HX))
-    assert f'value="{(renewed.start_on - DAY).isoformat()}"' in body and "Up to SC-PHIL2&#x27;s start" in body
+    before_start = renewed.start_on - DAY
+    shown = before_start + DAY if vr.leap_feb_28(before_start) else before_start  # Feb 28 of a leap year is offered as Feb 29 (ended by now)
+    assert f'value="{shown.isoformat()}"' in body and "Up to SC-PHIL2&#x27;s start" in body
     anniversary = contract(PHILIPS, today - 500 * DAY, today + 230 * DAY, reference="SC-PHIL3")
     eve = add_months(anniversary.start_on, 12) - DAY
     body = html(client.get(f"{BASE}new/?vendor=philips", **HX))
@@ -295,7 +303,7 @@ def test_new_review_refusals_keep_what_was_typed(client, sign_in, world, span):
     assert r.status_code == 200 and not VendorReview.objects.exists()
     assert "names Phillips: write the vendor as your contracts and work orders do." in body
     assert 'value="Phillips"' in body and f'name="period_end" value="{span[1].isoformat()}"' in body
-    assert 'value="other" checked' in body
+    assert 'value="other" id="vr-period-other" checked' in body
     r = client.post(f"{BASE}new/", {"names": [PHILIPS], "period": "other", "period_end": "soon"}, **HX)
     assert "Enter the last day of the 12 months the review covers." in html(r)
     assert 'name="period_end" value="soon"' in html(r)
@@ -494,7 +502,9 @@ def test_the_sign_off_posts_the_figures_shown(client, sign_in, world, review, to
     sign_in("manager")
     body = html(client.get(url(review, "sign-off") + f"?snapshot={review.snapshot_id}", **HX))
     assert f'name="snapshot_id" value="{review.snapshot_id}"' in body and f'name="signed_on" value="{today.isoformat()}"' in body
-    r = client.post(url(review, "sign-off"), {"snapshot_id": str(review.snapshot_id), "signed_on": today.isoformat(),
+    version = vr.fields_version(VendorReview.objects.get(pk=review.pk))
+    assert f'name="version" value="{version}"' in body  # what the modal showed (slice 34 review #3)
+    r = client.post(url(review, "sign-off"), {"snapshot_id": str(review.snapshot_id), "version": version, "signed_on": today.isoformat(),
                                               "approver_name": "Pat Lee", "approver_title": "VP, Support Services"}, **HX)
     assert r["HX-Retarget"] == "#vr-body" and toast_of(r) == f"{review.number} signed off"
     review.refresh_from_db()
@@ -520,12 +530,14 @@ def test_figures_taken_again_meanwhile_are_refused_and_nothing_is_saved(client, 
 def test_sign_off_refusals_on_their_fields(client, sign_in, world, review, today):
     vr.update_review(review, by=None, **{k: v for k, v in READY.items() if not k.startswith("approver")})
     sign_in("manager")
-    snap = str(review.snapshot_id)
-    r = client.post(url(review, "sign-off"), {"snapshot_id": snap, "signed_on": (today + DAY).isoformat(), "approver_name": ""}, **HX)
+    snap, version = str(review.snapshot_id), vr.fields_version(VendorReview.objects.get(pk=review.pk))
+    r = client.post(url(review, "sign-off"), {"snapshot_id": snap, "version": version, "signed_on": (today + DAY).isoformat(), "approver_name": ""},
+                    **HX)
     body = html(r)
     assert "The sign-off cannot be dated after today." in body and "Enter the approver&#x27;s name as they sign." in body
     assert f'value="{(today + DAY).isoformat()}"' in body
-    r = client.post(url(review, "sign-off"), {"snapshot_id": snap, "signed_on": today.isoformat(), "approver_name": "P" * 121}, **HX)
+    r = client.post(url(review, "sign-off"), {"snapshot_id": snap, "version": version, "signed_on": today.isoformat(), "approver_name": "P" * 121},
+                    **HX)
     assert "At most 120 characters (121 entered)." in html(r)
     review.refresh_from_db()
     assert review.status == ReviewStatus.DRAFT
@@ -745,14 +757,14 @@ def test_the_contract_drawers_review_line(client, sign_in, world, review, today)
 
 def test_the_drawer_line_says_overdue(client, sign_in, ctx, today):
     c = contract("Acme Imaging", today - 900 * DAY, today + 200 * DAY)
-    old = signed(vr.create_review(vendor_names=["Acme Imaging"], period_end=today - 500 * DAY, by=None, today=today), today)
+    old = signed(vr.create_review(vendor_names=["Acme Imaging"], period_end=ended(today - 500 * DAY), by=None, today=today), today)
     due = vr.next_period_end(old.period_end) + timedelta(days=vr.DUE_AFTER_DAYS)
     assert due < today
     sign_in("analyst")
     body = html(client.get(f"/contracts/{c.pk}/", **HX))
     assert f"Last review {old.number}, meets, renew; next due {day(due)} (overdue)" in body and "vr-ct-line warn" in body
-    ended = contract("Gone Imaging", today - 400 * DAY, today - 5 * DAY)  # ended in the last 12 months, never reviewed: no day due
-    body = html(client.get(f"/contracts/{ended.pk}/", **HX))
+    gone = contract("Gone Imaging", today - 400 * DAY, today - 5 * DAY)  # ended in the last 12 months, never reviewed: no day due
+    body = html(client.get(f"/contracts/{gone.pk}/", **HX))
     assert ">Not reviewed</a>" in body and "vr-ct-line warn" not in body
 
 
@@ -832,7 +844,9 @@ def test_the_screens_under_the_policies(client, sign_in, world, span, today):
     data = {**{f: "met" for f in CRITERIA_FIELDS}}
     assert toast_of(client.post(f"{page}fields/ratings/", data, **HX)) == "Ratings saved"
     assert toast_of(client.post(f"{page}fields/decision/", {"overall": "meets", "decision": "renew"}, **HX)) == "Overall and decision saved"
-    r = client.post(f"{page}sign-off/", {"snapshot_id": snapshot, "signed_on": today.isoformat(), "approver_name": "Pat Lee"}, **HX)
+    version = re.search(r'name="version" value="([0-9a-f]{16})"', html(client.get(f"{page}sign-off/?snapshot={snapshot}", **HX))).group(1)
+    r = client.post(f"{page}sign-off/", {"snapshot_id": snapshot, "version": version, "signed_on": today.isoformat(), "approver_name": "Pat Lee"},
+                    **HX)
     assert toast_of(r) == f"{number} signed off"
     ticked = re.search(r'name="reviews" value="([0-9a-f-]{36})" checked', html(client.get(f"{BASE}committee/", **HX))).group(1)
     r = client.post(f"{BASE}committee/", {"body": "governing", "meeting_on": today.isoformat(), "reviews": [ticked]}, **HX)

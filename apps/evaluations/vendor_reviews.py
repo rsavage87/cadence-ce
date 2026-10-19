@@ -11,9 +11,10 @@ The rules:
   included: each day by the version Cadence held at the end of that day, its vendor and term; a day before the contract was entered by
   the version it stood as at the end of the day it was entered (a contract entered at onboarding covers its past term; a typo fixed
   the same day never counts).
-- Its period is the 12 months ending on period_end, any day that has ended (before the facility's today): period_start_of(end) is the
-  day after the end, 12 months back, so 12-month periods ending on month ends tile (Mar 1, 2024 to Feb 28, 2025, then Mar 1, 2025 to
-  Feb 28, 2026). Its number is VR-<yy>-<nnnn> (Sequence "vendor-review-<yy>", yy from the period's end).
+- Its period is the 12 months ending on period_end, any day that has ended (before the facility's today) but Feb 28 of a leap year
+  (leap_feb_28: the 12 months after could not start on Feb 29): period_start_of(end) is the day after the end, 12 months back, so
+  each period's next_period_end starts the day after it (Mar 1, 2024 to Feb 28, 2025, then Mar 1, 2025 to Feb 28, 2026). Its number
+  is VR-<yy>-<nnnn> (Sequence "vendor-review-<yy>", yy from the period's end).
 - No vendor key is in two live reviews (LIVE_REVIEW_STATUSES: draft, signed off) whose periods overlap: checked before the count and
   again under the facility's vendor review lock (lock_reviews: a Sequence row "vendor-reviews" that never counts), the partial unique
   constraint on a signed-off review's first key and start behind it. Withdrawn and discarded reviews free their period.
@@ -23,7 +24,8 @@ The rules:
   outside any lock, then saved only if the review is still a draft with the snapshot the count started from (else FIGURES_CHANGED).
   Taking the figures, and signing them off, also needs their gate (permissions.can_see_vendor_figures: Reports View and Work orders
   View), so nobody signs or takes figures they may not read.
-- draft -> approved ("Signed off", Approve): the approver posts the snapshot id they saw (else FIGURES_CHANGED); every criterion rated,
+- draft -> approved ("Signed off", Approve): the approver posts the snapshot id they saw (else FIGURES_CHANGED) and the version of the
+  reviewer's fields they saw (fields_version, else REVIEW_CHANGED); every criterion rated,
   overall and decision set; "does not meet" needs a corrective action plan, replacing or ending the contract, or bringing the service
   in-house; a corrective plan needs its due day after the sign-off, and only a plan has a due day; the approver's name; signed on a day
   not after today and not before the period's end. approved -> withdrawn (Approve: it stays readable, frees its period, its reports
@@ -42,6 +44,9 @@ Privacy (CLAUDE.md non-negotiable 6): nothing here reads a requester's text; the
 """
 from __future__ import annotations
 
+import calendar
+import hashlib
+import json
 import uuid
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -118,6 +123,9 @@ APPROVE_PERMISSION = ("Signing off a vendor review, withdrawing one, or recordin
                       "Approve and Contracts View.")
 FIGURES_PERMISSION = "{doing} needs Reports View and Work orders View too: the figures are shown only with both. Ask someone who has them."
 FIGURES_CHANGED = "The figures were taken again meanwhile. Read the new figures, then try again."
+REVIEW_CHANGED = "The review was changed meanwhile. Read it again, then sign off."
+SIGNED_FIELDS = (*CRITERIA_FIELDS, "stated_in_contract", *PCT_FIELDS, *COUNT_FIELDS, "vendor_report_reference", "overall", "decision",
+                 "plan_due_on", "summary")  # what the approver signs beside the figures (fields_version); their name and title come with it
 FIGURES_RULE = "only a draft's figures are taken again."
 PCT_RULE = "Enter a percentage from 0 to 100, with at most two decimals."
 CHOICE_WORDS = {
@@ -252,13 +260,25 @@ def clean_names(names) -> tuple[list[str], list[str]]:
     return kept, keys
 
 
+def leap_feb_28(d: date) -> bool:
+    """Feb 28 of a leap year: no 12 months end there, since the 12 months after them would have to start on Feb 29 (period_start_of
+    never does), so Feb 29 would fall in no review."""
+    return d.month == 2 and d.day == 28 and calendar.isleap(d.year)
+
+
 def _clean_period_end(period_end, today: date) -> tuple[date, date]:
     """(period_start, period_end), or a refusal keyed by period_end."""
     period_end = _day_value(period_end)
     if not _is_day(period_end):
         raise ValidationError({"period_end": "Enter the last day of the 12 months the review covers."})
     if period_end >= today:
-        raise ValidationError({"period_end": "A review covers 12 months that have ended: choose yesterday or an earlier day."})
+        latest = "Feb 27" if leap_feb_28(today - timedelta(days=1)) else "yesterday"  # on Feb 29, yesterday is never an end
+        raise ValidationError({"period_end": f"A review covers 12 months that have ended: choose {latest} or an earlier day."})
+    if leap_feb_28(period_end):
+        instead = (f"Feb 29, {period_end.year} or Feb 27" if period_end + timedelta(days=1) < today
+                   else f"Feb 27, {period_end.year}, or wait until Feb 29 has ended")
+        raise ValidationError({"period_end": f"End the 12 months on {instead}: the next 12 months could not start on Feb 29, which no "
+                                             "review would then cover."})
     start = period_start_of(period_end) if period_end >= EARLIEST else None  # never 12 months before year 1
     if start is None or start < EARLIEST:
         raise ValidationError({"period_end": f"Choose 12 months from {EARLIEST.year} on."})
@@ -520,6 +540,21 @@ def _check_together(r: VendorReview, given) -> dict:
     return errors
 
 
+def _changed_reason(words: list[str]) -> str:
+    """"Overall changed", "Changed: Overall, Decision", or, past the history's reason column, "Changed: <the first that fit>, and 4
+    more" (never cut mid-word; the entry lists every change)."""
+    if len(words) == 1:
+        return f"{words[0]} changed"
+    whole = f"Changed: {', '.join(words)}"
+    if len(whole) <= CHANGE_REASON_MAX:
+        return whole
+    for n in range(len(words) - 1, 0, -1):
+        text = f"Changed: {', '.join(words[:n])}, and {len(words) - n} more"
+        if len(text) <= CHANGE_REASON_MAX:
+            return text
+    return f"Changed {len(words)} fields"
+
+
 def update_review(review, *, by, **fields) -> VendorReview:
     """Save the fields given on a draft (Edit): the ratings, whether the contract states the expectations, the vendor's reported figures
     (percentages from 0 to 100 with two decimals, systems counts; the lowest not above the reported, the systems below not more than the
@@ -553,13 +588,19 @@ def update_review(review, *, by, **fields) -> VendorReview:
         if together:
             raise ValidationError(together)
         if changed:
-            words = [FIELD_LABELS.get(f, f) for f in changed]
-            reason = f"{words[0]} changed" if len(words) == 1 else f"Changed: {', '.join(words)}"
-            _save(r, by, reason, update_fields=[*changed, "updated_at"])
+            _save(r, by, _changed_reason([FIELD_LABELS.get(f, f) for f in changed]), update_fields=[*changed, "updated_at"])
     return r
 
 
 # --- the sign-off -----------------------------------------------------------------------------------------------------------------
+
+
+def fields_version(review: VendorReview) -> str:
+    """The reviewer's fields the approver signs (SIGNED_FIELDS) as a short token: the sign-off modal posts the one it was drawn with,
+    and sign_off refuses when they changed since (REVIEW_CHANGED), as the snapshot id guards the figures."""
+    values = {f: getattr(review, f) for f in SIGNED_FIELDS}
+    text = json.dumps(values, sort_keys=True, default=str)
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
 def _same_id(posted, stored) -> bool:
@@ -581,13 +622,14 @@ def _signed_on_errors(signed_on, r: VendorReview, today: date) -> str:
     return ""
 
 
-def sign_off(review, *, snapshot_id, signed_on, by, today: date | None = None) -> VendorReview:
+def sign_off(review, *, snapshot_id, signed_on, by, today: date | None = None, version: str | None = None) -> VendorReview:
     """Sign off a draft (Approve, and the figures' gate): `snapshot_id` is the figures the approver saw (refused if they were taken
-    again since: FIGURES_CHANGED); every criterion rated, overall and decision set; overall "does not meet" needs a corrective action
-    plan, replacing or ending the contract, or bringing the service in-house; a corrective action plan needs its due day after the
-    sign-off, and only a plan has a due day; the approver's name; `signed_on` not after today and not before the period's end. The
-    review is then signed off (status approved) by whoever recorded it (signed_by). Problems with the fields come keyed by field, all
-    at once."""
+    again since: FIGURES_CHANGED), and `version` the reviewer's fields they saw (fields_version; refused if any changed since:
+    REVIEW_CHANGED; None only where nobody was shown a page: the seed, a test); every criterion rated, overall and decision set;
+    overall "does not meet" needs a corrective action plan, replacing or ending the contract, or bringing the service in-house; a
+    corrective action plan needs its due day after the sign-off, and only a plan has a due day; the approver's name; `signed_on` not
+    after today and not before the period's end. The review is then signed off (status approved) by whoever recorded it (signed_by).
+    Problems with the fields come keyed by field, all at once."""
     _check(by, perms.can_approve_reviews, APPROVE_PERMISSION)
     _check_figures(by, "Signing off a vendor review")
     today = today or timezone.localdate()
@@ -599,6 +641,8 @@ def sign_off(review, *, snapshot_id, signed_on, by, today: date | None = None) -
             raise ValidationError("Take the figures before signing off.")
         if not _same_id(snapshot_id, r.snapshot_id):
             raise ValidationError(FIGURES_CHANGED)
+        if version is not None and str(version) != fields_version(r):
+            raise ValidationError(REVIEW_CHANGED)
         errors = {}
         for f, label, _help in CRITERIA:
             if not getattr(r, f):

@@ -49,7 +49,7 @@ GAPS_SHOWN = 50  # a section's gaps listed on the screen; all of them in the gap
 # Table.links: the column holding a record's key, and what kind of record it is (the screen and print make the link).
 WORK_ORDER, DEVICE = "work_order", "device"
 INCIDENT = "incident"  # slice 28: an incident's number (web:incident), linked for Incidents View only
-EVALUATION = "evaluation"  # slice 32: a program evaluation's number (web:evaluation: its version of record), linked for Program evaluation View only
+EVALUATION = "evaluation"  # slice 32: a program evaluation's number (web:evaluation: its version of record), linked for Evaluations View only
 VENDOR_REVIEW = "vendor_review"  # slice 34: a vendor review's number (web:vendor_review: a page of its own), linked for Evaluations View only
 
 

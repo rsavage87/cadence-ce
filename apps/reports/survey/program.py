@@ -15,7 +15,7 @@ any other window with apps.pm.windows.policy_disagrees (word classes, never numb
 
 Slice 32, the program's annual evaluation (apps.evaluations): a table of the approved evaluations whose 12 months overlap the binder's
 period (number and version, the months, the day it was approved, and the committees that approved it, from their approvals; never its
-text or its figures), each number linked for a reader with Program evaluation View (the EVALUATION link column). A CHECK only once the
+text or its figures), each number linked for a reader with Evaluations View (the EVALUATION link column). A CHECK only once the
 facility has approved one and the next is overdue (apps.evaluations.services.next_due: the last approved period's end, 12 months, and
 90 days, before today), linking to Program evaluation (LINK_NEEDS): the facility's own housekeeping. A facility that never approved one
 has no item here, and Cadence never says which accreditor asks for an evaluation. The written plan itself is not in Cadence; an

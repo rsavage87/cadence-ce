@@ -3,6 +3,7 @@ from datetime import date, timedelta
 from io import StringIO
 
 from django.core.management import call_command
+from vendor_review_days import ended
 
 from apps.accounts import people
 from apps.accounts.backends import find_account
@@ -299,7 +300,7 @@ def test_seed_demo_signs_off_a_philips_review(db):
         today = timezone.localdate()
         manager = User.objects.get(username=f"{seed_demo.EVALUATION_AUTHOR}@riverside.example")
         review = VendorReview.objects.select_related("snapshot").get()
-        end = today - timedelta(days=1)
+        end = ended(today - timedelta(days=1))  # Feb 27 on a Feb 29, as the seed does
         assert (review.vendor_names, review.vendor_keys, review.period_start, review.period_end) == (
             seed_demo.VENDOR_REVIEW_NAMES, ["philips"], vr.period_start_of(end), end)
         assert (review.status, review.signed_on, review.signed_by, review.created_by, manager.role.slug) == (

@@ -31,6 +31,7 @@ from django.db import connection
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from pg_helpers import as_app_role, needs_postgres
+from vendor_review_days import ended
 
 import apps.evaluations as evaluations_package
 from apps.accounts.models import DEFAULT_LEVELS, Level, Module, Role, User
@@ -100,7 +101,7 @@ def today(ctx):
 @pytest.fixture
 def span(today):
     """The 12 months ending at the end of last month: (start, end)."""
-    end = today.replace(day=1) - DAY
+    end = ended(today.replace(day=1) - DAY)
     return vr.period_start_of(end), end
 
 
@@ -239,8 +240,9 @@ def test_a_draft_is_numbered_by_its_period_end_and_takes_its_figures(ctx, today,
     assert (snap.review, snap.taken_on, snap.taken_by) == (r, today, director)
     assert figures.calls == [(["philips", "philips healthcare"], span[0], span[1], today)] and snap.data["call"] == 1
     assert reasons(r) == ["Drafted", "Figures taken"]
-    job(philips.asset, PHILIPS, add_months(span[1], -24) - 10 * DAY)
-    two_back = vr.create_review(vendor_names=[PHILIPS], period_end=add_months(span[1], -24), by=None, today=today)
+    two_back_end = ended(add_months(span[1], -24))  # Feb 28, 2030's two years back is Feb 28, 2028
+    job(philips.asset, PHILIPS, two_back_end - 10 * DAY)
+    two_back = vr.create_review(vendor_names=[PHILIPS], period_end=two_back_end, by=None, today=today)
     assert two_back.number == f"VR-{(span[1].year - 2) % 100:02d}-0001"  # each year of the period's end counts on its own
     job(philips.asset, "GE Healthcare", span[0] + 5 * DAY)
     assert vr.create_review(vendor_names=["GE Healthcare"], period_end=span[1], by=None, today=today).number.endswith("-0002")
@@ -277,8 +279,9 @@ def test_the_period_has_ended_before_it_is_drafted(ctx, today, philips, end, wor
 
 def test_yesterday_and_an_iso_day_are_accepted(ctx, today, pump):
     job(pump, PHILIPS, today - 3 * DAY)
-    r = vr.create_review(vendor_names=PHILIPS, period_end=(today - DAY).isoformat(), by=None, today=today)
-    assert (r.period_end, r.vendor_names) == (today - DAY, [PHILIPS])
+    end = ended(today - DAY)
+    r = vr.create_review(vendor_names=PHILIPS, period_end=end.isoformat(), by=None, today=today)
+    assert (r.period_end, r.vendor_names) == (end, [PHILIPS])
 
 
 @pytest.mark.parametrize("names,words", [
@@ -398,7 +401,7 @@ def test_a_vendor_is_in_one_live_review_for_any_day(ctx, today, span, philips, p
     assert e.value.message_dict["period_end"] == [f"{first.number} (draft) reviews Philips for {vr.period_label(*span)}, which overlaps these "
                                                   "12 months: a vendor is in one review for any day. Finish or discard it, or choose other "
                                                   "months."]
-    later_end = today - DAY
+    later_end = ended(today - DAY)
     job(pump, PHILIPS, later_end - 5 * DAY)
     with pytest.raises(ValidationError):  # ending later, still overlapping
         vr.create_review(vendor_names=[PHILIPS], period_end=later_end, by=None, today=today)
@@ -427,7 +430,7 @@ def test_withdrawn_and_discarded_reviews_free_their_period(ctx, today, span, phi
 # --- the prefill ------------------------------------------------------------------------------------------------------------------
 
 def test_a_draft_is_prefilled_from_the_previous_signed_off_review_of_the_vendor(ctx, today, span, pump):
-    prev_end = span[0] - DAY
+    prev_end = ended(span[0] - DAY)
     job(pump, PHILIPS, prev_end - 20 * DAY)
     job(pump, PHILIPS, span[0] + 20 * DAY)
     job(pump, "Philips Healthcare", span[0] + 30 * DAY)
@@ -446,7 +449,7 @@ def test_a_draft_is_prefilled_from_the_previous_signed_off_review_of_the_vendor(
 
 
 def test_no_prefill_from_a_draft_a_withdrawn_review_or_another_vendor(ctx, today, span, pump):
-    prev_end = span[0] - DAY
+    prev_end = ended(span[0] - DAY)
     for name in (PHILIPS, "GE Healthcare"):
         job(pump, name, prev_end - 20 * DAY)
         job(pump, name, span[0] + 20 * DAY)
@@ -936,9 +939,9 @@ def test_the_vendors_list(ctx, today, pump):
     job(pump, "Old Jobs Inc", year_ago - 5 * DAY)  # before the 12 months
     job(pump, "", today - 5 * DAY)  # vendor not named: never a row
     job(pump, "Reviewed Co", today - 500 * DAY)  # long ago, but reviewed
-    reviewed = vr.create_review(vendor_names=["Reviewed Co"], period_end=today - 450 * DAY, by=None, today=today)
+    reviewed = vr.create_review(vendor_names=["Reviewed Co"], period_end=ended(today - 450 * DAY), by=None, today=today)
     job(pump, "Discarded Co", today - 500 * DAY)
-    vr.discard(vr.create_review(vendor_names=["Discarded Co"], period_end=today - 450 * DAY, by=None, today=today), by=None)
+    vr.discard(vr.create_review(vendor_names=["Discarded Co"], period_end=ended(today - 450 * DAY), by=None, today=today), by=None)
     with CaptureQueriesContext(connection) as q:
         rows = vr.vendors_list(today)
     assert len(q.captured_queries) == 4
@@ -955,6 +958,7 @@ def test_the_vendors_list(ctx, today, pump):
 
 def test_next_due_and_the_open_plan(ctx, today, pump):
     def signed_for(name, end, **over):
+        end = ended(end)
         job(pump, name, end - 5 * DAY)
         return signed(vr.create_review(vendor_names=[name], period_end=end, by=None, today=today), today=today, signed_on=end + 10 * DAY,
                       **over)
@@ -969,9 +973,9 @@ def test_next_due_and_the_open_plan(ctx, today, pump):
     old = signed_for("Draeger", today - 600 * DAY, overall=Overall.PARTIALLY, decision=Decision.CORRECTIVE_PLAN, plan_due_on=today - 500 * DAY)
     rows = {row.key: row for row in vr.vendors_list(today)}
     s, h, d = rows["stryker"], rows["hillrom"], rows["draeger"]
-    assert (s.last_review, s.next_due, s.overdue) == (stryker, vr.next_period_end(today - 40 * DAY) + 90 * DAY, False)
+    assert (s.last_review, s.next_due, s.overdue) == (stryker, vr.next_period_end(ended(today - 40 * DAY)) + 90 * DAY, False)
     assert (h.next_due, h.overdue) == (today + 60 * DAY, False)
-    assert (d.next_due, d.overdue, d.open_plan, d.plan_overdue) == (vr.next_period_end(today - 600 * DAY) + 90 * DAY, True, old, True)
+    assert (d.next_due, d.overdue, d.open_plan, d.plan_overdue) == (vr.next_period_end(ended(today - 600 * DAY)) + 90 * DAY, True, old, True)
     vr.record_plan_result(old, result=PlanResult.CONTRACT_ENDED, closed_on=today, by=None, today=today)
     d = {row.key: row for row in vr.vendors_list(today)}["draeger"]
     assert (d.open_plan, d.plan_overdue, d.last_review) == (None, False, old)
@@ -1008,7 +1012,7 @@ def _setup(tenant):
 
     with tenant_context(tenant):
         today = timezone.localdate()
-        end = today.replace(day=1) - DAY
+        end = ended(today.replace(day=1) - DAY)
         model = DeviceModel.objects.create(manufacturer="Philips", model="MX450", category="Monitors")
         asset = Asset.objects.create(tag="CE-1", device_model=model, department=Department.objects.create(name="ICU"))
         job(asset, PHILIPS, end - 30 * DAY)

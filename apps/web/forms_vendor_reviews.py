@@ -63,10 +63,15 @@ class NewReviewForm(ServiceForm):
         return _no_nul([v.strip() for v in values if isinstance(v, str) and v.strip()])
 
     def clean_period_end(self) -> str:
-        """The day the service is given: the choice's, or the day typed for OTHER (or with no choice), as typed."""
+        """The day the service is given: the choice's, or the day typed for OTHER (or with no choice), as typed. A day typed while
+        another choice is ticked is refused rather than dropped (a browser without the page's script never ticks Another day)."""
         choice = (self.cleaned_data.get("period") or "").strip()
         typed = (self.cleaned_data.get("period_end") or "").strip()
-        return typed if choice in ("", OTHER) else choice
+        if choice in ("", OTHER):
+            return typed
+        if typed and typed != choice:
+            raise forms.ValidationError("You typed a day but another choice is ticked: tick Another day to use the day typed, or clear it.")
+        return choice
 
     @staticmethod
     def typed_in(data) -> dict:
@@ -111,9 +116,11 @@ class BlockForm:
 
 
 class SignOffForm(ServiceForm):
-    """Sign off: the figures the approver saw (the snapshot id the page was drawn with), the day it was signed, and the approver's name
-    and title as they sign (saved on the review with the sign-off, or neither)."""
+    """Sign off: the figures the approver saw (the snapshot id the page was drawn with), the reviewer's fields the modal showed them
+    (their version), the day it was signed, and the approver's name and title as they sign (saved on the review with the sign-off, or
+    neither)."""
     snapshot_id = _text(widget=forms.HiddenInput)
+    version = _text(widget=forms.HiddenInput)  # the reviewer's fields the modal showed (vendor_reviews.fields_version)
     signed_on = _box("Signed off on", type="date")
     approver_name = _box("Approver's name", autocomplete="off")
     approver_title = _box("Approver's title", autocomplete="off")

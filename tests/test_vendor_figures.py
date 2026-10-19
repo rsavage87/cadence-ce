@@ -515,7 +515,7 @@ def test_repeat_repairs_count_a_failure_or_an_unknown_finding(ctx, today, span, 
 
     data = take(span, today)
     f = fig(data, "repeat_repairs")
-    assert (nd(f), f["detail"]) == ((6, 8), "6 of 8, 2 not recorded")
+    assert (nd(f), f["detail"]) == ((6, 8), "6 of 8 repairs; 2 later repairs not recorded")
     assert nd(fig(data, "repeat_not_recorded")) == (2, 6) and fig(data, "repeat_other")["value"] == 2  # use error, and power or room
     assert [(p["repair"], p["later"], p["days"], p["finding"], p["finding_label"]) for p in data["repeats"]] == [
         (v1.number, r1.number, 10, "battery", "Battery failed"),

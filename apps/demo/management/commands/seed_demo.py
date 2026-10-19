@@ -50,7 +50,7 @@ demo, so its records show on the Vendor staff tab and in the binder's tables onl
 generators, and no work order is added (every later number and draw stays as it was).
 
 Slice 32: Riverside has a draft program evaluation (Reports, Program evaluation) of the 12 months ending at the end of last month,
-drafted through apps.evaluations.services at the very end of the seed by the CE manager (rfeldman@: Program evaluation Approve, and
+drafted through apps.evaluations.services at the very end of the seed by the CE manager (rfeldman@: Evaluations Approve, and
 View on every area the figures cover, which taking them needs), so its figures count everything the demo did: about six months of
 work, with "Cadence's records begin" on the day the demo's work starts, and no previous column (the records begin after the 12 months
 before end). Two of this period's objectives with their results, one for the next period, and two parts of the text (EVALUATION_*:
@@ -984,11 +984,14 @@ class Command(BaseCommand):
 
     @staticmethod
     def _vendor_review(today: date, domain: str) -> None:
-        """Slice 34: Philips's review for the 12 months ending yesterday, through apps.evaluations.vendor_reviews as the Reviews tab
+        """Slice 34: Philips's review for the 12 months ending yesterday (Feb 27 on a Feb 29), through apps.evaluations.vendor_reviews as the Reviews tab
         writes one: drafted by the CE manager (its figures taken now), each of VENDOR_REVIEW_FIELDS recorded, the corrective action
         plan due VENDOR_REVIEW_PLAN_DAYS after today, and signed off today on the figures it holds. Constants only."""
         manager = User.objects.get(username=f"{EVALUATION_AUTHOR}@{domain}")  # the CE manager: Evaluations Approve, Contracts Edit
-        review = vendor_reviews.create_review(vendor_names=VENDOR_REVIEW_NAMES, period_end=today - timedelta(days=1), by=manager, today=today)
+        end = today - timedelta(days=1)
+        if vendor_reviews.leap_feb_28(end):  # on Feb 29 yesterday ends no 12 months (the next could not start on Feb 29)
+            end -= timedelta(days=1)
+        review = vendor_reviews.create_review(vendor_names=VENDOR_REVIEW_NAMES, period_end=end, by=manager, today=today)
         review = vendor_reviews.update_review(review, by=manager, plan_due_on=today + timedelta(days=VENDOR_REVIEW_PLAN_DAYS),
                                               **VENDOR_REVIEW_FIELDS)
         vendor_reviews.sign_off(review, snapshot_id=review.snapshot_id, signed_on=today, by=manager, today=today)

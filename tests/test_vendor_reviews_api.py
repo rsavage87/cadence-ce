@@ -19,6 +19,7 @@ from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from pg_helpers import as_app_role, needs_postgres
 from rest_framework.authtoken.models import Token
+from vendor_review_days import ended
 
 from apps.accounts.models import DataScope, Level, Module, Role, User, create_default_roles
 from apps.api import views_vendor_reviews
@@ -70,7 +71,9 @@ def job(asset, vendor, done):
 
 
 def signed(names, period_end, *, today, by=None, signed_on=None, **over):
-    r = vr.create_review(vendor_names=list(names), period_end=period_end, by=by, today=today)
+    """A review of `names` for the 12 months ending `period_end` (the day before when that is Feb 28 of a leap year: vendor_review_days),
+    signed off on `signed_on`."""
+    r = vr.create_review(vendor_names=list(names), period_end=ended(period_end), by=by, today=today)
     r = vr.update_review(r, by=by, **{**READY, **over})
     return vr.sign_off(r, snapshot_id=r.snapshot_id, signed_on=signed_on or today, by=by, today=today)
 
@@ -83,7 +86,7 @@ def reviews(ctx, today, pump, make_user):
     for vendor in ("Philips", "Philips Healthcare", "Steris"):
         contract(vendor, today)
     job(pump, "Philips", today - 60 * DAY)
-    first_end = today - 400 * DAY
+    first_end = ended(today - 400 * DAY)
     before = signed(["Philips"], first_end, today=today, by=manager, signed_on=first_end + 20 * DAY, overall=Overall.PARTIALLY,
                     decision=Decision.CORRECTIVE_PLAN, plan_due_on=first_end + 60 * DAY, rating_invoices=Rating.NOT_MET)
     vr.record_plan_result(before, result=PlanResult.MET, closed_on=first_end + 50 * DAY, by=manager, today=today)

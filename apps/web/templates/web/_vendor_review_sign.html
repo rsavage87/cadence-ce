@@ -1,7 +1,8 @@
 {% load web %}
 {% comment %}Sign off (slice 34, views_vendor_reviews.vendor_review_sign_off; vendor_reviews.sign_off, Approve and the figures' gate): the
    figures the page was drawn with (their snapshot id, posted back: if they were taken again since, the approver reads the new ones
-   first), the day it was signed, and the approver's name and title as they sign. What keeps it from being signed (a rating, the overall
+   first), what the approver signs beside them (the ratings, the vendor's own figures, overall and decision, the summary: their version
+   posted back, so a change saved meanwhile is refused), the day it was signed, and the approver's name and title as they sign. What keeps it from being signed (a rating, the overall
    rating, the decision, a plan's due day) is said before, with no button; the service's refusals come back in the modal, what was typed
    kept.{% endcomment %}
 <div class="modal-h"><h2>Sign off {{ r.number }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
@@ -15,8 +16,14 @@
 {% else %}
 <form id="vr-sign-form" hx-post="{{ action }}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" method="post" action="{{ action }}" novalidate>{% csrf_token %}
   <input type="hidden" name="snapshot_id" value="{% if form.is_bound %}{{ form.data.snapshot_id }}{% else %}{{ form.initial.snapshot_id }}{% endif %}">
+  <input type="hidden" name="version" value="{{ version }}">
   <div class="form">
     <p class="full">You sign off {{ r.vendor }}'s review of {{ period }} with the figures taken {{ taken_on }}, as shown on the page: {{ overall|default:"no overall rating" }}; {{ decision|default:"no decision" }}{% if plan %} ({{ plan.short }}){% endif %}.</p>
+    <dl class="full vr-sign-what">
+      <div><dt>Ratings</dt><dd>{% for x in ratings.rows %}{{ x.label }}: {{ x.words|default:"not rated"|lower }}{% if not forloop.last %}; {% endif %}{% endfor %}. Expectations stated in the contract: {{ ratings.stated|default:"not recorded"|lower }}.</dd></div>
+      <div><dt>The vendor's own figures</dt><dd>{% if reported.lines %}{{ reported.lines|join:"; " }}{% else %}Not recorded{% endif %}</dd></div>
+      <div><dt>Summary</dt><dd>{% if r.summary %}<div class="vr-sign-summary">{{ r.summary|linebreaksbr }}</div>{% else %}Not written{% endif %}</dd></div>
+    </dl>
     <p class="full hint">Once signed off, nothing changes but the plan's result and the committees it goes to. The approver is who approved it, as they sign; Cadence also records that you entered the sign-off.</p>
     {% if form.non_field_errors %}<div class="full">{% for e in form.non_field_errors %}<span class="err" role="alert">{{ e }}</span>{% endfor %}</div>{% endif %}
     <label>Signed off on<input type="date" name="signed_on" value="{% if form.is_bound %}{{ form.data.signed_on }}{% else %}{{ form.initial.signed_on }}{% endif %}" max="{{ today|date:'Y-m-d' }}"{% if form.signed_on.errors %} aria-invalid="true"{% endif %}>

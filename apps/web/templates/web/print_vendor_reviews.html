@@ -68,7 +68,7 @@ table.vrs ul{margin:0;padding-left:14px}
     <tbody>{% for x in others %}<tr><td>{{ x.name }}</td>{% if x.jobs is not None %}<td class="num">{{ x.jobs }}</td>{% endif %}<td>{% if x.last %}{{ x.last.r.number }}, {{ x.last.overall|lower }}; {{ x.last.decision|lower }}{% else %}Not reviewed{% endif %}</td></tr>{% endfor %}</tbody>
   </table>
   {% endif %}
-  <p class="vrs-hint">A review is due {{ due_after }} days after the 12 months after the last signed-off review end, or by the end of a contract in force, whichever comes first.</p>
+  <p class="vrs-hint">A review is due {{ due_after }} days after the 12 months after the last signed-off review end, or by the end of a contract in force, whichever comes first (a review whose 12 months ended within the year before that contract ends covers its renewal).</p>
 </section>
 </main>
 {% endblock %}

@@ -75,8 +75,8 @@ FIELD_LABELS = {**{field: label for field, label, _help in NARRATIVE}, "inventor
                 "plan_title": "Plan reviewed", "plan_version": "Plan version", "plan_effective_on": "Plan effective"}
 APPROVAL_FIELDS = ("body", "body_name", "meeting_on", "chair_name", "chair_title", "minutes_reference")
 
-EDIT_PERMISSION = "Drafting and writing a program evaluation needs Program evaluation Edit."
-APPROVE_PERMISSION = "Recording a committee's approval, or amending an approved evaluation, needs Program evaluation Approve."
+EDIT_PERMISSION = "Drafting and writing a program evaluation needs Evaluations Edit."
+APPROVE_PERMISSION = "Recording a committee's approval, or amending an approved evaluation, needs Evaluations Approve."
 FIGURES_CHANGED = "It changed while the figures were taken; refresh again."
 FIGURES_RULE = "only a draft's figures are taken again."
 OBJECTIVES_RULE = "only a draft's objectives are changed."

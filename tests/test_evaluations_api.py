@@ -3,7 +3,7 @@ Slice 32: the program's annual evaluation over the API (apps/api/views_evaluatio
 
 GET /api/v1/program-evaluations/ lists the evaluations newest period first with no figures and no text; GET .../<id or number>/ one
 evaluation (by number its version of record, ?version= a given one) with its text, objectives, approvals, and the figures cut to the
-reader (apps.evaluations.indicators.cut). Program evaluation View; scoped users never (a custom scoped role with Full everywhere
+reader (apps.evaluations.indicators.cut). Evaluations View; scoped users never (a custom scoped role with Full everywhere
 neither); writes are refused; a fixed number of queries on the list; tokens read their own facility only; under row-level security
 on PostgreSQL.
 """
@@ -205,7 +205,7 @@ def test_the_figures_are_cut_to_the_reader(client, tenant, evaluations, missing,
 
 
 def test_the_analyst_reads_it_without_the_staff_figures(client, make_user, evaluations):
-    signed_in(client, make_user("analyst"))  # Program evaluation View, Reports Full, no Users and access
+    signed_in(client, make_user("analyst"))  # Evaluations View, Reports Full, no Users and access
     data = ok(client.get(f"{API}{evaluations['current'].number}/"))
     assert data["text"][0]["text"] == "Steady year; see the figures."
     assert "staff_lapse_work" not in {i["key"] for i in data["figures"]["indicators"]} and "staff" not in data["figures"]["binder_gaps"]

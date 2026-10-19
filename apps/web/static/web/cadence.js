@@ -131,6 +131,15 @@
     if (sel.value === "all") { window.location.href = sel.dataset.all; return; }
     sel.form.submit();
   });
+  // Slice 34: a box beside a choice (New review's "Another day") chooses it when a day is typed or picked in it, never on focus
+  // (tabbing past it keeps the choice ticked): data-chooses names the radio's id.
+  const choose = (e) => {
+    const box = e.target.closest && e.target.closest("[data-chooses]");
+    const radio = box && box.value && document.getElementById(box.dataset.chooses);
+    if (radio && !radio.checked) radio.checked = true;
+  };
+  document.addEventListener("input", choose);
+  document.addEventListener("change", choose);
   document.addEventListener("keydown", (e) => {
     const typing = /INPUT|TEXTAREA|SELECT/.test(e.target.tagName);
     if (e.key === "Escape") {

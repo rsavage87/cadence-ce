@@ -168,8 +168,8 @@ def _words(e) -> str:
 
 
 def _number(value) -> str:
-    """97.50 -> "97.5", 100.00 -> "100"."""
-    text = f"{Decimal(value):f}"
+    """97.50 -> "97.5", 100.00 -> "100"; a float (a snapshot's PM target, read back from JSON) by its shortest text, 97.1 -> "97.1"."""
+    text = f"{Decimal(str(value) if isinstance(value, float) else value):f}"
     return text.rstrip("0").rstrip(".") if "." in text else text
 
 
@@ -319,7 +319,7 @@ def _contract_year_end(start_on: date, today: date) -> date | None:
 def presets(today: date, row: vr.VendorRow | None) -> list[dict]:
     """New review's choices for the last day of its 12 months: the 12 months after the vendor's last review (when they have ended),
     last month's end, yesterday, and the 12 months up to the latest anniversary (or the start) of each of its contracts in force that
-    has passed; each day once."""
+    has passed; each day once, Feb 28 of a leap year as Feb 29 (vendor_reviews.leap_feb_28)."""
     options: list[tuple[date, str]] = []
     if row is not None and row.last_review is not None:
         after = vr.next_period_end(row.last_review.period_end)
@@ -333,6 +333,10 @@ def presets(today: date, row: vr.VendorRow | None) -> list[dict]:
             options.append((end, f"Up to {c.reference}'s {'start' if end + timedelta(days=1) == c.start_on else 'anniversary'}"))
     seen, out = set(), []
     for end, label in options:
+        if vr.leap_feb_28(end):  # never a period's end (the next could not start on Feb 29): the day after, once it has ended
+            end += timedelta(days=1)
+            if end >= today:
+                continue
         if end in seen or end < vr.EARLIEST:
             continue
         seen.add(end)
@@ -818,21 +822,27 @@ def _sign_blockers(r: VendorReview) -> list[str]:
     return out
 
 
-def _sign_modal(request, r: VendorReview, form: SignOffForm, *, snapshot: str, today: date, blockers=()):
+def _sign_modal(request, r: VendorReview, form: SignOffForm, *, snapshot: str, today: date, blockers=(), version: str | None = None):
+    """The modal shows everything the approver signs beside the figures (the ratings, the vendor's own figures, overall and decision,
+    the summary) and posts their version (vendor_reviews.fields_version) as drawn: a change saved meanwhile is refused
+    (REVIEW_CHANGED), as figures taken again are (FIGURES_CHANGED)."""
     figures_moved = bool(snapshot) and r.snapshot_id is not None and parse_uuid(snapshot) != r.snapshot_id
-    ctx = {"r": r, "form": form, "snapshot": snapshot, "today": today, "action": review_url(r, "vendor_review_sign_off"),
+    current = vr.fields_version(r)
+    version = current if version is None else version
+    moved = vr.FIGURES_CHANGED if figures_moved else (vr.REVIEW_CHANGED if version != current else "")
+    ctx = {"r": r, "form": form, "snapshot": snapshot, "version": version, "today": today, "action": review_url(r, "vendor_review_sign_off"),
            "taken_on": _day(r.snapshot.taken_on) if r.snapshot_id else "", "blockers": list(blockers),
-           "moved": vr.FIGURES_CHANGED if figures_moved else "", "refusal": _figures_refusal(request.user, "Signing off a vendor review"),
+           "moved": moved, "refusal": _figures_refusal(request.user, "Signing off a vendor review"),
            "period": vr.period_label(r.period_start, r.period_end), "plan": plan_status(r, today), "overall": r.get_overall_display(),
-           "decision": r.get_decision_display()}
+           "decision": r.get_decision_display(), "ratings": _read(r, RATINGS, today), "reported": _read(r, REPORTED, today)}
     return render(request, SIGN, ctx)
 
 
 @reviews_view(perms.APPROVE_LEVEL)
 def vendor_review_sign_off(request, number):
-    """Sign off (Approve, a draft, and the figures' gate): GET the modal (?snapshot= the figures the page was drawn with; what keeps it
-    from being signed, with no button), POST the approver's name and title (vendor_reviews.update_review) and vendor_reviews.sign_off
-    with the snapshot id posted, both or neither."""
+    """Sign off (Approve, a draft, and the figures' gate): GET the modal (?snapshot= the figures the page was drawn with; what the
+    approver signs and its version; what keeps it from being signed, with no button), POST the approver's name and title
+    (vendor_reviews.update_review) and vendor_reviews.sign_off with the snapshot id and version posted, both or neither."""
     r = _get(number)
     today = _today()
     if request.method != "POST":
@@ -851,7 +861,7 @@ def vendor_review_sign_off(request, number):
                 names = {f: d[f] for f in ("approver_name", "approver_title") if f in request.POST}
                 if names and r.status == ReviewStatus.DRAFT:
                     vr.update_review(r, by=request.user, **names)
-                vr.sign_off(r, snapshot_id=d["snapshot_id"], signed_on=d["signed_on"], by=request.user, today=today)
+                vr.sign_off(r, snapshot_id=d["snapshot_id"], signed_on=d["signed_on"], by=request.user, today=today, version=d["version"])
             done = True
         except (ValidationError, PermissionDenied) as e:
             form.add_service_errors(e)
@@ -859,7 +869,7 @@ def vendor_review_sign_off(request, number):
         r = _get(r.number)
         if not request.htmx:
             return _modal_refused(request, r, _form_words(form))
-        return _sign_modal(request, r, form, snapshot=request.POST.get("snapshot_id", ""), today=today)
+        return _sign_modal(request, r, form, snapshot=request.POST.get("snapshot_id", ""), today=today, version=request.POST.get("version", ""))
     return _saved(request, r, f"{r.number} signed off")
 
 

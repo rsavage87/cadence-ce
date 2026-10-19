@@ -34,6 +34,7 @@ who may read what (can_read, readable_areas): scoped users (apps.workorders.scop
 no history, and readable_areas gives them no area.
 """
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -60,6 +61,7 @@ class Change:
     field: str  # the field's label
     before: str
     after: str
+    private: bool = False  # staff-written text the change log never shows (PRIVATE_TEXT): only the record's own History does
 
 
 @dataclass
@@ -90,6 +92,7 @@ class Area:
     url: object = None  # (historical record) -> str | None
     select: tuple = ()  # the historical rows' foreign keys `name` and `url` read, joined in the same query
     url_module: str | None = None  # the module whose View following `url` needs, when it is not `module` (the change log drops the link)
+    also: tuple = ()  # more modules whose View reading this area needs, beside `module` (a vendor review: Contracts View too)
 
     @property
     def model(self):
@@ -177,7 +180,7 @@ AREAS = {a.key: a for a in (
          select=("engineer",)),
     Area("vendor_attestations", "Vendor attestations", "vendors.VendorAttestation", "contracts",
          _safe(lambda r: f"{', '.join(r.vendor_names)} · attestation {r.reference}"), _safe(lambda r: reverse("web:vendor_staff"))),
-    # Slice 32: the program's annual evaluations, their objectives and approvals, read with Program evaluation View.
+    # Slice 32: the program's annual evaluations, their objectives and approvals, read with Evaluations View.
     Area("evaluations", "Program evaluations", "evaluations.ProgramEvaluation", "evaluations", _safe(_evaluation_name),
          _safe(lambda r: _evaluation_url(r.number, r.version))),
     Area("evaluation_objectives", "Program evaluation objectives", "evaluations.EvaluationObjective", "evaluations",
@@ -186,12 +189,13 @@ AREAS = {a.key: a for a in (
     Area("evaluation_approvals", "Program evaluation approvals", "evaluations.EvaluationApproval", "evaluations",
          _safe(lambda r: f"{_evaluation_name(r.evaluation)} · approval"), _safe(lambda r: _evaluation_url(r.evaluation.number, r.evaluation.version)),
          select=("evaluation",)),
-    # Slice 34: the vendor reviews and the committees they were reported to (the views also need Contracts View)
+    # Slice 34: the vendor reviews and the committees they were reported to, read with Evaluations View and Contracts View (as the
+    # Reviews tab, the review's page, and the API)
     Area("vendor_reviews", "Vendor reviews", "evaluations.VendorReview", "evaluations", _safe(lambda r: f"{r.number} · {(r.vendor_names or [''])[0]}"),
-         _safe(lambda r: reverse("web:vendor_review", args=[r.number]))),
+         _safe(lambda r: reverse("web:vendor_review", args=[r.number])), also=("contracts",)),
     Area("vendor_review_reports", "Vendor review reports", "evaluations.VendorReviewReport", "evaluations",
          _safe(lambda r: f"{r.review.number} · report"), _safe(lambda r: reverse("web:vendor_review", args=[r.review.number])),
-         select=("review",)),
+         select=("review",), also=("contracts",)),
 )}
 ACCESS = Area("access", "Access", "accounts.AccessEvent", "users", _safe(lambda e: str(e.user) if e.user_id else ""))
 ALL_AREAS = {**AREAS, ACCESS.key: ACCESS}
@@ -224,17 +228,23 @@ def _is_scoped(user) -> bool:
     return scoping.is_scoped(user)
 
 
+def _views(user, area: Area) -> bool:
+    """View on the area's module and on each of its `also` modules."""
+    return all(user.has_level(m, 1) for m in (area.module, *area.also))
+
+
 def readable_areas(user) -> list[Area]:
     """The areas `user`'s role can view, in AREAS' order (access last). None for a scoped user: history is never theirs."""
     if _is_scoped(user):
         return []
-    return [a for a in ALL_AREAS.values() if user.has_level(a.module, 1)]
+    return [a for a in ALL_AREAS.values() if _views(user, a)]
 
 
 def can_read(user, area_key: str) -> bool:
-    """`user` may read the history of `area_key`'s records: View on its module, and not scoped (what the History tabs check)."""
+    """`user` may read the history of `area_key`'s records: View on its module (and its `also` modules), and not scoped (what the
+    History tabs check)."""
     area = ALL_AREAS.get(area_key)
-    return area is not None and not _is_scoped(user) and user.has_level(area.module, 1)
+    return area is not None and not _is_scoped(user) and _views(user, area)
 
 
 # --- how each field reads ----------------------------------------------------------------------------------------------------
@@ -308,7 +318,8 @@ LABELS = {
                                       "inventory_reviewed_on": "Inventory reviewed", "plan_title": "Plan reviewed", "plan_version": "Plan version",
                                       "plan_effective_on": "Plan effective"},
     "evaluations.evaluationobjective": {"text": "Objective", "target": "Target", "result": "Result", "comment": "Comment"},
-    "evaluations.evaluationapproval": {"body_name": "Committee", "meeting_on": "Meeting", "chair_name": "Chair", "chair_title": "Chair's title",
+    "evaluations.evaluationapproval": {"body": "Committee", "body_name": "Committee's name", "meeting_on": "Meeting", "chair_name": "Chair",
+                                       "chair_title": "Chair's title",
                                        "minutes_reference": "Minutes", "recorded_by": "Recorded by"},
     # Slice 34 (the criteria as apps.evaluations.models.CRITERIA words them)
     "evaluations.vendorreview": {"vendor_names": "Vendor names", "period_start": "Period starts", "period_end": "Period ends", "snapshot": "Figures",
@@ -322,7 +333,7 @@ LABELS = {
                                  "overall": "Overall", "decision": "Decision", "plan_due_on": "Plan due", "plan_result": "Plan result",
                                  "plan_closed_on": "Plan closed", "summary": "Summary", "signed_on": "Signed off",
                                  "approver_name": "Approved by", "approver_title": "Approver's title", "signed_by": "Sign-off recorded by"},
-    "evaluations.vendorreviewreport": {"meeting_on": "Meeting", "minutes_reference": "Minutes", "recorded_by": "Recorded by"},
+    "evaluations.vendorreviewreport": {"body": "Committee", "meeting_on": "Meeting", "minutes_reference": "Minutes", "recorded_by": "Recorded by"},
     "accounts.role": {"is_system": "System role", "scope": "What its users see"},
     "facility.facilitysettings": {"portal_require_callback": "Portal: callback number required", "portal_hotline": "Portal: hotline",
                                   "portal_confirmation": "Portal: confirmation", "portal_email_domains": "Portal: email domains",
@@ -367,7 +378,19 @@ KINDS = {
     # Slice 31: a record's device models by name, never their ids; an attestation's vendor names as a list in words
     "vendors.engineertraining": {"model_ids": "device_models"},
     "vendors.vendorattestation": {"model_ids": "device_models", "vendor_names": "names"},
+    # Slice 34: a review's vendor names as a list in words, the vendor's reported figures as percentages
+    "evaluations.vendorreview": {"vendor_names": "names", "uptime_target_pct": "percent", "uptime_reported_pct": "percent",
+                                 "uptime_lowest_pct": "percent", "response_target_pct": "percent", "response_reported_pct": "percent"},
 }
+
+# Staff-written text that stays on its own page, its print, and its History (slice 32's narrative, slice 34's summary): the change log,
+# its CSV and print, and the API's say only that it was edited (change_log), so the words never leave in a CSV.
+PRIVATE_TEXT = {
+    "evaluations.programevaluation": frozenset({"summary", "scope_changes", "emergency_equipment", "aem_effectiveness", "effectiveness",
+                                                "went_well", "improvements", "capital_staffing", "cybersecurity"}),
+    "evaluations.vendorreview": frozenset({"summary"}),
+}
+PRIVATE_NOTE = "edited (the words are on its own page)"
 
 _CAPITALS = {"pm": "PM", "oem": "OEM", "aem": "AEM", "po": "PO", "cms": "CMS", "mttr": "MTTR"}
 
@@ -707,13 +730,29 @@ _NOISE_REASONS = frozenset({"added", "edited", "changed", "removed", "deleted", 
 
 def _reason(rec, changes: list[Change]) -> str:
     """The reason a service gave, unless it only repeats what the entry already says: the action ("Added", "Edited"), the fields
-    it changed ("Edited: columns, sort"), or one change's new value ("Status: In service")."""
+    it changed ("Edited: columns, sort", "Changed: Overall, Decision", "Summary changed"), or one change's new value ("Status: In
+    service")."""
     reason = (rec.history_change_reason or "").strip()
-    if reason.lower() in _NOISE_REASONS or reason.lower().startswith("edited: "):
+    if reason.lower() in _NOISE_REASONS or reason.lower().startswith("edited: ") or _lists_changes(reason, changes):
         return ""
-    if any(reason == f"{c.field}: {c.after}" for c in changes):
+    if any(reason in (f"{c.field}: {c.after}", f"{c.field} changed") for c in changes):
         return ""
     return reason
+
+
+_MORE = re.compile(r"and \d+ more")
+
+
+def _lists_changes(reason: str, changes: list[Change]) -> bool:
+    """"Changed: Overall, Decision, and 2 more" naming only fields the entry shows changed (what a service writes when it saves several
+    fields at once: vendor_reviews.update_review). A note someone typed that starts "Changed: " lists no fields, and keeps showing."""
+    if not reason.lower().startswith("changed: "):
+        return False
+    words = reason[len("changed: "):].split(", ")
+    if words and _MORE.fullmatch(words[-1]):
+        words = words[:-1]
+    labels = {c.field for c in changes}
+    return bool(words) and all(w in labels for w in words)
 
 
 def _empty(value) -> bool:
@@ -734,6 +773,7 @@ def _build(area: Area, pairs: list[tuple]) -> list[Entry | None]:
     fields = _shown_fields(model)
     names = _Names()
     kinds = KINDS.get(_model_key(model), {})
+    private = PRIVATE_TEXT.get(_model_key(model), frozenset())
     raw = []
     for rec, prev in pairs:
         if rec.history_type == "~" and prev is not None:
@@ -768,7 +808,7 @@ def _build(area: Area, pairs: list[tuple]) -> list[Entry | None]:
                 before_text = _text(f, before, names, prev)
                 if before_text == after_text:
                     after_text += EDITED  # a checklist reworded, long text changed past the cut: the same words, a different value
-            changes.append(Change(_label(f, model), before_text, after_text))
+            changes.append(Change(_label(f, model), before_text, after_text, private=f.name in private))
         out.append(Entry(at=rec.history_date, area=area.key, area_label=area.label, record=area.name(rec), url=area.url(rec) if area.url else None,
                          who=who, who_id=who_id, action=action, reason=_reason(rec, changes), changes=changes))
     return out
@@ -953,7 +993,8 @@ def change_log(user, *, areas: list[str] | None = None, since: date | None = Non
     """The facility's changes, newest first, across the areas `user` can view (or those of `areas` among them), between `since`
     and `until` (local days, inclusive), made by the user with id `who`: a page of up to `limit` entries after the cursor `after`
     (None for the newest). Returns (entries, the next page's cursor or None when nothing is older). A link that needs more than the
-    area's View (a device model opens in the PM program's drawer) is left off for a reader without it."""
+    area's View (a device model opens in the PM program's drawer) is left off for a reader without it. Staff-written text (PRIVATE_TEXT)
+    reads only as edited: the record's own History shows the words."""
     from apps.accounts.models import AccessEvent
 
     allowed = [a for a in readable_areas(user) if areas is None or a.key in areas]
@@ -975,4 +1016,9 @@ def change_log(user, *, areas: list[str] | None = None, since: date | None = Non
         follow = ALL_AREAS[entry.area].url_module
         if entry.url and follow and not user.has_level(follow, 1):
             entry.url = None
+        hidden = [c.field for c in entry.changes if c.private]
+        if hidden:  # staff-written text (PRIVATE_TEXT): that it changed, never the words
+            entry.changes = [c for c in entry.changes if not c.private]
+            note = f"{', '.join(hidden)} {PRIVATE_NOTE}"
+            entry.reason = f"{entry.reason}; {note}" if entry.reason else note
     return entries, cursor_text(following) if following else None

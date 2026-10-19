@@ -6,7 +6,7 @@ month or a grace period. Also the two default PM policy texts, which now say wha
 
 Slice 32: the program's annual evaluations approved whose 12 months overlap the binder's period (never a draft, one sent to committee,
 a discarded one, or a superseded version), with the committees that approved each; the CHECK once the facility has approved one and
-the next is overdue (never before a first approval), linked for a reader with Program evaluation View; NOT_COVERED and the note on the
+the next is overdue (never before a first approval), linked for a reader with Evaluations View; NOT_COVERED and the note on the
 written plan; a fixed number of queries.
 """
 from datetime import date, timedelta

@@ -1,16 +1,16 @@
 """
 The program's annual evaluation (slice 32) over the API: read-only this slice (writes are the screens', Reports, Program evaluation,
-through apps.evaluations.services). Program evaluation View (apps.evaluations.permissions), checked server-side on every request;
+through apps.evaluations.services). Evaluations View (apps.evaluations.permissions), checked server-side on every request;
 Module.EVALUATIONS and no scoped_actions: a vendor's or a requester's account is refused every endpoint (403), whatever its levels.
 
-GET program-evaluations/                  Program evaluation View. Newest period first (then the latest version), 50 a page, each
+GET program-evaluations/                  Evaluations View. Newest period first (then the latest version), 50 a page, each
                                           without figures or text: number, version, label, the months, status, the day sent to
                                           committee and the day approved, the version it amends, the committees that approved it
                                           ({body, committee, meeting_on}), and its page on the web naming the facility.
                                           ?status= draft | ready | approved | superseded | discarded | all (the default);
                                           ?search= a number; ?ordering= period_start, period_end, number, approved_on (a leading "-"
                                           reverses it).
-GET program-evaluations/<id or number>/   Program evaluation View. One evaluation (serializers_evaluations.EvaluationSerializer): the
+GET program-evaluations/<id or number>/   Evaluations View. One evaluation (serializers_evaluations.EvaluationSerializer): the
                                           list's fields, the text, the inventory review, the plan reviewed, the objectives, every
                                           approval, and the figures cut to the reader (apps.evaluations.indicators.cut: left_out names
                                           what their role may not see; without Reports View, no figures at all). By number (EV-26-0001,
@@ -35,9 +35,9 @@ from . import serializers_evaluations as se
 from .permissions import ModulePermission
 from .tenancy import TenantAPIMixin
 
-VIEW_REFUSAL = "Reading program evaluations needs Program evaluation View."
+VIEW_REFUSAL = "Reading program evaluations needs Evaluations View."
 WRITE_REFUSAL = ("The API reads program evaluations only. Drafting and changing one is done on the Program evaluation screen, and needs "
-                 "Program evaluation Edit.")
+                 "Evaluations Edit.")
 NOT_FOUND = "No program evaluation with that id or number in this facility."
 SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
 
@@ -50,7 +50,7 @@ def _uuid(value):
 
 
 class ProgramEvaluationViewSet(TenantAPIMixin, viewsets.ReadOnlyModelViewSet):
-    """The evaluations (the module docstring). Reads need Program evaluation View; the figures also each reader's own areas (the cut)."""
+    """The evaluations (the module docstring). Reads need Evaluations View; the figures also each reader's own areas (the cut)."""
 
     permission_classes = [IsAuthenticated, ModulePermission]
     module = perms.MODULE

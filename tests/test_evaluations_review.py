@@ -6,7 +6,7 @@ Slice 32's adversarial review, each finding pinned:
    the days from then (views_evaluations._previous); a column from the whole 12 months, an empty one, and an approved one say nothing.
 #2 A superseded version's approvals stay as recorded: correcting or removing one is refused in words by the service (so its approval
    day can never move after the amendment that replaced it), the page offers neither, and a POST is refused with nothing changed.
-#3 The API is read-only for every holder of Program evaluation Edit: a DELETE by Edit, Approve (the default manager), or Full is a 405
+#3 The API is read-only for every holder of Evaluations Edit: a DELETE by Edit, Approve (the default manager), or Full is a 405
    like POST, PUT, and PATCH, never a 403 naming a level they hold; a View-only reader keeps the 403 in words.
 #4/#6 The survey binder's table links open the drawer only for records that open in one: the program section's evaluation number is a
    plain link to its page (never hx-target="#drawer"), while device and work order links keep the drawer; the print's links never.
@@ -240,7 +240,7 @@ def test_every_write_by_a_holder_of_edit_is_a_405(client, make_user, tenant, one
     for r in (client.put(one["url"], {}, content_type="application/json"), client.patch(one["url"], {}, content_type="application/json"),
               client.delete(one["url"]), client.delete(f"{API}{one['ev'].number}/")):
         assert r.status_code == 405, (who, r.status_code, r.content)
-        assert "needs Program evaluation Edit" not in r.content.decode()
+        assert "needs Evaluations Edit" not in r.content.decode()
     assert ProgramEvaluation.objects.filter(pk=one["ev"].pk, status=Status.DRAFT).exists()
 
 

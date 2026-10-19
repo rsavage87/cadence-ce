@@ -125,7 +125,7 @@ class Indicator:
     direction: str = NEUTRAL
     target: str = ""  # FULL, PM_TARGET, MTTR_TARGET, BUDGET, or "" for none
     basis: str = PERIOD
-    needs: tuple = ()  # Modules (View) beyond Program evaluation View and Reports View
+    needs: tuple = ()  # Modules (View) beyond Evaluations View and Reports View
     rule: str = ""  # the counting rule in plain words
     quarters: bool = False  # also counted by quarter of the period
     empty: str = "None"  # the display when there is nothing to count (a share of nothing)
@@ -243,7 +243,7 @@ BY_KEY = {i.key: i for i in INDICATORS}
 CLASS_KEYS = ((RiskClass.LIFE_SUPPORT, "devices_life_support"), (RiskClass.HIGH, "devices_high"), (RiskClass.MEDIUM, "devices_medium"),
               (RiskClass.LOW, "devices_low"))
 PM_KEYS = ("pm_high", "pm_oem", "pm_aem")
-# The tables and what each needs beyond Program evaluation View and Reports View.
+# The tables and what each needs beyond Evaluations View and Reports View.
 TABLE_NEEDS = {"aem": (PMS, WO)}
 TABLE_LABELS = {"aem": "AEM effectiveness by model"}
 # What Cadence does not record, said so it is never read as zero.
@@ -878,7 +878,7 @@ def missing_for(user) -> list[str]:
 
 
 def can_refresh(user) -> bool:
-    """Take the figures (a draft's, or a new draft's): Program evaluation Edit and View on every area the figures cover."""
+    """Take the figures (a draft's, or a new draft's): Evaluations Edit and View on every area the figures cover."""
     return perms.can_edit(user) and not missing_for(user)
 
 

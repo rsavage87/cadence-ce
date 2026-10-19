@@ -44,7 +44,7 @@
     {% if fig.contracts %}
     <div class="tbl-wrap ev-figs-wrap">
       <table class="ev-figs vr-cts">
-        <thead><tr><th>Contract</th><th>Type and coverage</th><th>Term</th><th>Counted for</th><th class="num">Days</th><th class="num">Cost for the period</th><th class="num">Devices today</th></tr></thead>
+        <thead><tr><th>Contract</th><th>Type and coverage</th><th>Term</th><th>Counted for</th><th class="num">Days</th><th class="num">Cost for the period</th><th class="num">Devices on {{ fig.taken_on }}</th></tr></thead>
         <tbody>{% for c in fig.contracts %}{% for v in c.versions %}<tr>
           <td class="ev-wrap">{% if forloop.first %}<b>{{ c.reference }}</b>{% if c.deleted %} <span class="chip neutral">Deleted since</span>{% endif %}{% else %}<span class="muted">then</span>{% endif %}{% if v.vendor %}<small>{{ v.vendor }}</small>{% endif %}</td>
           <td class="ev-wrap">{{ v.type_label }}<small>{{ v.coverage_label }}</small></td>

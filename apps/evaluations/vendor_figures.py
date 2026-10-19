@@ -40,7 +40,10 @@ The rules (each figure's own rule says it in words):
 - PMs assigned to the vendor in Cadence (the planner never assigns a vendor) due in the period: pm_due_queryset under the windows in
   force at the period's end; those not on time by their late reason: the vendor's side (waiting on parts or the vendor, or none
   recorded), the facility's, or other (VENDOR_REASONS, FACILITY_REASONS, and OTHER_REASONS partition LateReason). Beside them, the PMs
-  due on devices under the vendor's contracts (in force in the period, still naming it today) not assigned to it.
+  due on devices under the vendor's contracts (in force in the period, still naming it today) not assigned to it. Provisional until the
+  last window still open among the vendor's pending PMs and the covered devices' PMs not assigned to it.
+- Imported work orders (Source.IMPORTED) are counted apart (jobs_imported, cost_imported) and in no other figure: never a PM assigned,
+  pending, or on a covered device, never a repair or a later repair.
 - Repeat repairs: a repair of the same device opened on or within 30 days after a vendor's repair was completed, matched to the vendor's
   last repair of that device before it (one it completed after the period keeps it), counted when its finding is a device failure or
   unknown (findings.RELIABILITY / UNKNOWN; still open counts as unknown); never cancelled. Provisional until 30 days after the period's
@@ -475,9 +478,9 @@ def _repeat_kind(later: dict) -> str:
 
 def _repeats(qs, repairs: list[_Job], keys: set, p: _Span) -> tuple[list[dict], int]:
     """The later repairs matched to the vendor's repairs (one query): [pair] counted, and how many were left out for their finding. A
-    repair after one the vendor completed after the period is that one's, never this period's."""
+    repair after one the vendor completed after the period is that one's, never this period's; an imported repair is never either."""
     last_open = p.end + timedelta(days=REPEAT_DAYS)
-    later = list(WorkOrder.objects.filter(type=WoType.REPAIR, opened_on__gte=p.start, opened_on__lte=last_open,
+    later = list(WorkOrder.objects.filter(type=WoType.REPAIR, source__in=OURS_SOURCES, opened_on__gte=p.start, opened_on__lte=last_open,
                                           asset_id__in=qs.filter(type=WoType.REPAIR, source__in=OURS_SOURCES).values("asset_id"))
                  .exclude(status=WoStatus.CANCELLED).order_by("opened_on", "number")
                  .values("id", "number", "asset_id", "status", "opened_on", "completed_on", "repair_finding", "vendor_service", "vendor_name",
@@ -513,9 +516,11 @@ def _repeats(qs, repairs: list[_Job], keys: set, p: _Span) -> tuple[list[dict], 
 # --- PMs --------------------------------------------------------------------------------------------------------------------------
 
 def _pms(keys: set, p: _Span, w: Windows) -> tuple[Counter, int, int]:
-    """The PMs assigned to the vendor due in the period (pm_due_queryset, one grouped query): (late by reason, on time, counted)."""
+    """The PMs assigned to the vendor due in the period (pm_due_queryset, one grouped query; imported ones apart, as every figure but
+    jobs_imported): (late by reason, on time, counted)."""
     late, on_time, counted = Counter(), 0, 0
-    for row in (pm_due_queryset(p.start, p.end, p.today, w=w).filter(vendor_service=True).order_by().values("vendor_name", "late_reason")
+    for row in (pm_due_queryset(p.start, p.end, p.today, w=w).filter(vendor_service=True, source__in=OURS_SOURCES).order_by()
+                .values("vendor_name", "late_reason")
                 .annotate(n=Count("id"), on_time=Count("id", filter=w.on_time_q()))):
         if rules.vendor_key(row["vendor_name"]) not in keys:
             continue
@@ -525,33 +530,38 @@ def _pms(keys: set, p: _Span, w: Windows) -> tuple[Counter, int, int]:
     return late, on_time, counted
 
 
-def _pm_pending(keys: set, p: _Span, w: Windows) -> tuple[int, date | None]:
-    """PMs assigned to the vendor due in the period, not done, still inside their window on the day taken, and the last day one of them
-    stops being inside it. None under the default window (by the due date: nothing is ever inside it); else one grouped query."""
+def _pm_pending(keys: set, contract_ids: list, p: _Span, w: Windows) -> tuple[int, date | None]:
+    """PMs assigned to the vendor due in the period, not done, still inside their window on the day taken, and the last day one of them,
+    or a PM due in the period on a device under the vendor's contracts today (`contract_ids`) not assigned to it, stops being inside it
+    (until then pm_covered_not_assigned may still change). None under the default window (by the due date: nothing is ever inside
+    it); else one grouped query. Imported PMs are never pending (an import is completed)."""
     if w.is_default:
         return 0, None
     high = Case(When(Q(**{f"{WORK_ORDER_RISK}__in": HIGH_CLASSES}), then=Value(True)), default=Value(False), output_field=BooleanField())
+    covered = Case(When(asset__contract_id__in=contract_ids, then=Value(True)), default=Value(False), output_field=BooleanField())
     pending, last_end = 0, None
-    for row in (WorkOrder.objects.filter(type=WoType.PM, vendor_service=True, due_on__gte=p.start, due_on__lte=min(p.end, p.today),
+    for row in (WorkOrder.objects.filter(Q(vendor_service=True) | Q(asset__contract_id__in=contract_ids), type=WoType.PM,
+                                         source__in=OURS_SOURCES, due_on__gte=p.start, due_on__lte=min(p.end, p.today),
                                          completed_on__isnull=True)
                 .filter(w.inside_window_q(p.today)).exclude(RETIRED_AND_CANCELLED).order_by()
-                .values("vendor_name", high=high).annotate(n=Count("id"), last=Max("due_on"))):
-        if rules.vendor_key(row["vendor_name"]) not in keys:
+                .values("vendor_service", "vendor_name", high=high, covered=covered).annotate(n=Count("id"), last=Max("due_on"))):
+        if row["vendor_service"] and rules.vendor_key(row["vendor_name"]) in keys:
+            pending += row["n"]
+        elif not row["covered"]:
             continue
-        pending += row["n"]
         end = (w.high if row["high"] else w.other).end(row["last"])
         last_end = end if last_end is None or end > last_end else last_end
     return pending, last_end
 
 
 def _pms_covered(keys: set, contract_ids: list, p: _Span, w: Windows) -> tuple[int, int, int]:
-    """The PMs due in the period (pm_due_queryset) on devices under the vendor's contracts today: (counted, not assigned to the vendor
-    and completed, not assigned and not completed). One grouped query; none without such a contract."""
+    """The PMs due in the period (pm_due_queryset, imported ones apart) on devices under the vendor's contracts today: (counted, not
+    assigned to the vendor and completed, not assigned and not completed). One grouped query; none without such a contract."""
     if not contract_ids:
         return 0, 0, 0
     done = Case(When(completed_on__isnull=False, then=Value(True)), default=Value(False), output_field=BooleanField())
     total = completed = not_completed = 0
-    for row in (pm_due_queryset(p.start, p.end, p.today, w=w).filter(asset__contract_id__in=contract_ids).order_by()
+    for row in (pm_due_queryset(p.start, p.end, p.today, w=w).filter(asset__contract_id__in=contract_ids, source__in=OURS_SOURCES).order_by()
                 .values("vendor_service", "vendor_name", done=done).annotate(n=Count("id"))):
         total += row["n"]
         if row["vendor_service"] and rules.vendor_key(row["vendor_name"]) in keys:
@@ -692,7 +702,7 @@ def _figures(contracts: list[dict], jobs: list[_Job], pairs: list[dict], repeat_
                        "caused by earlier service), not recorded, or still open. Each later repair is matched to the vendor's last repair "
                        "of the device before it, and listed to check. Information for the reviewer: Cadence does not say who caused it.",
                        _count(len(repeated), len(repairs)) if repairs else _V(None, 0, 0), empty=NO_REPAIRS,
-                       detail=(f"{len(repeated):,} of {len(repairs):,}, {unknown:,} not recorded" if repairs else "")))
+                       detail=(f"{len(repeated):,} of {_n(len(repairs), 'repair')}; {_n(unknown, 'later repair')} not recorded" if repairs else "")))
     out.append(_figure("repeat_not_recorded", "repeats", "Later repairs with no finding recorded", COUNT,
                        "Of the later repairs counted, those with no finding recorded (or not stated by the vendor), or still open.",
                        _count(unknown, len(pairs))))
@@ -774,8 +784,8 @@ def snapshot(vendor_keys, period_start: date, period_end: date, *, today: date) 
         _evidence(qs, ours)
         pairs, repeat_other = _repeats(qs, [j for j in ours if j.type == WoType.REPAIR], found, p)
         cost = _cost(qs)
-    pending, pending_end = _pm_pending(found, p, w)
     in_force_ours = [c["_id"] for c in contracts if c["_ours_today"]]
+    pending, pending_end = _pm_pending(found, in_force_ours, p, w)
     covered = _pms_covered(found, in_force_ours, p, w)
     figures = _figures(contracts, jobs, pairs, repeat_other, _pms(found, p, w), pending, covered, cost)
 

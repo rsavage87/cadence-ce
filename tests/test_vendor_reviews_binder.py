@@ -24,6 +24,7 @@ from django.urls import reverse
 from django.utils import timezone
 from pg_helpers import as_app_role, needs_postgres
 from survey_helpers import gaps_of, period, rows_of
+from vendor_review_days import ended
 
 from apps.accounts.models import Level, Module, Role, User
 from apps.contracts.models import Contract
@@ -65,8 +66,9 @@ def contract(vendor, today, *, start=None, end=None):
 
 
 def signed(names, period_end, *, today, signed_on=None, **over):
-    """A review of `names` for the 12 months ending `period_end`, every field the sign-off needs, signed off on `signed_on`."""
-    r = vr.create_review(vendor_names=list(names), period_end=period_end, by=None, today=today)
+    """A review of `names` for the 12 months ending `period_end` (the day before when that is Feb 28 of a leap year: vendor_review_days),
+    every field the sign-off needs, signed off on `signed_on`."""
+    r = vr.create_review(vendor_names=list(names), period_end=ended(period_end), by=None, today=today)
     r = vr.update_review(r, by=None, **{**READY, **over})
     return vr.sign_off(r, snapshot_id=r.snapshot_id, signed_on=signed_on or today, by=None, today=today)
 
@@ -114,7 +116,7 @@ def test_the_last_review_is_the_latest_signed_off_one_naming_the_vendor(today):
     contract("Philips", today)
     contract("Philips Healthcare", today)
     contract("Steris", today)
-    first_end = today - 400 * DAY
+    first_end = ended(today - 400 * DAY)
     older = signed(["Philips"], first_end, today=today, signed_on=first_end + 20 * DAY)
     newer = signed(["Philips field service", "Philips Healthcare"], vr.next_period_end(first_end), today=today)  # "philips" is Philips's key
     s = build(today)
@@ -173,7 +175,7 @@ def test_the_number_links_to_the_review_for_evaluations_view_only(client, today,
 def test_no_review_check_before_the_first_sign_off(today):
     contract("Philips", today)
     contract("Steris", today)
-    draft = vr.create_review(vendor_names=["Philips"], period_end=today - 40 * DAY, by=None, today=today)
+    draft = vr.create_review(vendor_names=["Philips"], period_end=ended(today - 40 * DAY), by=None, today=today)
     s = build(today)
     assert review_checks(s) == [] and s.gaps == []
     assert (figures(s)["Vendors under contract"], figures(s)["Vendors under contract with a signed-off review"]) == (2, 0)
@@ -226,7 +228,7 @@ def test_the_check_names_five_vendors_then_how_many_more(today):
 def test_a_vendor_under_contract_whose_next_review_is_overdue(today, pump):
     contract("Philips", today)
     contract("Steris", today, start=today - 900 * DAY, end=today - 30 * DAY)  # ended: its review is not chased
-    end = today - 470 * DAY
+    end = ended(today - 470 * DAY)
     r = signed(["Philips"], end, today=today, signed_on=end + 15 * DAY)
     signed(["Steris"], end, today=today, signed_on=end + 15 * DAY)
     job(pump, "BD field service", end - 20 * DAY)
@@ -248,7 +250,7 @@ def test_a_vendor_under_contract_whose_next_review_is_overdue(today, pump):
 def test_one_overdue_check_per_review_whatever_names_it_gives(today):
     contract("Philips", today)
     contract("Philips Healthcare", today)  # its own row in the table (another key), the same review
-    end = today - 470 * DAY
+    end = ended(today - 470 * DAY)
     r = signed(["Philips Healthcare", "Philips"], end, today=today, signed_on=end + 15 * DAY)
     (check,) = review_checks(build(today))
     assert check.text.startswith(f"Philips and Philips Healthcare: no signed-off review of the 12 months after {fmt(r.period_start)} to "
@@ -285,7 +287,7 @@ def test_the_rules_are_vendor_reviews_own(today):
     for end in [date(2024, 2, 29), date(2025, 2, 28), date(2026, 1, 31), date(2026, 12, 31), today - DAY, *(today - n * 37 * DAY for n in range(20))]:
         assert vendors.next_period_end(end) == vr.next_period_end(end), end
     contract("Philips", today)
-    end = today - 470 * DAY
+    end = ended(today - 470 * DAY)
     signed(["Philips"], end, today=today, signed_on=end + 15 * DAY)
     (philips,) = [r for r in vr.vendors_list(today) if r.key == "philips"]
     assert philips.overdue and len(review_checks(build(today))) == 1  # the Reviews tab says overdue too
