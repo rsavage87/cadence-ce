@@ -82,6 +82,15 @@ def can_set_repair_finding(user, wo) -> bool:
     return user.has_level(MODULE, late_reason_level(wo.status)) and not scoping.is_scoped(user)
 
 
+def can_set_test_equipment(user, wo) -> bool:
+    """Record or correct which test equipment a completed or closed work order recorded (slice 35: services.set_test_equipment): Edit,
+    Approve once closed, as the reason a PM was late; never a scoped user (the facility's test equipment and its records are never
+    theirs). Completing with it is completing (Edit)."""
+    from . import scoping
+
+    return user.has_level(MODULE, late_reason_level(wo.status)) and not scoping.is_scoped(user)
+
+
 def can_keep_open(user) -> bool:
     """Record failed checks after a repair on the repair, which stays open and may hold the device out (slice 30: completion.keep_open):
     Edit, as completing it."""

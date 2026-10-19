@@ -37,6 +37,11 @@ set_repair_finding records or corrects it afterwards on a completed or closed re
 Two writes keep a stored finding true to the repair: assign clears "not stated by the vendor" when the work leaves that vendor
 (vendors.rules.vendor_key, as for the vendor's report number), and clear_use_error takes a use error off a repair an incident adopts as
 its investigation (an investigation never records one: who erred stays in the facility's event report).
+
+Slice 35, the test equipment a work order recorded (apps.testequipment: TestEquipmentUse): completion.complete_work_order records it, and
+set_test_equipment records or corrects it afterwards on a completed or closed work order (the same rules: testequipment.services
+.check_uses). assign clears it when an open work order moves to a vendor (testequipment.services.clear_for_vendor, audited): that work
+is the vendor's, and its report names its own test equipment. A work order with test equipment recorded is never deleted (PROTECT).
 """
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -223,7 +228,14 @@ def lock_work(asset_id, *also) -> None:
     names (one being completed or reopened, PMs a release gives a late reason), all in number order, until the transaction ends. Its
     row comes after (equipment.services._locked_row, _lock_for_hold). A writer that locked one work order before this would wait here
     for a lower number another writer holds while that writer waits for its row: so this comes first, before any other work order's
-    row (complete_work_order, the incident services)."""
+    row (complete_work_order, the incident services).
+
+    Slice 35, test equipment: a writer of a work order's test equipment (complete_work_order, set_test_equipment) takes this, then the
+    work order's row, then the test equipment items' rows (those it names and those already on the work order, in pk order:
+    testequipment.services.check_uses), and only then what else it takes (a failed PM's repair number, the device's row). assign takes
+    the work order's row, then the items' rows of the uses it clears. Every test equipment writer of its own (apps.testequipment
+    .services: details, status, calibrations, entered in error, the review) locks only its item's row (after the facility's tag lock when
+    it takes one) and takes nothing after it, so no writer waits for a work order while holding an item."""
     rows = WorkOrder.objects.select_for_update().filter(Q(asset_id=asset_id, status__in=OPEN_STATUSES) | Q(pk__in=also)).order_by("number")
     list(rows.values_list("pk", flat=True))
 
@@ -334,7 +346,10 @@ def assign(wo: WorkOrder, technician=None, vendor_name: str = "", by=None) -> Wo
     an open one (a completed or closed work order keeps who did it; the drawer refused already, now the API does too), and the
     vendor's engineer it names, and the vendor's report number, are cleared when the work moves in-house or to another vendor
     (apps.vendors.rules.vendor_key): they were that vendor's visit (review fix: a re-completion keeps a number left out). Slice 33:
-    so is a finding of "not stated by the vendor" (a reopened repair's): that vendor's report was silent, not the next one's."""
+    so is a finding of "not stated by the vendor" (a reopened repair's): that vendor's report was silent, not the next one's. Slice 35:
+    the test equipment it recorded (a reopened work order's) is cleared when it moves to a vendor, from in-house or another vendor
+    (testequipment.services.clear_for_vendor: the items' rows locked after this row, each use's history "Test equipment cleared:
+    assigned to <vendor>")."""
     from apps.credentials.services import qualification
     from apps.vendors.rules import vendor_key
 
@@ -373,6 +388,10 @@ def assign(wo: WorkOrder, technician=None, vendor_name: str = "", by=None) -> Wo
             wo.repair_finding = ""  # slice 33: that vendor's report named no cause; the work's next completion records what was found
             fields.append("repair_finding")
     wo.save(update_fields=fields)
+    if wo.vendor_service and (before is None or vendor_key(wo.vendor_name) != before):  # slice 35: the work moved to a vendor
+        from apps.testequipment.services import clear_for_vendor  # apps.testequipment imports this app
+
+        clear_for_vendor(wo, wo.vendor_name, by=by)
     WorkOrderStatusHistory.objects.create(tenant=wo.tenant, work_order=wo, from_status=wo.status, to_status=wo.status, changed_by=by, note=note)
     if technician is not None and not vendor_name:
         assignments.announce(wo, technician, by=by)  # slice 20: emailed once this commits, at most once per work order and person
@@ -511,6 +530,40 @@ def set_repair_finding(wo: WorkOrder, finding: str, *, by=None) -> WorkOrder:
         label = RepairFinding(value).label
         _save_finding(locked, value, f"What was found: {label}" if locked.repair_finding else f"Recorded later: {label}", by)
     wo.repair_finding = locked.repair_finding
+    return locked
+
+
+# --- the test equipment used (slice 35) --------------------------------------------------------------
+
+@transaction.atomic
+def set_test_equipment(wo: WorkOrder, ids, *, by, today: date | None = None) -> WorkOrder:
+    """Record or correct which test equipment `wo` recorded, once it is completed or closed: `ids` a list of item ids (text or UUID)
+    that replaces the set as a diff, [] clears (KEEP changes nothing). The rules of completing (testequipment.services.check_uses), but a
+    new item need only not have been retired before the work's day: it is judged on that day, and its standing flags it. Never a scoped
+    user's; Work orders Edit, Approve once closed (permissions.can_set_test_equipment, checked here on the locked row for a user given
+    as `by`). Locks as completing does: lock_work, this row, then the items' rows. Refusals keyed test_equipment. Each use added or taken
+    off is a history row of its own ("Recorded after completion", "Taken off after completion"). Returns the row."""
+    from django.core.exceptions import PermissionDenied
+
+    from apps.testequipment import services as te
+
+    from . import permissions, scoping
+
+    today = today or timezone.localdate()
+    if scoping.is_scoped(by):
+        raise ValidationError({"test_equipment": te.SCOPED})
+    lock_work(wo.asset_id, wo.pk)
+    locked = WorkOrder.objects.select_for_update().get(pk=wo.pk)
+    if locked.status not in (WoStatus.COMPLETED, WoStatus.CLOSED):
+        raise ValidationError({"test_equipment": te.NOT_DONE.format(number=locked.number)})
+    if by is not None and not permissions.can_set_test_equipment(by, locked):
+        raise PermissionDenied(te.SET_PERMISSION)
+    errors: dict = {}
+    change = te.check_uses(locked, ids, by=by, today=today, errors=errors, completing=False)
+    if errors:
+        raise ValidationError(errors)
+    if change is not te.KEEP:
+        te.apply_uses(locked, change, by=by, completing=False)
     return locked
 
 

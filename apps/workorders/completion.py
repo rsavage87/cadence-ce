@@ -126,6 +126,17 @@ rest, never preselected:
   who cannot choose the finding stored (the facility's) leaves it as stored: sent nothing, or the stored value sent back.
 - On any other type a finding is refused (findings.NOT_A_REPAIR). Stored with the completion (change_status saves the row, so the
   work order's history has it). keep_open records no finding: the repair is not over.
+
+Slice 35, the test equipment used (apps.testequipment; the rule is its rules, the checks its services.check_uses), keyed test_equipment
+with the rest, never preselected: KEEP (left out) keeps what the work order recorded; a list of item ids (text or UUID) replaces the set
+as a diff (each use added or taken off is a history row of its own); [] clears. Refused when the work is not offered (imported; vendor
+service, except a repair completed with an outcome other than the vendor's report: the outcome chosen in the same call), for a scoped
+user (a non-empty list; an empty one changes nothing), and for an unknown id or another facility's. A new item must be usable today
+(in use, or its status changed today); one already on the work order passes whatever its status; one is taken off only under the
+kept-use rule (rules.may_remove on the day the work was last completed: a reopened work order's uses stay once a calibration dated on or
+after that day is on file). Read on the locked rows: the items' rows are locked after lock_work and the work order's row, in pk order,
+before anything else this takes (a failed PM's repair number, the device's row). keep_open records no test equipment (its day is not
+the completion's).
 """
 import hashlib
 import json
@@ -141,6 +152,7 @@ from apps.equipment.models import AssetStatus, RiskClass
 from apps.pm.procedures import step_parts
 from apps.pm.windows import window_of
 from apps.tenants.context import get_current_tenant
+from apps.testequipment import services as test_equipment_services
 from apps.vendors import services as vendor_services
 
 from . import costs, findings, inspections, repair_checks, services
@@ -1021,7 +1033,8 @@ def result_note(result: str, done: Completion) -> str:
 def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str = "", inspection_result: str = "", repair_check: str = "",
                         checks_reference=vendor_services.KEEP, results=None, open_repair: bool = True, tag_out: bool | None = None,
                         signature: str | None = None, hours=None, late_reason=None, vendor_engineer=vendor_services.KEEP,
-                        engineer_name: str = "", repair_finding=vendor_services.KEEP, by=None, today: date | None = None) -> Completion:
+                        engineer_name: str = "", repair_finding=vendor_services.KEEP, test_equipment=vendor_services.KEEP, by=None,
+                        today: date | None = None) -> Completion:
     """Complete `wo` with its resolution and, for a PM, its result and checklist results (the module's rules); a PM still open is
     started first (starts_on_completion). `results` is one {"result": "pass" | "fail" | "na", "reading": "..."} per checklist step, in
     order. `hours` (None or blank: none) are logged with it, and `late_reason` (None or blank: none; slice 25) is recorded on a PM
@@ -1030,9 +1043,10 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
     checklist's `results` for passed, and `checks_reference` for vendor_report. Slice 31: vendor service takes `vendor_engineer` or
     `engineer_name` and `checks_reference` (the module's Slice 31 paragraph; left out, the number on file stays). Slice 33: a repair
     takes `repair_finding` (RepairFinding; KEEP, None, or blank keeps the one stored, required when none is: the module's Slice 33
-    paragraph). Raises ValidationError: a plain message when the work order cannot be completed now, else a dict keyed by resolution,
-    pm_result, inspection_result, repair_check, checks_reference, checklist, step_<n>, reading_<n>, open_repair, hours, late_reason,
-    vendor_engineer, engineer_name, and repair_finding. `wo` is refreshed from the database afterwards (and its device with it)."""
+    paragraph). Slice 35: `test_equipment` (KEEP, or a list of item ids: the module's Slice 35 paragraph). Raises ValidationError: a
+    plain message when the work order cannot be completed now, else a dict keyed by resolution, pm_result, inspection_result,
+    repair_check, checks_reference, checklist, step_<n>, reading_<n>, open_repair, hours, late_reason, vendor_engineer, engineer_name,
+    repair_finding, and test_equipment. `wo` is refreshed from the database afterwards (and its device with it)."""
     today = today or timezone.localdate()
     _check_tenant(wo)
     # The device's open work orders and this one first, in number order (its open inspections among them: two of its inspections
@@ -1094,6 +1108,9 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
     late = _late_reason(locked, late_reason, by, today, errors)
     engineer = vendor_services.engineer_choice(locked, vendor_engineer, engineer_name, by=by, errors=errors)  # slice 31
     finding = _repair_finding(locked, repair_finding, by, errors)  # slice 33
+    # Slice 35: the items' rows locked here, after lock_work and this row, before the repair's number and the device's row
+    uses = test_equipment_services.check_uses(locked, test_equipment, by=by, today=today, errors=errors, completing=True,
+                                              repair_check=repair_check if is_repair else None)
     if errors:
         _log_hours(locked, hours, by, today, errors)  # its refusal too, so every problem is reported at once (a line goes back with the rest)
         raise ValidationError(errors)
@@ -1142,6 +1159,8 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
     locked.resolution = text
     # A passed inspection of a waiting device passes it here (services._on_completed: equipment.services.pass_incoming_inspection).
     services.change_status(locked, WoStatus.COMPLETED, by=by, note=note, as_of=today)
+    if uses is not vendor_services.KEEP:
+        test_equipment_services.apply_uses(locked, uses, by=by, completing=True)  # slice 35: each use added or taken off
     if late:
         _record_late_reason(locked, late, by, today)  # once completed late, it is a PM that missed its due date (missed_pms)
     asset.refresh_from_db(fields=["status", "last_pm_on", "next_pm_on", "awaiting_inspection"])
