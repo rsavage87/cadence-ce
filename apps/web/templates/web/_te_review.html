@@ -1,0 +1,27 @@
+{% load web %}
+{% comment %}Slice 35: the tolerance review's decision (views_testequipment.test_equipment_review; services.decide_review, Decide). Drawn
+   with the work in the look-back window now: the hidden version is that list's (services.review_version), so a list that moved before
+   the decision is refused and shown again as it is now.{% endcomment %}
+<div class="modal-h"><h2>{{ item.tag }}: review the work done with it</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="ter-form" hx-post="{% url 'web:test_equipment_review' item.tag c.pk %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    <div class="full te-rv">
+      <p><strong>{{ found }}</strong>: certificate {{ c.certificate }} of {{ c.calibrated_on|date:"M j, Y" }} from {{ c.provider }}.</p>
+      <p class="hint">{{ window }}</p>
+      <p>The decision covers the {{ count }} work order{{ count|pluralize }} in this window now.</p>
+      {% if recent %}<ol class="te-wlist">{% for r in recent %}<li>{{ r.w.number }} · {{ r.w.completed_on|date:"M j, Y" }} · {{ r.w.asset.tag }}</li>{% endfor %}</ol>
+      <p>{% if count > recent|length %}<span class="hint">The latest {{ recent|length }} of {{ count }}.</span> {% endif %}<a class="link" href="{% url 'web:test_equipment_review_csv' item.tag c.pk %}" download>The whole list as CSV</a></p>{% endif %}
+    </div>
+    {% include "web/_te_radios.html" with field=form.basis cls="full te-basis" %}
+    {% include "web/_asset_field.html" with field=form.decided_on %}
+    {% include "web/_asset_field.html" with field=form.quality_reference %}
+    <input type="hidden" name="version" value="{{ s.version }}">
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Record the review</button></div>
+</form>
+{% endif %}

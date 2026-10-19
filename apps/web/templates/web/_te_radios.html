@@ -1,0 +1,7 @@
+{# Slice 35: one choice as radio buttons in a fieldset (field), with its hint and error; `hints` (optional) a {value: words} dict shown under each choice. #}
+<fieldset class="te-radios{% if cls %} {{ cls }}{% endif %}"{% if field.errors %} aria-describedby="{{ field.auto_id }}_error"{% endif %}>
+  <legend>{{ field.label }}</legend>
+  <div class="te-radio-list">{% for radio in field %}<label for="{{ radio.id_for_label }}">{{ radio.tag }}<span>{{ radio.choice_label }}</span></label>{% endfor %}</div>
+  {% if field.help_text %}<span class="hint" id="{{ field.auto_id }}_helptext">{{ field.help_text }}</span>{% endif %}
+  {% if field.errors %}<span class="err" id="{{ field.auto_id }}_error">{{ field.errors|striptags }}</span>{% endif %}
+</fieldset>

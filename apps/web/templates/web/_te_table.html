@@ -1,0 +1,26 @@
+{% load web %}
+{# Slice 35: the Test equipment tab's table. Re-fetches itself on te-changed (any change in an item's drawer or a modal); each row opens the item's drawer. Its standing is judged today, in apps.testequipment.rules' words. #}
+<div id="te-table" class="te-table" hx-get="{{ list_url }}{% query request.GET %}" hx-trigger="te-changed from:body" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap hx-target">
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Tag</th><th>Kind</th><th>Make and model</th><th>Serial</th><th>Status</th><th>Held by</th><th>Standing</th></tr></thead>
+      <tbody>
+        {% for r in rows %}{% with i=r.i %}
+        <tr class="row" hx-get="{% url 'web:test_equipment_item' i.tag %}" hx-target="#drawer">
+          <td class="tag"><a class="tag" href="{% url 'web:test_equipment_item' i.tag %}">{{ i.tag }}</a></td>
+          <td>{{ i.get_kind_display }}</td>
+          <td class="two">{{ i.manufacturer }}<small>{{ i.model }}</small></td>
+          <td>{{ i.serial }}</td>
+          <td class="two">{{ r.status }}<small>since {{ i.status_since|date:"M j, Y" }}</small></td>
+          <td>{% if i.held_by %}{{ i.held_by.name }}{% else %}<span class="muted">Nobody</span>{% endif %}</td>
+          <td><span class="chip {{ r.tone }}">{{ i.standing.words }}</span></td>
+        </tr>
+        {% endwith %}{% empty %}
+        <tr><td colspan="7"><div class="empty">{% if f.any %}No test equipment matches these filters. Clear a filter or search a different tag or serial.{% else %}No test equipment on record. Add the department's analyzers, simulators, and meters to keep their certificates and the work done with them.{% endif %}</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% include "web/_pager.html" with noun="items" target="#te-table" %}
+  </div>
+</div>
+{% if oob_summary %}{% include "web/_te_summary.html" with oob=True %}{% endif %}

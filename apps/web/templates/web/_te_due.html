@@ -1,0 +1,8 @@
+{# Slice 35: Record calibration's due day (views_testequipment: due). Prefilled with the item's interval after the calibration day (due.default, posted back as due_default: left as prefilled, the service's default is used); re-fetched when the calibration day changes, keeping a day the user typed. The hint says the cap. #}
+<div class="fld full te-due{% if due.error %} te-err{% endif %}" id="tec-due">
+  <label for="tec-due_on">Due day</label>
+  <input type="date" name="due_on" id="tec-due_on" value="{{ due.value }}" aria-describedby="tec-due_on_helptext{% if due.error %} tec-due_on_error{% endif %}"{% if due.autofocus %} autofocus{% endif %}>
+  <input type="hidden" name="due_default" value="{{ due.default }}">
+  <span class="hint" id="tec-due_on_helptext">{{ due.hint.words }}</span>
+  {% if due.error %}<span class="err" id="tec-due_on_error">{{ due.error }}</span>{% endif %}
+</div>

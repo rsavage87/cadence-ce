@@ -1,0 +1,9 @@
+{# Slice 35: an item's fields (forms_testequipment.ItemForm) in Add test equipment and Change. A field Change does not offer (form.locks: the tag once a calibration or work is on record, the interval below Decide once a certificate is on file) shows its value and why. #}
+{% if form.locks.tag %}<div class="fld te-locked"><span class="lbl">Tag</span><span class="te-val">{{ item.tag }}</span><span class="hint">{{ form.locks.tag }}</span></div>{% else %}{% include "web/_asset_field.html" with field=form.tag %}{% endif %}
+{% include "web/_asset_field.html" with field=form.kind %}
+{% include "web/_asset_field.html" with field=form.manufacturer %}
+{% include "web/_asset_field.html" with field=form.model %}
+{% include "web/_asset_field.html" with field=form.serial %}
+{% include "web/_asset_field.html" with field=form.held_by %}
+{% include "web/_te_radios.html" with field=form.program cls="full" %}
+{% if form.locks.interval_months %}<div class="fld te-locked"><span class="lbl">Interval</span><span class="te-val">{{ item.interval_months }} month{{ item.interval_months|pluralize }}</span><span class="hint">{{ form.locks.interval_months }}</span></div>{% else %}{% include "web/_asset_field.html" with field=form.interval_months %}{% endif %}

@@ -1174,6 +1174,72 @@ td small.tmp-late{color:var(--crit)}
 }
 
 /* Slice 35 A: the Equipment screen's Test equipment tab and an item's drawer. Wave 2A owns this block, up to the A end marker. */
+/* The table's standing chip may be long ("Calibration was due Aug 31, 2026"): it stays on one line and the table scrolls sideways on a
+   phone (.tbl-wrap). The drawer: the status moves wrap; each calibration is a card, one marked entered in error greyed and struck;
+   the review box sits inside its calibration's card; the uses wrap their words (never cut off: the words are the record). */
+.te-table td .chip{max-width:none}
+.te-line{margin:0 0 6px;font-size:13px;line-height:1.45}
+.te-drawer .hint.te-line{font-size:12.5px}
+.te-moves{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.te-dl .te-wide{grid-column:1/-1}
+.te-dl dd{overflow-wrap:anywhere}
+.te-sec-act{margin:-4px 0 8px}
+.te-cals{display:flex;flex-direction:column;gap:10px}
+.te-cal{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--surface);min-width:0}
+.te-cal-h{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px}
+.te-cal-h .t{font-weight:600}
+.te-cal-h .muted{font-size:12.5px}
+.te-cal-f{margin-top:8px}
+.te-void{background:var(--surface-2)}
+.te-void .te-cal-h .t{text-decoration:line-through;color:var(--ink-3)}
+.te-void .te-dl dd{color:var(--ink-3)}
+.te-review{margin-top:10px;padding:10px 12px;border-radius:8px;border:1px solid var(--crit);background:var(--crit-soft)}
+.te-review.decided{border-color:var(--line);background:var(--surface-2)}
+.te-review-h{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;font-size:13px}
+.te-review .dl{margin:6px 0}
+.te-review-f{margin-top:8px}
+.te-added{margin:6px 0}
+.te-recheck{margin:6px 0;font-size:12.5px}
+.te-recheck summary{cursor:pointer;color:var(--accent)}
+.te-recheck ul{margin:6px 0 0;padding-left:18px}
+.te-wlist{margin:6px 0;padding-left:20px;font-size:12.5px;line-height:1.6}
+.te-wlist .chip{font-size:11.5px}
+.te-uses{list-style:none;margin:0 0 8px;padding:0}
+.te-use{padding:8px 0 8px 10px;border-top:1px solid var(--line);border-left:3px solid var(--ok);min-width:0}
+.te-use:first-child{border-top:0}
+.te-use.flagged{border-left-color:var(--warn)}
+.te-use-h{font-size:13px;font-weight:500;overflow-wrap:anywhere}
+.te-use-s{font-size:12.5px;color:var(--ink-3);overflow-wrap:anywhere;margin-top:2px}
+.te-uses a.tag,.te-uses a.link{text-decoration:none}
+/* The modals: radio choices as rows, the certificate's fields in a box of their own, a locked field's value and why */
+.te-radios{margin:0;padding:0;border:0;min-width:0;display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--ink-2)}
+.te-radios legend{padding:0;margin-bottom:4px}
+.te-radio-list{display:flex;flex-direction:column;gap:6px}
+.te-radio-list label{display:flex;flex-direction:row;gap:8px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line-2);border-radius:8px;cursor:pointer;font-size:13px;color:var(--ink)}
+.te-radio-list input{margin:2px 0 0;padding:0;width:auto;flex:none}
+.te-radio-list label:has(input:checked){border-color:var(--accent);background:var(--accent-soft)}
+.form .te-check-fld{justify-content:flex-end}
+.form label.te-check{display:flex;flex-direction:row;gap:8px;align-items:center;font-size:13px;color:var(--ink);cursor:pointer;padding:8px 0}
+.te-check input{width:auto;margin:0;padding:0}
+.te-cert{margin:0;padding:8px 12px 12px;border:1px solid var(--line);border-radius:8px;min-width:0}
+.te-cert>legend{padding:0 4px;font-size:12.5px;font-weight:600;color:var(--ink-2)}
+.te-cert>.hint{margin:0 0 10px}
+.te-cert-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.te-cert-grid>.full{grid-column:1/-1}
+.te-locked .lbl{font-size:12.5px;color:var(--ink-2)}
+.te-locked .te-val{font-weight:500;color:var(--ink);padding:7px 0}
+.te-rv p{margin:0 0 6px;font-size:13px}
+.te-in-error p{margin:0 0 8px;font-size:13px;line-height:1.45}
+@supports selector(:has(*)){
+  /* a failed certificate has no due day: the field hides while Failed is chosen, unless it carries an error */
+  .te-certs:has(input[name="result"][value="failed"]:checked) .te-due:not(.te-err){display:none}
+}
+@media (max-width:760px){
+  .te-cert-grid{grid-template-columns:1fr}
+  .te-moves .btn,.te-review-f .btn{min-height:40px}
+  .te-radio-list label{min-height:40px;align-items:center}
+  .te-dl{grid-template-columns:1fr}
+}
 /* Slice 35 A: end */
 
 /* Slice 31: field engineer (web/_wo_engineer_select.html in the completion modal and the drawer's Change; the drawer's row). On vendor

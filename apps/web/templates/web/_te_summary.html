@@ -1,0 +1,2 @@
+{# The Test equipment tab's line (slice 35): the items not retired, and how many are in each standing filter, each a link to it. Swapped out of band when the table re-fetches (oob). #}
+<p class="sub" id="te-summary"{% if oob %} hx-swap-oob="true"{% endif %}>{{ summary.live }} test equipment item{{ summary.live|pluralize }} not retired{% for key, label, n in summary.counts %} · <a class="link" href="{{ list_url }}?standing={{ key }}">{{ n }} {{ label|lower }}</a>{% endfor %}</p>

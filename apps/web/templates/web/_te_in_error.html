@@ -1,0 +1,21 @@
+{% load web %}
+{% comment %}Slice 35: Entered in error (views_testequipment.test_equipment_calibration_error; services.mark_entered_in_error, Decide).
+   Says what it does before it is done: the record stays, marked; the standing follows the other calibrations; the status stays; a
+   review of it stops counting.{% endcomment %}
+<div class="modal-h"><h2>Certificate {{ c.certificate }}: entered in error</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="tee-form" hx-post="{% url 'web:test_equipment_calibration_error' item.tag c.pk %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]">
+  <div class="form">
+    {% if error %}<div class="full"><span class="err" role="alert">{{ error }}</span></div>{% endif %}
+    <div class="full te-in-error">
+      <p>{{ item.tag }}'s {{ noun }} of {{ c.calibrated_on|date:"M j, Y" }} from {{ c.provider }} ({{ c.get_result_display|lower }}) stays on record, marked entered in error, and counts nowhere.</p>
+      <p>Its standing then follows its other {{ noun }}s. Its status ({{ status }}) stays as it is: change it from the drawer if it should.</p>
+      {% if has_review %}<p>The review recorded on it stops counting; its history keeps it.</p>{% endif %}
+    </div>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn danger" type="submit">Mark entered in error</button></div>
+</form>
+{% endif %}

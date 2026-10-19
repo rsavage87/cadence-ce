@@ -1,0 +1,9 @@
+{# Slice 35: a certificate's fields (forms_testequipment.CertificateFields) in Add test equipment and Record calibration. `due` set: Record calibration's due day (web/_te_due.html, prefilled and re-fetched with the calibration day); else the plain field (blank: the interval after the day). The due day hides while Failed is chosen (a failed certificate has none), unless it carries an error. #}
+{% include "web/_asset_field.html" with field=form.calibrated_on %}
+{% include "web/_te_radios.html" with field=form.result cls="te-result" %}
+{% if due %}{% include "web/_te_due.html" %}{% else %}<div class="full te-due{% if form.due_on.errors %} te-err{% endif %}">{% include "web/_asset_field.html" with field=form.due_on %}</div>{% endif %}
+{% include "web/_asset_field.html" with field=form.as_found %}
+<div class="fld te-check-fld"><label class="te-check" for="{{ form.adjusted.id_for_label }}">{{ form.adjusted }}<span>{{ form.adjusted.label }}</span></label>{% if form.adjusted.errors %}<span class="err" id="{{ form.adjusted.auto_id }}_error">{{ form.adjusted.errors|striptags }}</span>{% endif %}</div>
+{% include "web/_asset_field.html" with field=form.provider %}
+{% include "web/_asset_field.html" with field=form.certificate %}
+{% include "web/_te_radios.html" with field=form.accreditation cls="full" %}

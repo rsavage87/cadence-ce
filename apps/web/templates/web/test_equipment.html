@@ -1,0 +1,26 @@
+{% extends "web/base.html" %}
+{% load web %}
+{% block title %}Test equipment{% endblock %}
+{% block content %}
+{% comment %}Slice 35 (views_testequipment): the Equipment screen's Test equipment tab, the CE department's own analyzers, simulators, and
+   meters. Filters re-fetch the table (#te-table, which also re-fetches itself on te-changed); a row opens the item's drawer, and the page
+   renders with it open when an item's address is opened directly. Equipment View; Add test equipment for Equipment Edit. Export carries
+   the list's filters (data-act="with-filters").{% endcomment %}
+<div class="page-head">
+  <div><h1>Equipment</h1>{% include "web/_te_summary.html" %}</div>
+  <div class="actions">
+    {% query request.GET page=None as te_q %}<a class="btn" href="{% url 'web:test_equipment_csv' %}{{ te_q }}" data-act="with-filters" data-base="{% url 'web:test_equipment_csv' %}" download title="Download the test equipment in this list as CSV, each with its standing today">{% icon "dl" %} Export</a>
+    {% if can_add %}<button class="btn primary" type="button" hx-get="{% url 'web:test_equipment_new' %}" hx-target="#modal-card">{% icon "plus" %} Add test equipment</button>{% endif %}
+  </div>
+</div>
+{% include "web/_equipment_tabs.html" %}
+<form class="toolbar te-filters" id="te-filters" method="get" action="{{ list_url }}"
+      hx-get="{{ list_url }}" hx-trigger="change, submit, input changed delay:300ms from:#te-q" hx-target="#te-table" hx-swap="outerHTML" hx-push-url="true">
+  <label class="field grow">{% icon "search" %}<input id="te-q" type="search" name="q" value="{{ f.q }}" placeholder="Search tag or serial" aria-label="Search test equipment by tag or serial"></label>
+  <label class="field"><span>Standing</span><select name="standing" aria-label="Standing">{% for v, l in options.standings %}<option value="{{ v }}"{% if f.standing == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+  <label class="field"><span>Status</span><select name="status" aria-label="Status">{% for v, l in options.statuses %}<option value="{{ v }}"{% if f.status == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+  <label class="field"><span>Kind</span><select name="kind" aria-label="Kind"><option value="">All</option>{% for v, l in options.kinds %}<option value="{{ v }}"{% if f.kind == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+  <label class="field"><span>Held by</span><select name="held_by" aria-label="Held by"><option value="">Anyone</option>{% for v, l in options.holders %}<option value="{{ v }}"{% if f.held_by == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+</form>
+{% include "web/_te_table.html" %}
+{% endblock %}

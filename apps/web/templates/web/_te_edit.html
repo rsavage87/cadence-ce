@@ -1,0 +1,12 @@
+{% load web %}
+{% comment %}Slice 35: Change (views_testequipment.test_equipment_edit; services.update_test_equipment). The tag only before the item's
+   first calibration or use; the interval only at Decide once a certificate is on file (form.locks says why for each one not offered).
+   The status changes with the drawer's buttons, never here.{% endcomment %}
+<div class="modal-h"><h2>Change {{ item.tag }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+<form id="te-form" class="te-form" hx-post="{% url 'web:test_equipment_edit' item.tag %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    {% include "web/_te_item_fields.html" %}
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Save</button></div>
+</form>

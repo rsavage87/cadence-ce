@@ -1,0 +1,28 @@
+{% comment %}Slice 35: the review box of one calibration found out of tolerance as found, or failed (views_testequipment._review_box: b).
+   Its look-back window in words, the work in it now, the last few (Work orders View) with a CSV of the whole list, and Decide (Work
+   orders Approve). Once decided: the decision, who, when, the work orders it was decided on, the recheck progress for the two recheck
+   decisions, and the work added to the window since.{% endcomment %}
+<section class="te-review{% if b.s.review %} decided{% endif %}" aria-label="Review of certificate {{ b.s.calibration.certificate }}">
+  <div class="te-review-h"><strong>{{ b.found }}: review of the work done with it</strong><span class="chip {% if not b.s.review %}crit{% elif b.s.added %}warn{% else %}ok{% endif %}">{% if b.s.review %}Reviewed{% else %}Not reviewed{% endif %}</span></div>
+  <p class="hint te-line">{{ b.window }}</p>
+  <p class="te-line">{{ b.count }} work order{{ b.count|pluralize }} in this window now.</p>
+  {% if b.s.review %}{% with rv=b.s.review %}
+  <dl class="dl te-dl">
+    <div class="te-wide"><dt>Decision</dt><dd>{{ b.s.words }}</dd></div>
+    <div><dt>Decided by</dt><dd>{{ rv.decided_by|default:"—" }}</dd></div>
+    <div><dt>Decided on</dt><dd>{{ rv.decided_on|date:"M j, Y" }}</dd></div>
+    <div><dt>Work orders decided on</dt><dd>{{ rv.work_count }}</dd></div>
+    {% if rv.quality_reference %}<div><dt>Quality record</dt><dd>{{ rv.quality_reference }}</dd></div>{% endif %}
+    {% if b.progress %}<div><dt>Recheck</dt><dd>{{ b.progress.words }}</dd></div>{% endif %}
+  </dl>
+  {% if b.s.added %}<div class="note warn te-added" role="status">{{ b.s.added_words }}: the decision does not cover {{ b.s.added|length|pluralize:"it,them" }}.</div>{% endif %}
+  {% if b.devices %}<details class="te-recheck"><summary>Each device's recheck</summary><ul>{% for d in b.devices %}<li>{{ d.asset.tag }}: {{ d.words }}</li>{% endfor %}</ul>{% if b.progress.total > b.devices|length %}<p class="hint">The first {{ b.devices|length }} of {{ b.progress.total }} devices, by tag.</p>{% endif %}</details>{% endif %}
+  {% endwith %}{% endif %}
+  {% if b.recent %}
+  <ol class="te-wlist">
+    {% for r in b.recent %}{% with w=r.w %}<li><a class="link" href="{% url 'web:wo' w.number %}" hx-get="{% url 'web:wo' w.number %}" hx-target="#drawer">{{ w.number }}</a> · {{ w.completed_on|date:"M j, Y" }} · {{ w.asset.tag }}{% if r.added %} <span class="chip warn">Added since the review</span>{% endif %}</li>{% endwith %}{% endfor %}
+  </ol>
+  <p class="te-line">{% if b.count > b.recent|length %}<span class="hint">The latest {{ b.recent|length }} of {{ b.count }}.</span> {% endif %}<a class="link" href="{% url 'web:test_equipment_review_csv' item.tag b.s.calibration.pk %}" download>The whole list as CSV</a></p>
+  {% endif %}
+  {% if can_decide and not b.s.review %}<div class="te-review-f"><button class="btn sm primary" type="button" hx-get="{% url 'web:test_equipment_review' item.tag b.s.calibration.pk %}" hx-target="#modal-card">Decide</button></div>{% endif %}
+</section>

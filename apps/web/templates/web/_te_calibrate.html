@@ -1,0 +1,14 @@
+{% load web %}
+{% comment %}Slice 35: Record calibration (views_testequipment.test_equipment_calibrate; services.record_calibration). The day on the
+   certificate (the due day re-fetches its prefill when it changes: #tec-due), the result, the due day (prefilled, a day typed as the
+   certificate or label shows allowed up to the cap the hint says), as found, adjusted, the provider (the last certificate's prefilled),
+   its number, and the accreditation mark. Refusals come back on their fields with what was typed.{% endcomment %}
+<div class="modal-h"><h2>{{ item.tag }}: record {{ noun|lower }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+<form id="tec-form" class="te-form te-certs"hx-post="{% url 'web:test_equipment_calibrate' item.tag %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    <p class="full hint">{{ item.manufacturer }} {{ item.model }}, serial {{ item.serial }}: check the certificate names this serial.</p>
+    {% include "web/_te_cert_fields.html" %}
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Record {{ noun|lower }}</button></div>
+</form>

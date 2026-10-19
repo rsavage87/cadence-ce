@@ -1,0 +1,82 @@
+{% load web %}
+{% comment %}One item of test equipment (slice 35, views_testequipment._drawer_context): its status and the moves the reader may make, its
+   details (Change), its calibrations (each with what the certificate shows; Entered in error at Decide; the review box of each one found
+   out of tolerance as found, or failed), the work done with it (Work orders View for the work orders themselves), and History. The
+   standing's words are apps.testequipment.rules'. A refusal from a button shows at the top (`refusal`).{% endcomment %}
+<div class="dr-h">
+  <div>
+    <h2>{{ item.tag }} · {{ item.get_kind_display }}</h2>
+    <div class="sub">{{ item.manufacturer }} {{ item.model }} · serial {{ item.serial }}</div>
+    <div class="chips"><span class="chip {% if item.status == 'in_use' %}ok{% elif item.status == 'retired' %}neutral{% else %}warn{% endif %}">{{ status }}</span><span class="chip {{ tone }}">{{ standing.words }}</span></div>
+  </div>
+  <button class="iconbtn" type="button" data-act="close-drawer" aria-label="Close">{% icon "x" %}</button>
+</div>
+<div class="dr-b te-drawer">
+  {% if refusal %}<div class="sec"><div class="note warn" role="alert">{{ refusal }}</div></div>{% endif %}
+
+  <div class="sec"><h3>Status</h3>
+    <p class="te-line">{{ status }} since {{ item.status_since|date:"M j, Y" }}.</p>
+    {% if back_words %}<p class="hint te-line">{{ back_words }}</p>{% endif %}
+    {% if moves %}<div class="te-moves">{% for mv in moves %}<button class="btn sm" type="button" hx-post="{% url 'web:test_equipment_status' item.tag %}" hx-vals='{"to": "{{ mv.m.to }}", "reason": "{{ mv.m.reason }}"}' hx-target="#drawer"{% if mv.confirm %} hx-confirm="{{ mv.confirm }}"{% endif %}>{{ mv.m.label }}</button>{% endfor %}</div>{% endif %}
+  </div>
+
+  <div class="sec"><h3>Details {% if can_edit %}<button class="link" type="button" hx-get="{% url 'web:test_equipment_edit' item.tag %}" hx-target="#modal-card">Change</button>{% endif %}</h3>
+    <dl class="dl te-dl">
+      <div><dt>Kind</dt><dd>{{ item.get_kind_display }}</dd></div>
+      <div><dt>Make and model</dt><dd>{{ item.manufacturer }} {{ item.model }}</dd></div>
+      <div><dt>Serial number</dt><dd>{{ item.serial }}</dd></div>
+      <div><dt>Certificates</dt><dd>{{ item.get_program_display }}</dd></div>
+      <div><dt>Interval</dt><dd>{{ item.interval_months }} month{{ item.interval_months|pluralize }}</dd></div>
+      <div><dt>Held by</dt><dd>{% if item.held_by %}{{ item.held_by.name }}{% else %}Nobody (the department's){% endif %}</dd></div>
+      <div><dt>Added</dt><dd>{{ item.created_at|date:"M j, Y" }}{% if item.created_by %} by {{ item.created_by }}{% endif %}</dd></div>
+    </dl>
+  </div>
+
+  <div class="sec"><h3>{{ noun }}s <span>{{ cal_rows|length }} on record</span></h3>
+    {% if can_edit %}<div class="sec-actions te-sec-act"><button class="link" type="button" hx-get="{% url 'web:test_equipment_calibrate' item.tag %}" hx-target="#modal-card">Record {{ noun|lower }}</button></div>{% endif %}
+    <div class="te-cals">
+      {% for r in cal_rows %}{% with c=r.c %}
+      <article class="te-cal{% if c.entered_in_error %} te-void{% endif %}" aria-label="Certificate {{ c.certificate }}">
+        <div class="te-cal-h">
+          <span class="t">{{ c.calibrated_on|date:"M j, Y" }}</span>
+          {% if c.entered_in_error %}<span class="chip neutral">Entered in error</span>{% else %}<span class="chip {% if c.result == 'failed' %}crit{% elif c.as_found == 'out_of_tolerance' %}warn{% else %}ok{% endif %}">{{ c.get_result_display }}</span>{% endif %}
+          {% if c.due_on %}<span class="muted">due {{ c.due_on|date:"M j, Y" }}</span>{% endif %}
+        </div>
+        <dl class="dl te-dl">
+          <div><dt>As found</dt><dd>{{ c.get_as_found_display }}</dd></div>
+          <div><dt>Adjusted</dt><dd>{{ c.adjusted|yesno:"Yes,No" }}</dd></div>
+          <div><dt>Provider</dt><dd>{{ c.provider }}</dd></div>
+          <div><dt>Certificate number</dt><dd>{{ c.certificate }}</dd></div>
+          <div class="te-wide"><dt>Accreditation mark</dt><dd>{{ r.mark }}</dd></div>
+          <div><dt>Recorded</dt><dd>{{ r.entered|date:"M j, Y" }}{% if c.recorded_by %} by {{ c.recorded_by }}{% endif %}</dd></div>
+          {% if c.entered_in_error %}<div><dt>Marked entered in error</dt><dd>{{ c.entered_in_error_on|date:"M j, Y" }}{% if c.entered_in_error_by %} by {{ c.entered_in_error_by }}{% endif %}</dd></div>{% endif %}
+        </dl>
+        {% if r.can_error %}<div class="te-cal-f"><button class="link" type="button" hx-get="{% url 'web:test_equipment_calibration_error' item.tag c.pk %}" hx-target="#modal-card">Entered in error</button></div>{% endif %}
+        {% if r.box %}{% include "web/_te_review_box.html" with b=r.box %}{% endif %}
+      </article>
+      {% endwith %}{% empty %}<div class="empty">No {{ noun|lower }} on file.</div>{% endfor %}
+    </div>
+  </div>
+
+  <div class="sec"><h3>Work done with it</h3>
+    <p class="te-line">{{ work_words }}</p>
+    {% if work_rows %}
+    {% if work %}
+    <ol class="te-uses">
+      {% for j in work %}{% with wo=j.use.work_order %}
+      <li class="te-use{% if j.flagged %} flagged{% endif %}">
+        <div class="te-use-h"><a class="link" href="{% url 'web:wo' wo.number %}" hx-get="{% url 'web:wo' wo.number %}" hx-target="#drawer">{{ wo.number }}</a> · {{ wo.get_type_display }} · {% if can_view_asset %}<a class="tag" href="{% url 'web:asset' wo.asset.tag %}" hx-get="{% url 'web:asset' wo.asset.tag %}" hx-target="#drawer">{{ wo.asset.tag }}</a>{% else %}{{ wo.asset.tag }}{% endif %} · {{ j.day|date:"M j, Y" }}</div>
+        <div class="te-use-s">{% if j.standing %}{{ j.standing.words }}{% endif %}{% for f in j.later %}; {{ f.words }}{% endfor %}</div>
+      </li>
+      {% endwith %}{% endfor %}
+    </ol>
+    <p class="te-line"><a class="link" href="{% url 'web:test_equipment_uses_csv' item.tag %}" download>Every use as CSV</a> <span class="hint">each with its standing on the day of the work</span></p>
+    {% else %}<div class="empty">No completed work has recorded {{ item.tag }} yet.</div>{% endif %}
+    {% else %}<p class="hint">The work orders themselves need Work orders View.</p>{% endif %}
+  </div>
+  {% if can_history %}{% include "web/_history_section.html" %}{% endif %}
+</div>
+{% if can_edit %}<div class="dr-f">
+  <button class="btn primary" type="button" hx-get="{% url 'web:test_equipment_calibrate' item.tag %}" hx-target="#modal-card">Record {{ noun|lower }}</button>
+  <button class="btn" type="button" hx-get="{% url 'web:test_equipment_edit' item.tag %}" hx-target="#modal-card">Change details</button>
+</div>{% endif %}

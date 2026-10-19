@@ -1,0 +1,17 @@
+{% load web %}
+{% comment %}Slice 35: Add test equipment (views_testequipment.test_equipment_new; services.add_test_equipment). The item's details, then
+   its latest certificate, optional: left empty, it is added with no calibration on file; any of its fields filled sends the certificate,
+   checked whole. Refusals come back on their fields with what was typed.{% endcomment %}
+<div class="modal-h"><h2>Add test equipment</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+<form id="te-form" class="te-form" hx-post="{% url 'web:test_equipment_new' %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    {% include "web/_te_item_fields.html" %}
+    <fieldset class="full te-cert te-certs">
+      <legend>Its latest certificate (optional)</legend>
+      <p class="hint">Leave this empty to add it with no calibration on file, and record the certificate from its drawer later.</p>
+      <div class="te-cert-grid">{% include "web/_te_cert_fields.html" %}</div>
+    </fieldset>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Add test equipment</button></div>
+</form>
