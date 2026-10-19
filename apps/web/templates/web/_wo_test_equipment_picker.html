@@ -1,0 +1,32 @@
+{% comment %}The test equipment used (slice 35, views_wo_test_equipment.picked, under "te"): the completion modal's, right after the steps,
+   and the drawer's Change. "Yours" first (the technician's kit and what they recorded in the last 30 days), then "Other test equipment
+   (N)" collapsed, by kind (open by default only when Yours is empty and there are few, or when one in it is ticked). Each row: a
+   checkbox, the tag, the make and model, its status when not in use, and its standing in rules' words as a chip (warning style when
+   flagged). Nothing is ticked for the user but what the work order already recorded; one kept there (a certificate dated on or after the
+   work is on file) is ticked and disabled, and its id goes with the form in a hidden input (a disabled box posts nothing). The hidden
+   marker says the picker was on screen (absent: kept as recorded; none ticked: none). On a repair the completion modal hides it with
+   Checked by the vendor (CSS :has). `te.prefix` keeps the ids apart ("wc" in the completion modal, "wt" in Change).{% endcomment %}
+{% with t=te %}
+<fieldset class="full wte" id="{{ t.prefix }}-te" aria-describedby="{{ t.prefix }}-te-hint{% if t.error %} {{ t.prefix }}-te-error{% endif %}">
+  <legend class="wc-label">{{ t.legend }} <span class="muted">(optional)</span></legend>
+  <input type="hidden" name="shown_test_equipment" value="1">
+  <p class="hint wte-hint" id="{{ t.prefix }}-te-hint">{{ t.hint }}{% if t.vendor_hint %} {{ t.vendor_hint }}{% endif %}</p>
+  {% if t.error %}<span class="err" id="{{ t.prefix }}-te-error" role="alert">{{ t.error }}</span>{% endif %}
+  {% for s in t.sections %}
+  {% if s.collapsible %}<details class="wte-sec wte-others"{% if s.open %} open{% endif %}><summary>{{ s.label }}</summary>{% else %}<div class="wte-sec wte-yours"><div class="wte-h">{{ s.label }}{% if s.hint %} <span class="hint">· {{ s.hint }}</span>{% endif %}</div>{% endif %}
+    {% for g in s.groups %}
+    {% if g.label %}<div class="wte-kind">{{ g.label }}</div>{% endif %}
+    <ul class="wte-list">
+      {% for o in g.options %}<li>
+        <label class="wte-opt{% if o.flagged %} flag{% endif %}{% if o.kept %} kept{% endif %}">
+          <input type="checkbox"{% if o.kept %} disabled{% else %} name="test_equipment"{% endif %} value="{{ o.id }}"{% if o.checked %} checked{% endif %}{% if o.focus %} autofocus{% endif %}>
+          <span class="wte-what"><b class="mono">{{ o.tag }}</b> <span class="wte-name">{{ o.name }}</span>{% if o.status %} <span class="wte-status">· {{ o.status }}</span>{% endif %}{% if o.kept %} <span class="wte-kept">· {{ t.kept_words }}</span>{% endif %}</span>
+          <span class="chip {{ o.css }}">{{ o.words }}</span>
+        </label>{% if o.kept %}<input type="hidden" name="test_equipment" value="{{ o.id }}">{% endif %}
+      </li>{% endfor %}
+    </ul>
+    {% endfor %}
+  {% if s.collapsible %}</details>{% else %}</div>{% endif %}
+  {% endfor %}
+</fieldset>
+{% endwith %}

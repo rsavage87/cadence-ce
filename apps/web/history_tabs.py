@@ -2,7 +2,9 @@
 The History tab (slice 20, part A): a record's changes in its drawer, newest first, read through apps.core.history. The device and
 device model drawers have tabs, so History is a tab there (?tab=history); the work order and contract drawers are sections, so it is
 a section at their foot that loads when asked (?history=1). A work order's history carries its labor and part lines' changes, and a
-device model's its AEM cases', interleaved by time (lines removed since keep theirs).
+device model's its AEM cases', interleaved by time (lines removed since keep theirs). Slice 35: a work order's also carries the test
+equipment it recorded and took off ("Test equipment TE-01 added", its reason "Recorded with the completion"), for a reader of the
+test_equipment_uses area (Work orders View and Equipment View: apps.core.history.AREAS).
 
 Who: View on the record's module (apps.core.history.AREAS) and not scoped (apps.workorders.scoping: a vendor technician or a
 clinical requester sees no history, though the device and work order drawers admit them). The drawers offer the tab only to them,
@@ -28,14 +30,15 @@ PARTIALS = ("hist", "hist-more")  # a section's first page, and Show older
 
 # What each drawer's history reads besides the record's own changes: area key -> the historical rows' field holding the record.
 RELATED = {
-    "work_orders": {"labor": "work_order_id", "parts": "work_order_id"},
+    "work_orders": {"labor": "work_order_id", "parts": "work_order_id", "test_equipment_uses": "work_order_id"},  # slice 35: its uses
     "device_models": {"aem": "device_model_id"},
     "incidents": {"incident_holds": "incident_id"},  # slice 28: the incident drawer's History carries its holds' changes
     # slice 32: a program evaluation's History carries its objectives' and approvals' changes
     "evaluations": {"evaluation_objectives": "evaluation_id", "evaluation_approvals": "evaluation_id"},
 }
 NOUNS = {"labor": "Labor", "parts": "Part", "aem": "AEM case", "incident_holds": "Hold", "evaluation_objectives": "Objective",
-         "evaluation_approvals": "Approval"}  # a related row's entries: "Labor added", "Part removed"
+         "evaluation_approvals": "Approval", "test_equipment_uses": "Test equipment"}  # a related row's entries: "Labor added", "Part removed"
+NAMED = {"test_equipment_uses"}  # slice 35: a related row whose entry names it ("Test equipment TE-01 added"): its record ends with the tag
 VERBS = {"added": "added", "changed": "changed", "deleted": "removed"}
 
 
@@ -63,7 +66,10 @@ def wants_entries(request) -> bool:
 def _title(entry, own_area: str) -> str:
     if entry.area == own_area:
         return entry.action_label
-    return f"{NOUNS.get(entry.area, entry.area_label)} {VERBS.get(entry.action, entry.action)}"
+    noun = NOUNS.get(entry.area, entry.area_label)
+    if entry.area in NAMED and " · " in entry.record:  # "WO-26-0042 · TE-01" (apps.core.history's name): no tag or number has " · "
+        noun = f"{noun} {entry.record.rsplit(' · ', 1)[1]}"
+    return f"{noun} {VERBS.get(entry.action, entry.action)}"
 
 
 def context(request, obj, area_key: str, url: str, *, tab: bool) -> dict:

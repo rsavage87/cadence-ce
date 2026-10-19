@@ -40,6 +40,16 @@ views_wo_finding) sits directly above the resolution, after the checks, so it co
 gets the focus first. `finding_initial` is the value to begin with (the finding stored, for a user who sees the whole facility: a
 reopened repair completed again); "Mark the rest pass" carries the choice (filled() keeps every field). FindingForm is the drawer's
 Change (views_wo_finding.wo_finding), for workorders.services.set_repair_finding.
+
+Slice 35, the test equipment used (apps.testequipment; the picker is web/_wo_test_equipment_picker.html, views_wo_test_equipment):
+test_equipment, the ids ticked (a list: TestEquipmentField reads every value posted under the name, the checkboxes' and the hidden
+inputs that carry the ones kept on the work order, whose disabled boxes post nothing), and shown_test_equipment, the picker's marker.
+Taken from the post only where the work order records test equipment (offer_test_equipment) and the marker came back: no marker sends nothing (the
+service keeps what the work order recorded); the marker with nothing ticked sends [] (it clears what may be taken off). A repair
+completed as checked by the vendor sends nothing either (the vendor's report names its own test equipment; the picker hides with that
+choice). The picker comes after the steps, so "test_equipment" follows them in the focus order (LAYOUT_PICKER). "Mark the rest pass"
+carries the ticks (filled() reads the list with getlist). TestEquipmentForm is the drawer's Change (views_wo_test_equipment), for
+workorders.services.set_test_equipment.
 """
 import re
 
@@ -66,6 +76,7 @@ STEP_CHOICES = [(completion.PASS, "Pass"), (completion.FAIL, "Fail"), (completio
 LAYOUT_TAIL = ("pm_result", "inspection_result", "repair_finding", "resolution", "open_repair", "hours")  # slice 33: the finding above the resolution
 LAYOUT_REPAIR = ("repair_check",)  # slice 30: a repair's outcome comes before its checklist
 LAYOUT_VENDOR = ("vendor_engineer", "engineer_name", "checks_reference")  # slice 31: then who did the vendor's work, and their report
+LAYOUT_PICKER = ("test_equipment",)  # slice 35: the test equipment used, right after the steps (before a prominent late reason)
 OTHER = "other"  # slice 31: the select's "Someone else" (the name typed in engineer_name)
 KEEP_CHOICE = "keep"  # slice 31: a scoped vendor account's "Another company's engineer": the engineer stored stays
 LATE_BLANK = "Not recorded"
@@ -142,6 +153,49 @@ class FindingForm(forms.Form):
         service_errors(self, error)
 
 
+class TestEquipmentField(forms.Field):
+    """Slice 35: the test equipment ticked, as a list of ids in the order posted (every value under the name: the checkboxes' and the
+    kept ones' hidden inputs). The service checks them (an unknown or another facility's id is refused in its words)."""
+    widget = forms.MultipleHiddenInput  # value_from_datadict reads getlist
+
+    def to_python(self, value):
+        if value in self.empty_values:
+            return []
+        if isinstance(value, str):
+            value = [value]
+        out = []
+        for v in value:
+            text = str(v).strip()
+            if text and text not in out:
+                out.append(text)
+        return out
+
+
+def ticked(form) -> list | None:
+    """The ids `form` holds ticked (posted, or carried by Mark the rest pass), or None when the picker's marker is not there (it was not
+    on screen: the work order's own ticks are shown, and nothing is sent)."""
+    if "test_equipment" not in form.fields or not form["shown_test_equipment"].value():
+        return None
+    return form.fields["test_equipment"].to_python(form["test_equipment"].value())
+
+
+class TestEquipmentForm(forms.Form):
+    """The drawer's Change of the test equipment used (slice 35, views_wo_test_equipment): the completion modal's picker, for
+    workorders.services.set_test_equipment (which checks the ids, the kept-use rule, and who may)."""
+    __test__ = False  # pytest: not a test class
+    test_equipment = TestEquipmentField(required=False)
+    shown_test_equipment = forms.CharField(required=False)
+
+    def ids(self):
+        """What to send: the ids ticked ([] for none) when the picker's marker came back, else KEEP (nothing changes)."""
+        if not self.cleaned_data.get("shown_test_equipment"):
+            return vendor_services.KEEP
+        return self.cleaned_data["test_equipment"]
+
+    def add_service_errors(self, error):
+        service_errors(self, error)
+
+
 class CompleteForm(forms.Form):
     resolution = forms.CharField(required=False, strip=False, widget=forms.Textarea(attrs={"rows": 3, "maxlength": completion.RESOLUTION_MAX}))
     # Text, not a number field: apps.workorders.costs says what a valid number of hours is. inputmode brings up the number pad.
@@ -173,10 +227,14 @@ class CompleteForm(forms.Form):
     # Slice 31: who did the vendor's work (engineer_kwargs reads them; web/_wo_engineer_select.html draws them)
     vendor_engineer = forms.CharField(required=False)
     engineer_name = forms.CharField(required=False)
+    # Slice 35: the test equipment ticked, and the picker's marker (absent: nothing sent, the work order keeps what it recorded)
+    test_equipment = TestEquipmentField(required=False)
+    shown_test_equipment = forms.CharField(required=False)
 
     def __init__(self, *args, steps=(), is_pm=False, is_inspection=False, kept_pass=False, offer_open_repair=False, offer_tag_out=False,
                  offer_hours=False, offer_late_reason=False, late_first=False, late_recorded="", is_repair=False, repair_default="",
-                 offer_engineer=False, engineer_initial="", offer_reference=False, reference_initial="", finding_initial="", **kwargs):
+                 offer_engineer=False, engineer_initial="", offer_reference=False, reference_initial="", finding_initial="",
+                 offer_test_equipment=False, **kwargs):
         """`steps`: the checklist the modal shows, as completion.checklist_of gives it. The two offers say whether the failed-PM
         options are on screen: an option that is not offered is not taken from the post (a new repair is opened; no tag-out).
         `offer_hours`: the Hours box is on screen; without it no hours are taken from the post. `offer_late_reason` (slice 25): the
@@ -188,7 +246,8 @@ class CompleteForm(forms.Form):
         the engineer stored as `engineer_initial`: the select's value to begin with); `offer_reference`, the vendor's report number box
         (any vendor job, for a user who sees the whole facility), with the number stored as `reference_initial` (a reopened job).
         Slice 33: `finding_initial`, a repair's finding to begin with (views_wo_finding.select_context's: the one stored, never a scoped
-        user's)."""
+        user's). Slice 35: `offer_test_equipment`, the work order may record test equipment (views_wo_test_equipment.offer:
+        rules.offered); without it nothing is taken from the post, and with it only when the picker's marker came back."""
         kwargs.setdefault("auto_id", "wc-%s")
         super().__init__(*args, **kwargs)
         self.steps, self.is_pm, self.is_inspection = list(steps), is_pm, is_inspection and not is_pm
@@ -209,6 +268,9 @@ class CompleteForm(forms.Form):
             del self.fields["checks_reference"]
         elif reference_initial:
             self.fields["checks_reference"].initial = reference_initial
+        self.offer_test_equipment = offer_test_equipment  # slice 35
+        if not offer_test_equipment:
+            del self.fields["test_equipment"], self.fields["shown_test_equipment"]
         if not self.is_inspection:
             del self.fields["inspection_result"]
         elif kept_pass:
@@ -239,8 +301,11 @@ class CompleteForm(forms.Form):
         `fill`: "Mark the rest pass" without saving anything."""
         form = cls(**kwargs)
         initial = {name: params.get(name, "") for name in form.fields
-                   if name not in ("open_repair", "tag_out", "signature", "shown_open_repair", "shown_tag_out", "hold", "shown_hold")}
+                   if name not in ("open_repair", "tag_out", "signature", "shown_open_repair", "shown_tag_out", "hold", "shown_hold",
+                                   "test_equipment")}
         initial.update(open_repair="open_repair" in params, tag_out="tag_out" in params)
+        if "test_equipment" in form.fields:  # slice 35: every id ticked, not only the last
+            initial["test_equipment"] = params.getlist("test_equipment") if hasattr(params, "getlist") else params.get("test_equipment", [])
         if "hold" in form.fields and params.get("shown_hold"):  # slice 30: the hold-out box as it was on screen (else its default, on)
             initial["hold"] = "hold" in params
         if params.get("signature"):  # the checklist the values were typed against, so a revision since is still caught on save
@@ -332,6 +397,9 @@ class CompleteForm(forms.Form):
             kwargs["checks_reference"] = d["checks_reference"]
         if self.offer_engineer:  # slice 31: who did the vendor's work (KEEP_CHOICE sends nothing: the engineer stored stays)
             kwargs.update(self.engineer)
+        chosen = ticked(self)  # slice 35: None without the picker's marker (nothing sent: kept as recorded)
+        if chosen is not None and not (self.is_repair and kwargs.get("repair_check") == RepairCheck.VENDOR_REPORT):
+            kwargs["test_equipment"] = chosen  # the vendor's report names its own: ticks left under that choice are dropped
         return kwargs
 
     def keep_open_kwargs(self) -> dict:
@@ -350,7 +418,7 @@ class CompleteForm(forms.Form):
         """Sent back with errors: htmx focuses the [autofocus] element it swaps in, so the template marks the first one."""
         late = ("late_reason",)
         names = [*(LAYOUT_REPAIR if self.is_repair else ()), *LAYOUT_VENDOR, "checklist",
-                 *(f"{kind}_{n}" for n in range(1, len(self.steps) + 1) for kind in ("step", "reading")),
+                 *(f"{kind}_{n}" for n in range(1, len(self.steps) + 1) for kind in ("step", "reading")), *LAYOUT_PICKER,
                  *(late if self.late_first else ()), *LAYOUT_TAIL, *(() if self.late_first else late)]
         self.first_error = next((name for name in names if name in self.errors), "")
         if self.first_error in self.fields:

@@ -29,6 +29,9 @@ Slice 33: a repair prints what was found (apps.workorders.findings): while it is
 (findings.choices_for, in findings.GROUPS; a scoped reader whose stored finding is the facility's, "Recorded by the facility"); once done,
 the finding, or "Not recorded", for a reader who sees the whole facility only (the finding is the facility's record: nothing on a
 scoped reader's print).
+
+Slice 35: the test equipment used (views_wo_test_equipment.print_context, for a reader who sees the whole facility only): lines to write
+it on while the work is open, and once done each item in apps.testequipment.rules' words on the day of the work, or none recorded.
 """
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -182,6 +185,12 @@ def finding_print(wo, user=None) -> dict | None:
     return {"open": True, "kept": False, "groups": [g for g in groups if g["options"]]}
 
 
+def _test_equipment_print(wo, user):
+    from .views_wo_test_equipment import print_context  # it imports .views, which imports this module (asset_tabs)
+
+    return print_context(wo, user)
+
+
 @web_view(Module.WORKORDERS, Level.VIEW, scoped=True)
 def wo_print(request, number):
     # Scoped like the drawer's lookup (views.get_wo): another tenant's number, or one outside a scoped user's share, is a 404.
@@ -218,6 +227,7 @@ def wo_print(request, number):
         "repair_checks": repair_checks_print(wo, user),  # slice 30
         "finding": finding_print(wo, user),  # slice 33: what the repair found
         "field_engineer": engineer_shown(wo, user) if wo.vendor_service else "",  # slice 31: names only, as this reader may read them
+        "test_equipment": _test_equipment_print(wo, user),  # slice 35: never a scoped reader's (views_wo_test_equipment.print_context)
         "past_due_days": (today - wo.due_on).days if is_open and wo.due_on < today else 0,
         # The procedure on file (never the incoming checklist, which is no procedure: no code, source, or revision to print)
         "procedure": None if incoming else procedure, "steps": checklist_steps(procedure),

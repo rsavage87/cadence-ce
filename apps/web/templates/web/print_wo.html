@@ -11,7 +11,9 @@
    Slice 31: vendor service names its field engineer (views_print: names only, as the reader may read them) and the vendor's report
    number under Assignment, or lines to write them on while it is open.
    Slice 33: a repair's "What was found" (views_print.finding_print): a box per finding the reader may record while it is open, the
-   finding once done (a reader who sees the whole facility only).{% endcomment %}
+   finding once done (a reader who sees the whole facility only).
+   Slice 35: the test equipment used (views_wo_test_equipment.print_context, never a scoped reader's): lines to write it on while open,
+   once done each item in apps.testequipment.rules' words on the day of the work, or none recorded.{% endcomment %}
 {% block title %}{{ wo.number }}{% endblock %}
 {% block page_style %}<style>
 @page{size:letter;margin:.5in;@bottom-right{content:"{{ wo.number }} · page " counter(page) " of " counter(pages);font:9px sans-serif;color:#6a7280}}
@@ -45,6 +47,10 @@ table.rc-steps td.meas{width:1.9in}
 .rf-pick .rf-grp{display:flex;flex-wrap:wrap;gap:4px 16px;align-items:center}
 .rf-pick .rf-grp>i{font-style:normal;color:var(--ink-2);min-width:1.2in}
 .rf-done{margin:6px 0 0}
+.te-print{margin-top:12px}
+.te-print .te-line{margin:0 0 2px}
+.te-print .te-uses{margin:2px 0 0;padding-left:18px}
+.te-print .te-uses li{margin:1px 0}
 </style>{% endblock %}
 {% block bar_title %}{{ wo.number }} · {{ wo.get_type_display }}{% endblock %}
 {% block content %}
@@ -238,6 +244,19 @@ table.rc-steps td.meas{width:1.9in}
 </section>
 {% endif %}{% endwith %}
 {% endif %}
+
+{% with te=test_equipment %}{% if te %}{# slice 35: the test equipment used, on the day of the work #}
+<section class="te-print keep">
+{% if te.open %}
+<p class="te-line"><b>Test equipment used</b> <span class="muted">· each item's tag, make, and model</span></p>
+{% if te.uses %}<ul class="te-uses">{% for w in te.uses %}<li>{{ w }}</li>{% endfor %}</ul>{% endif %}
+<div class="ruled te-rules"><div class="rule"></div><div class="rule"></div></div>
+{% else %}
+<p class="te-line"><b>Test equipment:</b>{% if not te.uses %} none recorded{% endif %}</p>
+{% if te.uses %}<ul class="te-uses">{% for w in te.uses %}<li>{{ w }}</li>{% endfor %}</ul>{% endif %}
+{% endif %}
+</section>
+{% endif %}{% endwith %}
 
 <h2>Labor</h2>
 <table>
