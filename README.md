@@ -283,6 +283,23 @@ documents and never judges anyone's competence; badges, immunizations, and backg
 credentialing system. Contracts View sees the tab, Contracts Edit changes it; a vendor's own account sees only its company's engineers'
 names on its work.
 
+## Vendor reviews
+The Contracts screen's "Reviews" tab keeps the facility's yearly review of each contracted service vendor (CMS asks that every contracted
+service is evaluated through the quality program and the governing body kept informed; surveyors have cited board minutes that named an
+"annual contract review" with no evaluations behind them). It lists every vendor with a contract in force, recent jobs, or a review,
+with its last review and when the next is due (a year after the last, or the contract's end first). A review covers 12 months that have
+ended (a contract's anniversary works) and may name several spellings of one vendor. Cadence takes the figures from its own records of
+the vendor's work: its contracts from their history (cost prorated over each version's days), jobs by who completed them, time with the
+vendor from the day the job was handed to it, PMs assigned to it on time (late ones by whose reason), repeat repairs that were real
+failures, documentation, staff evidence, and cost. It never computes uptime or response from its dates: the reviewer records the
+vendor's own reported figures with the report's reference. The reviewer rates six criteria, the overall result, and the decision (renew,
+renew with changes, a corrective action plan with its due date, replace, bring in-house), signs it off (on the figures and the ratings
+the sign-off shows: a change saved meanwhile is refused), and later records the plan's result and the committees it went to; the contracted services summary prints every vendor's last review for the governing body, and one
+committee meeting is recorded for several reviews at once. The survey binder's vendors section shows each vendor's last review and checks
+a review overdue, vendors under contract never reviewed, and a plan past its due day. Reviews need Evaluations (the module of Program
+evaluation, now named Evaluations) with Contracts View, in the change log too, where the reviewer's summary reads only as edited; a
+vendor's own account never sees its review.
+
 ## Program evaluation
 Reports' "Program evaluation" drafts the yearly evaluation of the medical equipment program that hospitals present to their environment
 of care or safety committee and their quality program (DNV and ACHC expect one; The Joint Commission's 2026 standards no longer require
@@ -355,6 +372,8 @@ its module's docstring under `apps/api/`, and the browsable API (open `/api/v1/`
   answers a 400 naming what to send;
 - program evaluations, read only (`views_evaluations.py`: the list, and each with its text, objectives, approvals, and the figures your
   access allows);
+- vendor reviews, read only (`views_vendor_reviews.py`: the list, and each with its ratings, decision, plan, committee reports, and the
+  figures when you hold Evaluations, Contracts, Reports, and Work orders View);
 - the signed-in person's facilities and All facilities (`views_facilities.py`, `views_all_facilities.py`; session only).
 
 Vendor technicians and clinical requesters reach only their own devices and work orders (and Scan), as on the screens. Nobody gives

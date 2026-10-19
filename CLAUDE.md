@@ -94,8 +94,10 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   SQLite and PostgreSQL); `days.local_day` (a timestamp's facility day: read audit
   timestamps and history dates inside the facility, never with .date()); `history.py` a record's changes in words from django-simple-history
   (`record_history`, `entries_for_rows`; `who(rec)` names whoever made a historical row's change as this facility may read it) and the facility's change log (`change_log`) across the areas a role can view (`can_read`,
-  `readable_areas`: none for scoped users). The historical tables' managers are not tenant-scoped, so every query there filters on the
-  current tenant (`_rows`)
+  `readable_areas`: none for scoped users; an area may need View on more than its module, `Area.also`: a vendor review's, Contracts View
+  too); staff-written text (`PRIVATE_TEXT`: an evaluation's narrative, a vendor review's summary) reads in the change log, its CSV and
+  print, and the API's only as edited, the words only in the record's own History. The historical tables' managers are not tenant-scoped,
+  so every query there filters on the current tenant (`_rows`)
 - `apps/accounts` User, Role, RolePermission, default roles, `require_level`; `Role.levels()` (slice 28: the levels in force; a module a
   role has no row for, added after it was made, takes FULL on a system role and DEFAULT_LEVELS on a default role, None on a custom one;
   level_for, the role matrix, and the API's roles read it); `DataScope`, `Role.scope` (blank: the default by slug, vendor
@@ -245,7 +247,17 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   targets and PM windows in force at its end, the previous period beside each (approved, else counted), the AEM table, the binder's gap
   counts; `cut(data, user)` for every reader: never render a snapshot without it; refreshing needs View on every area); `services.py` every
   write and the read helpers (`current`, `previous_approved`, `next_due`, `suggested_start`); `permissions.py` (Module.EVALUATIONS:
-  View reads, Edit drafts and writes, Approve records approvals and amends; the figures also need Reports View)
+  View reads, Edit drafts and writes, Approve records approvals and amends; the figures also need Reports View); slice 34, the review of
+  each contracted service vendor (standalone models: `VendorReview` (VR-<yy>-<nnnn>; one or more vendor names and their keys; a 12-month
+  period ending on any day that has ended; draft -> signed off; withdrawn frees its period; discarded; no key in two live reviews with
+  overlapping periods; never ending on Feb 28 of a leap year, `leap_feb_28`, so each next period starts the day after), `VendorReviewSnapshot`,
+  `VendorReviewReport` (a committee it was reported to)); `vendor_reviews.py` every write (create with prefill from the previous
+  signed-off review, refresh, update, sign off on the snapshot shown and the reviewer's fields shown, `fields_version` / REVIEW_CHANGED,
+  plan result, withdraw, discard, committee reports for several reviews at once) and `vendors_list` (each vendor's last review and next due);
+  `vendor_figures.py` the figures from Cadence's records of the vendor's work (contracts from their history, time with the vendor from
+  the handoff, PMs assigned to it, repeat repairs that were real failures, documentation by who completed, staff evidence, cost; never
+  uptime or response from Cadence's dates; imported work orders only in jobs_imported and cost_imported), `can_see` / `cut` all or nothing (Evaluations, Contracts, Reports, Work orders View); the module's
+  label is "Evaluations"; seeing a review also needs Contracts View; never a scoped user
 - `apps/recalls` Alert (global), AlertMatch (per tenant), matching, openFDA importer; `services.py` dispositions and recall work-order batches,
   `permissions.py` (review at Edit, close/reopen at Approve); `feeds.py` the openFDA fetch shared by `import_openfda` and the Recalls
   screen's Check FDA feed (one fetch per 15 minutes for everyone, kept in apps.jobs' `JobRun`; a check matches only its own facility).
@@ -278,7 +290,8 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   one was approved and the next is overdue), inventory, maintenance, aem, inspections, recalls, vendors (slice 31, "Contracted
   service and vendor staff": each vendor with its contracts and the evidence on file, the period's vendor jobs judged by
   vendors.rules.evidence_for, a GAP per vendor with jobs nothing covers (never a person), a CHECK for manufacturer-schedule jobs naming no
-  engineer; Reports, Work orders, Contracts, and Equipment View), incidents (slice 28, Incidents
+  engineer; slice 34: each vendor's last review, and CHECKs for a review overdue, vendors under contract never reviewed, and a corrective
+  plan past due; Reports, Work orders, Contracts, and Equipment View), incidents (slice 28, Incidents
   View: decisions and reports against the clock; a held device past its PM is a finding, explained), staff (slice 30: `repairs`, the checks after repair before return to use, by outcome, never a gap; slice 29: inventory lists
   temporary equipment on site with each owner's PM date: a past one is a gap; the other sections count ours); read only, a fixed number
   of queries, history through `core.history._rows`, never requester text; each section needs Reports View plus its areas' View,
@@ -296,6 +309,9 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   (slice 33; the completion modal's finding select is `web/_wo_finding_select.html`, never shown to a scoped user), `views_evaluations.py` Reports' Program evaluation (slice 32, with
   `forms_evaluations.py` and `templatetags/evaluation_tags.py`: the list and next due, New evaluation, the page (figures cut to the
   reader, each narrative field saved on its own, objectives, approvals, actions by status and level, history), the committee's print),
+  `views_vendor_reviews.py` the Contracts screen's Reviews tab (slice 34, with
+  `forms_vendor_reviews.py`: the vendors and their last reviews, New review, the review's page, its print, the contracted services
+  summary print and its batch committee report; the contract drawer's review line),
   `views_temporary.py` loaners and rentals (slice 29, with `forms_temporary.py`: Add rental or
   loaner, the drawer's temporary section (`asset_tabs.temporary_box`), Change details, Return to owner, Keep it, Vendor loaner arrived,
   Return the loaner; the Equipment "Whose" filter through `forms.equipment_assets`), `views_incidents.py` Incidents (slice 28, with
@@ -333,7 +349,7 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   label (null for a scoped user), `completion_checklist`'s `findings` / `found_on_pm` / `finding_required`, the transition's
   `repair_finding` (omitted keeps; a missing one names what to send), the `repair-finding` action; slice 32: `views_evaluations.py` /
   `serializers_evaluations.py` program evaluations, read only (the list without figures or text; by id or number, the figures cut to the
-  reader); serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
+  reader); slice 34: `views_vendor_reviews.py` / `serializers_vendor_reviews.py` vendor reviews, read only; serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
   same thing and calls the same service; the API never imports apps.web. `tenancy.py` (`TenantAPIMixin`: the tenant from the session or
   token user, set after authentication and restored once the response is rendered), `authentication.py` (DRF's token check plus the
   deactivated-facility refusal sign-in has)
@@ -361,4 +377,5 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   and its report due in a few work days; slice 29: a rental bed, a vendor loaner for a pump out for vendor repair, a demo unit past due
   back, a returned rental; slice 31: Philips engineers with training on the patient monitor model, one lapsed and named on the closed
   monitor repair, with no Philips attestation: the binder's deliberate vendor gap; TechCare's engineer and its attestation; slice 32: a
-  draft program evaluation of the 12 months ending last month, made last, with no random draws)
+  draft program evaluation of the 12 months ending last month, made last, with no random draws; slice 34: a signed-off Philips review
+  for the 12 months ending yesterday with a corrective plan, made just before the program evaluation)
