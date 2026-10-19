@@ -17,6 +17,7 @@ from apps.workorders import permissions as wo_perms
 from apps.workorders.completion import checklist_of, checklist_signature, procedure_for, repair_outcomes
 from apps.workorders.models import OPEN_STATUSES, LaborLine, PartLine, RepairCheck, WorkOrder, WoStatus, WoType
 
+from .serializers_testequipment import test_equipment_of
 from .serializers_vendors import engineer_choices
 
 
@@ -253,11 +254,14 @@ def finding_limits(rows) -> dict:
 
 
 class WorkOrderListSerializer(serializers.ListSerializer):
-    """A page of work orders: what limits each open repair's findings read in one go (finding_limits, slice 33), not once per row."""
+    """A page of work orders: what limits each open repair's findings read in one go (finding_limits, slice 33), not once per row; and
+    the test equipment each recorded (slice 35: serializers_testequipment.test_equipment_of, at most four queries for the page, none for a
+    reader who does not read test equipment)."""
 
     def to_representation(self, data):
         items = list(data.all() if isinstance(data, models.manager.BaseManager) else data)
         self.context["_finding_limits"] = finding_limits(items)
+        self.context["_test_equipment"] = test_equipment_of(items, getattr(self.context.get("request"), "user", None))
         return super().to_representation(items)
 
 
@@ -281,6 +285,10 @@ class WorkOrderSerializer(serializers.ModelSerializer):
     # other types. Written only by the transition to completed and POST {id}/repair-finding/.
     repair_finding = serializers.SerializerMethodField()
     repair_finding_label = serializers.SerializerMethodField()
+    # Slice 35: the test equipment the work order recorded, each with its words on the day of the work (apps.testequipment.rules): null
+    # for a reader who does not read test equipment (a scoped user; without Equipment View). Written only by the transition to completed
+    # and POST {id}/test-equipment/.
+    test_equipment = serializers.SerializerMethodField()
 
     class Meta:
         model = WorkOrder
@@ -290,7 +298,7 @@ class WorkOrderSerializer(serializers.ModelSerializer):
                   "problem", "resolution", "estimated_hours", "tagged_out", "is_late", "total_cost", "labor_lines", "part_lines", "updated_at",
                   "pm_result", "checklist_results", "follow_up_of", "legacy_number", "late_reason", "late_reason_label", "inspection_result",
                   "inspection_result_label", "repair_check", "repair_check_label", "checks_reference", "completion_checklist", "vendor_engineer",
-                  "vendor_engineer_name", "engineer_choices", "repair_finding", "repair_finding_label"]
+                  "vendor_engineer_name", "engineer_choices", "repair_finding", "repair_finding_label", "test_equipment"]
         # Slice 15: what a completion recorded (transition to completed, apps.workorders.completion) is read here, never written.
         # Slice 23: so is an imported work order's number in the previous system (apps.workorders.legacy sets it, once).
         # Slice 25: so is why a PM was late (the model field is editable=False): POST {id}/late-reason/ or the completion records it.
@@ -299,6 +307,7 @@ class WorkOrderSerializer(serializers.ModelSerializer):
         # Slice 31: so is the vendor's engineer (editable=False; a method field here, as the user may read it), and the report number
         # is any vendor job's.
         # Slice 33: so is what a repair found (editable=False; method fields here, as the user may read it).
+        # Slice 35: so is the test equipment it recorded (a method field: the uses, judged on the day of the work).
         read_only_fields = ["number", "status", "started_on", "completed_on", "resolution", "pm_result", "checklist_results", "follow_up_of",
                             "legacy_number", "late_reason", "inspection_result", "repair_check", "checks_reference"]
 
@@ -358,6 +367,21 @@ class WorkOrderSerializer(serializers.ModelSerializer):
         if wo.repair_finding or wo.status in (WoStatus.COMPLETED, WoStatus.CLOSED):
             return findings.label(wo.repair_finding)
         return ""
+
+    def get_test_equipment(self, wo):
+        """Slice 35: [{"id", "tag", "words"}] by tag, each item the work order recorded with its words on the day of the work
+        (rules.use_words: "SA-03 (Fluke ESA612): calibration due Mar 31, 2027 on the day of this work", "(on file since ...)" when its
+        certificate was entered later, "found out of tolerance on ..." with its review; while a reopened one is not completed again,
+        "judged on the day the work is completed"); [] when none. Null for a reader who does not read test equipment: a scoped user
+        (never theirs), or one without Equipment View. A list's page is read at once (WorkOrderListSerializer), else this work order alone."""
+        if "_test_equipment" not in self.context:
+            self.context["_test_equipment"] = test_equipment_of([wo], self._user())
+        known = self.context["_test_equipment"]
+        if known is None:
+            return None
+        if wo.pk not in known:
+            known.update(test_equipment_of([wo], self._user()))
+        return known[wo.pk]
 
     def _user(self):
         return getattr(self.context.get("request"), "user", None)
