@@ -229,7 +229,7 @@ RELEASED_REASON = "Hold released"
 NEW_DEVICE_STATUSES = (AssetStatus.IN_SERVICE, AssetStatus.OUT_OF_SERVICE)  # a new device is in use, or waiting for incoming inspection
 # /equipment/new/ adds a device, so no device can be tagged "new"; "." and ".." are path segments browsers rewrite, so a device
 # tagged that way could never be opened.
-RESERVED_TAGS = {"new", ".", ".."}
+RESERVED_TAGS = {"new", ".", "..", "export.csv"}  # slice 35: /test-equipment/export.csv is the list's CSV (the tags are shared)
 TAGS_LOCK = "tags"  # slice 35: the facility's tag lock (a Sequence row that never counts): devices and test equipment share the tags
 
 

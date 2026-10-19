@@ -457,15 +457,18 @@ def test_the_section_shows_only_once_done_and_never_to_a_scoped_reader(client, s
     assert row(body) == "" and "TE-01" not in body
 
 
-def test_the_tag_links_only_for_equipment_view(client, pump, tech, today, ctx):
+def test_the_test_equipment_needs_equipment_view(client, pump, tech, today, ctx):
+    """Merge rule (slice 35): the drawer's section and the print's line need Equipment View, as the API's field and the change log's
+    area do; a work order clerk with Work orders View alone reads the work order without them."""
     a = in_date("TE-01")
     wo = pm_with(pump, a, tech=tech, completed_on=today)
     clerk = Role.objects.create(name="Work order clerk", slug="wo-clerk")
     clerk.set_levels({Module.WORKORDERS: Level.VIEW})
     user = User.objects.create_user(username="clerk@riverside.example", password="Test-Pass-2026-x", tenant=ctx, role=clerk)
     client.force_login(user)
-    body = row(client.get(f"/work-orders/{wo.number}/", **HX).content.decode())
-    assert "TE-01 (Fluke Biomedical ESA612): calibration due" in body and "/test-equipment/" not in body and "Change</button>" not in body
+    body = client.get(f"/work-orders/{wo.number}/", **HX).content.decode()
+    assert "TE-01" not in body and "/test-equipment/" not in body
+    assert "TE-01" not in client.get(f"/print/work-orders/{wo.number}/").content.decode()
 
 
 def test_the_drawer_reads_any_number_of_uses_in_the_same_queries(client, signed_in, pump, tech, today):

@@ -48,7 +48,6 @@ from apps.testequipment import services as te_services
 from apps.testequipment.models import Reason, Status, TestEquipment, TestEquipmentUse
 from apps.vendors.rules import fmt
 from apps.workorders import permissions as wo_perms
-from apps.workorders import scoping
 from apps.workorders import services as wo_services
 from apps.workorders.models import OPEN_STATUSES, RepairCheck, Source, WoStatus
 
@@ -84,7 +83,7 @@ def offer(wo, user, today):
     imported, vendor work other than a repair, a scoped user). The form takes the ticks wherever it is offered (an item taken out of use
     while the modal was open is refused in the service's words, never dropped); the picker shows only when it has options (has_options)
     or a refusal to show."""
-    if not rules.offered(wo, user):
+    if not rules.offered(wo, user) or not te_perms.can_view(user):  # the items are Equipment View's (as the API's field and History)
         return None
     return te_services.picker(wo, user, today=today)
 
@@ -164,10 +163,11 @@ def _shown(wo, user, judged) -> bool:
 
 def drawer_context(request, wo) -> dict:
     """The drawer's "Test equipment" section, under "test_equipment_row": None unless `wo` is completed or closed and the reader sees
-    the whole facility (and _shown). Each use judged on the day of the work (testequipment.services.judged_for: at most four
-    queries); Change for can_set_test_equipment where it may be recorded."""
+    the whole facility with Equipment View (testequipment.permissions.can_view: as the API's field and the change log's area) (and
+    _shown). Each use judged on the day of the work (testequipment.services.judged_for: at most four queries); Change for
+    can_set_test_equipment where it may be recorded."""
     user = request.user
-    if wo.status not in rules.DONE or scoping.is_scoped(user):
+    if wo.status not in rules.DONE or not te_perms.can_view(user):
         return {"test_equipment_row": None}
     judged = te_services.judged_for(wo)
     if not _shown(wo, user, judged):
@@ -182,10 +182,10 @@ def drawer_context(request, wo) -> dict:
 # --- the print's line ----------------------------------------------------------------------------------------------------------
 
 def print_context(wo, user) -> dict | None:
-    """The work order print's test equipment (views_print.wo_print): None for a scoped reader, a cancelled work order, or where it is
-    not _shown. Open: `open` (lines to write on while it may be recorded) and any uses a reopened work order keeps. Done: each use in
+    """The work order print's test equipment (views_print.wo_print): None for a scoped reader or one without Equipment View, a cancelled
+    work order, or where it is not _shown. Open: `open` (lines to write on while it may be recorded) and any uses a reopened work order keeps. Done: each use in
     rules' words on the day of the work, or none recorded."""
-    if scoping.is_scoped(user):
+    if not te_perms.can_view(user):  # never a scoped reader's; the items are Equipment View's
         return None
     is_open = wo.status in OPEN_STATUSES
     if not is_open and wo.status not in rules.DONE:
