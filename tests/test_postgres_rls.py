@@ -181,6 +181,16 @@ def test_the_api_under_the_policies(client, seeded):
         assert r.status_code == 200, (url, r.status_code)
     # the fleet, the four new devices (slices 25 and 26), and the four rentals, loaner, and demo unit (slice 29: one returned)
     assert client.get("/api/v1/assets/").json()["count"] == 204
+    # slice 35: the CE department's test equipment (never a device), the list and one item by id
+    from apps.demo.management.commands import seed_demo
+    from apps.testequipment.models import TestEquipment
+
+    with tenant_context(seeded):
+        analyzer = TestEquipment.objects.get(tag="TE-301")
+    r = client.get("/api/v1/test-equipment/")
+    assert r.status_code == 200 and r.json()["count"] == len(seed_demo.TEST_EQUIPMENT)
+    r = client.get(f"/api/v1/test-equipment/{analyzer.pk}/")
+    assert r.status_code == 200 and r.json()["tag"] == "TE-301"
 
 
 def test_the_survey_binder_under_the_policies(client, seeded):
@@ -204,6 +214,31 @@ def test_the_survey_binder_under_the_policies(client, seeded):
             assert r.status_code == 200 and b"".join(r.streaming_content), (s["key"], t["key"])
             tables += 1
     assert tables >= len(binder["sections"])  # every section lists something in a seeded facility
+    # slice 35: the seeded test equipment, its gaps (the defibrillator analyzer past due, the infusion analyzer's review not recorded), and
+    # its rows, read under the policies with the calibrations' and items' history
+    section = client.get("/api/v1/survey/testequipment/").json()
+    assert [(g["kind"], g["record"]) for g in section["gaps"]] == [("gap", "TE-301"), ("gap", "TE-401"), ("finding", "TE-301")]
+    r = client.get("/reports/survey/testequipment/items.csv")
+    assert r.status_code == 200 and "TE-301" in b"".join(r.streaming_content).decode()
+
+
+def test_the_test_equipment_screens_under_the_policies(client, seeded):
+    """Slice 35: the Equipment screen's Test equipment tab, its CSV, and a seeded item's page (its drawer opened directly, by its tag in
+    any letter case) as the runtime role. Wave 2A builds them behind the scaffold's stubs, which answer 501: until those are merged this
+    test is an expected failure, and it runs for real the moment the screens are there."""
+    from django.urls import reverse
+
+    client.force_login(User.objects.get(username="kim@riverside.example"))
+    as_app_role()
+    if client.get(reverse("web:test_equipment")).status_code == 501:
+        pytest.xfail("slice 35 wave 2A's screens are not merged yet")
+    for url in [reverse("web:test_equipment"), reverse("web:test_equipment_csv"), reverse("web:test_equipment_item", args=["TE-301"]),
+                reverse("web:test_equipment_item", args=["te-401"])]:
+        r = client.get(url)
+        assert r.status_code == 200, (url, r.status_code)
+        if hasattr(r, "streaming_content"):
+            assert b"".join(r.streaming_content), url  # a CSV is read after the view returns, inside the request's tenant
+    assert "TE-301" in client.get(reverse("web:test_equipment")).content.decode()
 
 
 def _seeded_evaluation(tenant):

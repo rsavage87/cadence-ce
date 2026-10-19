@@ -335,6 +335,106 @@ def test_seed_demo_signs_off_a_philips_review(db):
         assert VendorReview.objects.count() == 1 and VendorReviewSnapshot.objects.count() == 1
 
 
+def test_seed_demo_keeps_the_ce_departments_test_equipment(db):
+    """Slice 35: the CE department's test equipment, added through apps.testequipment.services before the work that records it, each
+    item entered TE_ADDED_DAYS_AGO and each certificate the day it came back (no "on file since" anywhere): an electrical safety analyzer
+    per technician, held by them, calibrated before the work began and due months from now, on every one of its holder's in-house PMs,
+    incoming inspections, and repairs checked and ready for use; the ProSim 8 due within 60 days; the defibrillator analyzer past due,
+    on the defibrillators' PMs up to its due day and on one after it; the infusion device analyzer found out of tolerance last week, the
+    pumps' PMs since its previous certificate not reviewed. The binder: two gaps and one finding, nothing else. Riverside only; a second
+    run adds nothing."""
+    from django.db.models import Min, Q
+    from django.utils import timezone
+
+    from apps.core.days import local_day
+    from apps.reports.survey import FINDING, GAP, default_period, testequipment
+    from apps.testequipment import rules
+    from apps.testequipment.models import AsFound, Calibration, Kind, Status, TestEquipment, TestEquipmentUse, ToleranceReview
+    from apps.vendors.rules import fmt
+    from apps.workorders.models import RepairCheck
+
+    call_command("seed_demo", stdout=StringIO())
+    with tenant_context(Tenant.objects.get(slug="riverside")):
+        today = timezone.localdate()
+        items = {i.tag: i for i in TestEquipment.objects.select_related("held_by")}
+        esas = [f"TE-{101 + i}" for i in range(len(seed_demo.TECHS))]
+        assert sorted(items) == [*esas, "TE-201", "TE-301", "TE-401"] and all(t.startswith("TE-") for t in items)
+        assert all(i.status == Status.IN_USE and i.interval_months == 12 for i in items.values())
+        assert [items[t].held_by.name for t in esas] == [name for name, *_rest in seed_demo.TECHS]
+        assert all(items[t].kind == Kind.ELECTRICAL_SAFETY for t in esas) and items["TE-201"].held_by is None
+        # dated as it happened: every item entered TE_ADDED_DAYS_AGO, each certificate the day it came back
+        added = today - timedelta(days=seed_demo.TE_ADDED_DAYS_AGO)
+        assert {(h.history_type, local_day(h.history_date)) for h in TestEquipment.history.all()} == {("+", added)}
+        cals = list(Calibration.objects.all())
+        assert len(cals) == len(esas) + 4 and not any(c.entered_in_error for c in cals)
+        entered = rules.entered_days(cals)
+        assert all(entered[c.pk] == c.calibrated_on for c in cals)
+        now = rules.standings(items.values(), today)
+        first_work = WorkOrder.objects.aggregate(first=Min("completed_on"))["first"]
+        for t in esas:
+            cal = items[t].calibrations.get()
+            assert now[items[t].pk].state == rules.IN_DATE and cal.calibrated_on < first_work and cal.due_on > today
+        assert rules.matches(now[items["TE-201"].pk], "due_soon", today) and now[items["TE-201"].pk].due_on > today
+        due = today - timedelta(days=seed_demo.DEFIB_ANALYZER_DUE_DAYS_AGO)
+        assert (now[items["TE-301"].pk].state, now[items["TE-301"].pk].due_on) == (rules.PAST_DUE, due)
+        found = items["TE-401"].calibrations.order_by("-calibrated_on").first()
+        assert (found.calibrated_on, found.as_found, found.adjusted, found.needs_review) == (
+            today - timedelta(days=seed_demo.INFUSION_FOUND_DAYS_AGO), AsFound.OUT_OF_TOLERANCE, True, True)
+        assert not ToleranceReview.objects.exists()
+
+        # each technician's analyzer on every in-house PM, inspection, and checked repair they completed; nothing else records test
+        # equipment (no vendor work, no repair not returned to use, no recall work)
+        counted = WorkOrder.objects.filter(rules.counted_work_q()).filter(
+            Q(type__in=(WoType.PM, WoType.INSPECTION)) | Q(type=WoType.REPAIR, repair_check=RepairCheck.PASSED))
+        held = {items[t].held_by_id: items[t].pk for t in esas}
+        uses = {}
+        for u in TestEquipmentUse.objects.all():
+            uses.setdefault(u.work_order_id, set()).add(u.test_equipment_id)
+        assert counted.count() > 100
+        for wo in counted:
+            assert held[wo.assigned_to_id] in uses.get(wo.pk, set()), wo.number
+        assert set(uses) == set(counted.values_list("pk", flat=True))
+        # the analyzers for the models' PMs: the defibrillator analyzer once past due on one PM only
+        for tag in ("TE-201", "TE-301", "TE-401"):
+            mine = WorkOrder.objects.filter(test_equipment_uses__test_equipment=items[tag]).select_related("asset__device_model")
+            assert mine and all(w.type == WoType.PM and seed_demo.TE_FOR_MODELS[w.asset.device_model.model] == tag for w in mine), tag
+        defib_pms = WorkOrder.objects.filter(rules.counted_work_q(), type=WoType.PM, asset__device_model__model="R Series Plus")
+        after = defib_pms.filter(completed_on__gt=due)
+        assert after.count() >= 1 and after.filter(test_equipment_uses__test_equipment=items["TE-301"]).count() == 1
+        assert defib_pms.filter(completed_on__lte=due).exclude(test_equipment_uses__test_equipment=items["TE-301"]).count() == 0
+        [late] = after.filter(test_equipment_uses__test_equipment=items["TE-301"])
+        pumps = WorkOrder.objects.filter(rules.counted_work_q(), type=WoType.PM, asset__device_model__model="Alaris 8015 PCU",
+                                         completed_on__lte=found.calibrated_on)
+        in_window = pumps.filter(completed_on__gt=today - timedelta(days=seed_demo.INFUSION_PREVIOUS_DAYS_AGO))
+        assert in_window.count() >= 2 and set(in_window.filter(test_equipment_uses__test_equipment=items["TE-401"])) == set(in_window)
+
+        # the binder: the defibrillator analyzer in use past due (a gap) and used once past due (a finding); the infusion analyzer's
+        # certificate not reviewed (a gap); no check (all the work with readings names its test equipment)
+        s = testequipment.build(default_period(today), None)
+        assert [(g.kind, g.record) for g in s.gaps] == [(GAP, "TE-301"), (GAP, "TE-401"), (FINDING, "TE-301")]
+        assert s.gaps[0].text.startswith(f"TE-301 (Fluke Biomedical Impulse 7000DP) is in use: calibration was due {fmt(due)}.")
+        assert s.gaps[1].text.startswith(f"TE-401 (Fluke Biomedical IDA-5): certificate KCL-41877 ({fmt(found.calibrated_on)}) found it out "
+                                         f"of tolerance, and the {in_window.count()} work orders done with it after its previous passed "
+                                         f"certificate")
+        assert s.gaps[2].text.startswith(f"TE-301 (Fluke Biomedical Impulse 7000DP) was used on 1 work order while past due, "
+                                         f"{fmt(late.completed_on)} (calibration was due {fmt(due)}).")
+        figures = {f.label: f.value for f in s.figures}
+        assert figures["Test equipment"] == len(items) and figures["Work with readings naming no test equipment"] == 0
+        assert figures["Work with readings before test equipment was entered"] == 0
+        work = rows_of_table(s, "work")
+        assert {r[0] for r in work} == {late.number} | {w.number for w in in_window if w.completed_on >= default_period(today).start}
+        assert all(r[6] is None for r in work)  # nothing on file since: each certificate entered the day it came back
+    with tenant_context(Tenant.objects.get(slug="riverside-north")):
+        assert not TestEquipment.objects.exists() and not TestEquipmentUse.objects.exists()
+    call_command("seed_demo", stdout=StringIO())  # a second run adds nothing
+    with tenant_context(Tenant.objects.get(slug="riverside")):
+        assert TestEquipment.objects.count() == len(items) and Calibration.objects.count() == len(cals)
+
+
+def rows_of_table(section, key) -> list:
+    return [list(r) for r in section.table(key).rows()]
+
+
 def test_a_database_seeded_before_slice_22_gets_the_north_campus(db, monkeypatch):
     monkeypatch.setattr(seed_demo.Command, "_north_campus", lambda self, tenant, opts: None)
     call_command("seed_demo", stdout=StringIO())

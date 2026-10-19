@@ -72,6 +72,17 @@ plan due VENDOR_REVIEW_PLAN_DAYS after the sign-off with no result yet, the vend
 service as a whole (VENDOR_REVIEW_*: no counts, no engineer, patient, requester, or incident). Signed off today by the CE manager. The
 survey binder's vendors section shows its number in Philips's last review, and its check names the other vendors under contract with
 no signed-off review. Constants only: nothing is drawn from the demo's generators. The North Campus has none.
+
+Slice 35: Riverside's CE department keeps its own test equipment (Equipment, Test equipment), added through apps.testequipment.services
+as the screen adds it, TE_ADDED_DAYS_AGO (before the demo's work begins), each certificate recorded the day it came back from the lab
+(TEST_EQUIPMENT; each one's history dated so, so none reads "on file since"), all before the completions that name them: an electrical
+safety analyzer per technician (held by them), calibrated before the work began and due months from now, recorded on its holder's
+in-house PMs, incoming inspections, and repairs checked and ready for use; and on the PMs of the models in TE_FOR_MODELS, the analyzer for
+them: a ProSim 8 due within 60 days; a defibrillator analyzer past due DEFIB_ANALYZER_DUE_DAYS_AGO days, recorded on the defibrillators'
+PMs up to its due day and on one after it (the survey binder's finding, and its gap while it is in use); and an infusion device analyzer
+whose certificate last week found it out of tolerance, with the pumps' PMs done with it since its previous certificate not reviewed (the
+binder's gap). Constants only: nothing is drawn from the demo's generators, and no work order or device is added. The North Campus has
+none.
 """
 import random
 from datetime import date, datetime, time, timedelta
@@ -118,6 +129,9 @@ from apps.recalls.models import Alert, AlertMatch
 from apps.recalls.services import create_recall_work_orders, set_status
 from apps.tenants.context import tenant_context, zone_of
 from apps.tenants.models import Tenant
+from apps.testequipment import rules as te_rules
+from apps.testequipment import services as test_equipment
+from apps.testequipment.models import AsFound, Calibration, Kind, Mark, Program, Result, TestEquipment, TestEquipmentUse
 from apps.vendors import services as vendor_services
 from apps.vendors.models import Covers, TrainingSource
 from apps.workorders import inspections
@@ -387,6 +401,30 @@ VENDOR_REVIEW_FIELDS = {
 }
 VENDOR_REVIEW_PLAN_DAYS = 90
 
+# Slice 35, the CE department's test equipment (_test_equipment), entered in Cadence TE_ADDED_DAYS_AGO, before the demo's 180 days of work.
+# Fictional serials, certificate numbers, and laboratory. Each item: tag, kind, manufacturer, model, serial, the technician holding it (a
+# TECHS name, or None), and its certificates, oldest first: (calibrated, days ago; due, days ago, or None for the interval's 12 months;
+# as found; adjusted; accreditation mark; provider; certificate number), every one passed.
+TE_ADDED_DAYS_AGO = 400
+TE_LAB = "Keystone Calibration Laboratory"
+ESA_CALIBRATED_DAYS_AGO = 200  # before the work began; due 12 months later, months from today
+DEFIB_ANALYZER_DUE_DAYS_AGO = 20  # past due: its certificate (12 months before) typed with the due day its label shows
+INFUSION_PREVIOUS_DAYS_AGO, INFUSION_FOUND_DAYS_AGO = 360, 6  # its certificate last week found it out of tolerance
+TEST_EQUIPMENT = [
+    *[(f"TE-{101 + i}", Kind.ELECTRICAL_SAFETY, "Fluke Biomedical", "ESA612", f"ESA612-31842{i}7", name,
+       [(ESA_CALIBRATED_DAYS_AGO, None, AsFound.IN_TOLERANCE, False, Mark.SHOWN, TE_LAB, f"KCL-3301{i}")])
+      for i, (name, *_rest) in enumerate(TECHS)],
+    ("TE-201", Kind.PATIENT_SIMULATOR, "Fluke Biomedical", "ProSim 8", "PS8-4471023", None,
+     [(325, None, AsFound.IN_TOLERANCE, False, Mark.NOT_SHOWN, "Fluke Biomedical", "FBS-118207")]),  # due within 60 days
+    ("TE-301", Kind.DEFIBRILLATOR, "Fluke Biomedical", "Impulse 7000DP", "IMP-2209175", None,
+     [(DEFIB_ANALYZER_DUE_DAYS_AGO + 365, DEFIB_ANALYZER_DUE_DAYS_AGO, AsFound.IN_TOLERANCE, False, Mark.SHOWN, TE_LAB, "KCL-29544")]),
+    ("TE-401", Kind.INFUSION, "Fluke Biomedical", "IDA-5", "IDA5-1730466", None,
+     [(INFUSION_PREVIOUS_DAYS_AGO, None, AsFound.IN_TOLERANCE, False, Mark.SHOWN, TE_LAB, "KCL-30311"),
+      (INFUSION_FOUND_DAYS_AGO, None, AsFound.OUT_OF_TOLERANCE, True, Mark.SHOWN, TE_LAB, "KCL-41877")]),
+]
+# The analyzer a PM of these models records, beside its technician's electrical safety analyzer.
+TE_FOR_MODELS = {"IntelliVue MX750": "TE-201", "Connex Spot": "TE-201", "R Series Plus": "TE-301", "Alaris 8015 PCU": "TE-401"}
+
 
 def _noon(day: date) -> datetime:
     """Noon of `day` in the current time zone (the facility's, inside tenant_context): a backdated timestamp's moment."""
@@ -476,6 +514,8 @@ class Command(BaseCommand):
                                              acquisition_cost=round(cost * rnd.uniform(0.9, 1.1), 2),
                                              condition=rnd.randint(2, 5), last_pm_on=add_months(next_pm, -pm), next_pm_on=next_pm, contract=contract)
                     assets.append(a)
+            # Slice 35: the CE department's test equipment and its certificates, before the work that records it (no draws)
+            self._test_equipment(today)
             # six months of closed work orders, plus a small open backlog. What each one found comes from its own generator, so
             # the devices, dates, and technicians stay as they were before results were recorded.
             outcomes = random.Random(20261002)
@@ -507,11 +547,12 @@ class Command(BaseCommand):
                         change_status(wo, "in_progress", as_of=d)
                         if not is_pm:
                             resolution = outcomes.choice(REPAIR_RESOLUTIONS)
-                            complete_work_order(wo, resolution=resolution, repair_finding=REPAIR_FINDINGS[resolution], today=done, **CHECKED)
+                            complete_work_order(wo, resolution=resolution, repair_finding=REPAIR_FINDINGS[resolution], today=done,
+                                                test_equipment=self._test_equipment_used(wo, done), **CHECKED)
                         elif failed_pm is None and day <= -FAIL_BEFORE_DAYS and self._can_fail(a):
                             failed_pm = self._failed_pm(wo, done)
                         else:
-                            self._completed_pm(wo, done, outcomes)
+                            self._completed_pm(wo, done, outcomes, test_equipment=self._test_equipment_used(wo, done, pm=True))
                         change_status(wo, "closed", as_of=done)
             # facility settings as the mock shows them: a shop hotline on the portal and a monthly repair budget
             update_settings(portal_hotline="ext. 4400", repair_budget_monthly=Decimal("52000"))
@@ -716,7 +757,7 @@ class Command(BaseCommand):
         assign(wo, technician=technician)
         change_status(wo, "in_progress", as_of=on["started"])
         complete_work_order(wo, resolution=CLOSED_INCIDENT_RESOLUTION, repair_finding=CLOSED_INCIDENT_FINDING, today=on["completed"],
-                            **CHECKED)  # checked: it may return to use
+                            test_equipment=Command._test_equipment_used(wo, on["completed"]), **CHECKED)  # checked: it may return to use
         change_status(wo, "closed", as_of=on["completed"])
         incident_services.record_finding(incident, Finding.MET_SPECS, by=technician.user)
         incident_services.decide(incident, outcome=Outcome.NO_HARM, basis=Basis.NOT_SERIOUS, decided_on=on["decided"],
@@ -785,7 +826,8 @@ class Command(BaseCommand):
                                opened_on=opened, assigned_to=technician)
         change_status(wo, "in_progress", as_of=opened)
         LaborLine.objects.create(work_order=wo, technician=technician, worked_on=done, hours=Decimal("1.25"), rate=82)
-        complete_work_order(wo, resolution=LAPSE_RESOLUTION, repair_finding=LAPSE_FINDING, today=done, **CHECKED)
+        complete_work_order(wo, resolution=LAPSE_RESOLUTION, repair_finding=LAPSE_FINDING, today=done,
+                            test_equipment=Command._test_equipment_used(wo, done), **CHECKED)
         change_status(wo, "closed", as_of=done)
         renewed = today - timedelta(days=LAPSE_RENEWED_DAYS_AGO)
         renew_credential(credential, today=renewed)
@@ -841,7 +883,8 @@ class Command(BaseCommand):
         if result == InspectionResult.FAILED:
             results[LEAKAGE] = {"result": "fail", "reading": INCOMING_FAIL_READING}
             resolution = INCOMING_FAIL
-        complete_work_order(wo, inspection_result=result, results=results, resolution=resolution, today=day)
+        complete_work_order(wo, inspection_result=result, results=results, resolution=resolution, today=day,
+                            test_equipment=Command._test_equipment_used(wo, day))
         change_status(wo, "closed", as_of=day)
         wo.refresh_from_db()
         return wo
@@ -904,7 +947,8 @@ class Command(BaseCommand):
         assign(wo, technician=qualified_technicians(asset, day)[0][0])
         results = [{"result": "pass", "reading": TEMPORARY_LEAKAGE if measure else ""}
                    for _text, measure in checklist_of(inspection_procedure(asset))]
-        complete_work_order(wo, inspection_result=InspectionResult.PASSED, results=results, today=day)
+        complete_work_order(wo, inspection_result=InspectionResult.PASSED, results=results, today=day,
+                            test_equipment=Command._test_equipment_used(wo, day))
         change_status(wo, "closed", as_of=day)
         return wo
 
@@ -914,30 +958,73 @@ class Command(BaseCommand):
         return asset.device_model.risk_class == RiskClass.LIFE_SUPPORT and Asset.objects.get(pk=asset.pk).status == AssetStatus.IN_SERVICE
 
     @staticmethod
-    def _completed_pm(wo, done: date, outcomes: random.Random) -> None:
+    def _completed_pm(wo, done: date, outcomes: random.Random, test_equipment=vendor_services.KEEP) -> None:
         """A PM completed through apps.workorders.completion like any other: mostly Pass, sometimes Pass with minor repair (the
-        visual inspection found something put right on the spot), each with its leakage reading."""
+        visual inspection found something put right on the spot), each with its leakage reading, and at Riverside the test equipment
+        it recorded (slice 35: _test_equipment_used)."""
         results = [{"result": "pass", "reading": f"{outcomes.randint(4, 62)} µA" if i == LEAKAGE else ""} for i in range(len(CHECKLIST))]
         if outcomes.random() < MINOR_REPAIR_SHARE:
             results[VISUAL]["result"] = "fail"
-            complete_work_order(wo, pm_result=PmResult.PASS_MINOR_REPAIR, results=results, resolution=outcomes.choice(MINOR_REPAIRS), today=done)
+            complete_work_order(wo, pm_result=PmResult.PASS_MINOR_REPAIR, results=results, resolution=outcomes.choice(MINOR_REPAIRS), today=done,
+                                test_equipment=test_equipment)
         else:
-            complete_work_order(wo, pm_result=PmResult.PASS, results=results, today=done)
+            complete_work_order(wo, pm_result=PmResult.PASS, results=results, today=done, test_equipment=test_equipment)
 
     @staticmethod
     def _failed_pm(wo, done: date):
         """The demo's one failed PM: leakage over the limit. It opens its follow-up repair and tags the device out; the repair is done
-        two days later (by a credentialed technician when the follow-up was left unassigned), which returns the device to service."""
+        two days later (by a credentialed technician when the follow-up was left unassigned), which returns the device to service. Each
+        records its test equipment (slice 35)."""
         results = [{"result": "pass", "reading": ""} for _ in CHECKLIST]
         results[LEAKAGE] = {"result": "fail", "reading": FAILED_READING}
-        repair = complete_work_order(wo, pm_result=PmResult.FAIL, results=results, tag_out=True, today=done).follow_up
+        repair = complete_work_order(wo, pm_result=PmResult.FAIL, results=results, tag_out=True, today=done,
+                                     test_equipment=Command._test_equipment_used(wo, done, pm=True)).follow_up
         if repair.assigned_to_id is None:
             credentialed = qualified_technicians(repair.asset, done)
             assign(repair, technician=credentialed[0][0] if credentialed else wo.assigned_to)
         change_status(repair, "in_progress", as_of=done)
-        complete_work_order(repair, resolution=FAIL_REPAIR, repair_finding=FAIL_REPAIR_FINDING, today=done + timedelta(days=2), **CHECKED)
-        change_status(repair, "closed", as_of=done + timedelta(days=2))
+        fixed = done + timedelta(days=2)
+        complete_work_order(repair, resolution=FAIL_REPAIR, repair_finding=FAIL_REPAIR_FINDING, today=fixed,
+                            test_equipment=Command._test_equipment_used(repair, fixed), **CHECKED)
+        change_status(repair, "closed", as_of=fixed)
         return wo
+
+    @staticmethod
+    def _test_equipment(today: date) -> None:
+        """Slice 35: TEST_EQUIPMENT through apps.testequipment.services as the Test equipment tab adds it, each item entered
+        TE_ADDED_DAYS_AGO and each certificate the day it came back (their history's first rows and created_at dated so: nothing reads
+        "on file since"). In use, the electrical safety analyzers held by their technicians."""
+        added = today - timedelta(days=TE_ADDED_DAYS_AGO)
+        technicians = {t.name: t for t in Technician.objects.all()}
+        for tag, kind, manufacturer, model, serial, holder, certificates in TEST_EQUIPMENT:
+            item = test_equipment.add_test_equipment(tag=tag, kind=kind, manufacturer=manufacturer, model=model, serial=serial,
+                                                     program=Program.CALIBRATION, interval_months=12,
+                                                     held_by=technicians[holder] if holder else None, by=None, today=added)
+            TestEquipment.history.filter(id=item.pk, history_type="+").update(history_date=_noon(added))
+            TestEquipment.objects.filter(pk=item.pk).update(created_at=_noon(added))
+            for calibrated_ago, due_ago, as_found, adjusted, mark, provider, number in certificates:
+                on = today - timedelta(days=calibrated_ago)
+                cal = test_equipment.record_calibration(
+                    item, calibrated_on=on, due_on=today - timedelta(days=due_ago) if due_ago is not None else None, provider=provider,
+                    certificate=number, accreditation=mark, as_found=as_found, adjusted=adjusted, result=Result.PASSED, by=None, today=on)
+                Calibration.history.filter(id=cal.pk, history_type="+").update(history_date=_noon(on))
+                Calibration.objects.filter(pk=cal.pk).update(created_at=_noon(on))
+
+    @staticmethod
+    def _test_equipment_used(wo, done: date, *, pm: bool = False) -> list:
+        """Slice 35: the test equipment a seeded completion of `wo` on `done` records, as the completion modal posts it (ids): the
+        electrical safety analyzer its technician holds, and on a PM of a model in TE_FOR_MODELS that model's analyzer, but once the
+        analyzer is past due, on one work order only (the binder's one finding there). Nothing where the facility has none (the North
+        Campus)."""
+        used = list(TestEquipment.objects.filter(held_by_id=wo.assigned_to_id, kind=Kind.ELECTRICAL_SAFETY)) if wo.assigned_to_id else []
+        tag = TE_FOR_MODELS.get(wo.asset.device_model.model) if pm else None
+        analyzer = TestEquipment.objects.filter(tag=tag).first() if tag else None
+        if analyzer is not None:
+            standing = te_rules.standings([analyzer], done)[analyzer.pk]
+            if standing.state != te_rules.PAST_DUE or not TestEquipmentUse.objects.filter(
+                    test_equipment=analyzer, work_order__completed_on__gt=standing.due_on).exists():
+                used.append(analyzer)
+        return [str(i.pk) for i in used]
 
     @staticmethod
     def _vendor_staff(today: date) -> dict:
