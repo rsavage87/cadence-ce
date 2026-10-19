@@ -222,6 +222,24 @@ to service waits for the repair's checks, and an incident's Return to use waits 
 after repair before return to use" section lists them. API clients that complete repairs send the outcome (and the checklist's results
 when checked): a work order's `completion_checklist` lists what to send.
 
+## Test equipment
+The Equipment screen's "Test equipment" tab keeps the department's own safety analyzers, simulators, and meters and their calibration
+certificates, apart from the medical equipment: no fleet, PM, or report figure counts them, and their tags share the devices' sticker
+space (a tag is one or the other, in any letter case). Each item has its kind, make, model, serial, whose kit it is, its interval, and
+whether its certificates calibrate or verify it (a SpO2 simulator is verified). Each certificate from a lab or the manufacturer is
+recorded with its day, due day (prefilled from the interval, never more than its month later), number, as found, adjusted, and result,
+and is judged by its own dates whenever it was typed in ("on file since" when it was typed after the work). An item reads "Calibration
+due Mar 31, 2027", "Calibration was due …", "No calibration on file", or "Failed calibration …"; one out of service returns to use only
+with a passed certificate dated on or after the day it is held from (the day it went out, or a failed certificate's own day), and a failed one takes it out of use. A certificate that found an item out of tolerance, or failed it, opens a
+review of the work done with it since its last passed certificate: the CE manager (Work orders Approve) records the decision on the list
+shown (refused if work was added meanwhile), and the devices' rechecks are counted as they happen. Mark completed asks which test equipment
+was used (optional; the technician's own kit first; one past due can be recorded, and the record says so) on in-house work and repairs
+the facility checked; each use keeps the day of the work it was recorded on (reopening and completing the work again never moves it),
+the work order shows each item's standing on that day, and a use is never taken off once the item has been calibrated on or after that
+day. The survey binder's "Test equipment calibration" section lists the items, the certificates, and the work done with
+test equipment past due, with none on file, failed, or found out of tolerance later, and checks work with readings that names none.
+Deferred: the import, labels and Scan, reminders, in-house verification against a reference standard.
+
 ## Repair findings
 Every repair records what it found, as one choice: no problem found, use error, power / gas / network / room conditions, damaged in
 handling, battery, accessory or cable, software or firmware, wore out, PM could have caught it, caused by earlier service, or (on vendor
@@ -374,6 +392,13 @@ its module's docstring under `apps/api/`, and the browsable API (open `/api/v1/`
   access allows);
 - vendor reviews, read only (`views_vendor_reviews.py`: the list, and each with its ratings, decision, plan, committee reports, and the
   figures when you hold Evaluations, Contracts, Reports, and Work orders View);
+- test equipment, read only (`views_testequipment.py`: Equipment View, never a vendor's or a requester's account): the list with each
+  item's standing in words, filtered by `?standing=past_due|due_soon|no_record|failed`, `?status=`, `?kind=`, `?held_by=`; one item by id
+  or tag with its calibrations and tolerance reviews. A work order reads the test equipment it recorded (`test_equipment`, each item's
+  words on the day of the work, for Equipment View); the transition to completed takes `test_equipment`, a list of item ids (`[]` for
+  none; left out, what is recorded stays, except that a completion with `repair_check` `vendor_report` takes ours off but the items a
+  calibration since has judged); afterwards POST `/api/v1/work-orders/{id}/test-equipment/` (facility staff only; Approve once
+  closed). A work order with test equipment recorded is never deleted;
 - the signed-in person's facilities and All facilities (`views_facilities.py`, `views_all_facilities.py`; session only).
 
 Vendor technicians and clinical requesters reach only their own devices and work orders (and Scan), as on the screens. Nobody gives

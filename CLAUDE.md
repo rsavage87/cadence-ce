@@ -31,7 +31,8 @@ security tests, `tests/test_postgres_rls.py`).
 5. **State changes go through services** (`apps/workorders/services.py`, `apps/pm/services.py`, `apps/contracts/services.py`,
    `apps/accounts/services.py`, `apps/credentials/services.py`, `apps/recalls/services.py`, `apps/facility/services.py`, `apps/equipment/services.py`,
    `apps/pm/aem.py`, `apps/pm/procedures.py`, `apps/workorders/costs.py`, `apps/workorders/completion.py`, `apps/workorders/legacy.py`, `apps/reports/custom.py`,
-   `apps/imports/services.py`, `apps/incidents/services.py`, `apps/vendors/services.py`, `apps/evaluations/services.py`), never by setting fields in a
+   `apps/imports/services.py`, `apps/incidents/services.py`, `apps/vendors/services.py`, `apps/evaluations/services.py`,
+   `apps/testequipment/services.py`), never by setting fields in a
    view or calling model helpers like
    `Contract.add_assets` directly. Services validate, write status history, and keep the asset in sync.
 6. **No PHI by design.** The portal never asks for patient identifiers. Don't add free-text fields that invite them, and never offer
@@ -139,7 +140,10 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   change goes through `_save_model`, which locks the row and tells `apps.pm.aem.model_changed`), `permissions.py` (Edit to add, edit,
   tag out, and add or edit models; Approve to retire or reinstate, to score a model or change its risk class, and to set or clear
   `oem_schedule_required`, the CMS rule that keeps imaging, radiologic, and medical laser equipment on the manufacturer's schedule:
-  `DeviceModel.aem_excluded` covers it and life support); `scan.py` which device a scanned or typed code names (a label's request link
+  `DeviceModel.aem_excluded` covers it and life support); slice 35: `lock_tags` (the facility's tag lock: devices and test equipment
+  share one sticker space, unique in any letter case across both tables; create_asset, add_test_equipment, update_test_equipment's tag
+  and unit changes, and set_status's moves to in use take it first) and
+  `is_test_equipment_tag`, `RESERVED_TAGS` with export.csv; `scan.py` which device a scanned or typed code names (a label's request link
   with any host, a device link, or a plain tag in any letter case, among the devices the user may see)
 - `apps/contracts` Contract with add/remove device operations and cost allocation; `services.py` for create/update/renew/delete, status, filters, KPI summary
 - `apps/workorders` WorkOrder and lines, ServiceRequest, lifecycle services; `scoping.py` who sees which devices and work orders inside a
@@ -186,6 +190,13 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   never use error, a failed PM's repair never "PM could have caught it"; a scoped user never replaces the facility's finding while the
   repair's limits allow it (`FACILITY_RECORDED`); `failure_q`, `recorded_q`); assign clears not stated when work leaves the vendor; an
   incident's adoption clears a use error (`services.clear_use_error`);
+  slice 35: the test equipment a work order used (`apps.testequipment` TestEquipmentUse), written only by `complete_work_order(test_equipment=
+  KEEP)` and `services.set_test_equipment` (completed or closed; Edit, Approve once closed, never scoped:
+  `permissions.can_set_test_equipment`), checked by testequipment.services.check_uses (the items' rows locked after lock_work and the
+  work order's row); each use has its own day (`TestEquipmentUse.used_on`, the day of the work it was recorded on, written once by
+  `apply_uses`: a re-completion never moves it), and every reader judges it on that day; `assign` (work moving to a vendor), a completion
+  as checked by the vendor (a list there may name only kept ones), and a cancel (taking no item lock) take them off, never a use the
+  kept-use rule keeps (a calibration dated on or after the use's day is on file); keep_open never records any;
   slice 29: no PM on a temporary device (`no_pm_message`), its incoming inspection on `inspections.TEMPORARY_INCOMING` and refused a
   pass while its owner's PM date is past (`owner_pm_refusal`), recall batches give its recall work order to its owner;
   slice 28, a device held as evidence (Asset.incident_hold): `change_status` refuses a start or completion (`HOLD_MOVES`) of any of its
@@ -237,6 +248,22 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   reader; `engineer_named` creates on the unique key, re-read after a race); `permissions.py` (Contracts View sees, Edit changes; scoped
   users never). No email, phone, files, notes, health, or background data on an engineer (badges and immunizations are the vendor
   credentialing system's); never in an email, a digest, or a custom report
+- `apps/testequipment` the CE department's own test equipment and its calibration (slice 35, beyond the mock; DNV surveyors apply ISO
+  9001's control of measuring equipment, no US rule names it; Cadence never says a standard requires it, never "calibrated", "in date",
+  or "uncalibrated" as a status, never "instrument"): never an equipment.Asset (no fleet, PM, report, recall, portal, contract, or
+  evaluation figure counts it). `TestEquipment` (tag shared with the devices', `tag_key`; kind; make, model, serial; `Program`
+  calibration or verification; interval; status with its `Reason` and `status_since` (the day of the change) and `held_since` (out of
+  service: the day a passed certificate must be dated on or after to release it, the one release rule); held_by), `Calibration` (an outside provider's
+  certificate, judged by its own dates whenever entered; due_on null exactly when failed; one live record per item and day; entered in
+  error, never deleted), `ToleranceReview` (the decision on the work done with an item later found out of tolerance or failed: its basis,
+  its window and work orders frozen), `TestEquipmentUse` (with `used_on`, its own day); `rules.py` the one rule (`standing_on` and its
+  words, the entered-after disclosure, `window` / `window_q` on used_on, `counted_work_q` / `counted_uses_q` positive only, `offered`,
+  `usable_today`, `may_remove` / `kept` the kept-use rule on each use's day, `judge_uses` and the batch readers); `services.py` every write (add with an optional first certificate, update, set_status
+  by level, record_calibration with its due default and cap and status moves, mark_entered_in_error, decide_review on the list shown:
+  REVIEW_CHANGED) and the work order's side (check_uses / apply_uses, picker, judged_for); `permissions.py` (Equipment View sees; Edit adds,
+  edits, moves everyday status, records certificates; Decide: Work orders Approve with Equipment View, the review, entered in error, the
+  interval once a certificate is on file; Equipment Approve retires and reinstates; scoped users never; a work order's test equipment is
+  shown only with Equipment View)
 - `apps/evaluations` the medical equipment program's annual evaluation (slice 32, beyond the mock; The Joint Commission dropped the
   hospital requirement in 2026, DNV and ACHC still expect one: Cadence never says which accreditor requires it, and Met is the facility's
   own target): `ProgramEvaluation` (EV-<yy>-<nnnn> and a version; a 12-month period that has ended; draft -> ready ("Sent to committee":
@@ -292,7 +319,11 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   vendors.rules.evidence_for, a GAP per vendor with jobs nothing covers (never a person), a CHECK for manufacturer-schedule jobs naming no
   engineer; slice 34: each vendor's last review, and CHECKs for a review overdue, vendors under contract never reviewed, and a corrective
   plan past due; Reports, Work orders, Contracts, and Equipment View), incidents (slice 28, Incidents
-  View: decisions and reports against the clock; a held device past its PM is a finding, explained), staff (slice 30: `repairs`, the checks after repair before return to use, by outcome, never a gap; slice 29: inventory lists
+  View: decisions and reports against the clock; a held device past its PM is a finding, explained), testequipment (slice 35, "Test
+  equipment calibration", after repairs: the items, the period's certificates, the work done with test equipment past due, with none on
+  file, failed, or found out of tolerance later; GAPs for an item in use past due or with none, a review missing, work added since a
+  review; FINDINGs per item and stretch; CHECKs for work with readings naming none and as found not reported; Equipment and Work orders
+  View), staff (slice 30: `repairs`, the checks after repair before return to use, by outcome, never a gap; slice 29: inventory lists
   temporary equipment on site with each owner's PM date: a past one is a gap; the other sections count ours); read only, a fixed number
   of queries, history through `core.history._rows`, never requester text; each section needs Reports View plus its areas' View,
   `permissions.SURVEY_NEEDS` / `survey_refusal`; never in REPORTS, so never emailed)
@@ -312,6 +343,10 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `views_vendor_reviews.py` the Contracts screen's Reviews tab (slice 34, with
   `forms_vendor_reviews.py`: the vendors and their last reviews, New review, the review's page, its print, the contracted services
   summary print and its batch committee report; the contract drawer's review line),
+  `views_testequipment.py` the Equipment screen's Test equipment tab (slice 35, with `forms_testequipment.py`, `_equipment_tabs.html`,
+  `test_equipment.html` and `_te_*.html`: the list and its CSV, Add, the item's drawer with its status moves, Record calibration, entered
+  in error, the review box and Decide, Work done with it and its CSV, History), `views_wo_test_equipment.py` the work order's test
+  equipment (the completion modal's picker, the drawer's section and its Change, the print's line; Equipment View),
   `views_temporary.py` loaners and rentals (slice 29, with `forms_temporary.py`: Add rental or
   loaner, the drawer's temporary section (`asset_tabs.temporary_box`), Change details, Return to owner, Keep it, Vendor loaner arrived,
   Return the loaner; the Equipment "Whose" filter through `forms.equipment_assets`), `views_incidents.py` Incidents (slice 28, with
@@ -349,7 +384,9 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   label (null for a scoped user), `completion_checklist`'s `findings` / `found_on_pm` / `finding_required`, the transition's
   `repair_finding` (omitted keeps; a missing one names what to send), the `repair-finding` action; slice 32: `views_evaluations.py` /
   `serializers_evaluations.py` program evaluations, read only (the list without figures or text; by id or number, the figures cut to the
-  reader); slice 34: `views_vendor_reviews.py` / `serializers_vendor_reviews.py` vendor reviews, read only; serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
+  reader); slice 34: `views_vendor_reviews.py` / `serializers_vendor_reviews.py` vendor reviews, read only; slice 35:
+  `views_testequipment.py` / `serializers_testequipment.py` test equipment, read only, and a work order's `test_equipment` (Equipment View),
+  the transition's `test_equipment` (omitted keeps), the `test-equipment` action, destroy refused with uses; serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
   same thing and calls the same service; the API never imports apps.web. `tenancy.py` (`TenantAPIMixin`: the tenant from the session or
   token user, set after authentication and restored once the response is rendered), `authentication.py` (DRF's token check plus the
   deactivated-facility refusal sign-in has)
@@ -378,4 +415,6 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   back, a returned rental; slice 31: Philips engineers with training on the patient monitor model, one lapsed and named on the closed
   monitor repair, with no Philips attestation: the binder's deliberate vendor gap; TechCare's engineer and its attestation; slice 32: a
   draft program evaluation of the 12 months ending last month, made last, with no random draws; slice 34: a signed-off Philips review
-  for the 12 months ending yesterday with a corrective plan, made just before the program evaluation)
+  for the 12 months ending yesterday with a corrective plan, made just before the program evaluation; slice 35: an ESA per technician
+  named on their in-house work, a ProSim due soon, a defibrillator analyzer past due, an infusion analyzer found out of tolerance with no
+  review)
