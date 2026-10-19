@@ -326,6 +326,19 @@ def settings_pm_window(request):
     return toast(response, _pm_window_message(pm_windows.windows(before), pm_windows.windows(s), len(followed)))
 
 
+# --- the fiscal year (slice 36) -------------------------------------------------------------------------
+
+@require_POST
+@web_view(fac_perms.MODULE, fac_perms.EDIT_LEVEL)
+def settings_fiscal(request):
+    """Save the month the fiscal year starts (fs.update_settings: fiscal_year_start_month, 1 to 12). Answers with the panel as saved
+    (web/_settings_fiscal.html), a refused post with the refusal; nothing stored moves (the replacement outlook re-buckets).
+    (Wave 2 builds the panel.)"""
+    from django.core.exceptions import PermissionDenied
+
+    raise PermissionDenied  # scaffold: wave 2 builds the panel
+
+
 # --- taking work (slice 24) -----------------------------------------------------------------------------
 
 @require_POST

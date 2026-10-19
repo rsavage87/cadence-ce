@@ -314,7 +314,11 @@ LABELS = {
                               "list_cost": "List price", "pm_procedure": "PM procedure", "risk_function": "Risk: clinical function",
                               "risk_physical": "Risk: physical risk of failure", "risk_maintenance": "Risk: maintenance requirement",
                               "risk_incidents": "Risk: incident history", "risk_reviewed_on": "Risk reviewed",
-                              "oem_schedule_required": "Manufacturer's schedule required (CMS)"},
+                              "oem_schedule_required": "Manufacturer's schedule required (CMS)",
+                              # slice 36: the expected life's source and the manufacturer's support
+                              "life_source": "Expected life from", "sale_ended_on": "No longer sold from",
+                              "support_ends_on": "Manufacturer support ends", "parts_end_on": "Parts available until",
+                              "support_notice": "Manufacturer's notice", "support_checked_on": "Support checked"},
     "workorders.workorder": {"asset": "Device", "requester": "Requested by", "callback": "Callback", "vendor_name": "Vendor", "opened_on": "Opened",
                              "due_on": "Due", "started_on": "Started", "completed_on": "Completed", "estimated_hours": "Estimated time",
                              "alert": "Recall notice", "pm_result": "PM result", "checklist_results": "Checklist", "follow_up_of": "Follow-up of",
@@ -381,7 +385,8 @@ LABELS = {
                                   "pm_window_high": "PM on time, life support and high risk",
                                   "pm_window_high_days": "PM on time, life support and high risk: days after the due date",
                                   "pm_window_other": "PM on time, medium and low risk",
-                                  "pm_window_other_days": "PM on time, medium and low risk: days after the due date"},
+                                  "pm_window_other_days": "PM on time, medium and low risk: days after the due date",
+                                  "fiscal_year_start_month": "Fiscal year starts in"},
     "reports.customreport": {"group_by": "Grouped by", "sort": "Sorted by"},
     "tenants.tenant": {"slug": "Portal link name", "timezone": "Time zone", "is_active": "Can sign in"},
     "incidents.incident": {"asset": "Device", "work_order": "Investigation work order", "opened_work_order": "Work order opened by the incident",
@@ -410,7 +415,7 @@ KINDS = {
     "accounts.role": {"scope": "role_scope"},
     "facility.facilitysettings": {"target_pm_pct": "percent", "target_uptime_pct": "percent", "target_mttr_days": "days",
                                   "repair_budget_monthly": "money", "labor_rate": "rate", "vendor_labor_rate": "rate",
-                                  "pm_window_high_days": "days", "pm_window_other_days": "days"},
+                                  "pm_window_high_days": "days", "pm_window_other_days": "days", "fiscal_year_start_month": "month"},
     "reports.customreport": {"columns": "report_columns", "filters": "report_filters", "group_by": "report_group", "sort": "report_sort"},
     "tenants.tenant": {"timezone": "zone"},
     # Slice 31: a record's device models by name, never their ids; an attestation's vendor names as a list in words
@@ -672,6 +677,10 @@ def _kind_text(kind: str, value, rec) -> str:
         return _plural(value, "day", "days")
     if kind == "percent":
         return f"{_number(value)}%"
+    if kind == "month":  # slice 36: a month of the year by name ("July")
+        import calendar
+
+        return calendar.month_name[int(value)] if value and 1 <= int(value) <= 12 else str(value)
     if kind == "number":
         return _number(value)
     if kind.startswith("of_"):

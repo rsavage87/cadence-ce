@@ -14,6 +14,7 @@ urlpatterns = [
     path("time-zone/", v.settings_time_zone, name="settings_time_zone"),  # slice 21: the facility's time zone
     path("take-work/", v.settings_take, name="settings_take"),  # slice 24: whether technicians may take unassigned work
     path("pm-window/", v.settings_pm_window, name="settings_pm_window"),  # slice 27: when a PM counts as on time
+    path("fiscal-year/", v.settings_fiscal, name="settings_fiscal"),  # slice 36: the month the fiscal year starts
     # Slice 23: Import data (views_imports): the kinds and the runs, a kind's template, an upload, and one run's steps
     path("import/", imp.imports, name="imports"),
     path("import/template/<str:kind>.csv", imp.import_template, name="import_template"),

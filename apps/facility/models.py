@@ -84,6 +84,9 @@ class FacilitySettings(TenantModel):
                                                            blank=True)
     pm_window_other = models.CharField("PM on time, medium and low risk", max_length=20, choices=PmWindow.choices, default=PmWindow.DUE_DATE)
     pm_window_other_days = models.PositiveSmallIntegerField("PM on time, medium and low risk: days after the due date", null=True, blank=True)
+    # Slice 36: the month the facility's fiscal year starts (1 = January: the calendar year). A fiscal year is named by the calendar year it
+    # ends (start 7: FY2027 runs Jul 1, 2026 to Jun 30, 2027); apps.facility.fiscal.
+    fiscal_year_start_month = models.PositiveSmallIntegerField("Fiscal year starts in", default=1)
     history = HistoricalRecords()
 
     class Meta:
@@ -91,7 +94,9 @@ class FacilitySettings(TenantModel):
         verbose_name_plural = "facility settings"
         constraints = [models.UniqueConstraint(fields=["tenant"], name="uniq_facility_settings_per_tenant"),
                        models.CheckConstraint(condition=_window_days_rule("pm_window_high", "pm_window_high_days"), name="pm_window_high_days"),
-                       models.CheckConstraint(condition=_window_days_rule("pm_window_other", "pm_window_other_days"), name="pm_window_other_days")]
+                       models.CheckConstraint(condition=_window_days_rule("pm_window_other", "pm_window_other_days"), name="pm_window_other_days"),
+                       models.CheckConstraint(condition=models.Q(fiscal_year_start_month__gte=1, fiscal_year_start_month__lte=12),
+                                              name="fiscal_year_start_month")]
 
     def __str__(self):
         return "Facility settings"

@@ -21,6 +21,7 @@ from apps.recalls.models import AlertMatch
 from . import permissions
 from .models import (
     OWNER_REFERENCE_VALIDATOR,
+    SUPPORT_NOTICE_VALIDATOR,
     TAG_VALIDATOR,
     TEMPORARY,
     AddedAs,
@@ -28,6 +29,7 @@ from .models import (
     AssetStatus,
     Department,
     DeviceModel,
+    LifeSource,
     Ownership,
     ReturnCleaning,
     ReturnData,
@@ -424,6 +426,11 @@ def create_device_model(*, manufacturer, model, description, category, risk_clas
 
 MODEL_FIELDS = ("manufacturer", "model", "description", "category", "risk_class", "oem_pm_interval_months", "aem_interval_months",
                 "expected_life_years", "list_cost", "pm_procedure", "oem_schedule_required")
+# Slice 36: the expected life's source and the manufacturer's support, changed through update_device_model only (the model drawer's Record
+# support; never create_device_model, so Add device's and Add model's forms stay as they are).
+SUPPORT_FIELDS = ("life_source", "sale_ended_on", "support_ends_on", "parts_end_on", "support_notice", "support_checked_on")
+SUPPORT_DATES = ("sale_ended_on", "support_ends_on", "parts_end_on")
+UPDATE_MODEL_FIELDS = MODEL_FIELDS + SUPPORT_FIELDS
 _MODEL_TEXT = {"manufacturer": 120, "model": 120, "description": 200, "category": 80}
 
 
@@ -471,9 +478,88 @@ def _model_fields(raw: dict) -> dict:
             except ValidationError as e:
                 errors.update(e.message_dict)
         out["pm_procedure"] = raw["pm_procedure"]
+    _support_fields(raw, out, errors)  # slice 36
     if errors:
         raise ValidationError(errors)
     return out
+
+
+def _support_fields(raw: dict, out: dict, errors: dict) -> None:
+    """Slice 36: the life source (a choice, or blank: not recorded), the three support dates (a day or none, in any order: notices vary),
+    the notice's reference (a token), and the day support was checked (not after today)."""
+    if "life_source" in raw:
+        value = raw["life_source"] or ""
+        if value not in ("", *LifeSource.values):
+            errors["life_source"] = "Choose where the expected life comes from, or leave it not recorded."
+        out["life_source"] = value
+    for name in (*SUPPORT_DATES, "support_checked_on"):
+        if name not in raw:
+            continue
+        value = raw[name]
+        if value in (None, ""):
+            out[name] = None
+            continue
+        if isinstance(value, str):
+            try:
+                value = date.fromisoformat(value.strip())
+            except ValueError:
+                errors[name] = "Enter a day."
+                continue
+        if not isinstance(value, date) or isinstance(value, datetime):
+            errors[name] = "Enter a day."
+            continue
+        if name == "support_checked_on" and value > timezone.localdate():
+            errors[name] = "The day support was checked cannot be after today."
+        out[name] = value
+    if "support_notice" in raw:
+        text = (raw["support_notice"] or "").strip() if isinstance(raw["support_notice"], str) or raw["support_notice"] is None else None
+        if text is None:
+            errors["support_notice"] = "Enter the notice's reference."
+        elif text:
+            try:
+                SUPPORT_NOTICE_VALIDATOR(text)
+            except ValidationError as e:
+                errors["support_notice"] = e.messages[0]
+            if len(text) > 40:
+                errors["support_notice"] = "Keep the reference to 40 characters."
+        out["support_notice"] = text or ""
+
+
+@dataclass(frozen=True)
+class SupportStatus:
+    """A model's manufacturer support on a day (support_status): `key` (parts_ended, support_ended, sale_ended, announced, supported, or
+    unknown), the priority rule's value for it (0 to 1, None when unknown), and the words every door shows."""
+    key: str
+    value: float | None
+    words: str
+
+
+SUPPORT_VALUES = {"parts_ended": 1.0, "support_ended": 0.8, "sale_ended": 0.4, "announced": 0.2, "supported": 0.0}
+SUPPORT_CHECK_DAYS = 365  # "supported" only when support was checked within this many days and no end is announced
+
+
+def support_status(dm, today: date) -> SupportStatus:
+    """The model's manufacturer support on `today` (slice 36; apps.capital.priority's supportability, the model drawer's words): the
+    latest milestone passed decides (parts no longer available, support ended, sale ended); an end announced for a later day reads it; none
+    announced and checked within SUPPORT_CHECK_DAYS reads supported; else not checked (unknown)."""
+    fmt = _day
+    passed = [(d, key) for d, key in ((dm.parts_end_on, "parts_ended"), (dm.support_ends_on, "support_ended"), (dm.sale_ended_on, "sale_ended"))
+              if d is not None and d <= today]
+    if passed:
+        order = {"parts_ended": 0, "support_ended": 1, "sale_ended": 2}
+        day, key = sorted(passed, key=lambda p: order[p[1]])[0]  # the gravest milestone passed decides
+        words = {"parts_ended": f"Parts no longer available since {fmt(day)}", "support_ended": f"Manufacturer support ended {fmt(day)}",
+                 "sale_ended": f"No longer sold since {fmt(day)}"}[key]
+        return SupportStatus(key, SUPPORT_VALUES[key], words)
+    future = [(d, label) for d, label in ((dm.support_ends_on, "Support ends"), (dm.parts_end_on, "Parts available until"),
+                                          (dm.sale_ended_on, "Sale ends")) if d is not None]
+    if future:
+        day, label = min(future)
+        return SupportStatus("announced", SUPPORT_VALUES["announced"], f"{label} {fmt(day)}")
+    if dm.support_checked_on is not None and (today - dm.support_checked_on).days <= SUPPORT_CHECK_DAYS:
+        return SupportStatus("supported", SUPPORT_VALUES["supported"], f"Supported, checked {fmt(dm.support_checked_on)}")
+    return SupportStatus("unknown", None, "Support not checked" if dm.support_checked_on is None
+                         else f"Support last checked {fmt(dm.support_checked_on)}")
 
 
 # CMS (S&C 14-07) keeps imaging, radiologic, and medical laser equipment on the manufacturer's schedule: whether a model is such
@@ -510,7 +596,7 @@ def update_device_model(device_model: DeviceModel, *, by=None, **fields) -> Devi
     Setting or clearing oem_schedule_required needs Equipment Approve from `by` (PermissionDenied otherwise; sending back the
     current value is fine). Marking a model on AEM ends its AEM and brings its devices' next PMs in (apps.pm.aem.model_changed, as
     for life support); clearing the mark changes no interval: AEM is proposed and approved again."""
-    unknown = set(fields) - set(MODEL_FIELDS)
+    unknown = set(fields) - set(UPDATE_MODEL_FIELDS)
     if unknown:
         raise ValidationError(f"These cannot be changed here: {', '.join(sorted(unknown))}.")
     cleaned = _model_fields(fields)

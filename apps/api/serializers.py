@@ -517,4 +517,5 @@ class FacilitySettingsSerializer(serializers.Serializer):
     pm_window_high_days = serializers.IntegerField(required=False, allow_null=True)
     pm_window_other = serializers.CharField(required=False, allow_blank=True)
     pm_window_other_days = serializers.IntegerField(required=False, allow_null=True)
+    fiscal_year_start_month = serializers.IntegerField(required=False)  # slice 36: 1 (January) to 12; the service checks it
     updated_at = serializers.DateTimeField(read_only=True, allow_null=True)

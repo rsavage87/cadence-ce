@@ -51,7 +51,9 @@ WINDOW_GROUPS = {"high": ("pm_window_high", "pm_window_high_days"), "other": ("p
 WINDOW_KINDS = tuple(kind for kind, _days in WINDOW_GROUPS.values())
 WINDOW_DAYS = tuple(days for _kind, days in WINDOW_GROUPS.values())
 WINDOW_FIELDS = WINDOW_KINDS + WINDOW_DAYS
-EDITABLE = PORTAL_FIELDS + POLICY_FIELDS + TARGET_FIELDS + RATE_FIELDS + TAKE_FIELDS + WINDOW_FIELDS
+# Slice 36: the fiscal year's first month (apps.facility.fiscal).
+FISCAL_FIELDS = ("fiscal_year_start_month",)
+EDITABLE = PORTAL_FIELDS + POLICY_FIELDS + TARGET_FIELDS + RATE_FIELDS + TAKE_FIELDS + WINDOW_FIELDS + FISCAL_FIELDS
 TOGGLES = ("portal_require_callback", "technicians_take_work")  # on or off, and nothing else
 
 # (field, label, low, high): the ranges a target may take. Life support and high risk PM stay at 100% (survey rule).
@@ -207,6 +209,8 @@ def _clean(fields: dict) -> dict:
             cleaned[field] = value
         elif field in WINDOW_DAYS:
             cleaned[field] = _window_days(value, field, errors)
+        elif field in FISCAL_FIELDS:
+            cleaned[field] = _month(value, field, errors)
         elif field in RATE_FIELDS:
             d = _decimal(value, field, errors)
             label = RATE_LABELS[field]
@@ -226,6 +230,18 @@ def _clean(fields: dict) -> dict:
     if errors:
         raise ValidationError(errors)
     return cleaned
+
+
+def _month(value, field: str, errors: dict):
+    """A month as a whole number, 1 (January) to 12: never True, 7.5, or "July"."""
+    text = value.strip() if isinstance(value, str) else ""
+    if isinstance(value, bool) or not (isinstance(value, int) or (text.isascii() and text.isdecimal() and len(text) <= 2)):
+        errors[field] = "Choose the month the fiscal year starts in."
+        return None
+    month = int(value)
+    if not 1 <= month <= 12:
+        errors[field] = "Choose the month the fiscal year starts in."
+    return month
 
 
 def _window_days(value, field: str, errors: dict):

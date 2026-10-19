@@ -228,6 +228,16 @@ def model_edit(request, pk):
     return _saved(request, dm, f"{dm} updated" + mark_toast(dm, was_marked))
 
 
+@web_view(pm_perms.MODULE, pm_perms.VIEW_LEVEL)
+def model_support(request, pk):
+    """Slice 36, Record support: the model's expected life source and the manufacturer's support (sale ended, support ends, parts
+    available until, the notice's reference, the day CE checked) through update_device_model. Equipment Edit; checked on defaults to
+    today. (Wave 2: the modal, web/_model_support.html.)"""
+    _require(eq_perms.can_edit_model(request.user))
+    get_model(pk)
+    raise PermissionDenied  # scaffold: wave 2 builds the modal
+
+
 def _risk_modal(request, dm, form):
     if form.is_bound:
         form.focus_first_error()

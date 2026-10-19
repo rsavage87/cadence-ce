@@ -11,6 +11,7 @@ urlpatterns = [
     path("models/<uuid:pk>/", views_models.model_detail, name="pm_model"),
     path("models/<uuid:pk>/edit/", views_models.model_edit, name="pm_model_edit"),
     path("models/<uuid:pk>/risk/", views_models.model_risk, name="pm_model_risk"),
+    path("models/<uuid:pk>/support/", views_models.model_support, name="pm_model_support"),  # slice 36: Record support
     # part D: procedures (views_procedures)
     path("models/<uuid:pk>/procedure/", views_procedures.model_procedure, name="pm_model_procedure"),
     path("procedures/new/", views_procedures.procedure_new, name="pm_procedure_new"),

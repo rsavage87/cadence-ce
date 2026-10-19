@@ -81,6 +81,8 @@ TAG_VALIDATOR = RegexValidator(r"^[^\s/]+$", "Asset tags cannot contain spaces o
 # Slice 29: a temporary device's agreement, PO, or RMA number. A token (no spaces): specialty beds are rented for one patient, and a
 # free-text box there invites a name or a room (CLAUDE.md non-negotiable 6).
 OWNER_REFERENCE_VALIDATOR = reference_token("Enter the agreement, PO, or RMA number as the owner's paperwork shows it, without spaces.")
+# Slice 36: the manufacturer's end-of-sale or end-of-support notice, by its reference (a token: never a name or free text).
+SUPPORT_NOTICE_VALIDATOR = reference_token("Enter the notice's reference as the manufacturer's letter shows it, without spaces.")
 
 
 class Department(TenantModel):
@@ -93,6 +95,14 @@ class Department(TenantModel):
 
     def __str__(self):
         return self.name
+
+
+class LifeSource(models.TextChoices):
+    """Where a model's expected life comes from (slice 36): blank is "not recorded" (the default 8 a model is added with, or an import's)."""
+    AHA = "aha", "AHA estimated useful lives"
+    ECRI = "ecri", "ECRI"
+    MANUFACTURER = "manufacturer", "The manufacturer"
+    OWN_HISTORY = "own_history", "Our own history"
 
 
 class DeviceModel(TenantModel):
@@ -121,6 +131,16 @@ class DeviceModel(TenantModel):
     # AEM interval (slice 18; apps.pm.aem refuses them, as it refuses life support). The facility marks which models these are.
     oem_schedule_required = models.BooleanField(default=False, help_text="Imaging, radiologic, or medical laser equipment: CMS requires the "
                                                 "manufacturer's maintenance schedule, so it never goes on AEM")
+    # Slice 36, the replacement priority (apps.capital.priority): where the expected life comes from, and the manufacturer's support as
+    # its notice states it (any of the three dates, in any order; none announced and checked recently reads supported). Written only by
+    # equipment.services.update_device_model (the model drawer's Record support; never Add device or Add model).
+    life_source = models.CharField(max_length=20, choices=LifeSource.choices, blank=True, help_text="Blank: not recorded")
+    sale_ended_on = models.DateField(null=True, blank=True, help_text="The manufacturer stopped selling it")
+    support_ends_on = models.DateField(null=True, blank=True, help_text="The manufacturer's service support ends")
+    parts_end_on = models.DateField(null=True, blank=True, help_text="Parts are available until")
+    support_notice = models.CharField(max_length=40, blank=True, validators=[SUPPORT_NOTICE_VALIDATOR],
+                                      help_text="The manufacturer's notice, by its reference")
+    support_checked_on = models.DateField(null=True, blank=True, help_text="The day CE last confirmed the support status with the manufacturer")
     history = HistoricalRecords()
 
     class Meta:
