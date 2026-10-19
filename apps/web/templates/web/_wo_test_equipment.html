@@ -1,0 +1,20 @@
+{% load web %}
+{% comment %}The drawer's Change of the test equipment a completed or closed work order recorded (slice 35,
+   views_wo_test_equipment.wo_test_equipment): the completion modal's picker (web/_wo_test_equipment_picker.html), each option as it
+   stood on the day of the work, posting to workorders.services.set_test_equipment. A work order that is open, cancelled, not one that
+   records test equipment, or closed for a user without Approve gets the reason instead of the form.{% endcomment %}
+<div class="modal-h"><h2>Test equipment on {{ wo.number }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="wt-form" class="wt-form" hx-post="{% url 'web:wo_test_equipment' wo.number %}" hx-target="#modal-card" hx-sync="this:drop" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    <p class="full wc-title"><strong>{{ asset.tag }}</strong> · {{ dm.description }}, {{ dm.manufacturer }} {{ dm.model }}<br><span class="muted">{{ wo.get_type_display }}{% if wo.vendor_service %} · {{ wo.vendor_name|default:"Vendor" }}{% elif wo.assigned_to %} · {{ wo.assigned_to.name }}{% endif %}{% if wo.completed_on %} · completed {{ wo.completed_on|date:"M j, Y" }}{% endif %}</span></p>
+    {% if form.non_field_errors %}<div class="full"><span class="err">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    {% include "web/_wo_test_equipment_picker.html" %}
+    <p class="full hint wt-audit">{% if recorded %}The change is kept in the work order's history.{% else %}Recorded after completion: the work order's history says so.{% endif %}</p>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Save</button></div>
+</form>
+{% endif %}

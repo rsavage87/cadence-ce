@@ -83,6 +83,15 @@ who sees the whole facility, and a scoped user never sees it (their blank keeps 
 facility" with no select). Refusals come back keyed repair_finding with the rest, the values kept; Mark the rest pass keeps the choice;
 My work's Complete is this modal. results_context carries the drawer's "What was found" row (views_wo_finding.drawer_context, under
 "what_found": a user who sees the whole facility only), and a reopened repair's note names the finding it keeps for that user.
+
+Slice 35, the test equipment used (apps.testequipment; views_wo_test_equipment): "Test equipment used (optional)" right after the steps
+(also on a type or a procedure with none), only where rules.offered holds and the facility has test equipment to offer
+(views_wo_test_equipment.offer, read once in _setup): Yours first, then Other test equipment by kind, collapsed; each with its standing
+judged today; nothing ticked for the user but what the work order already recorded (kept ones ticked and disabled, posted through hidden
+inputs); the hidden marker shown_test_equipment (forms_wo_complete: absent keeps, shown with none ticked clears). On a repair it hides
+with Checked by the vendor, and the ticks are dropped then. A refusal comes back keyed test_equipment with the rest, the ticks kept and
+the first box focused when it is the first error; Mark the rest pass keeps every tick. Keep open records none (completion.keep_open).
+results_context carries the drawer's "Test equipment" section (views_wo_test_equipment.drawer_context, under "test_equipment_row").
 """
 import copy
 
@@ -101,7 +110,7 @@ from apps.workorders import permissions as wo_perms
 from apps.workorders import services as wo_services
 from apps.workorders.models import OPEN_STATUSES, InspectionResult, PmResult, RepairCheck, ServiceRequest, Source, WoStatus, WoType
 
-from . import views_wo_engineer, views_wo_finding, views_wo_late
+from . import views_wo_engineer, views_wo_finding, views_wo_late, views_wo_test_equipment
 from .decorators import web_view
 from .forms_wo_complete import STEP_CHOICES, CompleteForm
 from .htmx import toast
@@ -143,7 +152,8 @@ def results_context(request, wo) -> dict:
     Slice 30: a repair's checks after it (kind "repair"): its outcome, who checked (repair_checks.checked_by: the vendor on vendor
     service, else the technician assigned) and when, the steps as recorded or the vendor's report number; `unrecorded` words a repair
     completed with no outcome (before slice 30, or imported). Slice 33: the drawer's "What was found" row (views_wo_finding, under
-    "what_found"), and a reopened repair's finding (`finding`) for a user who sees the whole facility."""
+    "what_found"), and a reopened repair's finding (`finding`) for a user who sees the whole facility. Slice 35: the "Test equipment"
+    section (views_wo_test_equipment.drawer_context, under "test_equipment_row")."""
     is_pm, is_inspection, is_repair = wo.type == WoType.PM, wo.type == WoType.INSPECTION, wo.type == WoType.REPAIR
     follow_up_of = wo.follow_up_of if wo.follow_up_of_id else None
     result = wo.inspection_result if is_inspection else wo.pm_result if is_pm else wo.repair_check if is_repair else ""
@@ -179,7 +189,8 @@ def results_context(request, wo) -> dict:
         "follow_up_of": follow_up_of if follow_up_of is not None and scoping.can_see_work_order(request.user, follow_up_of) else None,
         "follow_up_of_kind": "incoming inspection" if follow_up_of is not None and follow_up_of.type == WoType.INSPECTION else "PM",
     }, **views_wo_late.late_context(request, wo),  # slice 25: the "Why late" row (web/_wo_late.html), under "why_late"
-        **views_wo_finding.drawer_context(request, wo)}  # slice 33: the "What was found" row (web/_wo_finding_row.html), under "what_found"
+        **views_wo_finding.drawer_context(request, wo),  # slice 33: the "What was found" row (web/_wo_finding_row.html), under "what_found"
+        **views_wo_test_equipment.drawer_context(request, wo)}  # slice 35: web/_wo_test_equipment_row.html, under "test_equipment_row"
 
 
 # --- the modal -----------------------------------------------------------------------------------------------------------------
@@ -400,7 +411,8 @@ def _form_kwargs(wo, steps, offers, hours, late) -> dict:
             "is_repair": wo.type == WoType.REPAIR, "repair_default": offers.get("repair_default", ""),  # slice 30
             "offer_engineer": offers.get("engineer_select") is not None, "engineer_initial": offers.get("engineer_initial", ""),  # slice 31
             "offer_reference": offers.get("offer_reference", False), "reference_initial": offers.get("reference_initial", ""),
-            "finding_initial": (offers.get("finding_select") or {}).get("initial", "")}  # slice 33
+            "finding_initial": (offers.get("finding_select") or {}).get("initial", ""),  # slice 33
+            "offer_test_equipment": offers.get("te_picker") is not None}  # slice 35
 
 
 def _late(request, wo, today) -> dict:
@@ -473,6 +485,10 @@ def _modal(request, wo, form=None, *, steps=(), offers=None, hours=None, late=No
         # Slice 33: what the repair found, as the form holds it
         "finding": (views_wo_finding.picked((offers or {})["finding_select"], form, "wc")
                     if form is not None and (offers or {}).get("finding_select") is not None and "repair_finding" in form.fields else None),
+        # Slice 35: the test equipment used, as the form holds it (judged today)
+        "te": (views_wo_test_equipment.picked((offers or {})["te_picker"], form, prefix="wc",
+                                              vendor_report=(offers or {}).get("offer_vendor_report", False))
+               if form is not None and (offers or {}).get("te_picker") is not None and "test_equipment" in form.fields else None),
     })
     if reason and from_my_work(request):  # review fix: a card offered a move the work order no longer allows; the list is behind
         trigger_client_event(response, "wo-changed", {})
@@ -585,7 +601,8 @@ def _kept(request, wo, kept):
 def _setup(request, wo, today) -> tuple:
     """The modal's parts for `wo` today: its checklist's steps, the offers, the hours box, the late reason, and the form's kwargs."""
     steps = completion.checklist_of(completion.procedure_for(wo))
-    offers = {**_offers(wo, request.user, today), **_vendor_offers(wo, request.user, today)}  # slice 31: who did the vendor's work
+    offers = {**_offers(wo, request.user, today), **_vendor_offers(wo, request.user, today),  # slice 31: who did the vendor's work
+              "te_picker": views_wo_test_equipment.offer(wo, request.user, today)}  # slice 35: None where it records none
     hours = _hours(request, wo)
     late = _late(request, wo, today)  # slice 25
     return steps, offers, hours, late, _form_kwargs(wo, steps, offers, hours, late)
