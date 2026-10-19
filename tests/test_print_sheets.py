@@ -307,7 +307,7 @@ DISTINCT = {  # text only that report's partial prints, even for a small fleet w
     "cosr": "Red marker: 6% benchmark midpoint.",
     "compliance": "Compliance here means the share of active devices whose PM is not past due today.",
     "mtbf": "No repairs opened in the last 6 months.",
-    "replace": "Score weighs age against expected life (50%)",
+    "replace": "Score v2: age 30, support 25, failures 20, service cost 15, recall 10",
     "spend": "Repair work orders only; PM labor and service contracts are excluded.",
     "contract": "Contract cost is the annual cost of contracts that have not ended",
     "tech": "Vendor-performed work is excluded.",

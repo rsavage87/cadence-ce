@@ -201,7 +201,7 @@ def test_the_email_says_what_it_is_and_carries_the_screens_csv(client, ctx, tena
     assert mail.to == ["kim@riverside.example"] and mail.subject == "Replacement planning · Riverside Regional · Oct 5, 2026"
     body = mail.body
     assert body.startswith("Hello Kim,") and "Riverside Regional · as of October 5, 2026" in body
-    assert "Devices scoring highest on age, failures, and condition" in body
+    assert "Devices our rule ranks for replacement: support, failures, service cost, age, recalls" in body
     assert "attached as cadence-replace-2026-10-05.csv (2 rows)" in body
     # slice 22: each link names its facility, as a person may work in several
     assert f"{APP}/print/reports/replace/?facility=riverside\n" in body and f"{APP}/reports/replace/?facility=riverside\n" in body

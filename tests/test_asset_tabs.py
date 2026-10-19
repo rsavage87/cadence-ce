@@ -7,15 +7,16 @@ from decimal import Decimal
 import pytest
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
+from django.utils import timezone
 
 from apps.accounts.models import Level, Module, Role, User
+from apps.capital import priority
 from apps.contracts import services as ct_services
 from apps.credentials.models import Credential, Scope, Technician
 from apps.equipment import services as eq_services
 from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, RiskClass
 from apps.pm.dates import add_months
 from apps.pm.models import PmProcedure
-from apps.reports.fleet import replacement_score
 from apps.tenants.context import tenant_context
 from apps.web import asset_tabs
 from apps.workorders.models import LaborLine, PartLine, WoStatus, WoType
@@ -423,58 +424,57 @@ def test_a_retired_device_has_no_contract_share(ctx, vent):
 
 
 # --- replacement outlook ------------------------------------------------------------------------------------------------------
+# Slice 36: the replacement priority rule (apps.capital.priority.for_asset), the one the Replacement planning report ranks by; its body
+# is pinned in tests/test_capital_priority.py. Here: what the Costs tab says of it.
 
 
 def years_ago(n: float) -> date:
     return date.today() - timedelta(days=round(n * 365.25))
 
 
-def test_replacement_note_for_a_device_with_life_left(ctx, vent):
+def test_the_outlook_is_the_rules_priority_for_the_device(ctx, vent):
     o = asset_tabs.costs_tab(vent)["costs"]["outlook"]
-    age = vent.age_years()
-    score = round(replacement_score(age, 10, 0, 3) * 100)
-    assert o["score_pct"] == score
-    assert o["note"] == (f"About {10 - age:.1f} years of its 10-year expected life remaining. Replacement score {score} of 100, from age, "
-                         "no repairs in the last 6 months, and condition 3 of 5. No replacement action needed.")
+    p = o["priority"]
+    assert p == priority.for_asset(vent, timezone.localdate())  # the same figures the report ranks by
+    # support never checked; failures and cost: no work order in Cadence yet, too little history
+    assert o["score_pct"] == p.score and o["points_unknown"] == p.points_unknown == 60
+    assert o["version"] == priority.version_words() and [c.key for c in o["components"]] == list(priority.COMPONENTS)
+    assert o["suggested"] == f"Suggested for FY{p.suggested_fy}" and o["flags"] == []
+    assert o["note"].startswith(f"Replacement score {p.score} of 100, 60 points unknown. Suggested for FY{p.suggested_fy}.")
+    assert o["note"].endswith(f"Estimated replacement $38,000 (list price, set {timezone.localdate():%b} {timezone.localdate().day}, "
+                              f"{timezone.localdate().year}).")
 
 
-def test_replacement_note_past_and_near_expected_life(ctx, vent):
+def test_the_outlook_names_its_drivers_flags_and_the_current_fiscal_year_when_it_must_act(client, signed_in, vent):
+    today = date.today()
     vent.installed_on = years_ago(12)
     vent.save()
-    note = asset_tabs.costs_tab(vent)["costs"]["outlook"]["note"]
-    assert note.startswith("Past its 10-year expected life by 2.0 years.") and note.endswith("A replacement candidate; estimated replacement $39,900.")
-    vent.installed_on = years_ago(9)
-    vent.save()
-    note = asset_tabs.costs_tab(vent)["costs"]["outlook"]["note"]
-    assert note.startswith("Within 1.0 years of the end of its 10-year expected life.")
-    assert note.endswith("Flag it for the next capital cycle; estimated replacement $39,900.")
-
-
-def test_replacement_note_counts_recent_repairs_and_flags_a_young_device_in_poor_shape(client, signed_in, vent):
-    today = date.today()
+    eq_services.update_device_model(vent.device_model, parts_end_on=today - timedelta(days=1), support_checked_on=today)
     for days in (10, 40, 90):
-        work_order(vent, type=WoType.REPAIR, opened=today - timedelta(days=days))
-    cancelled = work_order(vent, type=WoType.REPAIR, opened=today - timedelta(days=20))
-    change_status(cancelled, WoStatus.CANCELLED)  # not a failure
-    work_order(vent, type=WoType.REPAIR, opened=today - timedelta(days=200))  # outside the six months
-    vent.condition = 1
-    vent.save()
+        completed(vent, today - timedelta(days=days), type=WoType.REPAIR)
     o = asset_tabs.costs_tab(vent)["costs"]["outlook"]
-    assert o["repairs"] == 3 and o["score_pct"] == round(replacement_score(vent.age_years(), 10, 3, 1) * 100) and o["score_pct"] >= 50
-    assert "3 repairs in the last 6 months, and condition 1 of 5. Repairs and condition score it high for its age; review its repair history." in o["note"]
+    p = o["priority"]
+    assert o["flags"] == [{"key": "parts_ended", "words": "Parts no longer available", "kind": "crit"}]
+    assert [c.key for c in o["drivers"]] == ["support", "age"] and p.must_act
+    assert "Driven most by manufacturer support (25.0 points) and age against expected life (24.0 points)." in o["note"]
     signed_in("technician")
-    assert "Replacement score " + str(o["score_pct"]) + " of 100" in tab(client, vent, "costs").content.decode()
+    body = tab(client, vent, "costs").content.decode()
+    assert '<span class="chip crit">Parts no longer available</span>' in body and "How it is scored" in body
+    assert priority.version_words() in body and f"Replacement score {p.score} of 100" in body
+    assert "Parts no longer available since" in body and "life source not recorded" in body
 
 
-def test_replacement_note_without_an_install_date_or_a_list_price(ctx, dept):
+def test_the_outlook_says_why_a_device_is_not_ranked(ctx, dept):
     model = DeviceModel.objects.create(manufacturer="Acme", model="A1", description="Suction pump", category="Suction", expected_life_years=8, list_cost=0)
     asset = Asset.objects.create(tag="CE-30000", device_model=model, department=dept, acquisition_cost=1000, next_pm_on=date.today())
-    note = asset_tabs.costs_tab(asset)["costs"]["outlook"]["note"]
-    assert note.startswith("No install date on file, so its age against its 8-year expected life is unknown.")
+    o = asset_tabs.costs_tab(asset)["costs"]["outlook"]
+    assert "Not ranked: no install date." in o["note"] and o["suggested"] == "Not placed"
+    assert o["note"].endswith("Estimated replacement $1,000 (acquisition cost, year unknown: a historical price).")
     asset.installed_on = years_ago(9)
     asset.save()
-    note = asset_tabs.costs_tab(asset)["costs"]["outlook"]["note"]
-    assert note.endswith("A replacement candidate; estimated replacement $1,050 (from its acquisition cost; the model has no list price).")
+    o = asset_tabs.costs_tab(asset)["costs"]["outlook"]
+    assert "Not ranked" not in o["note"] and o["priority"].ranked
+    assert o["note"].endswith(f"Estimated replacement $1,000 (acquisition cost, {asset.installed_on.year}: a historical price).")
 
 
 # --- bounded queries --------------------------------------------------------------------------------------------------------
@@ -536,7 +536,8 @@ def test_the_costs_tab_runs_the_same_queries_for_one_work_order_or_many(client, 
     asset = Asset.objects.select_related("device_model", "contract").get(pk=vent.pk)
     with CaptureQueriesContext(connection) as q:
         asset_tabs.costs_tab(asset)
-    assert len(q.captured_queries) <= 4  # labor by year, parts by year, the contract's covered devices, recent repairs
+    # labor by year, parts by year, the contract's covered devices; the replacement priority's fixed queries and Settings (its fiscal year)
+    assert len(q.captured_queries) == 3 + priority.QUERIES + 1
 
 
 # --- tenant isolation -------------------------------------------------------------------------------------------------------
@@ -557,7 +558,8 @@ def test_another_tenants_work_orders_are_never_counted(ctx, tenant, other_tenant
     PartLine.unscoped.create(tenant=other_tenant, work_order=ours, description="Not ours", quantity=1, unit_cost=9999)
 
     c = asset_tabs.costs_tab(vent)["costs"]
-    assert c["total"] == 100.0 and c["by_year"][today.year] == 100.0 and c["outlook"]["repairs"] == 0
+    assert c["total"] == 100.0 and c["by_year"][today.year] == 100.0
+    assert c["outlook"]["priority"].window_start == today and c["outlook"]["failures"] is None  # their history never opens our window
     history = asset_tabs.pm_tab(vent)["pm"]["history"]
     assert [h["wo"].number for h in history] == [ours.number] and history[0]["hours"] == Decimal("1.00")
 

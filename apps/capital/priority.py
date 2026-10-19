@@ -209,14 +209,306 @@ def scored_assets():
 
 def score_assets(qs, today: date, start: int | None = None) -> list[Priority]:
     """Each device of `qs` (narrowed to scored_assets) scored on `today`, in a fixed number of queries; `start` the fiscal year's start
-    month (read from Settings once when None). Unordered: rank() orders them."""
-    raise NotImplementedError
+    month (read from Settings once when None). Unordered: rank() orders them.
+
+    QUERIES of them whatever the fleet's size (a test pins it): the devices with their models, departments, and latest completed repair's
+    checks; the facility's first work order day; the failures; labor; parts; the live contracts' covered acquisition cost; the recall
+    matches; the devices' completed recall work; the models' list price history; and Settings when `start` is None. Every input is read
+    for the whole fleet in grouped queries over the earliest window any device can have, then narrowed per device in Python. Each query
+    filters on the devices as a subquery, so none is ever skipped (an empty IN list is), and the count never depends on the data."""
+    if start is None:
+        from apps.facility.fiscal import start_month
+
+        start = start_month()
+    devices = scored_assets().filter(pk__in=qs.values("pk"))
+    assets = _devices(devices)
+    inputs = _read(devices, today)
+    return [_score(a, today, start, inputs) for a in assets]
 
 
 def for_asset(asset, today: date, start: int | None = None) -> Priority | None:
     """One device's priority (the drawer's outlook): score_assets for that device; None when the rule does not score it (not ours, or
-    not in use)."""
-    raise NotImplementedError
+    not in use). A device the copy in hand shows is not scored costs no query."""
+    from apps.equipment.models import Asset, Ownership
+
+    if getattr(asset, "ownership", Ownership.OWNED) != Ownership.OWNED or asset.status not in Asset.ACTIVE_STATUSES:
+        return None
+    found = score_assets(Asset.objects.filter(pk=asset.pk), today, start)
+    return found[0] if found else None
+
+
+QUERIES = 9  # score_assets' queries with `start` given; one more (Settings) without it
+
+
+# --- reading the inputs ----------------------------------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _Inputs:
+    first_day: date | None  # the facility's first work order (imported ones included), None before any
+    failures: dict  # asset id: [(opened_on, recorded, imported, still open)], failures opened in the earliest window
+    spent: dict  # asset id: [(completed_on, vendor_service, amount)], labor and parts of work completed in the earliest window
+    contracts: dict  # live contract id: (annual cost, the acquisition cost of the devices it covers)
+    matches: dict  # device model id: [(alert id, status, Class I)], confirmed or under review
+    recalls_done: set  # (asset id, alert id): the device's own recall work order completed
+    list_set_on: dict  # device model id: (the day its list price was last set, that price), from its history
+
+
+def _done():
+    from apps.workorders.models import WoStatus
+
+    return (WoStatus.COMPLETED, WoStatus.CLOSED)
+
+
+def _devices(devices) -> list:
+    """Query 1: the devices with their models and departments, and the checks after their latest completed repair (repair_check)."""
+    from django.db.models import OuterRef, Subquery
+
+    from apps.workorders.models import WorkOrder, WoType
+
+    latest = (WorkOrder.objects.filter(asset=OuterRef("pk"), type=WoType.REPAIR, status__in=_done(), completed_on__isnull=False)
+              .order_by("-completed_on", "-created_at").values("repair_check")[:1])
+    return list(devices.select_related("device_model", "department").annotate(latest_repair_check=Subquery(latest)))
+
+
+def _read(devices, today: date) -> _Inputs:
+    """Queries 2 to 9: every other input, for the whole fleet at once, over the earliest window any device can have."""
+    from django.db.models import BooleanField, Case, DecimalField, Min, Q, Sum, Value, When
+
+    from apps.contracts.models import Contract
+    from apps.core.days import local_day
+    from apps.core.history import _rows
+    from apps.equipment.models import AssetStatus, DeviceModel
+    from apps.pm.dates import add_months
+    from apps.recalls.models import AlertMatch
+    from apps.reports.survey.recalls import is_class_one
+    from apps.workorders import findings
+    from apps.workorders.models import LABOR_AMOUNT, OPEN_STATUSES, PART_AMOUNT, LaborLine, PartLine, Source, WorkOrder, WoType
+
+    ids = devices.values("pk")
+    earliest = add_months(today, -WINDOW_MONTHS)
+    done = _done()
+
+    # 2. The facility's first work order in Cadence (imported history included): no window starts before it
+    first_day = WorkOrder.objects.aggregate(d=Min("opened_on"))["d"]
+
+    # 3. Failures (findings.failure_q; never a cancelled repair) by the day they were opened, with whether a finding is recorded (only a
+    # completed repair has one: an open repair is being worked on again) and whether the repair was imported ("not recorded then")
+    recorded = Case(When(findings.recorded_q() & Q(status__in=done), then=Value(True)), default=Value(False), output_field=BooleanField())
+    failures: dict = {}
+    for asset_id, opened_on, rec, source, status in (
+            WorkOrder.objects.filter(findings.failure_q(), asset__in=ids, opened_on__gte=earliest, opened_on__lte=today,
+                                     status__in=(*OPEN_STATUSES, *done))
+            .annotate(recorded=recorded).order_by().values_list("asset_id", "opened_on", "recorded", "source", "status")):
+        failures.setdefault(asset_id, []).append((opened_on, bool(rec), source == Source.IMPORTED, status in OPEN_STATUSES))
+
+    # 4, 5. Labor and parts (each line to the cent) of work completed in the window, never a recall's (the manufacturer's correction)
+    money = DecimalField(max_digits=14, decimal_places=2)
+    cost_types = [t for t in WoType.values if t != WoType.RECALL]
+    lines = {"work_order__asset__in": ids, "work_order__completed_on__gte": earliest, "work_order__completed_on__lte": today,
+             "work_order__status__in": done, "work_order__type__in": cost_types}
+    spent: dict = {}
+    for model, amount in ((LaborLine, LABOR_AMOUNT), (PartLine, PART_AMOUNT)):
+        for row in (model.objects.filter(**lines).order_by()
+                    .values("work_order__asset", "work_order__completed_on", "work_order__vendor_service").annotate(v=Sum(amount, output_field=money))):
+            spent.setdefault(row["work_order__asset"], []).append(
+                (row["work_order__completed_on"], row["work_order__vendor_service"], Decimal(row["v"] or 0)))
+
+    # 6. Live contracts today with the acquisition cost of the devices each covers (Contract.covered_assets: not retired), for each
+    # device's share (Contract.cost_share_for's rule, grouped)
+    covered = [s for s in AssetStatus.values if s != AssetStatus.RETIRED]
+    contracts = {row["pk"]: (Decimal(row["annual_cost"] or 0), Decimal(row["total"] or 0)) for row in
+                 Contract.objects.filter(pk__in=devices.values("contract"), start_on__lte=today, end_on__gte=today)
+                 .annotate(total=Sum("assets__acquisition_cost", filter=Q(assets__status__in=covered))).order_by()
+                 .values("pk", "annual_cost", "total")}
+
+    # 7. Recall matches on the devices' models a reviewer confirmed (in progress: counted) or is reviewing (shown beside, no points)
+    matches: dict = {}
+    for dm_id, alert_id, status, classification in (
+            AlertMatch.objects.filter(device_model__in=devices.values("device_model"),
+                                      status__in=(AlertMatch.Status.IN_PROGRESS, AlertMatch.Status.UNDER_REVIEW))
+            .order_by().values_list("device_model_id", "alert_id", "status", "alert__classification")):
+        matches.setdefault(dm_id, []).append((alert_id, status, is_class_one(classification)))
+
+    # 8. The devices' own recall work completed: that device is done for that alert
+    recalls_done = set(WorkOrder.objects.filter(asset__in=ids, alert__isnull=False, status__in=done).order_by()
+                       .values_list("asset_id", "alert_id"))
+
+    # 9. The day each model's list price was last set, from its history (whose manager is not tenant-scoped: core.history._rows). A list
+    # price changed outside the services, which history does not see, has no day.
+    list_set_on: dict = {}
+    last: dict = {}
+    for dm_id, cost, when in (_rows(DeviceModel.history.model)
+                              .filter(id__in=devices.filter(device_model__list_cost__gt=0).values("device_model"))
+                              .order_by("id", "history_date", "history_id").values_list("id", "list_cost", "history_date")):
+        if dm_id not in last or last[dm_id] != cost:
+            list_set_on[dm_id] = local_day(when)
+        last[dm_id] = cost
+    list_set_on = {dm_id: (day, last[dm_id]) for dm_id, day in list_set_on.items()}
+    return _Inputs(first_day, failures, spent, contracts, matches, recalls_done, list_set_on)
+
+
+# --- one device ------------------------------------------------------------------------------------------------------------------------
+
+
+def _money(d: Decimal) -> str:
+    return f"${d:,.0f}"
+
+
+def _day(d: date) -> str:
+    return f"{d:%b} {d.day}, {d.year}"
+
+
+def _plural(n: int, one: str, many: str) -> str:
+    return f"{n} {one if n == 1 else many}"
+
+
+def window_of(asset, today: date, first_day: date | None) -> tuple[date, int, bool]:
+    """(start, days, enough): failures' and cost's window, the last WINDOW_MONTHS clipped to the latest of that, the install date, and
+    the facility's first work order (no work order yet: none); enough when it covers MIN_HISTORY_MONTHS."""
+    from apps.pm.dates import add_months
+
+    start = max(d for d in (add_months(today, -WINDOW_MONTHS), asset.installed_on, first_day or today) if d is not None)
+    days = max((today - start).days, 0)
+    return start, days, start <= add_months(today, -MIN_HISTORY_MONTHS)
+
+
+def estimate_for(asset, list_set_on: date | None = None) -> Estimate:
+    """The replacement estimate: the model's list price when above 0, else the device's acquisition cost, else unknown. No markup."""
+    dm = asset.device_model
+    if dm.list_cost and dm.list_cost > 0:
+        return Estimate(Decimal(dm.list_cost), ESTIMATE_LIST, f"List price, set {_day(list_set_on)}" if list_set_on else "List price", list_set_on)
+    if asset.acquisition_cost and asset.acquisition_cost > 0:
+        year = asset.installed_on.year if asset.installed_on else "year unknown"
+        return Estimate(Decimal(asset.acquisition_cost), ESTIMATE_ACQUISITION, f"Acquisition cost, {year}: a historical price")
+    return Estimate(None, "", "No estimate")
+
+
+def _score(a, today: date, start: int, inp: _Inputs) -> Priority:
+    from apps.equipment.models import AssetStatus
+    from apps.equipment.services import support_status
+    from apps.pm.dates import add_months
+    from apps.recalls.models import AlertMatch
+    from apps.workorders.models import RepairCheck
+
+    dm = a.device_model
+    flags, gaps = set(), set()
+    life = dm.expected_life_years or 1  # a 0 reads as 1: it never divides by zero
+
+    # Age against expected life
+    age = life_end = None
+    if a.installed_on is None or a.installed_on > today:
+        gaps.add(NO_INSTALL_DATE)
+        age_c = Component(AGE, None, "no install date" if a.installed_on is None else "install date after today")
+    else:
+        age = (today - a.installed_on).days / 365.25
+        life_end = add_months(a.installed_on, 12 * life)
+        age_c = Component(AGE, age_value(age, life), f"{age:.1f} of {life} yr")
+    if not dm.life_source:
+        gaps.add(LIFE_SOURCE)
+        age_c = Component(AGE, age_c.value, age_c.input, "life source not recorded")
+
+    # Manufacturer support
+    support = support_status(dm, today)
+    if support.key == "unknown":
+        gaps.add(SUPPORT_UNCHECKED)
+    if support.key == "parts_ended":
+        flags.add(PARTS_ENDED)
+    if support.key == "support_ended" or (dm.support_ends_on is not None and dm.support_ends_on <= today):
+        flags.add(SUPPORT_ENDED)
+    support_c = Component(SUPPORT, support.value, support.words)
+
+    # The window of failures and cost
+    w_start, w_days, enough = window_of(a, today, inp.first_day)
+    window_years = w_days / 365.25
+    years = max(Decimal(w_days) / Decimal("365.25"), Decimal(str(MIN_YEARS)))  # rates a year never divide by less than a year
+    months = round(w_days * 12 / 365.25)
+
+    # Failures
+    mine = [f for f in inp.failures.get(a.pk, ()) if w_start <= f[0] <= today]
+    failures = len(mine) if enough else None
+    unrecorded = sum(1 for f in mine if not f[1]) if enough else 0
+    still_open = sum(1 for f in mine if f[3]) if enough else 0
+    imported = sum(1 for f in mine if f[2] and not f[1]) if enough else 0
+    per_year = None
+    if not enough:
+        rel_c = Component(RELIABILITY, None, TOO_LITTLE_HISTORY)
+    else:
+        per_year = failures / max(window_years, MIN_YEARS)
+        note = ""
+        if unrecorded:
+            why = [f"{still_open} still open" if still_open else "", f"{imported} imported: {NOT_RECORDED_THEN}" if imported else ""]
+            why = [w for w in why if w]
+            note = f"{unrecorded} with no finding recorded" + (f" ({', '.join(why)})" if why else "")
+        rel_c = Component(RELIABILITY, reliability_value(per_year), f"{failures} in {months} mo, {per_year:.1f} a year", note)
+
+    # Service cost a year against the replacement estimate: labor and parts in the window a year, plus the live contract's share (its
+    # vendor's work is the contract's, so never counted twice)
+    estimate = estimate_for(a, _set_on(dm, inp))
+    if estimate.amount is None:
+        gaps.add(NO_ESTIMATE)
+    contract = inp.contracts.get(a.contract_id) if a.contract_id else None
+    share = None
+    if contract is not None:
+        annual, covered = contract
+        share = annual * Decimal(a.acquisition_cost or 0) / covered if covered else Decimal("0")
+    spent = sum((amount for day, vendor, amount in inp.spent.get(a.pk, ()) if w_start <= day <= today and not (vendor and contract is not None)),
+                Decimal("0"))
+    cost_year = ratio = None
+    if not enough:
+        cost_c = Component(COST, None, TOO_LITTLE_HISTORY)
+    else:
+        cost_year = (spent / years + (share or 0)).quantize(Decimal("0.01"), rounding="ROUND_HALF_UP")
+        if estimate.amount is None:
+            cost_c = Component(COST, None, f"{_money(cost_year)} a year; no replacement estimate")
+        else:
+            ratio = cost_year / estimate.amount
+            pct = (ratio * 100).quantize(Decimal("1"), rounding="ROUND_HALF_UP")
+            cost_c = Component(COST, cost_value(ratio), f"{pct}% a year of replacement ({_money(cost_year)} a year)",
+                               f"with its contract share, {_money(share)} a year" if share else "")
+
+    # A confirmed recall not done on this device
+    model_matches = inp.matches.get(dm.pk, ())
+    confirmed = [(alert, one) for alert, status, one in model_matches
+                 if status == AlertMatch.Status.IN_PROGRESS and (a.pk, alert) not in inp.recalls_done]
+    reviewing = any(status == AlertMatch.Status.UNDER_REVIEW for _alert, status, _one in model_matches)
+    if confirmed:
+        flags.add(RECALL)
+        class_one = any(one for _alert, one in confirmed)
+        safety_c = Component(SAFETY, CLASS_ONE_VALUE if class_one else RECALL_VALUE,
+                             _plural(len(confirmed), "confirmed recall", "confirmed recalls") + " not done on this device"
+                             + (", Class I" if class_one else ""), "recall under review" if reviewing else "")
+    else:
+        safety_c = Component(SAFETY, 0.0, "no confirmed recall", "recall under review" if reviewing else "")
+
+    # Kept out of use after its latest repair
+    if a.latest_repair_check == RepairCheck.NOT_RETURNED and a.status != AssetStatus.IN_SERVICE:
+        flags.add(NOT_RETURNED)
+
+    components = (age_c, support_c, rel_c, cost_c, safety_c)
+    multiplier = multiplier_for(dm.risk_class)
+    score, unknown = total(components, multiplier)
+    ordered_flags = tuple(f for f in FLAGS if f in flags)
+    fy = suggested_fy(must_act=any(f in MUST_ACT for f in flags), life_end=life_end, support_ends_on=dm.support_ends_on,
+                      parts_end_on=dm.parts_end_on, today=today, start=start)
+    return Priority(
+        asset=a, components=components, multiplier=multiplier, score=score, points_unknown=unknown, estimate=estimate, support=support,
+        flags=ordered_flags, gaps=tuple(g for g in GAPS if g in gaps), suggested_fy=fy, age_years=age, life_years=life, life_end=life_end,
+        condition=a.condition, window_start=w_start, window_years=window_years, failures=failures, unrecorded=unrecorded,
+        service_cost_year=cost_year,
+        extras={"window_months": months, "failures_per_year": per_year, "still_open": still_open, "imported": imported,
+                "spent": spent if enough else None, "contract_share": share, "cost_ratio": ratio, "recalls": len(confirmed),
+                "recall_under_review": reviewing},
+    )
+
+
+def _set_on(dm, inp: _Inputs) -> date | None:
+    """The day the model's list price was set, when its history's last price is the one on the model."""
+    found = inp.list_set_on.get(dm.pk)
+    if found is None:
+        return None
+    day, cost = found
+    return day if cost == dm.list_cost else None
 
 
 def rank(priorities) -> tuple[list[Priority], list[Priority]]:

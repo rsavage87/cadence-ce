@@ -372,7 +372,7 @@ REPORTS = [
     {"key": "cosr", "title": "Cost of service ratio by category", "subtitle": "Annualized service cost against acquisition value"},
     {"key": "compliance", "title": "PM compliance summary", "subtitle": "Survey-ready view by risk class (EC.02.04.03)"},
     {"key": "mtbf", "title": "Reliability by model", "subtitle": "Failures, mean time between failures, turnaround"},
-    {"key": "replace", "title": "Replacement planning", "subtitle": "Devices scoring highest on age, failures, and condition"},
+    {"key": "replace", "title": "Replacement planning", "subtitle": "Devices our rule ranks for replacement: support, failures, service cost, age, recalls"},
     {"key": "spend", "title": "Repair spend trend", "subtitle": "Labor and parts by month"},
     {"key": "contract", "title": "Contract vs in-house", "subtitle": "Where the service dollars go"},
     {"key": "tech", "title": "Technician productivity", "subtitle": "Work closed, hours, on-time rate, last 30 days"},

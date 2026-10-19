@@ -7,16 +7,21 @@ Slice 29, the counting rule (equipment.services.OWNED / WORK_ORDER_OWNED): all t
 program, so they count our devices and their work orders only. A rental, vendor loaner, or demo unit (its owner maintains it) is never
 in a compliance denominator nor overdue when missing, its repairs are no failures of our models, and it is never up for replacement.
 
-Slice 33: reliability by model counts failures by what each repair found (apps.workorders.findings.failure_q) beside every repair; the
-replacement score keeps counting every repair (the work happened; deferred, with the device drawer's note that shares its inputs).
+Slice 33: reliability by model counts failures by what each repair found (apps.workorders.findings.failure_q) beside every repair.
+
+Slice 36: replacement planning reads the replacement priority rule (apps.capital.priority: support, failures, service cost against the
+replacement estimate, age, a confirmed recall, times criticality; points unknown shown, never scored as 0), as the device drawer does.
 """
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
+from statistics import median
 
 from django.db.models import Count, DecimalField, Q, Sum
 
+from apps.capital import priority
 from apps.equipment.models import Asset, AssetStatus, DeviceModel, Ownership, RiskClass
 from apps.equipment.services import OWNED, WORK_ORDER_OWNED
+from apps.facility.fiscal import current_fy, fy_label, start_month
 from apps.facility.services import compliance_targets, get_settings
 from apps.pm.dates import month_bounds
 from apps.pm.windows import ASSET_RISK, Windows, windows
@@ -31,7 +36,6 @@ LEFT_OUT = tuple(str(v) for v in (*findings.NO_FAULT, *findings.OTHER_FAULT))
 MTBF_LIMIT = 12
 REPAIR_RATE_FACTOR = 2  # the mock's x2: two 182-day halves make its year, the same base MTBF uses (n * 182 / repairs)
 REPLACE_LIMIT = 12
-REPLACEMENT_MARKUP = 1.05  # list price plus 5%, as the mock estimates
 
 
 def _active_assets():
@@ -188,39 +192,109 @@ def report_mtbf(today: date) -> dict:
 
 
 # --- Replacement planning ----------------------------------------------------------------------------------------
+# Slice 36: on the replacement priority rule (apps.capital.priority), the one rule the screen, CSV, print, email, API rows, and the
+# device drawer read. The mock's score (age 50%, repairs in six months 30%, condition 20%) and its flat 5% markup are gone.
+
+# The first seven columns as before; "Failures, 36 mo" was "Repairs, 6 mo"; the rest appended (each component's points, the flags,
+# support, the suggested fiscal year, the estimate's source, and the install date and acquisition cost the devices import reads back).
+REPLACE_COLUMNS = ["Asset tag", "Device", "Manufacturer", "Model", "Location", "Age years", "Expected life years", "Failures, 36 mo", "Condition",
+                   "Score", "Est. replacement", "Points unknown", "Age points", "Support points", "Failure points", "Service cost points",
+                   "Recall points", "Multiplier", "Flags", "Support", "Suggested fiscal year", "Estimate source", "Installed on",
+                   "Acquisition cost", "Ranked"]
+ESTIMATE_SOURCE_WORDS = {priority.ESTIMATE_LIST: "list price", priority.ESTIMATE_ACQUISITION: "acquisition cost"}
+OUTLOOK_YEARS = 5  # the current fiscal year and the four after it
 
 
-def replacement_score(age: float | None, life: int, repairs: int, condition: int) -> float:
-    """The mock's score: age against expected life (50%), repairs in the last six months (30%), condition (20%). 0 to 1.
-    A device installed in the future (a typo, or a record dated ahead) has no age yet: its age term is 0, never negative."""
-    age_term = min(max(age or 0.0, 0.0) / life, 1.5) / 1.5
-    return 0.5 * age_term + 0.3 * min(repairs / 3, 1) + 0.2 * (5 - condition) / 4
+def _points(c) -> Decimal | None:
+    """A component's points to one decimal (half up), None when unknown: a blank cell, never 0."""
+    return None if c.points is None else Decimal(repr(c.points)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+
+
+def replace_row(p) -> list:
+    """One device's row: the CSV's, the email attachment's, and the API's (plain values; unknown ones None)."""
+    a, dm = p.asset, p.asset.device_model
+    return [a.tag, dm.description, dm.manufacturer, dm.model, a.department.name, p.age_years, p.life_years, p.failures, p.condition, p.score,
+            p.estimate.amount, p.points_unknown, *(_points(c) for c in p.components), Decimal(repr(p.multiplier)),
+            "; ".join(priority.FLAG_WORDS[f] for f in p.flags), p.support.words,
+            fy_label(p.suggested_fy) if p.suggested_fy is not None else None, ESTIMATE_SOURCE_WORDS.get(p.estimate.source),
+            a.installed_on, a.acquisition_cost,
+            "yes" if p.ranked else "no: " + ", ".join(priority.UNRANKED_WORDS[r] for r in p.unranked_reasons)]
+
+
+def _fleets(every: list) -> list[dict]:
+    """Each model's fleet of scored devices: devices, past their expected life, support (the model's), failures a device-year (the
+    devices with enough history: their failures over their years within the window, each floored at a year, as the rule's rate), the
+    median ranked score and its range, and the estimated total to replace them all (the devices with an estimate; `unestimated` counts
+    the rest). Ranked by median score (a fleet with no ranked device last), then devices, then name."""
+    by_model: dict = {}
+    for p in every:
+        by_model.setdefault(p.asset.device_model_id, []).append(p)
+    fleets = []
+    for ps in by_model.values():
+        dm = ps[0].asset.device_model
+        scores = sorted(p.score for p in ps if p.ranked)
+        known = [p for p in ps if p.failures is not None]
+        years = sum(max(p.window_years, priority.MIN_YEARS) for p in known)
+        fleets.append({
+            "device_model": dm, "devices": len(ps), "ranked": len(scores), "life_years": ps[0].life_years, "support": ps[0].support,
+            "past_life": sum(1 for p in ps if p.age_years is not None and p.age_years > p.life_years),
+            "failures_per_device_year": sum(p.failures for p in known) / years if known else None,
+            "median_score": median(scores) if scores else None, "min_score": scores[0] if scores else None,
+            "max_score": scores[-1] if scores else None,
+            "total": sum((p.estimate.amount for p in ps if p.estimate.amount is not None), Decimal("0")),
+            "unestimated": sum(1 for p in ps if p.estimate.amount is None),
+        })
+    fleets.sort(key=lambda f: (f["median_score"] is None, -(f["median_score"] or 0), -f["devices"], f["device_model"].manufacturer,
+                               f["device_model"].model))
+    return fleets
+
+
+def _outlook(every: list, today: date, start: int) -> dict:
+    """The current fiscal year and the four after it: the devices suggested for each and their estimated total (`unestimated` those
+    with no estimate); `later` the devices suggested after them, `not_placed` those with no day to place them by."""
+    now = current_fy(today, start)
+    years = {fy: {"fy": fy, "label": fy_label(fy), "devices": 0, "total": Decimal("0"), "unestimated": 0} for fy in range(now, now + OUTLOOK_YEARS)}
+    later = not_placed = 0
+    for p in every:
+        if p.suggested_fy is None:
+            not_placed += 1
+        elif p.suggested_fy in years:
+            y = years[p.suggested_fy]
+            y["devices"] += 1
+            if p.estimate.amount is None:
+                y["unestimated"] += 1
+            else:
+                y["total"] += p.estimate.amount
+        else:
+            later += 1
+    return {"years": list(years.values()), "later": later, "not_placed": not_placed}
+
+
+def _gaps(every: list) -> list[dict]:
+    """What the scores do not know, in GAPS order: the devices each gap touches, and for a model's gap (the life source, support not
+    checked) the models too (None for a device's gap)."""
+    out = []
+    for key in priority.GAPS:
+        hit = [p for p in every if key in p.gaps]
+        models = len({p.asset.device_model_id for p in hit}) if key in (priority.LIFE_SOURCE, priority.SUPPORT_UNCHECKED) else None
+        out.append({"key": key, "words": priority.GAP_WORDS[key], "devices": len(hit), "models": models})
+    return out
 
 
 def report_replace(today: date) -> dict:
-    """Every active device scored for replacement; `rows` carries the full ranked list (the capital request) and `top` the twelve
-    the screen shows. One grouped query for repairs, one for the fleet."""
-    repairs, _ = _repairs_in_window(today)
-    reps = {row["asset"]: row["n"] for row in repairs.order_by().values("asset").annotate(n=Count("id"))}
-    scored = []
-    for a in _active_assets().select_related("device_model", "department"):
-        age = a.age_years(today)
-        if age is not None:
-            age = max(age, 0.0)  # a future installed_on reads as 0.0 yr on the screen and in the CSV, not a negative age
-        life = a.device_model.expected_life_years or 1  # a zero life would divide by zero; treat it as one year
-        n = reps.get(a.pk, 0)
-        condition = min(5, max(1, a.condition or 1))
-        score = replacement_score(age, life, n, condition)
-        list_cost = float(a.device_model.list_cost or 0)
-        estimate = (list_cost or float(a.acquisition_cost or 0)) * REPLACEMENT_MARKUP
-        scored.append({"asset": a, "age": age, "life": life, "repairs": n, "condition": condition, "score": score, "score_pct": round(score * 100),
-                       "estimate": estimate, "over_life": age is not None and age > life, "fallback": not list_cost})
-    scored.sort(key=lambda s: (-s["score"], s["asset"].tag))
-    top = scored[:REPLACE_LIMIT]
+    """Every scored device (apps.capital.priority.scored_assets: ours, in use) on the replacement priority rule. `rows` carries them all,
+    ranked then not ranked (the capital request; it reads back through the devices import, the bulk fix for missing install dates);
+    `top` the first REPLACE_LIMIT ranked; `fleets`, `outlook`, `gaps`, and `unranked` the report's other sections. The fiscal year's
+    start is read once; the rule's queries are a fixed number whatever the fleet's size."""
+    start = start_month()
+    ranked, unranked = priority.rank(priority.score_assets(priority.scored_assets(), today, start))
+    every = ranked + unranked
+    top = ranked[:REPLACE_LIMIT]
     return {
-        "columns": ["Asset tag", "Device", "Manufacturer", "Model", "Location", "Age years", "Expected life years", "Repairs, 6 mo", "Condition", "Score",
-                    "Est. replacement"],
-        "rows": [[s["asset"].tag, s["asset"].device_model.description, s["asset"].device_model.manufacturer, s["asset"].device_model.model,
-                  s["asset"].department.name, s["age"], s["life"], s["repairs"], s["condition"], s["score_pct"], s["estimate"]] for s in scored],
-        "top": top, "total": sum(s["estimate"] for s in top), "scored_count": len(scored), "fallback_count": sum(1 for s in top if s["fallback"]),
+        "columns": REPLACE_COLUMNS,
+        "rows": [replace_row(p) for p in every],
+        "top": top, "scored_count": len(every), "ranked_count": len(ranked),
+        "total": sum((p.estimate.amount for p in top), Decimal("0")),  # a ranked device always has an estimate
+        "version": priority.version_words(), "fleets": _fleets(every), "outlook": _outlook(every, today, start), "gaps": _gaps(every),
+        "unranked": unranked, "start": start, "today": today,
     }

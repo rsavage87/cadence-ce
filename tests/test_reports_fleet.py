@@ -1,13 +1,15 @@
 """Fleet reports (slice 7): PM compliance summary, reliability by model, replacement planning. Math, tenant isolation, rendering, empty tenant."""
 from datetime import date, timedelta
+from decimal import Decimal
 
 import pytest
 from csvutil import csv_text
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 
+from apps.capital.priority import version_words
 from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, RiskClass
-from apps.reports.fleet import REPAIR_RATE_FACTOR, replacement_score, report_compliance, report_mtbf, report_replace
+from apps.reports.fleet import REPAIR_RATE_FACTOR, REPLACE_COLUMNS, report_compliance, report_mtbf, report_replace
 from apps.reports.services import run_report
 from apps.tenants.context import tenant_context
 from apps.workorders.models import LaborLine, PartLine, WorkOrder
@@ -282,60 +284,86 @@ def test_mtbf_renders_the_empty_state(client, signed_in, vent):
 
 
 # --- replace -----------------------------------------------------------------------------------------------------
+# Slice 36: the report reads the replacement priority rule (apps.capital.priority; its body is pinned in tests/test_capital_priority.py).
+# Here: the rows' contract (the CSV, the email attachment, the API), the sections' data, the screen, and a fixed number of queries.
 
-
-def test_replacement_score_terms():
-    assert replacement_score(None, 10, 0, 5) == 0.0
-    assert replacement_score(12, 10, 3, 1) == pytest.approx(0.9)  # 1.2x life, repairs at the cap of 3, worst condition
-    assert replacement_score(20, 10, 9, 1) == pytest.approx(1.0)  # age capped at 1.5x life, repairs capped at 3
-    assert replacement_score(5, 10, 0, 3) == pytest.approx(0.5 * 0.5 / 1.5 + 0.2 * 0.5)
-    assert replacement_score(-0.5, 10, 0, 5) == 0.0  # installed in the future: the age term is 0, never negative
-    assert replacement_score(-3.0, 1, 1, 3) == pytest.approx(0.3 / 3 + 0.1)
+VENT_INSTALLED = date(2014, 9, 28)  # 12.0 years before TODAY
+SCALE_INSTALLED = date(2024, 9, 28)  # 730 days before TODAY
 
 
 @pytest.fixture
 def replace_data(ctx, dept, vent_model, pump_model, vent, pump):
-    Asset.objects.filter(pk=vent.pk).update(installed_on=TODAY - timedelta(days=round(12 * 365.25)), condition=1)  # 12 of 10 years, poor
-    Asset.objects.filter(pk=pump.pk).update(installed_on=None, condition=5)  # no install date, excellent: scores 0
+    Asset.objects.filter(pk=vent.pk).update(installed_on=VENT_INSTALLED, condition=1)  # 12 of 10 years, poor (never scored)
+    Asset.objects.filter(pk=pump.pk).update(installed_on=None, condition=5)  # no install date: not ranked
+    wo(vent, "pm", date(2022, 1, 3), completed=date(2022, 1, 3))  # the facility's first work order: every window is the full 36 months
     for i in range(3):
-        wo(vent, "repair", date(2026, 9, 1 + i), completed=date(2026, 9, 5 + i))
-    wo(vent, "repair", date(2026, 1, 1))  # before the window
-    wo(vent, "repair", date(2026, 9, 10), cancelled=True)
-    wo(pump, "repair", WINDOW_START - timedelta(days=1))  # the day before the window: not counted, so the pump still scores 0
+        wo(vent, "repair", date(2026, 9, 1 + i), completed=date(2026, 9, 5 + i), labor=(2, 100))  # failures, no finding recorded
+    wo(vent, "repair", date(2026, 9, 10), cancelled=True)  # not a failure
     no_list = DeviceModel.objects.create(manufacturer="Acme", model="Z", description="Scale", category="Scales", expected_life_years=0, list_cost=0)
-    scale = Asset.objects.create(tag="CE-10003", device_model=no_list, department=dept, installed_on=TODAY - timedelta(days=730), acquisition_cost=1000,
-                                 condition=3)
-    wo(scale, "repair", WINDOW_START)  # opened on the first day of the window: counted
+    Asset.objects.create(tag="CE-10003", device_model=no_list, department=dept, installed_on=SCALE_INSTALLED, acquisition_cost=1000, condition=3)
     Asset.objects.create(tag="CE-10004", device_model=pump_model, department=dept, status=AssetStatus.RETIRED, installed_on=date(2000, 1, 1), condition=1)
     return vent
 
 
-def test_replace_math_ranking_and_estimates(replace_data):
+def test_replace_rows_rank_on_the_rule_with_unknowns_blank(replace_data):
     r = report_replace(TODAY)
-    assert r["scored_count"] == 3 and len(r["top"]) == 3 and len(r["rows"]) == 3
-    v, z, p = r["top"]
-    assert v["asset"].tag == "CE-10001" and v["age"] == pytest.approx(12.0, abs=0.01) and v["life"] == 10 and v["repairs"] == 3 and v["condition"] == 1
-    assert v["score"] == pytest.approx(0.9) and v["score_pct"] == 90 and v["over_life"] and v["estimate"] == pytest.approx(38000 * 1.05) and not v["fallback"]
-    assert z["asset"].tag == "CE-10003" and z["life"] == 1 and z["age"] == pytest.approx(2.0, abs=0.01) and z["over_life"] and z["repairs"] == 1
-    assert z["score"] == pytest.approx(0.5 + 0.1 + 0.1) and z["estimate"] == pytest.approx(1050.0) and z["fallback"]
-    assert p["asset"].tag == "CE-10002" and p["age"] is None and p["repairs"] == 0 and p["score"] == 0.0 and p["score_pct"] == 0 and not p["over_life"]
-    assert r["total"] == pytest.approx(38000 * 1.05 + 1050 + 3200 * 1.05) and r["fallback_count"] == 1
-    assert r["columns"][0] == "Asset tag" and r["rows"][0][:5] == ["CE-10001", "ICU ventilator", "Hamilton Medical", "Hamilton-G5", "ICU"]
-    assert r["rows"][0][6:] == [10, 3, 1, 90, pytest.approx(39900.0)] and r["rows"][2][5] is None
+    assert r["scored_count"] == 3 and r["ranked_count"] == 2 and len(r["rows"]) == 3
+    assert [p.asset.tag for p in r["top"]] == ["CE-10001", "CE-10003"] and [p.asset.tag for p in r["unranked"]] == ["CE-10002"]
+    assert r["columns"] == REPLACE_COLUMNS and r["columns"][:11] == [
+        "Asset tag", "Device", "Manufacturer", "Model", "Location", "Age years", "Expected life years", "Failures, 36 mo", "Condition", "Score",
+        "Est. replacement"]
+    vent, scale, pump = r["rows"]
+    assert vent == ["CE-10001", "ICU ventilator", "Hamilton Medical", "Hamilton-G5", "ICU", pytest.approx(12.0), 10, 3, 1, 31, Decimal("38000"), 25,
+                    Decimal("24.0"), None, Decimal("6.7"), Decimal("0.0"), Decimal("0.0"), Decimal("1.0"), "", "Support not checked", "FY2026",
+                    "list price", VENT_INSTALLED, Decimal("38000"), "yes"]
+    assert scale == ["CE-10003", "Scale", "Acme", "Z", "ICU", pytest.approx(730 / 365.25), 1, 0, 3, 27, Decimal("1000"), 25, Decimal("30.0"), None,
+                     Decimal("0.0"), Decimal("0.0"), Decimal("0.0"), Decimal("0.9"), "", "Support not checked", "FY2026", "acquisition cost",
+                     SCALE_INSTALLED, Decimal("1000"), "yes"]
+    assert pump == ["CE-10002", "Infusion pump", "BD", "Alaris 8015 PCU", "ICU", None, 8, 0, 5, 0, Decimal("3200"), 55, None, None, Decimal("0.0"),
+                    Decimal("0.0"), Decimal("0.0"), Decimal("0.95"), "", "Support not checked", None, "list price", None, Decimal("3200"),
+                    "no: no install date"]
+    assert r["total"] == Decimal("39000") and r["version"] == version_words() and r["start"] == 1 and r["today"] == TODAY
 
 
-def test_replace_clamps_a_future_install_date(ctx, dept, pump_model, client, signed_in, freeze_today):
-    """A device dated ahead has no age yet: the age term is 0 (never negative), and the screen and CSV show 0.0 yr."""
+def test_replace_sections_fleets_outlook_gaps(replace_data):
+    r = report_replace(TODAY)
+    fleets = [(f["device_model"].model, f["devices"], f["ranked"], f["past_life"], f["median_score"], f["total"]) for f in r["fleets"]]
+    assert fleets == [("Hamilton-G5", 1, 1, 1, 31, Decimal("38000")), ("Z", 1, 1, 1, 27, Decimal("1000")), ("Alaris 8015 PCU", 1, 0, 0, None, Decimal("3200"))]
+    vent = r["fleets"][0]
+    assert vent["failures_per_device_year"] == pytest.approx(3 / (1096 / 365.25)) and vent["support"].words == "Support not checked"
+    assert [(y["label"], y["devices"], y["total"]) for y in r["outlook"]["years"]] == [
+        ("FY2026", 2, Decimal("39000")), ("FY2027", 0, 0), ("FY2028", 0, 0), ("FY2029", 0, 0), ("FY2030", 0, 0)]
+    assert r["outlook"]["not_placed"] == 1 and r["outlook"]["later"] == 0
+    assert [(g["key"], g["devices"], g["models"]) for g in r["gaps"]] == [
+        ("no_install_date", 1, None), ("no_estimate", 0, None), ("life_source", 3, 3), ("support_unchecked", 3, 3)]
+
+
+def test_the_outlook_follows_the_fiscal_year(replace_data, vent_model):
+    from apps.equipment import services as eq
+    from apps.facility import services as fac
+
+    fac.update_settings(fiscal_year_start_month="7")
+    eq.update_device_model(vent_model, support_ends_on=date(2029, 3, 1), support_checked_on=date(2026, 9, 1))
+    Asset.objects.filter(tag="CE-10001").update(installed_on=date(2020, 1, 1))  # its life ends Jan 1, 2030
+    r = report_replace(TODAY)
+    assert r["start"] == 7 and [y["label"] for y in r["outlook"]["years"]] == ["FY2027", "FY2028", "FY2029", "FY2030", "FY2031"]
+    assert [y["devices"] for y in r["outlook"]["years"]] == [1, 0, 1, 0, 0]  # the scale now; the ventilator by its support's end
+    rows = {row[0]: row for row in r["rows"]}
+    assert rows["CE-10001"][20] == "FY2029" and rows["CE-10003"][20] == "FY2027" and rows["CE-10002"][20] is None
+    assert rows["CE-10001"][19] == "Support ends Mar 1, 2029"
+
+
+def test_replace_lists_a_future_install_date_apart(ctx, dept, pump_model, client, signed_in, freeze_today):
+    """A device dated ahead has no age yet: not ranked, its age a blank cell (never 0 or negative)."""
     Asset.objects.create(tag="CE-10010", device_model=pump_model, department=dept, installed_on=TODAY + timedelta(days=200), condition=5)
     r = report_replace(TODAY)
-    s = r["top"][0]
-    assert s["age"] == 0.0 and s["score"] == 0.0 and s["score_pct"] == 0 and not s["over_life"] and r["rows"][0][5] == 0.0
+    assert r["top"] == [] and r["unranked"][0].asset.tag == "CE-10010" and r["rows"][0][5] is None and r["rows"][0][-1] == "no: no install date"
+    assert r["unranked"][0].component("age").input == "install date after today"
     freeze_today(TODAY)
     signed_in("director")
     body = client.get("/reports/replace/").content.decode()
-    assert '<td class="num">0.0 yr</td>' in body and '<td class="num"><b>0</b></td>' in body
-    assert "The top 1 is shown; the CSV carries the full ranked list of 1 active device for the capital request." in body
-    assert csv_text(client.get("/reports/replace.csv")).splitlines()[1].startswith("CE-10010,Infusion pump,BD,Alaris 8015 PCU,ICU,0.00,")
+    assert "No device can be ranked yet" in body and "Not ranked: no install date" in body
+    assert csv_text(client.get("/reports/replace.csv")).splitlines()[1].startswith("CE-10010,Infusion pump,BD,Alaris 8015 PCU,ICU,,8,,5,0,3200.00,")
 
 
 def test_replace_shows_twelve_but_exports_everyone(ctx, dept, pump_model):
@@ -343,13 +371,31 @@ def test_replace_shows_twelve_but_exports_everyone(ctx, dept, pump_model):
         Asset.objects.create(tag=f"CE-3{i:04d}", device_model=pump_model, department=dept, installed_on=TODAY - timedelta(days=100 * i), condition=3)
     r = report_replace(TODAY)
     assert r["scored_count"] == 15 and len(r["rows"]) == 15 and len(r["top"]) == 12
-    assert r["top"][0]["asset"].tag == "CE-30014" and [x[0] for x in r["rows"][-2:]] == ["CE-30001", "CE-30000"]
-    assert r["total"] == pytest.approx(12 * 3200 * 1.05)
+    assert r["top"][0].asset.tag == "CE-30014" and [x[0] for x in r["rows"][-3:]] == ["CE-30001", "CE-30002", "CE-30000"]  # 1, 1 (by tag), 0
+    assert r["total"] == 12 * Decimal("3200")
+
+
+def test_replace_runs_the_same_queries_for_two_devices_or_twelve(ctx, dept, pump_model, vent_model):
+    def count():
+        with CaptureQueriesContext(connection) as q:
+            report_replace(TODAY)
+        return len(q.captured_queries)
+
+    for i in range(2):
+        a = Asset.objects.create(tag=f"CE-5{i:04d}", device_model=pump_model, department=dept, installed_on=TODAY - timedelta(days=900), condition=3)
+        wo(a, "repair", TODAY - timedelta(days=30), completed=TODAY - timedelta(days=29), labor=(1, 80), part=40)
+    small = count()
+    for i in range(2, 12):
+        a = Asset.objects.create(tag=f"CE-5{i:04d}", device_model=vent_model if i % 2 else pump_model, department=dept,
+                                 installed_on=TODAY - timedelta(days=300 * i), condition=3)
+        wo(a, "repair", TODAY - timedelta(days=30 + i), completed=TODAY - timedelta(days=29), labor=(1, 80), part=40)
+        wo(a, "pm", TODAY - timedelta(days=60 + i), completed=TODAY - timedelta(days=59))
+    assert count() == small
 
 
 def test_replace_ignores_other_tenants(ctx, theirs, vent):
     r = run_report("replace", TODAY)
-    assert r["scored_count"] == 1 and r["top"][0]["asset"].tag == "CE-10001"
+    assert r["scored_count"] == 1 and r["top"][0].asset.tag == "CE-10001"
 
 
 def test_replace_renders_rows_that_open_the_drawer(client, signed_in, replace_data, freeze_today):
@@ -359,15 +405,30 @@ def test_replace_renders_rows_that_open_the_drawer(client, signed_in, replace_da
     assert r.status_code == 200
     body = r.content.decode()
     assert '<tr class="row" hx-get="/equipment/CE-10001/" hx-target="#drawer">' in body
-    assert '<a class="tag" href="/equipment/CE-10001/">CE-10001</a> ICU ventilator<small>Hamilton Medical Hamilton-G5</small>' in body
-    assert '<td class="num down">12.0 yr</td>' in body and '<td class="num">10 yr</td><td class="num">3</td><td>1 of 5</td>' in body
-    assert '<td class="num"><b>90</b></td><td class="num">$39,900</td>' in body and '<td class="num">—</td>' in body
-    assert "for these 3: <b style=\"color:var(--ink)\">$44,310</b>" in body and "1 device without a list price" in body
-    assert "The top 3 are shown; the CSV carries the full ranked list of 3 active devices for the capital request." in body
-    assert "twelve" not in body
+    assert '<a class="tag" href="/equipment/CE-10001/">CE-10001</a> ICU ventilator<small>Hamilton Medical Hamilton-G5 · Suggested for FY2026</small>' in body
+    assert '<td class="num down">12.0 of 10 yr</td>' in body and "<td>Support not checked</td>" in body
+    assert '<td class="num"><b>31</b><small>25 points unknown</small></td>' in body and "$38,000" in body
+    assert "for these 2: <b style=\"color:var(--ink)\">$39,000</b>" in body and "no markup" in body and "plus 5%" not in body
+    assert version_words() in body and "The top 2 ranked are shown; the CSV carries all 3 devices of ours in use" in body
+    assert "Fleets by model" in body and "Outlook by fiscal year" in body and 'title="FY2026: Jan 1, 2026 to Dec 31, 2026"' in body
+    assert "What the scores do not know" in body and "No install date: 1 device" in body
+    assert "Not ranked: no install date" in body and "twelve" not in body
     csv = csv_text(client.get("/reports/replace.csv"))
-    assert csv.startswith('Asset tag,Device,Manufacturer,Model,Location,Age years,Expected life years,"Repairs, 6 mo",Condition,Score,Est. replacement')
-    assert csv.splitlines()[1].startswith("CE-10001,ICU ventilator,Hamilton Medical,Hamilton-G5,ICU,")
+    assert csv.startswith('Asset tag,Device,Manufacturer,Model,Location,Age years,Expected life years,"Failures, 36 mo",Condition,Score,'
+                          "Est. replacement,Points unknown,Age points,Support points,Failure points,Service cost points,Recall points,Multiplier,"
+                          "Flags,Support,Suggested fiscal year,Estimate source,Installed on,Acquisition cost,Ranked")
+    assert csv.splitlines()[1] == ("CE-10001,ICU ventilator,Hamilton Medical,Hamilton-G5,ICU,12.00,10,3,1,31,38000.00,25,24.0,,6.7,0.0,0.0,1.0,,"
+                                   "Support not checked,FY2026,list price,2014-09-28,38000.00,yes")
+
+
+def test_the_api_serves_the_csvs_rows(client, signed_in, replace_data, monkeypatch):
+    monkeypatch.setattr("apps.api.views_reports._today", lambda: TODAY)
+    signed_in("director")
+    data = client.get("/api/v1/reports/replace/").json()
+    assert data["columns"] == REPLACE_COLUMNS
+    assert data["rows"][0] == ["CE-10001", "ICU ventilator", "Hamilton Medical", "Hamilton-G5", "ICU", 12.0, 10, 3, 1, 31, 38000.0, 25, 24.0, None,
+                               6.7, 0.0, 0.0, 1.0, "", "Support not checked", "FY2026", "list price", "2014-09-28", 38000.0, "yes"]
+    assert data["rows"][2][5] is None and data["rows"][2][-1] == "no: no install date"
 
 
 def test_replace_rows_are_plain_without_equipment_view(client, signed_in, replace_data, freeze_today):

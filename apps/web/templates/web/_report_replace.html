@@ -1,20 +1,62 @@
 {% load web %}
-{# Context: r (the report data), p (its presentation), can_view_asset, can_view_wo, can_view_recalls. #}
-{% if r.top %}
-<div class="hint" style="margin-bottom:10px">Score weighs age against expected life (50%), repairs in the last six months (30%), and condition (20%). The top {{ p.shown }} {% if p.shown == 1 %}is{% else %}are{% endif %} shown; the CSV carries the full ranked list of {{ r.scored_count }} active device{{ r.scored_count|pluralize }} for the capital request.</div>
+{# Context: r (apps.reports.fleet.report_replace), p (reports_fleet.present_replace), can_view_asset, can_view_wo, can_view_recalls. #}
+{# Slice 36: the replacement priority rule (apps.capital.priority). A recommendation for the committee, never a decision. #}
+{% if r.scored_count %}
+<div class="hint" style="margin-bottom:10px">{{ r.version }}. Unknown inputs are never scored as 0: their weight shows as points unknown. Condition is shown, never scored. {% if p.shown %}The top {{ p.shown }} ranked {% if p.shown == 1 %}is{% else %}are{% endif %} shown{% else %}No device can be ranked yet{% endif %}; the CSV carries all {{ r.scored_count }} device{{ r.scored_count|pluralize }} of ours in use, ranked then not ranked, for the capital request.</div>
+{% if p.rows %}
 <div class="tbl-wrap"><table>
-  <thead><tr><th>Asset</th><th>Location</th><th class="num">Age</th><th class="num">Expected life</th><th class="num">Repairs, 6 mo</th><th>Condition</th><th class="num">Score</th><th class="num">Est. replacement</th></tr></thead>
-  <tbody>{% for s in r.top %}{% with a=s.asset %}
+  <thead><tr><th>Asset</th><th>Location</th><th class="num">Age of life</th><th>Support</th><th class="num">Failures, 3 yr</th><th class="num">Service cost a year</th><th class="num">Score</th><th class="num">Est. replacement</th></tr></thead>
+  <tbody>{% for row in p.rows %}{% with a=row.asset %}
     <tr{% if can_view_asset %} class="row" hx-get="{% url 'web:asset' a.tag %}" hx-target="#drawer"{% endif %}>
-      <td class="two">{% if can_view_asset %}<a class="tag" href="{% url 'web:asset' a.tag %}">{{ a.tag }}</a>{% else %}{{ a.tag }}{% endif %} {{ a.device_model.description }}<small>{{ a.device_model.manufacturer }} {{ a.device_model.model }}</small></td>
+      <td class="two">{% if can_view_asset %}<a class="tag" href="{% url 'web:asset' a.tag %}">{{ a.tag }}</a>{% else %}{{ a.tag }}{% endif %} {{ a.device_model.description }}<small>{{ a.device_model.manufacturer }} {{ a.device_model.model }} · {{ row.suggested }}</small>{% for c in row.chips %} <span class="chip {{ c.kind }}">{{ c.words }}</span>{% endfor %}</td>
       <td>{{ a.department }}</td>
-      <td class="num{% if s.over_life %} down{% endif %}">{% if s.age is None %}—{% else %}{{ s.age|floatformat:1 }} yr{% endif %}</td>
-      <td class="num">{{ s.life }} yr</td><td class="num">{{ s.repairs }}</td><td>{{ s.condition }} of 5</td>
-      <td class="num"><b>{{ s.score_pct }}</b></td><td class="num">{{ s.estimate|money }}</td>
+      <td class="num{% if row.over_life %} down{% endif %}">{{ row.age }}</td>
+      <td>{{ row.support }}</td>
+      <td class="num" title="{{ row.failures_title }}">{% if row.failures %}{{ row.failures }}{% else %}—{% endif %}</td>
+      <td class="num" title="{{ row.cost_title }}">{% if row.cost_pct %}{{ row.cost_pct }}{% else %}—{% endif %}</td>
+      <td class="num"><b>{{ row.score }}</b>{% if row.points_unknown %}<small>{{ row.points_unknown }} points unknown</small>{% endif %}</td>
+      <td class="num" title="{{ row.estimate_words }}">{{ row.estimate|money }}</td>
     </tr>
   {% endwith %}{% endfor %}</tbody>
 </table></div>
-<div class="hint" style="margin-top:8px">Estimated replacement total for these {{ p.shown }}: <b style="color:var(--ink)">{{ r.total|money }}</b> at current list price plus 5%{% if p.fallback_count %} ({{ p.fallback_count }} device{{ p.fallback_count|pluralize }} without a list price, estimated from acquisition cost){% endif %}.</div>
+<div class="hint" style="margin-top:8px">Estimated replacement total for these {{ p.shown }}: <b style="color:var(--ink)">{{ r.total|money }}</b>, at the model's list price, else the device's acquisition cost (a historical price); no markup.</div>
+{% endif %}
+
+{% if p.fleets %}<h3 style="margin-top:16px">Fleets by model</h3>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Model</th><th class="num">Devices</th><th class="num">Past expected life</th><th>Support</th><th class="num">Failures a device-year</th><th class="num">Median score</th><th class="num">Est. fleet total</th></tr></thead>
+  <tbody>{% for f in p.fleets %}
+    <tr><td class="two">{{ f.model.manufacturer }} {{ f.model.model }}<small>{{ f.model.description }} · expected life {{ f.life_years }} yr</small></td><td class="num">{{ f.devices }}</td><td class="num">{{ f.past_life }}</td><td>{{ f.support }}</td><td class="num">{% if f.rate %}{{ f.rate }}{% else %}—{% endif %}</td><td class="num">{% if f.median %}{{ f.median }}{% else %}—{% endif %}</td><td class="num">{{ f.total|money }}{% if f.unestimated %}<small>{{ f.unestimated }} with no estimate</small>{% endif %}</td></tr>
+  {% endfor %}</tbody>
+</table></div>
+{% if p.fleets_truncated %}<div class="hint" style="margin-top:4px">Showing {{ p.fleets|length }} of {{ p.fleets_total }} models.</div>{% endif %}
+{% endif %}
+
+<h3 style="margin-top:16px">Outlook by fiscal year</h3>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Fiscal year</th><th class="num">Devices suggested</th><th class="num">Estimated total</th></tr></thead>
+  <tbody>{% for y in p.years %}
+    <tr><td title="{{ y.title }}">{{ y.label }}</td><td class="num">{{ y.devices }}</td><td class="num">{{ y.total|money }}{% if y.unestimated %}<small>{{ y.unestimated }} with no estimate</small>{% endif %}</td></tr>
+  {% endfor %}</tbody>
+</table></div>
+<div class="hint" style="margin-top:4px">The fiscal year starts in {{ p.fiscal_start }} and is named by the year it ends. Suggested for the current fiscal year when parts are no longer available or the device was kept out of use after a repair; else for the year its expected life, manufacturer support, or parts end, whichever is first.{% if p.later %} Later: {{ p.later }}.{% endif %} Not placed: {{ p.not_placed }}.</div>
+
+{% if p.gaps %}<h3 style="margin-top:16px">What the scores do not know</h3>
+<ul class="hint">{% for g in p.gaps %}<li>{{ g.words }}: {{ g.devices }} device{{ g.devices|pluralize }}{% if g.models %} ({{ g.models }} model{{ g.models|pluralize }}){% endif %}</li>{% endfor %}</ul>
+{% endif %}
+
+{% if p.unranked %}<h3 style="margin-top:16px">Not ranked</h3>
+<div class="tbl-wrap"><table>
+  <thead><tr><th>Asset</th><th>Location</th><th>Why</th><th class="num">Score so far</th></tr></thead>
+  <tbody>{% for u in p.unranked %}{% with a=u.asset %}
+    <tr{% if can_view_asset %} class="row" hx-get="{% url 'web:asset' a.tag %}" hx-target="#drawer"{% endif %}>
+      <td class="two">{% if can_view_asset %}<a class="tag" href="{% url 'web:asset' a.tag %}">{{ a.tag }}</a>{% else %}{{ a.tag }}{% endif %} {{ a.device_model.description }}<small>{{ a.device_model.manufacturer }} {{ a.device_model.model }}</small></td>
+      <td>{{ a.department }}</td><td>Not ranked: {{ u.why }}</td>
+      <td class="num">{{ u.p.score }}<small>{{ u.p.points_unknown }} points unknown</small></td>
+    </tr>
+  {% endwith %}{% endfor %}</tbody>
+</table></div>
+{% endif %}
 {% else %}
 <div class="empty">No active devices.</div>
 {% endif %}

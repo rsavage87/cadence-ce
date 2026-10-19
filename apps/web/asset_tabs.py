@@ -7,9 +7,10 @@ viewers with Work orders View (the drawer's can_view_wo).
 Real data only. Where the mock invents figures (a synced OEM library, past years' costs, a hashed technician), these show what is
 on file or say plainly that there is none; the AEM note names the committee's date only when an approval is recorded (slice 14).
 
-The read models below (pm_upcoming, pm_history, cost_by_year, replacement_outlook) are plain ORM reads with no web concerns. They
-belong in apps/pm/schedule.py (the first two), apps/reports/cost.py, and apps/reports/fleet.py, and sit here only because this
-slice's files are split by owner. Each runs a fixed number of queries however long the device's history is.
+The read models below (pm_upcoming, pm_history, cost_by_year) are plain ORM reads with no web concerns. They belong in
+apps/pm/schedule.py (the first two) and apps/reports/cost.py, and sit here only because this slice's files are split by owner. Each
+runs a fixed number of queries however long the device's history is. Slice 36: replacement_outlook reads the replacement priority rule
+(apps.capital.priority.for_asset), the one the Replacement planning report ranks by, and only words it.
 
 Slice 26, incoming inspections: the PM tab's history lists the device's incoming inspections with its PMs (the inspection is its first
 maintenance record, with its result), and a device waiting for its inspection has no upcoming PMs ("After its incoming inspection":
@@ -29,18 +30,19 @@ from django.db.models import DecimalField, Sum
 from django.db.models.functions import Coalesce, ExtractYear
 from django.utils import timezone
 
+from apps.capital import priority
 from apps.equipment import permissions as eq_perms
 from apps.equipment.models import Asset, AssetStatus, Ownership, RiskClass
 from apps.equipment.services import OWNED, USE_BEFORE_FROM, loaner_device_back, owner_maintains, repair_hold_message, status_label
 from apps.pm.dates import add_months
 from apps.pm.models import AemDecision, AemStatus
 from apps.pm.schedule import DEFAULT_PM_HOURS, planned_technicians
-from apps.reports.fleet import REPLACEMENT_MARKUP, _repairs_in_window, replacement_score
 from apps.workorders import inspections, scoping
 from apps.workorders import permissions as wo_perms
 from apps.workorders.models import LABOR_AMOUNT, OPEN_STATUSES, PART_AMOUNT, InspectionResult, LaborLine, PartLine, PmResult, WorkOrder, WoStatus, WoType
 
 from . import charts
+from .reports_fleet import cost_pct, flag_chips, suggested_words
 from .templatetags.web import money, money_k
 from .views_print import checklist_steps
 
@@ -49,8 +51,6 @@ HISTORY_LIMIT = 20  # PM work orders (and incoming inspections) listed; the Work
 MAINTENANCE_TYPES = (WoType.PM, WoType.INSPECTION)  # what the PM tab's history lists (slice 26: the incoming inspection with the PMs)
 AFTER_INSPECTION = "After its incoming inspection"  # slice 26: a waiting device's next PM, where a date would be
 COST_YEARS = 5  # this year and the four before it, or from the install year when that is later
-SOON_YEARS = 1.5  # the mock's "within 1.5 years of expected end of life"
-REVIEW_SCORE = 50  # a device younger than that scoring this high (repairs, condition) is worth a look; the report ranks by the same score
 
 
 def _months(n: int) -> str:
@@ -414,52 +414,37 @@ def contract_share(asset) -> float | None:
     return contract.cost_share_for(asset)
 
 
+DRIVERS = 2  # the components with the most points, named as what drives the score
+
+
 def replacement_outlook(asset, today: date) -> dict:
-    """The Replacement planning report's score for this one device (reports.fleet.replacement_score: age against expected life 50%,
-    repairs in the last six months 30%, condition 20%), with the same inputs the report uses, as a short note. One query. Slice 29:
-    none for a rental, vendor loaner, or demo unit (replacement planning is about the facility's own devices; no query)."""
+    """The replacement priority of this one device (slice 36: apps.capital.priority.for_asset, the rule the Replacement planning report
+    ranks by, in its fixed number of queries): the score with its points unknown, the suggested fiscal year, the flags, the top drivers,
+    every component for "How it is scored", and the rule's version words, with a short note. Slice 29: none for a rental, vendor loaner,
+    or demo unit (replacement planning is about the facility's own devices; no query); none for a retired device."""
     if owner_maintains(asset):
         return {"note": f"Not ours: {asset.owner or 'its owner'} owns and maintains it, so replacement planning leaves it out.", "score_pct": None,
-                "temporary": True}
+                "temporary": True, "priority": None}
     if asset.status == AssetStatus.RETIRED:
-        return {"note": "Retired. Replacement planning scores devices in use only.", "score_pct": None}
-    dm = asset.device_model
-    repairs_qs, _since = _repairs_in_window(today)
-    repairs = repairs_qs.filter(asset=asset).count()
-    age = asset.age_years(today)
-    if age is not None:
-        age = max(age, 0.0)  # a future install date reads as new, as the report does
-    life = dm.expected_life_years or 1
-    condition = min(5, max(1, asset.condition or 1))
-    score_pct = round(replacement_score(age, life, repairs, condition) * 100)
-    list_cost = float(dm.list_cost or 0)
-    estimate = (list_cost or float(asset.acquisition_cost or 0)) * REPLACEMENT_MARKUP
-    est = ""
-    if estimate:
-        est = f"estimated replacement {money(estimate)}" + ("" if list_cost else " (from its acquisition cost; the model has no list price)")
-
-    if age is None:
-        first = f"No install date on file, so its age against its {life}-year expected life is unknown."
-        left = None
+        return {"note": "Retired. Replacement planning scores devices in use only.", "score_pct": None, "priority": None}
+    p = priority.for_asset(asset, today)
+    if p is None:  # the copy in hand was in use; the row no longer is
+        return {"note": "Replacement planning scores our devices in use only.", "score_pct": None, "priority": None}
+    drivers = sorted((c for c in p.components if c.points), key=lambda c: -c.points)[:DRIVERS]
+    suggested = suggested_words(p)
+    unknown = f", {p.points_unknown} points unknown" if p.points_unknown else ""
+    parts = [f"Replacement score {p.score} of 100{unknown}."]
+    if p.ranked:
+        parts.append(f"{suggested}.")
     else:
-        left = life - age
-        if age > life:
-            first = f"Past its {life}-year expected life by {max(age - life, 0.1):.1f} years."
-        elif left <= SOON_YEARS:
-            first = f"Within {max(left, 0.1):.1f} years of the end of its {life}-year expected life."
-        else:
-            first = f"About {left:.1f} years of its {life}-year expected life remaining."
-    reps = "no repairs" if repairs == 0 else f"{repairs} repair{'' if repairs == 1 else 's'}"
-    second = f"Replacement score {score_pct} of 100, from age, {reps} in the last 6 months, and condition {condition} of 5."
-    if age is not None and age > life:
-        third = f"A replacement candidate; {est}." if est else "A replacement candidate."
-    elif left is not None and left <= SOON_YEARS:
-        third = f"Flag it for the next capital cycle; {est}." if est else "Flag it for the next capital cycle."
-    elif score_pct >= REVIEW_SCORE:
-        third = "Repairs and condition score it high for its age; review its repair history."
-    else:
-        third = "No replacement action needed."
-    return {"note": f"{first} {second} {third}", "score_pct": score_pct, "repairs": repairs, "estimate": estimate}
+        parts.append(f"Not ranked: {', '.join(priority.UNRANKED_WORDS[k] for k in p.unranked_reasons)}.")
+    if drivers:
+        parts.append("Driven most by " + " and ".join(f"{c.label.lower()} ({c.points:.1f} points)" for c in drivers) + ".")
+    if p.estimate.amount is not None:
+        parts.append(f"Estimated replacement {money(p.estimate.amount)} ({p.estimate.words[:1].lower()}{p.estimate.words[1:]}).")
+    return {"note": " ".join(parts), "score_pct": p.score, "priority": p, "points_unknown": p.points_unknown, "suggested": suggested,
+            "flags": flag_chips(p.flags), "drivers": drivers, "components": p.components, "estimate": p.estimate,
+            "version": priority.version_words(), "failures": p.failures, "cost_pct": cost_pct(p)}
 
 
 def costs_tab(asset, today: date | None = None) -> dict:
