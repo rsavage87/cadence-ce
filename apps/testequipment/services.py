@@ -5,11 +5,14 @@ words; by=None is the system: the seed, tests). Every write is transaction.atomi
 field a form has), and writes history with a _change_reason. Today is the facility's, read once and passed down.
 
 Locks: every writer here locks only its item's row (select_for_update) and takes nothing after it; adding an item takes
-equipment.services.lock_tags first (the facility's tags are shared with the devices), and so does a change of an item's tag, make, model,
-or serial (the duplicate checks run under it), before the item's row. The work order's writers (completion.complete_work_order,
-workorders.services.set_test_equipment: check_uses) take lock_work, then the work order row, then the named items' rows and those
-already on the work order in pk order, then what the completion already takes; assign (clear_for_vendor) takes the work order's row,
-then its items' rows: no cycle with the writers here.
+equipment.services.lock_tags first (the facility's tags are shared with the devices), and so does a change of an item's tag, make,
+model, or serial, and set_status's every move to in use (the duplicate checks run under it), before the item's row. The work order's
+writers (completion.complete_work_order, workorders.services.set_test_equipment: check_uses) take lock_work, then the work order row,
+then the named items' rows and those already on the work order in pk order, then what the completion already takes; assign
+(clear_for_vendor) takes the work order's row, then its items' rows: no cycle with the writers here. A cancel (clear_for_cancel) takes no
+item's row (review fix): it runs inside transactions that hold a device's row and cancel several work orders (equipment's retirement, a
+passed incoming inspection), where taking items after the device would wait in a circle with a writer above; a removal reads only the
+calibrations, so one recorded meanwhile is harmless.
 
 - add_test_equipment(*, tag, kind, manufacturer, model, serial, program, interval_months, held_by=None, calibration=None, by, today):
   Edit; the tag as a device's (TAG_VALIDATOR, at most 40, not reserved), unique in any letter case among devices and test equipment
@@ -17,41 +20,57 @@ then its items' rows: no cycle with the writers here.
   in any letter case refused; `calibration`: its latest certificate in the same call (a dict of record_calibration's fields), so an item
   going live is not born a GAP.
 - update_test_equipment(item, *, by, **fields): Edit; the tag only until its first calibration or use; the interval at Decide once a
-  live certificate is on file; held_by (an active technician; the one it has stays); never status (set_status) or tag_key.
+  live certificate is on file; held_by (an active technician; the one it has stays); never status (set_status), held_since, or tag_key.
 - set_status(item, *, to, reason="", by, today): MOVES (Edit: out for calibration, back from calibration, out of service damaged or
   failed a check, missing, found, returned to its owner; Equipment Approve: retired worn out or lost, reinstated; out of service ->
   in use only by a passed calibration, never by hand; failed calibration only by record_calibration; beyond build35.md, an item out of
-  service is retired (worn out: Approve; returned to its owner: Edit)); status_since is today.
+  service is retired (worn out: Approve; returned to its owner: Edit)); status_since is today, the day of the change, whatever the
+  move; out of service by hand, held_since is today too; leaving out of service clears it. Review fixes: Reinstate and Found land out
+  of service when the item must stay out (_held_out, by the one release rule below: a failed newest certificate, held since its day;
+  or retired while out of service with no passed certificate dated on or after the day it was held from, held since that day, carried
+  from its history), status_since still today; Reinstate refuses a second live record of the same make, model, and serial; an item
+  counts as usable on work completed today only when it was in use at some moment of today (rules.in_use_today).
 - record_calibration(item, *, calibrated_on, due_on=None, provider, certificate, accreditation, as_found, adjusted, result, by, today):
   Edit; calibrated_on not after today; one live record per day; due_on null exactly when failed, else default
   add_months(calibrated_on, interval_months), typed after calibrated_on and not after the last day of the month
   add_months(calibrated_on, interval) falls in; refused: failed with as found in tolerance; out of tolerance, not adjusted, and passed.
-  Status: only when it is the newest live record: passed puts an item out for calibration (calibrated on or after it went out) or out
-  of service (damaged or after a failed check: calibrated on or after that day; after a failed calibration: any newer passed one) in
-  use; failed puts an item in use or out for calibration out of service (failed calibration). A record typed late never moves a
-  missing or retired item.
+  Status (status_since today, the day of the change): only when it is the newest live record. One release rule (review fix, release_day):
+  passed puts an item out for calibration in use when it is dated on or after the day it went out (status_since), and one out of
+  service, whatever the reason, when it is dated on or after held_since (back_in_use_words); failed puts an item in use or out for
+  calibration out of service (failed calibration), held since the certificate's own day (never before the day it went out for
+  calibration), so a pass dated after it releases it whatever order they are typed in. A record typed late never moves a missing or
+  retired item.
 - mark_entered_in_error(calibration, *, by, today): Decide; the standing follows from the rest; status does not revert
   (entered_in_error_note says so); a review of it stops counting.
 - decide_review(calibration, *, basis, quality_reference="", decided_on, version, by, today): Decide; a live calibration that needs a
   review and has none; decided on or after its day, not after today; `version` the look-back list the reviewer was shown
   (review_version of affected_work), refused if it changed (REVIEW_CHANGED); stores the window and the work orders, frozen.
-- Read helpers: affected_work(calibration) (the counted uses' work orders in its window, by completed day), review_version(work orders),
-  review_summary(calibration) (the review box: window, work, version, the review, work added since), recheck_progress(calibration) (per
-  affected device: rechecked on <day> (work order) when a PM, inspection, safety check, or checked repair on it completed after the
-  calibration's day records test equipment IN_DATE on its day; else not yet), list_with_standing(qs, today) (each item with its
-  standing, for the list, CSV, and API in a fixed number of queries), work_done(item), moves_for(item, user).
+- Read helpers: affected_work(calibration) (the counted uses' work orders in its window, each use on its own day, used_on),
+  review_version(work orders), review_summary(calibration) (the review box: window, work, version, the review, work added since),
+  recheck_progress(calibration) (per affected device: rechecked on <day> (work order) when a PM, inspection, safety check, or checked
+  repair on it records test equipment used after the calibration's day and IN_DATE that day; else not yet), list_with_standing(qs,
+  today) (each item with its standing, for the list, CSV, and API in a fixed number of queries), work_done(item) and
+  work_since_last_calibration(item) (by used_on), moves_for(item, user).
 
-The work order's side (the uses; the callers are completion.complete_work_order, workorders.services.set_test_equipment, assign):
-- check_uses(wo, ids, *, by, today, errors, completing, repair_check=None): what a door sent (KEEP keeps; a list of ids, as text or
-  UUID, or items, replaces the set as a diff; [] clears), checked on the locked rows: never a scoped user's (a non-empty list refused; an empty
-  one changes nothing), never on work that is not offered (rules.offered, with the outcome chosen in the same call), never an unknown
-  id or another facility's; new items usable today (completing) or not retired before the work's day (after completion: judged on its
-  day, flagged by the standing); items already on the work order pass whatever their status; removals obey the kept-use rule. Refusals
-  keyed test_equipment in `errors`; returns KEEP or a UsesChange for apply_uses.
+The work order's side (the uses; the callers are completion.complete_work_order, workorders.services.set_test_equipment, assign, and
+change_status's cancel). Each use has its own day, used_on (the day of the work it was recorded on), written once by apply_uses and
+never moved: a reopened work order completed again keeps its uses' days, and one added then gets the new day.
+- check_uses(wo, ids, *, by, today, errors, completing, repair_check=None): what a door sent (KEEP keeps, but a completion as checked
+  by the vendor takes off the uses the kept-use rule does not keep; a list of ids, as text or UUID, or items, replaces the set as a
+  diff; [] clears), checked on the locked rows: never a scoped user's (a non-empty list refused; an empty one changes nothing), never a
+  user's without Equipment View, never an unknown id or another facility's; on work that is not offered (rules.offered, with the
+  outcome chosen in the same call) only kept ids (any other refused in _not_offered's words: VENDOR_CHECKED on a completion as checked
+  by the vendor; with kept uses, VENDOR_CHECKED_KEPT or VENDOR_WORK_KEPT, naming them as the only ones to send), the others coming off
+  as KEEP takes them off; new items usable today (completing) or not retired before the work's
+  day (after completion: judged on its day, flagged by the standing); items already on the work order pass whatever their status;
+  removals obey the kept-use rule, each use on its own day (KEPT names it). Refusals keyed test_equipment in `errors`; returns KEEP or a
+  UsesChange for apply_uses.
+- clear_for_vendor (assign) and clear_for_cancel take off every use but the kept ones.
 - picker(wo, user, *, today) the modal's and Change's options; kept_ids(wo); judged_for(wo) / judged_by_work_order(work_orders) the
   drawer row, the print, and the API's field.
 - A work order with test equipment recorded is never deleted (TestEquipmentUse.work_order is PROTECT): the API's destroy (the only door
-  that deletes a work order) catches the ProtectedError and refuses in delete_refusal(wo)'s words, as it does an incident's.
+  that deletes a work order) catches the ProtectedError and refuses in delete_refusal(wo)'s words, as it does an incident's (a
+  cancelled one's say that the uses a calibration since has judged stay on it as the record).
 """
 from __future__ import annotations
 
@@ -108,10 +127,19 @@ CHOOSE_CALIBRATION = "Choose a calibration of this facility's test equipment."
 # The work order's side (keyed test_equipment)
 LIST_ONLY = "Send the test equipment as a list of ids ([] for none)."
 SCOPED = "The facility's CE staff record the test equipment used."
+VIEW_NEEDED = "Recording the test equipment used needs Equipment View too: the test equipment and its records are Equipment's."
 IMPORTED = "{number} was imported from another system: it records no test equipment."
 VENDOR_WORK = "{number} is vendor service: the vendor's report names the test equipment it used, so record none here."
-VENDOR_CHECKED = ("Checked by the vendor: the vendor's report names the test equipment it used. Record ours with checked and ready for "
-                  "use, or record none.")
+VENDOR_CHECKED = ("Checked by the vendor: the vendor's report names the test equipment it used, so record none here; ours is recorded "
+                  "on work completed as checked and ready for use.")  # review fix: true while completing and after (never an action refused)
+# Review fix: with kept uses on the work order, the refusal names what to send ([] would be refused next, in KEPT's words). `tags` the
+# kept items' tags ("TE-K", "TE-K and TE-L"); `left_out` LEFT_OUT while completing (left out, the completion keeps them), else "".
+VENDOR_CHECKED_KEPT = ("Checked by the vendor: the vendor's report names the test equipment it used, and {number} keeps {tags} (a "
+                       "calibration since has judged the work). Send only {tags}{left_out}; ours is recorded on work completed as checked and "
+                       "ready for use.")
+VENDOR_WORK_KEPT = ("{number} is vendor service: the vendor's report names the test equipment it used, and it keeps {tags} (a calibration "
+                    "since has judged the work). Send only {tags}{left_out}.")
+LEFT_OUT = ", or leave test_equipment out"
 NOT_USABLE = "{tag} is {status}: only test equipment in use is recorded on work completed today."
 RETIRED_BEFORE = "{tag} was retired on {day}, before this work was done."
 KEPT = ("{tag} stays on {number}: a calibration dated on or after the day of this work ({day}) is on file, so the work has been judged "
@@ -119,6 +147,10 @@ KEPT = ("{tag} stays on {number}: a calibration dated on or after the day of thi
 NOT_DONE = "{number} is not completed yet: record the test equipment when completing it."
 SET_PERMISSION = "Recording the test equipment used needs Work orders Edit (Approve once the work order is closed)."
 DELETE_REFUSED = "{number} has test equipment recorded, so it is not deleted: it is the record of the work done with it."
+DELETE_CANCELLED = ("{number} was cancelled; the test equipment a calibration since has judged stays on it as the record, so it is not "
+                    "deleted.")
+CANCELLED = "{number} was cancelled: it records no test equipment."
+VENDOR_TAKEN_OFF = "Taken off: completed as checked by the vendor"
 
 YOURS_MAX = 8
 RECENT_DAYS = 30
@@ -440,29 +472,41 @@ def _record(locked: TestEquipment, cleaned: dict, *, by, today: date) -> Calibra
     return cal
 
 
+def release_day(item) -> date:
+    """The day from which a passed certificate puts `item` back in use (the one release rule): out of service, held_since (its
+    status_since for a row written without one); out for calibration, the day it went out (status_since)."""
+    if item.status == Status.OUT_OF_SERVICE and item.held_since is not None:
+        return item.held_since
+    return item.status_since
+
+
 def _status_after(locked: TestEquipment, cal: Calibration, *, by, today: date) -> None:
-    """The status a newest live record moves (the module docstring); nothing for a missing or retired item."""
+    """The status a newest live record moves (the module docstring), status_since today (the day of the change); nothing for a missing
+    or retired item. One release rule (review fix): out for calibration or out of service, whatever the reason, goes back in use on a
+    passed certificate dated on or after release_day (out of service: held_since, cleared then). A failed one takes an item in use or
+    out for calibration out of service (failed calibration), held since the certificate's own day (the lab's; for an item out for
+    calibration, never before the day it went out), so a pass dated after it releases it whatever order the two are typed in, and a
+    pass dated before it never does."""
     what = rules.noun(locked).lower()
     if cal.result == Result.PASSED:
-        back = (locked.status == Status.OUT_FOR_CALIBRATION and cal.calibrated_on >= locked.status_since) or (
-            locked.status == Status.OUT_OF_SERVICE and (locked.status_reason == Reason.FAILED_CALIBRATION
-                                                        or cal.calibrated_on >= locked.status_since))
-        if not back:
+        if locked.status not in (Status.OUT_FOR_CALIBRATION, Status.OUT_OF_SERVICE) or cal.calibrated_on < release_day(locked):
             return
-        to, reason, note = Status.IN_USE, "", f"Back in use: {what} passed {fmt(cal.calibrated_on)}"
+        to, reason, held, note = Status.IN_USE, "", None, f"Back in use: {what} passed {fmt(cal.calibrated_on)}"
     else:
         if locked.status not in (Status.IN_USE, Status.OUT_FOR_CALIBRATION):
             return
+        held = max(cal.calibrated_on, locked.status_since) if locked.status == Status.OUT_FOR_CALIBRATION else cal.calibrated_on
         to, reason, note = Status.OUT_OF_SERVICE, Reason.FAILED_CALIBRATION, f"Out of service: failed {what} {fmt(cal.calibrated_on)}"
-    locked.status, locked.status_reason, locked.status_since = to, reason, today
-    _save(locked, by, note, update_fields=["status", "status_reason", "status_since", "updated_at"])
+    locked.status, locked.status_reason, locked.status_since, locked.held_since = to, reason, today, held
+    _save(locked, by, note, update_fields=["status", "status_reason", "status_since", "held_since", "updated_at"])
 
 
 # --- items ---------------------------------------------------------------------------------------------------------------------
 
 def add_test_equipment(*, tag, kind, manufacturer, model, serial, program, interval_months, held_by=None, calibration=None, by, today=None):
-    """Add an item in use (status since today), with its latest certificate when `calibration` gives one (the module docstring).
-    Problems with the fields come keyed by field, all at once (the certificate's beside the item's)."""
+    """Add an item in use (status since today), with its latest certificate when `calibration` gives one (the module docstring): one
+    that failed adds it out of service (failed calibration), status since today and held since the certificate's day. Problems with
+    the fields come keyed by field, all at once (the certificate's beside the item's)."""
     from apps.equipment.services import lock_tags
 
     _check(by, perms.can_edit, EDIT_PERMISSION)
@@ -487,8 +531,12 @@ def add_test_equipment(*, tag, kind, manufacturer, model, serial, program, inter
         found = _same_unit(fields["manufacturer"], fields["model"], fields["serial"])
         if found is not None:
             raise ValidationError({"serial": _unit_refusal(found, fields["manufacturer"], fields["model"], fields["serial"])})
-        item = TestEquipment(**fields, tag_key=fields["tag"].casefold(), held_by=holder, status=Status.IN_USE, status_reason="",
-                             status_since=today, created_by=by)
+        # Review fix: an item whose first certificate failed is never "in use" for a moment today: out of service (failed calibration)
+        # from its first row, held since the certificate's day, as a failed certificate takes an item in use out (_status_after)
+        failed = cleaned is not None and cleaned.get("result") == Result.FAILED
+        item = TestEquipment(**fields, tag_key=fields["tag"].casefold(), held_by=holder, status=Status.OUT_OF_SERVICE if failed else Status.IN_USE,
+                             status_reason=Reason.FAILED_CALIBRATION if failed else "", status_since=today,
+                             held_since=cleaned["calibrated_on"] if failed else None, created_by=by)
         _save(item, by, "Added")
         if cleaned is not None:
             _record(item, cleaned, by=by, today=today)
@@ -502,7 +550,7 @@ def update_test_equipment(item, *, by, today=None, **fields):
 
     unknown = set(fields) - set(ITEM_FIELDS)
     if unknown:
-        raise ValidationError({f: ("Change the status with its own action." if f in ("status", "status_reason", "status_since") else
+        raise ValidationError({f: ("Change the status with its own action." if f in ("status", "status_reason", "status_since", "held_since") else
                                    "This is not changed here.") for f in sorted(unknown)})
     _check(by, perms.can_edit, EDIT_PERMISSION)
     errors: dict = {}
@@ -594,13 +642,12 @@ def moves_for(item, user) -> list[Move]:
 
 
 def back_in_use_words(item) -> str:
-    """How an item out of service goes back in use (set_status's refusal, the drawer's line)."""
+    """How an item out of service goes back in use (set_status's refusal, the drawer's line): the one release rule, whatever the reason
+    (_status_after: a passed certificate dated on or after release_day, its held_since)."""
     what = rules.noun(item).lower()
-    if item.status_reason == Reason.FAILED_CALIBRATION:
-        return f"{item.tag} failed its {what}: it goes back in use when a passed {what} after it is recorded."
     reason = Reason(item.status_reason).label.lower() if item.status_reason else "out of service"
     return (f"{item.tag} is out of service ({reason}): it goes back in use when a passed {what} dated on or after "
-            f"{fmt(item.status_since)} is recorded.")
+            f"{fmt(release_day(item))} is recorded.")
 
 
 def _move(locked: TestEquipment, to: str, reason: str) -> Move:
@@ -627,8 +674,39 @@ def _move(locked: TestEquipment, to: str, reason: str) -> Move:
     return move
 
 
+def _held_out(locked: TestEquipment, today: date) -> tuple[str, date | None]:
+    """Review fix: why an item coming back from retired or missing lands out of service, never in use, and the day it is held from
+    (its held_since): ("", None) to land in use. Judged by its newest live certificate against how it left, by the one release rule
+    (_status_after: a passed certificate dated on or after the day it is held from). Retired while out of service (its history's last
+    row before retirement: the reason and that row's held_since, or its status_since for a row written without one): it lands in use
+    when the newest live certificate passed and is dated on or after that day; out of service (failed calibration) held since that
+    certificate's day when it failed and is dated on or after that day; else with the history's reason, held since the history's day (a
+    round trip never moves it). Otherwise (Found, or retired from use) a failed newest certificate holds it out (failed calibration,
+    held since its day). One or two queries. The move's own day (status_since) is today whatever this says."""
+    from apps.core.history import _rows
+
+    newest = Calibration.objects.filter(test_equipment=locked, entered_in_error=False).order_by("-calibrated_on").first()
+    if locked.status == Status.RETIRED:
+        before = (_rows(TestEquipment.history.model).filter(id=locked.pk).exclude(status=Status.RETIRED)
+                  .order_by("-history_date", "-history_id").values_list("status", "status_reason", "held_since", "status_since").first())
+        if before is not None and before[0] == Status.OUT_OF_SERVICE:
+            reason, held = before[1] or Reason.DAMAGED, before[2] or before[3] or today
+            if newest is not None and newest.calibrated_on >= held:
+                return ("", None) if newest.result == Result.PASSED else (Reason.FAILED_CALIBRATION, newest.calibrated_on)
+            return reason, held
+    if newest is not None and newest.result == Result.FAILED:
+        return Reason.FAILED_CALIBRATION, newest.calibrated_on
+    return "", None
+
+
 def set_status(item, *, to, reason="", by, today=None):
-    """Move an item's status by hand (MOVES; the module docstring), status_since today. Returns the row."""
+    """Move an item's status by hand (MOVES; the module docstring): status_since today, the day of the change; held_since today when it
+    goes out of service, cleared when it leaves. Reinstate and Found land out of service (with the reason and the day it is held from,
+    _held_out) when the item's newest certificate failed, or it was out of service when it was retired and nothing passed it since;
+    Reinstate refuses a second live record of the same make, model, and serial (under lock_tags, before the item's row). Returns the
+    row."""
+    from apps.equipment.services import lock_tags
+
     _check(by, perms.can_edit, EDIT_PERMISSION)
     today = _today(today)
     to, reason = str(to or "").strip(), str(reason or "").strip()
@@ -637,12 +715,25 @@ def set_status(item, *, to, reason="", by, today=None):
     if reason and reason not in Reason.values:
         raise ValidationError({"status_reason": "Choose a reason listed."})
     with transaction.atomic():
+        if to == Status.IN_USE:
+            lock_tags()  # review fix: a reinstated item becomes live again: the duplicate check runs under the facility's tag lock
         locked = _locked(item)
         move = _move(locked, to, reason)
         if move.level == RETIRE:
             _check(by, perms.can_retire, RETIRE_PERMISSION)
-        locked.status, locked.status_reason, locked.status_since = move.to, move.reason, today
-        _save(locked, by, move.note, update_fields=["status", "status_reason", "status_since", "updated_at"])
+        status, why, note = move.to, move.reason, move.note
+        held = today if move.to == Status.OUT_OF_SERVICE else None  # by hand: damaged or failed a check, held from the day of the move
+        if locked.status == Status.RETIRED and move.to != Status.RETIRED:
+            found = _same_unit(locked.manufacturer, locked.model, locked.serial, exclude=locked)
+            if found is not None:
+                raise ValidationError({"status": _unit_refusal(found, locked.manufacturer, locked.model, locked.serial)})
+        if move.to == Status.IN_USE and locked.status in (Status.RETIRED, Status.MISSING):
+            out, held_from = _held_out(locked, today)
+            if out:
+                status, why, held = Status.OUT_OF_SERVICE, out, held_from
+                note = f"{move.note}: out of service ({Reason(out).label.lower()})"
+        locked.status, locked.status_reason, locked.status_since, locked.held_since = status, why, today, held
+        _save(locked, by, note, update_fields=["status", "status_reason", "status_since", "held_since", "updated_at"])
     _sync(item, locked)
     return locked
 
@@ -703,14 +794,17 @@ def entered_in_error_note(calibration) -> str:
 # --- the tolerance review --------------------------------------------------------------------------------------------------------
 
 def affected_work(calibration) -> list:
-    """The work orders whose counted uses of the calibration's item fall in its look-back window (rules.window), by completed day and
-    number, each with its device. Two queries."""
+    """The work orders whose counted uses of the calibration's item fall in its look-back window (rules.window, on each use's own day:
+    used_on), by that day and number, each with its device and `used_on` (the use's day, the one the window reads). Two queries."""
     cals = list(Calibration.objects.filter(test_equipment_id=calibration.test_equipment_id))
     bounds = rules.window(calibration, cals)
-    uses = (TestEquipmentUse.objects.filter(rules.counted_uses_q(), rules.window_q(bounds, "work_order__"),
-                                            test_equipment_id=calibration.test_equipment_id)
-            .select_related("work_order__asset").order_by("work_order__completed_on", "work_order__number"))
-    return [u.work_order for u in uses]
+    uses = (TestEquipmentUse.objects.filter(rules.counted_uses_q(), rules.window_q(bounds), test_equipment_id=calibration.test_equipment_id)
+            .select_related("work_order__asset").order_by("used_on", "work_order__number"))
+    out = []
+    for u in uses:
+        u.work_order.used_on = u.used_on  # one use per work order and item
+        out.append(u.work_order)
+    return out
 
 
 def review_version(work_orders) -> str:
@@ -792,7 +886,8 @@ def review_summary(calibration) -> ReviewSummary:
 
 @dataclass(frozen=True)
 class Recheck:
-    """One affected device: the first work that rechecked it after the calibration's day (None: not yet), and the words."""
+    """One affected device: the first work that rechecked it after the calibration's day (None: not yet), the day of that work's use
+    of test equipment (used_on), and the words."""
     asset: object
     work_order: object | None
     day: date | None
@@ -816,9 +911,9 @@ class RecheckProgress:
 
 def recheck_progress(calibration) -> RecheckProgress:
     """Per affected device (the devices of the review's frozen list, or of the work in the window when it is not reviewed): rechecked
-    on <day> (work order) when a PM, an incoming inspection, a safety check, or a repair checked and ready for use on it completed after
-    the calibration's day records test equipment IN_DATE on its day (the first such work); else not yet. Computed, never stored. A
-    fixed number of queries."""
+    on <day> (work order) when a counted PM, incoming inspection, safety check, or repair checked and ready for use on it records test
+    equipment used after the calibration's day and IN_DATE on that day (each use judged on its own day, used_on; the first such use);
+    else not yet. Computed, never stored. A fixed number of queries."""
     from apps.equipment.models import Asset
     from apps.workorders.models import RepairCheck, WorkOrder, WoType
 
@@ -831,17 +926,17 @@ def recheck_progress(calibration) -> RecheckProgress:
     assets = list(Asset.objects.filter(pk__in=device_ids).order_by("tag"))
     kinds = Q(work_order__type__in=rules.RECHECK_TYPES) | Q(work_order__type=WoType.REPAIR, work_order__repair_check=RepairCheck.PASSED)
     uses = list(TestEquipmentUse.objects.filter(rules.counted_uses_q(), kinds, work_order__asset_id__in=device_ids,
-                                                work_order__completed_on__gt=calibration.calibrated_on)
-                .select_related("work_order", "test_equipment").order_by("work_order__completed_on", "work_order__number"))
+                                                used_on__gt=calibration.calibrated_on)
+                .select_related("work_order", "test_equipment").order_by("used_on", "work_order__number"))
     cals = rules.calibrations_by_item(u.test_equipment_id for u in uses)
     first: dict = {}
     for u in uses:
         wo = u.work_order
         if wo.asset_id in first:
             continue
-        if rules.standing_on(u.test_equipment, wo.completed_on, cals.get(u.test_equipment_id, ())).state == rules.IN_DATE:
-            first[wo.asset_id] = wo
-    devices = [Recheck(a, first.get(a.pk), first[a.pk].completed_on if a.pk in first else None) for a in assets]
+        if rules.standing_on(u.test_equipment, u.used_on, cals.get(u.test_equipment_id, ())).state == rules.IN_DATE:
+            first[wo.asset_id] = (wo, u.used_on)
+    devices = [Recheck(a, *first[a.pk]) if a.pk in first else Recheck(a, None, None) for a in assets]
     return RecheckProgress(devices, sum(1 for d in devices if d.work_order is not None), len(devices))
 
 
@@ -858,23 +953,24 @@ def list_with_standing(qs, today: date) -> list:
 
 
 def work_done(item, *, limit: int | None = None) -> list:
-    """The counted work done with `item`, newest first, each use judged on its day (rules.JudgedUse): the drawer's "Work done with
-    it" (limit 10) and its CSV (every use). Four queries."""
+    """The counted work done with `item`, newest first by each use's own day (used_on), each judged on it (rules.JudgedUse): the
+    drawer's "Work done with it" (limit 10) and its CSV (every use). Four queries."""
     uses = (TestEquipmentUse.objects.filter(rules.counted_uses_q(), test_equipment=item).select_related("work_order__asset", "test_equipment")
-            .order_by("-work_order__completed_on", "-work_order__number"))
-    return rules.judge_uses(uses[:limit] if limit else uses)
+            .order_by("-used_on", "-work_order__number"))
+    return rules.judge_uses(uses[:limit] if limit else uses, all_counted=True)  # counted_uses_q above
 
 
 def work_since_last_calibration(item) -> int:
-    """How many counted work orders were done with `item` after its latest live calibration's day (all of them when it has none)."""
+    """How many counted work orders recorded `item` on a day (used_on) after its latest live calibration's day (all of them when it has
+    none)."""
     last = Calibration.objects.filter(test_equipment=item, entered_in_error=False).order_by("-calibrated_on").values_list("calibrated_on", flat=True).first()
     qs = TestEquipmentUse.objects.filter(rules.counted_uses_q(), test_equipment=item)
-    return (qs.filter(work_order__completed_on__gt=last) if last else qs).count()
+    return (qs.filter(used_on__gt=last) if last else qs).count()
 
 
 def judged_for(wo) -> list:
-    """The test equipment `wo` recorded, each judged on its work's day (rules.JudgedUse), by tag: the drawer's row and the print. At
-    most four queries."""
+    """The test equipment `wo` recorded, each judged on its own day (used_on: rules.JudgedUse), by tag: the drawer's row and the print.
+    At most four queries."""
     uses = TestEquipmentUse.objects.filter(work_order=wo).select_related("test_equipment", "work_order").order_by("test_equipment__tag")
     return rules.judge_uses(uses)
 
@@ -897,7 +993,12 @@ def has_uses(wo) -> bool:
 
 
 def delete_refusal(wo) -> str:
-    """The API destroy's words for a work order with test equipment recorded (PROTECT keeps it)."""
+    """The API destroy's words for a work order with test equipment recorded (PROTECT keeps it); a cancelled one keeps only the uses a
+    calibration since has judged (clear_for_cancel), so its words say so (review fix)."""
+    from apps.workorders.models import WoStatus
+
+    if wo.status == WoStatus.CANCELLED:
+        return DELETE_CANCELLED.format(number=wo.number)
     return DELETE_REFUSED.format(number=wo.number)
 
 
@@ -905,40 +1006,71 @@ def delete_refusal(wo) -> str:
 
 @dataclass
 class UsesChange:
-    """What check_uses found to do: items to record (their rows locked) and uses to take off."""
+    """What check_uses found to do: items to record (their rows locked) and uses to take off; `note` words the history's reason when
+    it is the completion's own consequence (not what was sent)."""
     add: list
     remove: list
+    note: str = ""
+
+
+def _lock_items(ids) -> None:
+    """The items' rows, locked in pk order until the transaction ends (the work order's writers, after its row)."""
+    list(TestEquipment.objects.select_for_update().filter(pk__in=list(ids)).order_by("pk").values_list("pk", flat=True))
+
+
+def _kept(uses) -> set:
+    """The item ids of `uses` (one work order's) the kept-use rule keeps, each on its own day (rules.kept). One query."""
+    return rules.kept(uses, rules.calibrations_by_item(u.test_equipment_id for u in uses)) if uses else set()
 
 
 def kept_ids(wo) -> set:
-    """The items on `wo` that may not be taken off (rules.may_remove on the work's day, rules.work_day): the modal and Change show them
-    ticked and disabled ("kept: calibrated since") and post them with the rest."""
-    uses = list(TestEquipmentUse.objects.filter(work_order=wo).select_related("test_equipment"))
-    if not uses:
-        return set()
-    day = rules.work_day(wo)
-    cals = rules.calibrations_by_item(u.test_equipment_id for u in uses)
-    return {u.test_equipment_id for u in uses if not rules.may_remove(u.test_equipment, day, cals.get(u.test_equipment_id, ()))}
+    """The items on `wo` that may not be taken off (rules.may_remove, each use on its own day): the modal and Change show them ticked
+    and disabled ("kept: calibrated since") and post them with the rest. Two queries (one with nothing recorded)."""
+    return _kept(list(TestEquipmentUse.objects.filter(work_order=wo)))
 
 
-def _not_offered(wo, repair_check) -> str:
+def _and(words: list) -> str:
+    """"A", "A and B", "A, B, and C"."""
+    return words[0] if len(words) == 1 else f"{words[0]} and {words[1]}" if len(words) == 2 else f"{', '.join(words[:-1])}, and {words[-1]}"
+
+
+def _not_offered(wo, repair_check, kept: set, *, completing: bool) -> str:
+    """Why `wo` takes no other test equipment (rules.offered fails), in words naming what may be sent: with uses the kept-use rule keeps
+    (`kept`, item ids), only those (review fix: never an answer refused next)."""
     from apps.workorders.models import RepairCheck, Source
 
     if wo.source == Source.IMPORTED:
         return IMPORTED.format(number=wo.number)
-    if (repair_check if repair_check is not None else wo.repair_check) == RepairCheck.VENDOR_REPORT:
-        return VENDOR_CHECKED
-    return VENDOR_WORK.format(number=wo.number)
+    vendor_checked = (repair_check if repair_check is not None else wo.repair_check) == RepairCheck.VENDOR_REPORT
+    if kept:
+        tags = _and(sorted(TestEquipment.objects.filter(pk__in=list(kept)).values_list("tag", flat=True)))
+        words = VENDOR_CHECKED_KEPT if vendor_checked else VENDOR_WORK_KEPT
+        return words.format(number=wo.number, tags=tags, left_out=LEFT_OUT if completing else "")
+    return VENDOR_CHECKED if vendor_checked else VENDOR_WORK.format(number=wo.number)
 
 
 def check_uses(wo, ids, *, by, today: date, errors: dict, completing: bool, repair_check: str | None = None):
     """What a door sent for the test equipment `wo` recorded (the module docstring), checked on the locked rows: `wo` is the work order's
     row, locked after lock_work; the named items and those already on it are locked here, in pk order. `completing`: the work is
     completed today (new items usable today); else after completion (new items not retired before its day). `repair_check`: the
-    outcome a completion chooses in the same call. Returns KEEP (nothing to change) or a UsesChange; refusals keyed test_equipment."""
+    outcome a completion chooses in the same call. On work that is not offered (a completion as checked by the vendor: rules.offered
+    with that outcome) only the kept uses stay: KEEP takes off the others, and a list may name only kept ones (review fix). Returns
+    KEEP (nothing to change) or a UsesChange; refusals keyed test_equipment."""
     from apps.workorders.scoping import is_scoped
 
     if ids is KEEP:
+        if completing and not rules.offered(wo, None, repair_check=repair_check):
+            # Review fix: completed again as checked by the vendor (a reopened repair CE had checked), the work no longer counts and
+            # its report names the vendor's test equipment: ours comes off with the completion, but never a use the kept-use rule
+            # keeps (a calibration since has judged it: it stays, in no window while the work does not count, and counts again if the
+            # work is completed again as checked by us)
+            stale = list(TestEquipmentUse.objects.filter(work_order=wo))
+            if stale:
+                _lock_items(u.test_equipment_id for u in stale)
+                keep = _kept(stale)
+                free = [u for u in stale if u.test_equipment_id not in keep]
+                if free:
+                    return UsesChange(add=[], remove=free, note=VENDOR_TAKEN_OFF)
         return KEEP
     if isinstance(ids, (str, bytes)) or not isinstance(ids, (list, tuple, set, frozenset)):
         errors["test_equipment"] = LIST_ONLY
@@ -955,10 +1087,15 @@ def check_uses(wo, ids, *, by, today: date, errors: dict, completing: bool, repa
         if wanted:
             errors["test_equipment"] = SCOPED
         return KEEP  # an empty list never changes the facility's record
-    if wanted and not rules.offered(wo, by, repair_check=repair_check):
-        errors["test_equipment"] = _not_offered(wo, repair_check)
+    if by is not None and not perms.can_view(by):  # review fix: every door, the API's too, as the web's picker and Change
+        errors["test_equipment"] = VIEW_NEEDED
         return KEEP
     existing = {u.test_equipment_id: u for u in TestEquipmentUse.objects.filter(work_order=wo)}
+    offered = rules.offered(wo, by, repair_check=repair_check)
+    if not offered and any(pk not in existing for pk in wanted):
+        # never a new item; the words name the kept ones, if any (read for the words only: nothing is written)
+        errors["test_equipment"] = _not_offered(wo, repair_check, _kept(list(existing.values())), completing=completing)
+        return KEEP
     lock = set(wanted) | set(existing)
     rows = {i.pk: i for i in TestEquipment.objects.select_for_update().filter(pk__in=lock).order_by("pk")} if lock else {}
     if any(pk not in rows for pk in wanted):
@@ -967,6 +1104,11 @@ def check_uses(wo, ids, *, by, today: date, errors: dict, completing: bool, repa
     keep = set(wanted)
     add = [rows[pk] for pk in wanted if pk not in existing]
     remove = [u for pk, u in existing.items() if pk not in keep]
+    kept = _kept(list(existing.values())) if remove or not offered else set()  # on the locked rows: no calibration races it
+    if not offered and any(pk not in kept for pk in wanted):
+        # Review fix: on work that is not offered only a kept use may be sent back; the others come off, as KEEP takes them off
+        errors["test_equipment"] = _not_offered(wo, repair_check, kept, completing=completing)
+        return KEEP
     problems = []
     for item in add:
         if completing:
@@ -979,48 +1121,68 @@ def check_uses(wo, ids, *, by, today: date, errors: dict, completing: bool, repa
             retired_on = rules.retired_throughout(item, wo.completed_on)
             if retired_on is not None:
                 problems.append(RETIRED_BEFORE.format(tag=item.tag, day=fmt(retired_on)))
-    if remove:
-        day = rules.work_day(wo)
-        cals = rules.calibrations_by_item(u.test_equipment_id for u in remove)
-        for u in sorted(remove, key=lambda u: rows[u.test_equipment_id].tag):
-            item = rows[u.test_equipment_id]
-            if not rules.may_remove(item, day, cals.get(item.pk, ())):
-                problems.append(KEPT.format(tag=item.tag, number=wo.number, day=fmt(day)))
+    # The kept-use rule, whatever the work, each use on its own day (a judged use is never erased: counted again, it is the record the
+    # review read)
+    for u in sorted(remove, key=lambda u: rows[u.test_equipment_id].tag):
+        if u.test_equipment_id in kept:
+            problems.append(KEPT.format(tag=rows[u.test_equipment_id].tag, number=wo.number, day=fmt(u.used_on)))
     if problems:
         errors["test_equipment"] = " ".join(problems)
         return KEEP
     if not add and not remove:
         return KEEP
-    return UsesChange(add=add, remove=remove)
+    return UsesChange(add=add, remove=remove, note=VENDOR_TAKEN_OFF if completing and not offered else "")
 
 
 def apply_uses(wo, change: UsesChange, *, by, completing: bool) -> None:
     """Write what check_uses found (inside the caller's transaction, the rows still locked): each use added or taken off is a history
-    row of its own (the change log's "Test equipment used")."""
+    row of its own (the change log's "Test equipment used"). A use added is recorded on the day of the work, its used_on: the work
+    order's completed_on (completing, the completion's day, today; after completion, the day it was completed), never moved after; the
+    uses that stay keep theirs."""
     when = "with the completion" if completing else "after completion"
     for use in change.remove:
-        _delete(use, by, f"Taken off {when}")
+        _delete(use, by, change.note or f"Taken off {when}")
     for item in change.add:
-        _save(TestEquipmentUse(tenant_id=wo.tenant_id, work_order=wo, test_equipment=item), by, f"Recorded {when}")
+        _save(TestEquipmentUse(tenant_id=wo.tenant_id, work_order=wo, test_equipment=item, used_on=wo.completed_on), by, f"Recorded {when}")
+
+
+def clear_for_cancel(wo, *, by) -> int:
+    """workorders.services.change_status's cancel (review fix): a cancelled work order records no test equipment (its drawer, print, and
+    the API's field show none): each use taken off, audited "Test equipment cleared: cancelled", but never a use the kept-use rule keeps
+    (it counts nowhere). Takes no item lock (review fix): a cancel runs inside transactions that hold a device's row and cancel several
+    work orders (equipment's retirement, a passed incoming inspection), and a use's removal reads only the calibrations, so a
+    calibration recorded meanwhile is harmless. Returns how many."""
+    return _clear(wo, by=by, note="Test equipment cleared: cancelled", lock_items=False)
 
 
 def clear_for_vendor(wo, vendor_name: str, *, by) -> int:
     """assign's clearing (workorders.services.assign, the work order's row locked): an open work order that moves to a vendor keeps no
-    test equipment of ours (that work is now the vendor's, and its report names its own). Each use taken off, audited "Test equipment
-    cleared: assigned to <vendor>"; their items' rows locked first, in pk order. Returns how many."""
+    test equipment of ours (that work is now the vendor's, and its report names its own), but never a use the kept-use rule keeps (a
+    reopened work order a calibration since has judged: it stays, in no window while the work does not count). Each use taken off,
+    audited "Test equipment cleared: assigned to <vendor>"; their items' rows locked first, in pk order. Returns how many."""
+    return _clear(wo, by=by, note=f"Test equipment cleared: assigned to {vendor_name}")
+
+
+def _clear(wo, *, by, note: str, lock_items: bool = True) -> int:
+    """Take off `wo`'s uses but the kept ones, each judged on its own day (the work order's row locked by the caller; the items' rows
+    here, in pk order, unless `lock_items` is False)."""
     uses = list(TestEquipmentUse.objects.filter(work_order=wo))
     if not uses:
         return 0
-    list(TestEquipment.objects.select_for_update().filter(pk__in=[u.test_equipment_id for u in uses]).order_by("pk").values_list("pk", flat=True))
-    for u in uses:
-        _delete(u, by, f"Test equipment cleared: assigned to {vendor_name}")
-    return len(uses)
+    if lock_items:
+        _lock_items(u.test_equipment_id for u in uses)
+    keep = _kept(uses)
+    free = [u for u in uses if u.test_equipment_id not in keep]
+    for u in free:
+        _delete(u, by, note)
+    return len(free)
 
 
 @dataclass(frozen=True)
 class Option:
-    """One item a door offers for a work order: its standing on the work's day (today while completing), whether it is on the work
-    order already, and whether it is kept there (the kept-use rule: ticked and disabled)."""
+    """One item a door offers for a work order: its standing on the work's day (today while completing; one on the work order already,
+    on its use's own day), whether it is on the work order already, and whether it is kept there (the kept-use rule: ticked and
+    disabled)."""
     item: TestEquipment
     standing: rules.Standing
     on_work_order: bool = False
@@ -1042,29 +1204,35 @@ class Picker:
 
 def picker(wo, user, *, today: date) -> Picker:
     """The options for `wo` (rules.offered must hold: the door shows nothing otherwise). Completing (an open work order): the items in use
-    or whose status changed today, judged today. After completion: every item not retired before the work's day, judged on that day.
-    The items already on the work order always, kept ones marked. A fixed number of queries."""
+    at some moment of today (rules.in_use_today), judged today. After completion: every item not retired before the work's day, judged on
+    that day. The items already on the work order always, each judged on its use's own day (used_on), kept ones marked (rules.kept). Yours:
+    the technician's kit, then the items they recorded on days (used_on) in the last RECENT_DAYS days. A fixed number of queries."""
     from apps.credentials.services import technician_of
     from apps.workorders.costs import default_technician
 
     completing = wo.status not in rules.DONE
     day = today if completing else wo.completed_on
-    existing = set(TestEquipmentUse.objects.filter(work_order=wo).values_list("test_equipment_id", flat=True))
+    uses = list(TestEquipmentUse.objects.filter(work_order=wo))
+    existing = {u.test_equipment_id: u.used_on for u in uses}
     if completing:
         offered_q = Q(status=Status.IN_USE) | Q(status_since=today)
     else:
         offered_q = Q(status__in=LIVE_STATUSES) | Q(status=Status.RETIRED, status_since__gte=day)
-    items = list(TestEquipment.objects.filter(offered_q | Q(pk__in=existing)).order_by("tag"))
+    items = list(TestEquipment.objects.filter(offered_q | Q(pk__in=list(existing))).order_by("tag"))
+    if completing:  # review fix: a status changed today counts only when the item was in use at some moment of today
+        usable = rules.in_use_today([i for i in items if i.pk not in existing], today)
+        items = [i for i in items if i.pk in existing or i.pk in usable]
     cals = rules.calibrations_by_item(i.pk for i in items)
-    kept = kept_ids(wo) if existing else set()
-    options = {i.pk: Option(i, rules.standing_on(i, day, cals.get(i.pk, ())), i.pk in existing, i.pk in kept) for i in items}
+    kept = rules.kept(uses, cals)
+    options = {i.pk: Option(i, rules.standing_on(i, existing.get(i.pk, day), cals.get(i.pk, ())), i.pk in existing, i.pk in kept)
+               for i in items}
     tech = default_technician(wo, user) or technician_of(user)
     yours_ids: list = []
     if tech is not None:
         yours_ids = [i.pk for i in items if i.held_by_id == tech.pk]
-        recent = (TestEquipmentUse.objects.filter(work_order__assigned_to=tech, work_order__completed_on__gte=day - timedelta(days=RECENT_DAYS),
+        recent = (TestEquipmentUse.objects.filter(work_order__assigned_to=tech, used_on__gte=day - timedelta(days=RECENT_DAYS),
                                                   test_equipment_id__in=list(options))
-                  .order_by("-work_order__completed_on").values_list("test_equipment_id", flat=True))
+                  .order_by("-used_on").values_list("test_equipment_id", flat=True))
         for pk in recent:
             if pk not in yours_ids:
                 yours_ids.append(pk)

@@ -12,8 +12,9 @@ Tables (rows built in the one pass, read lazily):
   with "on file since" when its certificate was entered after that day; "Not in Cadence yet" for an item added after it).
 - calibrations: the live certificates dated in the period (provider, number, as found, adjusted, result, the ISO/IEC 17025 mark, the
   day it was entered), each with its tolerance review when it needs one (not reviewed, or the decision, and work added since it).
-- work: the counted work completed in the period with test equipment past due, with no calibration on file, or failed on the work's
-  day, or found out of tolerance later, or judged on a certificate entered after the work (its "on file since").
+- work: the counted uses of test equipment on days in the period (each use's own day, used_on: the day of the work it was recorded
+  on) with the item past due, with no calibration on file, or failed that day, or found out of tolerance later, or judged on a
+  certificate entered after the work (its "on file since").
 - unnamed: the counted work completed in the period, since test equipment was first entered in Cadence, that recorded a reading (a
   measured checklist step with a reading) or was a safety check, and names no test equipment.
 
@@ -23,16 +24,16 @@ Gaps (GAP: one record fixes it, linked to the item's page; FINDING: be ready to 
 - GAP per live calibration that needs a review (out of tolerance as found, or failed) and has none, when its look-back window touches
   the period (it may be dated after the period's end: the period's work is in question).
 - GAP per decided review whose window (touching the period) now holds counted work outside its frozen list (added since the review).
-- FINDING per item and stretch: the period's work done with it on days it was past due, with no calibration on file, or failed, one per
+- FINDING per item and stretch: the period's uses of it on days it was past due, with no calibration on file, or failed, one per
   governing certificate (the stretch), with the first and last day of that work; a certificate in force on those days entered late
   clears it, disclosed "on file since".
 - CHECK: the unnamed work above, one with the count (earlier work, before test equipment was first entered, is a figure apart).
 - CHECK per calibration dated in the period that was adjusted with its as found not reported: ask the provider for the as-found data.
 
 Built with user=None (the program evaluation's binder_gaps) in a fixed number of queries whatever the facility's size: the items, their
-history's first days (core.history._rows), their calibrations, the calibrations' entered days, their reviews, the period's counted uses,
-the uses in the touching windows (only when some calibration there needs a review), and the period's counted work naming none (eight at
-most). Never requester text: work orders are read for their number, type, day, device tag, and checklist steps (staff-recorded; only
+history's first days (core.history._rows), their calibrations, the calibrations' entered days, their reviews, the period's counted uses
+(by used_on), the uses in the touching windows (by used_on; only when some calibration there needs a review), and the period's counted
+work naming none (eight at most). Never requester text: work orders are read for their number, type, day, device tag, and checklist steps (staff-recorded; only
 whether a measured step has a reading is used).
 """
 from __future__ import annotations
@@ -57,7 +58,7 @@ ITEM_COLUMNS = ["Tag", "Kind", "Make and model", "Serial number", "Certificates"
                 "Standing today", "Standing at the period's end"]
 CALIBRATION_COLUMNS = ["Tag", "Calibrated", "Due", "Provider", "Certificate", "As found", "Adjusted", "Result",
                        "Certificate carries an ISO/IEC 17025 accreditation mark", "Entered in Cadence", "Tolerance review"]
-WORK_COLUMNS = ["Work order", "Type", "Completed on", "Device", "Test equipment", "Standing on the day", "On file since",
+WORK_COLUMNS = ["Work order", "Type", "Day of the work", "Device", "Test equipment", "Standing on the day", "On file since",
                 "Found out of tolerance later"]
 UNNAMED_COLUMNS = ["Work order", "Type", "Completed on", "Device"]
 NOT_YET = "Not in Cadence yet"  # an item added after the period's end has no standing there
@@ -65,7 +66,7 @@ NOT_NEEDED = "Not needed"  # in tolerance as found and passed: nothing to review
 NOT_REVIEWED = "Not reviewed"
 _TYPES = dict(WoType.choices)
 # The columns a use is read with (never the work order's problem, notes, resolution, or requester)
-_USE_ONLY = ("id", "work_order", "test_equipment", "work_order__number", "work_order__type", "work_order__completed_on", "work_order__asset",
+_USE_ONLY = ("id", "work_order", "test_equipment", "used_on", "work_order__number", "work_order__type", "work_order__asset",
              "work_order__asset__tag", "test_equipment__tag", "test_equipment__manufacturer", "test_equipment__model", "test_equipment__program")
 
 
@@ -151,8 +152,8 @@ def _added_gap(item, cal, review, added: int) -> Gap:
 
 
 def _findings(judged: list) -> list[Gap]:
-    """One FINDING per item and stretch: the period's work done with it on days its standing was flagged (past due, no calibration on
-    file, failed), grouped by the certificate that governed (none for no calibration on file)."""
+    """One FINDING per item and stretch: the period's uses of it on days (their own, used_on) its standing was flagged (past due, no
+    calibration on file, failed), grouped by the certificate that governed (none for no calibration on file)."""
     groups: dict = defaultdict(list)
     for j in judged:
         if j.standing is not None and j.standing.flagged:
@@ -178,15 +179,15 @@ def _findings(judged: list) -> list[Gap]:
 
 
 def _window_work(scoped: list) -> dict:
-    """{calibration id: {work order id (text)}}: the counted uses of each calibration's item in its window now, for `scoped` [(calibration,
-    bounds)]. One query (none for an empty list)."""
+    """{calibration id: {work order id (text)}}: the counted uses of each calibration's item in its window now (each on its own day,
+    used_on), for `scoped` [(calibration, bounds)]. One query (none for an empty list)."""
     if not scoped:
         return {}
     q = Q()
     for cal, bounds in scoped:
-        q |= Q(test_equipment_id=cal.test_equipment_id) & rules.window_q(bounds, "work_order__")
+        q |= Q(test_equipment_id=cal.test_equipment_id) & rules.window_q(bounds)
     rows = list(TestEquipmentUse.objects.filter(rules.counted_uses_q()).filter(q).order_by()
-                .values_list("test_equipment_id", "work_order_id", "work_order__completed_on"))
+                .values_list("test_equipment_id", "work_order_id", "used_on"))
     return {cal.pk: {str(wo) for item, wo, day in rows if item == cal.test_equipment_id and rules.in_window(day, bounds)}
             for cal, bounds in scoped}
 
@@ -245,12 +246,11 @@ def build(period: Period, user) -> Section:
                          entered.get(c.pk), _review_words(c, reviews.get(c.pk), added_since.get(c.pk, 0))] for c in in_period]
     needing = [c for c in in_period if c.needs_review]
 
-    # The period's work done with test equipment, each use judged on its day
-    uses = (TestEquipmentUse.objects.filter(rules.counted_uses_q(), work_order__completed_on__gte=period.start,
-                                            work_order__completed_on__lte=period.end)
+    # The period's work done with test equipment: the counted uses on days in the period, each judged on its own day (used_on)
+    uses = (TestEquipmentUse.objects.filter(rules.counted_uses_q(), used_on__gte=period.start, used_on__lte=period.end)
             .select_related("work_order__asset", "test_equipment").only(*_USE_ONLY)
-            .order_by("work_order__completed_on", "work_order__number", "test_equipment__tag"))
-    judged = rules.judge_uses(uses, calibrations=cals, entered=entered, reviews=reviews)
+            .order_by("used_on", "work_order__number", "test_equipment__tag"))
+    judged = rules.judge_uses(uses, calibrations=cals, entered=entered, reviews=reviews, all_counted=True)  # counted_uses_q, fields deferred
     shown = [j for j in judged if j.flagged or j.standing.entered_after]
     work_rows = [[j.use.work_order.number, _TYPES.get(j.use.work_order.type, j.use.work_order.type), j.day, j.use.work_order.asset.tag,
                   j.item.tag, j.standing.plain, j.standing.entered_after, "; ".join(f.words for f in j.later)] for j in shown]
@@ -292,7 +292,7 @@ def build(period: Period, user) -> Section:
         Figure("Calibrations in the period", len(in_period), f"{in_error:,} more entered in error, left out" if in_error else ""),
         Figure("Found out of tolerance or failed", len(needing), "calibrations in the period"),
         Figure("Of those, reviewed", sum(1 for c in needing if c.pk in reviews)),
-        Figure("Work done with test equipment", len(work_orders), "work orders completed in the period"),
+        Figure("Work done with test equipment", len(work_orders), "work orders recording it on a day in the period"),
         Figure("Done with test equipment past due, with no calibration on file, or failed", len(flagged_on_day), "on the day of the work"),
         Figure("Done with test equipment found out of tolerance later", len(found_later)),
         Figure("Work with readings naming no test equipment", len(unnamed),

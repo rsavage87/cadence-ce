@@ -386,16 +386,38 @@ def test_change_details_and_the_locks(client, signed_in, te_world):
     body = html(client.get(url(w.in_date, "edit"), **HX))
     assert 'name="tag"' not in body and "TE-IN has calibrations or work on record, so its tag stays." in body
     assert 'name="interval_months"' not in body and tes.INTERVAL_PERMISSION.replace("'", "&#x27;") in body
-    data = {"tag": "TE-IN9", "kind": "electrical_safety", "manufacturer": "Fluke Biomedical", "model": "ESA612", "serial": "SN-TE-IN",
-            "program": "calibration", "interval_months": "6", "held_by": str(w.tech.pk)}
-    client.post(url(w.in_date, "edit"), data, **HX)  # neither is offered, so neither posted value is read
+    data = {"kind": "electrical_safety", "manufacturer": "Fluke Biomedical", "model": "ESA615", "serial": "SN-TE-IN",
+            "program": "calibration", "held_by": str(w.tech.pk)}
+    r = client.post(url(w.in_date, "edit"), data, **HX)  # neither is offered, so the modal posts neither: the rest saves
     w.in_date.refresh_from_db()
-    assert w.in_date.tag == "TE-IN" and w.in_date.interval_months == 12
+    assert toast_of(r) == "TE-IN: details saved" and (w.in_date.tag, w.in_date.interval_months, w.in_date.model) == ("TE-IN", 12, "ESA615")
+    r = client.post(url(w.in_date, "edit"), {**data, "tag": "TE-IN", "interval_months": "12", "model": "ESA612"}, **HX)  # as stored
+    w.in_date.refresh_from_db()
+    assert toast_of(r) == "TE-IN: details saved" and (w.in_date.tag, w.in_date.interval_months, w.in_date.model) == ("TE-IN", 12, "ESA612")
     signed_in("manager")
     assert 'name="interval_months"' in html(client.get(url(w.in_date, "edit"), **HX))
-    client.post(url(w.in_date, "edit"), data, **HX)
+    r = client.post(url(w.in_date, "edit"), {**data, "interval_months": "6"}, **HX)  # the tag left out, as the modal does
     w.in_date.refresh_from_db()
-    assert w.in_date.interval_months == 6 and w.in_date.tag == "TE-IN"
+    assert toast_of(r) == "TE-IN: details saved" and w.in_date.interval_months == 6 and w.in_date.tag == "TE-IN"
+    r = client.post(url(w.in_date, "edit"), {**data, "tag": "TE-IN", "interval_months": "12"}, **HX)  # the stored tag posted
+    w.in_date.refresh_from_db()
+    assert toast_of(r) == "TE-IN: details saved" and w.in_date.interval_months == 12 and w.in_date.tag == "TE-IN"
+
+
+def test_change_refuses_a_changed_locked_tag_in_the_locks_words(client, signed_in, te_world):
+    """A tag posted changed while it is locked (calibrations or work on record) is refused in the lock's words, and nothing in the same
+    post is saved (review fix: never silently dropped)."""
+    w = te_world
+    data = {"tag": "TE-IN9", "kind": "electrical_safety", "manufacturer": "Fluke Biomedical", "model": "ESA615", "serial": "SN-TE-IN",
+            "program": "calibration", "interval_months": "6", "held_by": str(w.tech.pk)}
+    lock = "TE-IN has calibrations or work on record, so its tag stays."
+    for role, words in (("technician", f"{lock} {tes.INTERVAL_PERMISSION}"), ("manager", lock)):
+        signed_in(role)
+        r = client.post(url(w.in_date, "edit"), data, **HX)
+        assert r.status_code == 200 and toast_of(r) == "" and list(r.context["form"].non_field_errors()) == [words], role
+        assert escape(words) in html(r)
+        w.in_date.refresh_from_db()
+        assert (w.in_date.tag, w.in_date.interval_months, w.in_date.model) == ("TE-IN", 12, "ESA612"), role
 
 
 def test_change_refusals_keep_what_was_typed(client, signed_in, te_world):
@@ -617,7 +639,7 @@ def test_work_done_with_it(client, signed_in, te_world):
     judged = tes.work_done(w.in_date)[0]
     assert judged.standing.words in body and "/test-equipment/TE-IN/uses.csv" in body
     rows = csv_rows(client.get("/test-equipment/TE-IN/uses.csv"))
-    assert rows[0] == ["Work order", "Type", "Device", "Completed", "Standing that day", "Found out of tolerance later"]
+    assert rows[0] == ["Work order", "Type", "Device", "Day of the work", "Standing that day", "Found out of tolerance later"]
     assert rows[1][:4] == [w.pm.number, "Preventive maintenance", w.pm.asset.tag, w.today.isoformat()] and rows[1][4] == judged.standing.words
     later = csv_rows(client.get(f"/test-equipment/{w.unreviewed.item.tag}/uses.csv"))
     assert len(later) == 3 and all(r[5] == f"found out of tolerance on {fmt(w.unreviewed.found.calibrated_on)}; not reviewed" for r in later[1:])
@@ -630,7 +652,7 @@ def test_the_review_csv(client, signed_in, te_world):
     added = pm_with(w.work[0].asset, w.item, completed_on=te_world.today - 20 * DAY)
     r = client.get(f"{url(w.item)}calibrations/{w.found.pk}/review.csv")
     rows = csv_rows(r)
-    assert rows[0] == ["Work order", "Type", "Device", "Completed", "In the review"]
+    assert rows[0] == ["Work order", "Type", "Device", "Day of the work", "In the review"]
     assert {(row[0], row[4]) for row in rows[1:]} == {(w.work[0].number, "Yes"), (w.work[1].number, "Yes"), (added.number, "Added since the review")}
     assert re.search(r'filename="cadence-TE-OT2-review-C-TE-OT2-\d{8}-\d{4}-\d{2}-\d{2}\.csv"', r["Content-Disposition"])
     assert client.get(f"{url(w.item)}calibrations/{w.before.pk}/review.csv").status_code == 404  # passed in tolerance: no review

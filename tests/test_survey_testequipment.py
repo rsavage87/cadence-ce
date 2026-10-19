@@ -44,7 +44,7 @@ from apps.reports.survey import CHECK, DEVICE, FINDING, GAP, TEST_EQUIPMENT, WOR
 from apps.reports.survey import testequipment as section
 from apps.tenants.context import tenant_context
 from apps.testequipment import services
-from apps.testequipment.models import AsFound, Basis, Calibration, Reason, Status, TestEquipment
+from apps.testequipment.models import AsFound, Basis, Calibration, Reason, Result, Status, TestEquipment
 from apps.vendors.rules import fmt
 from apps.workorders.models import WorkOrder
 from apps.workorders.services import set_test_equipment
@@ -146,9 +146,11 @@ def test_an_item_in_use_past_due_with_no_calibration_on_file_or_failed_is_a_gap(
     assert (f["In use today"], f["In use and past due today"], f["In use with no calibration on file today"]) == (3, 1, 1)
     services.set_status(pd, to=Status.OUT_FOR_CALIBRATION, by=None)  # at the lab: not in use
     assert listed(build(today), GAP) == [(GAP, "TE-NR"), (GAP, "TE-FL")]
-    # a failed item back in use (retired, then reinstated) while its failed certificate still governs
-    services.set_status(fl, to=Status.RETIRED, reason=Reason.WORN_OUT, by=None)
-    services.set_status(fl, to=Status.IN_USE, by=None)
+    # a failed item in use while its failed certificate governs: a passed certificate after the failure put it back in use, then that
+    # passed one was marked entered in error (its status stays: entered_in_error_note); Reinstate or Found never land a failed item in use
+    services.mark_entered_in_error(certificate(fl, today - 5 * DAY), by=None)
+    fl.refresh_from_db()
+    assert fl.status == Status.IN_USE
     gap = gaps_of(build(today), GAP)[0]
     assert gap.record == "TE-FL" and gap.text == (f"TE-FL {ESA} is in use: failed calibration {fmt(today - 10 * DAY)}. Take it out of use, "
                                                   "or record the certificate that passed it since.")
@@ -200,8 +202,11 @@ def test_one_finding_per_item_and_stretch(today, pump, vent):
     pm_with(vent, pd, completed_on=today - 10 * DAY)
     nr = no_record("TE-NR")
     late = pm_with(pump, nr, completed_on=today - 5 * DAY)
-    fl = failed("TE-FL")  # failed 10 days ago; out of service since today, so work completed today may still record it
+    # in use when today's work was completed with it; its certificate dated 10 days ago, typed after, failed it (out of service since
+    # that day, the certificate's: the work is judged on its own day, today, and the failure governs it)
+    fl = item("TE-FL")
     pm_with(vent, fl)
+    certificate(fl, today - 10 * DAY, result=Result.FAILED, as_found=AsFound.OUT_OF_TOLERANCE)
     s = build(today)
     assert listed(s, FINDING) == [(FINDING, "TE-FL"), (FINDING, "TE-NR"), (FINDING, "TE-PD")]
     texts = [g.text for g in gaps_of(s, FINDING)]

@@ -1,6 +1,6 @@
 {% load web %}
 {% comment %}Slice 35: Add test equipment (views_testequipment.test_equipment_new; services.add_test_equipment). The item's details, then
-   its latest certificate, optional: left empty, it is added with no calibration on file; any of its fields filled sends the certificate,
+   its latest certificate, optional: left empty, it is added with no calibration on file; any of its fields filled (never the accreditation mark alone: forms_testequipment.NewItemForm.has_certificate) sends the certificate,
    checked whole. Refusals come back on their fields with what was typed.{% endcomment %}
 <div class="modal-h"><h2>Add test equipment</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
 <form id="te-form" class="te-form" hx-post="{% url 'web:test_equipment_new' %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>

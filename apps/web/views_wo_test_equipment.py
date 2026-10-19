@@ -9,32 +9,34 @@ Change refuses them (web_view).
 
 The picker (offer, then picked): only where rules.offered holds (in-house work of any type, or a repair whose outcome is not the
 vendor's report; never imported; never a scoped user), and shown only when it has options (testequipment.services.picker: none means no
-picker and no marker, so a facility that keeps no test equipment in Cadence sees nothing) or a refusal to show. The form takes the
-ticks wherever it is offered, so an item taken out of use while the modal was open is refused in the service's words, never dropped. "Yours"
+picker and no marker, so a facility that keeps no test equipment in Cadence sees nothing) or a refusal to show. The form takes the ticks
+wherever it is offered, so an item taken out of use while the modal was open is refused in the service's words, never dropped. "Yours"
 first (the items held by costs.default_technician, the technician assigned or the user's own profile, then those that technician
 recorded in the last 30 days, at most 8), then "Other test equipment (N)", a <details> grouped by kind, open by default only when Yours
 is empty and N is at most 12 (and whenever one in it is ticked, or a refusal points at it). Each row: the tag, the make and model, the
-status when it is not in use, and a chip with its standing (judged today while completing; on the day of the work in Change), in the
-warning style when flagged (anything but a certificate in force). Nothing is ticked for the user: only what the work order already
-recorded (a reopened work order's, or Change's), or what the form sent back. Completing offers only items in use or whose status changed
-today, and those already on the work order; Change, every item not retired before the work's day. An item kept on the work order (the
-kept-use rule: a certificate dated on or after the work's day is on file, rules.may_remove) is ticked and disabled, "kept: calibrated
-since", with a hidden input carrying its id (a disabled box posts nothing, and the service refuses a list that leaves it out). The
-hidden `shown_test_equipment` marker says the picker was on screen: without it nothing is sent (kept as recorded); with it and nothing
-ticked, [] (forms_wo_complete.ticked). On a repair the picker hides with "Checked by the vendor" (CSS :has), and the form drops ticks
-left under that choice.
+status when it is not in use, and a chip with its standing (judged today while completing; on the day of the work in Change; one already
+on the work order on its use's own day), in the warning style when flagged (anything but a certificate in force). Nothing is ticked for
+the user: only what the work order already recorded (a reopened work order's, or Change's), or what the form sent back. Completing
+offers only items in use at some moment of today (rules.in_use_today), and those already on the work order; Change, every item not
+retired before the work's day. An item kept on the work order (the kept-use rule: a certificate dated on or after the use's own day is
+on file, rules.may_remove) is ticked and disabled, "kept: calibrated since", with a hidden input carrying its id (a disabled box posts
+nothing, and the service refuses a list that leaves it out). The hidden `shown_test_equipment` marker says the picker was on screen:
+without it nothing is sent (kept as recorded); with it and nothing ticked, [] (forms_wo_complete.ticked). On a repair the picker hides
+with "Checked by the vendor" (CSS :has), and the form drops ticks left under that choice.
 
 The drawer's section (drawer_context, under "test_equipment_row") on a completed or closed work order, for a user who sees the whole
-facility: each item the work order recorded in rules' words on the day of the work ("TE-01 (Fluke Biomedical ESA612): calibration due
-Mar 31, 2027 on the day of this work", then any "found out of tolerance on <day>; <its review>"), flagged ones marked, the tag a link
-to the item for Equipment View (testequipment.permissions.can_view); "None recorded" when it is offered and recorded none (shown only
-when the facility has test equipment); Change ("Record" when none) for workorders.permissions.can_set_test_equipment (Work orders Edit,
-Approve once closed). judged_for reads the uses in at most four queries whatever their number.
+facility: each item the work order recorded in rules' words on its own day, the day of the work it was recorded on ("TE-01 (Fluke
+Biomedical ESA612): calibration due Mar 31, 2027 on the day of this work", then any "found out of tolerance on <day>; <its review>"),
+flagged ones marked, the tag a link to the item for Equipment View (testequipment.permissions.can_view); the heading reads "<n> used on
+<day>" only when every use shares that day, else "<n> used" and each line names its own day (the print likewise); "None recorded" when
+it is offered and recorded none (shown only when the facility has test equipment); Change ("Record" when none) for
+workorders.permissions.can_set_test_equipment (Work orders Edit, Approve once closed). judged_for reads the uses in at most four queries
+whatever their number.
 
-Change (wo_test_equipment): a modal with the picker as of the day of the work, posting to services.set_test_equipment. Open, cancelled,
-not offered (imported, vendor work), or closed for a user without Approve: the modal says why. A refusal (keyed test_equipment, in the
-service's words) re-renders it with what was ticked; a save answers with the drawer, a toast, wo-changed, and the modal's close after
-settle. A direct visit opens the work order.
+Change (wo_test_equipment): a modal with the picker as of the day of the work (an item already on the work order as of its use's own
+day: HINT_DAY says so), posting to services.set_test_equipment. Open, cancelled, not offered (imported, vendor work), or closed for a
+user without Approve: the modal says why. A refusal (keyed test_equipment, in the service's words) re-renders it with what was ticked;
+a save answers with the drawer, a toast, wo-changed, and the modal's close after settle. A direct visit opens the work order.
 """
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.shortcuts import redirect, render
@@ -63,11 +65,12 @@ YOURS_HINT = "{name}'s kit, and what {name} recorded in the last {days} days"
 OTHERS = "Other test equipment ({count})"
 HINT_TODAY = ("Tick what was used. Each shows its certificate as of today; one past due or with none on file can still be recorded, and "
               "the record says so.")
-HINT_DAY = "Tick what was used on {day}, the day of this work. Each shows its certificate as it stood that day."
+HINT_DAY = ("Tick what was used on {day}, the day of this work. Each shows its certificate as it stood that day; one already on the work "
+            "order, as it stood on the day it was used.")
 VENDOR_HINT = "Not recorded with Checked by the vendor: their report names the test equipment they used."
 KEPT_WORDS = "kept: calibrated since"
 NONE_RECORDED = "None recorded"
-CANCELLED = "{number} was cancelled: it records no test equipment."
+CANCELLED = te_services.CANCELLED  # the service's words (set_test_equipment, the API's action)
 CLOSED = "{number} is closed: recording the test equipment used now needs Work orders Approve."
 IMPORTED = "{number} was imported from another system: it records no test equipment."
 VENDOR_CHECKED = "{number} was checked by the vendor: their report names the test equipment they used."
@@ -147,12 +150,19 @@ def picked(picker, form, *, prefix: str, day=None, vendor_report: bool = False) 
 # --- the drawer's section ------------------------------------------------------------------------------------------------------
 
 def _use(judged, link: bool) -> dict:
-    """One use in rules' words (use_words), the item's name apart so the tag can link to the item."""
+    """One use in rules' words (use_words), the item's name apart so the tag can link to the item, and its own day (used_on)."""
     name = rules.item_name(judged.item)
     words = judged.words
     rest = words[len(name):] if words.startswith(name) else f": {words}"
     url = reverse("web:test_equipment_item", args=[judged.item.tag]) if link else ""
-    return {"name": name, "rest": rest, "words": words, "url": url, "flagged": judged.flagged}
+    return {"name": name, "rest": rest, "words": words, "url": url, "flagged": judged.flagged, "day": judged.day}
+
+
+def _shared_day(judged):
+    """The day every use was recorded on (used_on), or None when they differ (a reopened work order completed again keeps each earlier
+    use on its own day: each line then names its day, never the last completion's for all)."""
+    days = {j.day for j in judged}
+    return next(iter(days)) if len(days) == 1 else None
 
 
 def _shown(wo, user, judged) -> bool:
@@ -164,8 +174,8 @@ def _shown(wo, user, judged) -> bool:
 def drawer_context(request, wo) -> dict:
     """The drawer's "Test equipment" section, under "test_equipment_row": None unless `wo` is completed or closed and the reader sees
     the whole facility with Equipment View (testequipment.permissions.can_view: as the API's field and the change log's area) (and
-    _shown). Each use judged on the day of the work (testequipment.services.judged_for: at most four queries); Change for
-    can_set_test_equipment where it may be recorded."""
+    _shown). Each use judged on its own day (testequipment.services.judged_for: at most four queries); the heading's "used on <day>"
+    only when every use shares it (`day`), else each line names its own; Change for can_set_test_equipment where it may be recorded."""
     user = request.user
     if wo.status not in rules.DONE or not te_perms.can_view(user):
         return {"test_equipment_row": None}
@@ -174,7 +184,7 @@ def drawer_context(request, wo) -> dict:
         return {"test_equipment_row": None}
     link = te_perms.can_view(user)
     return {"test_equipment_row": {
-        "uses": [_use(j, link) for j in judged], "none": NONE_RECORDED, "day": wo.completed_on,
+        "uses": [_use(j, link) for j in judged], "none": NONE_RECORDED, "day": _shared_day(judged),
         "can_change": rules.offered(wo, user) and wo_perms.can_set_test_equipment(user, wo),
     }}
 
@@ -183,8 +193,9 @@ def drawer_context(request, wo) -> dict:
 
 def print_context(wo, user) -> dict | None:
     """The work order print's test equipment (views_print.wo_print): None for a scoped reader or one without Equipment View, a cancelled
-    work order, or where it is not _shown. Open: `open` (lines to write on while it may be recorded) and any uses a reopened work order keeps. Done: each use in
-    rules' words on the day of the work, or none recorded."""
+    work order, or where it is not _shown. Open: `open` (lines to write on while it may be recorded) and any uses a reopened work order
+    keeps, each on its own day. Done: each use in rules' words on its own day (named on its line when the uses' days differ), or none
+    recorded."""
     if not te_perms.can_view(user):  # never a scoped reader's; the items are Equipment View's
         return None
     is_open = wo.status in OPEN_STATUSES
@@ -193,7 +204,16 @@ def print_context(wo, user) -> dict | None:
     judged = te_services.judged_for(wo)
     if not _shown(wo, user, judged):
         return None
-    return {"open": is_open and rules.offered(wo, user), "uses": [j.words for j in judged], "flagged": [j.flagged for j in judged]}
+    return {"open": is_open and rules.offered(wo, user), "uses": _lines(judged, wo), "flagged": [j.flagged for j in judged]}
+
+
+def _lines(judged, wo) -> list:
+    """Each use in rules' words; each names its own day ("TE-A (Fluke Biomedical ESA612) used on Sep 19, 2026: calibration due ...")
+    unless every use's day is the work order's completed day the print shows beside them (review fix: a reopened work order's kept use,
+    or one printed while it is open, never reads as done on another day)."""
+    if wo.completed_on is not None and all(j.day == wo.completed_on for j in judged):
+        return [j.words for j in judged]
+    return [f"{u['name']} used on {fmt(j.day)}{u['rest']}" for j, u in ((j, _use(j, False)) for j in judged)]
 
 
 # --- Change ---------------------------------------------------------------------------------------------------------------------

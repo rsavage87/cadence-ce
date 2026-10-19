@@ -14,12 +14,14 @@ Test equipment is never an equipment.Asset: no fleet, PM, report, recall, portal
 shares the facility's tags with the devices (one sticker, one meaning: equipment.services.lock_tags and both writers' checks).
 
 - TestEquipment: one item (its tag, kind, make, model, serial; its program: calibration or verification certificates; its interval;
-  its status with a reason; who holds it). No notes, no free text, no cost.
+  its status with a reason and the day it last changed; out of service, the day from which a passed certificate puts it back in use;
+  who holds it). No notes, no free text, no cost.
 - Calibration: one certificate from an outside provider (a lab or the manufacturer), judged by its own dates whenever entered; a
   renewal is a new record; one entered in error stays (marked). In-house verification against a reference standard is deferred.
 - ToleranceReview: the decision on the work done with an item between its last passed certificate and one that found it out of
   tolerance (or failed it), with the list of work orders it was drawn with, frozen.
-- TestEquipmentUse: one work order recorded one item. Standing is never stored: it is computed on the work's completed day (rules).
+- TestEquipmentUse: one work order recorded one item, on its own day (used_on: the day of the work it was recorded on). Standing is
+  never stored: it is computed on that day (rules).
 
 Every rule is apps.testequipment.rules; every write is apps.testequipment.services (and, for uses, completion.complete_work_order and
 workorders.services.set_test_equipment).
@@ -130,7 +132,10 @@ class Basis(models.TextChoices):
 class TestEquipment(TenantModel):
     """One item of the CE department's test equipment. Never deleted once it has a calibration or a use; its tag may be corrected
     until then (services). The tag is unique per facility in any letter case among devices and test equipment (tag_key here, the
-    services' checks under equipment.services.lock_tags)."""
+    services' checks under equipment.services.lock_tags). status_since is always the facility day its status last changed (the day the
+    change was made: rules.in_use_today and rules.retired_throughout read the history by it); held_since, set only while it is out of
+    service, is the day from which a passed certificate puts it back in use (the one release rule: services._status_after): the day of
+    the move by hand, a failed certificate's own day, or, back from retired or missing, the day carried from its history."""
     __test__ = False  # pytest: not a test class
 
     tag = models.CharField(max_length=TAG_MAX, validators=[TAG_VALIDATOR], help_text="The CE control number on its sticker")
@@ -143,7 +148,10 @@ class TestEquipment(TenantModel):
     interval_months = models.PositiveSmallIntegerField(default=INTERVAL_DEFAULT)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.IN_USE)
     status_reason = models.CharField(max_length=20, choices=Reason.choices, blank=True)
-    status_since = models.DateField(editable=False, help_text="The facility day of the last status change: services only")
+    status_since = models.DateField(editable=False, help_text="The facility day of its last status change (services only)")
+    held_since = models.DateField(null=True, blank=True, editable=False,
+                                  help_text="Out of service: a passed certificate dated on or after this day puts it back in use; none "
+                                            "otherwise (services only)")
     held_by = models.ForeignKey("credentials.Technician", on_delete=models.SET_NULL, null=True, blank=True, related_name="test_equipment",
                                 help_text="Whose kit it is")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
@@ -227,17 +235,21 @@ class ToleranceReview(TenantModel):
 
 
 class TestEquipmentUse(TenantModel):
-    """One work order recorded one item of test equipment. A work order with test equipment recorded is never deleted (PROTECT)."""
+    """One work order recorded one item of test equipment, on `used_on`: the day of the work it was recorded on (the completion's day,
+    or, recorded after completion, the work order's completed_on), written once by services.apply_uses and never moved: a reopened
+    work order completed again keeps its uses' days (one added then gets the new day). Every reader judges a use on its own day
+    (rules). A work order with test equipment recorded is never deleted (PROTECT)."""
     __test__ = False  # pytest: not a test class
 
     work_order = models.ForeignKey("workorders.WorkOrder", on_delete=models.PROTECT, related_name="test_equipment_uses")
     test_equipment = models.ForeignKey(TestEquipment, on_delete=models.PROTECT, related_name="uses")
+    used_on = models.DateField(editable=False, help_text="The day of the work it was recorded on: services.apply_uses only")
     history = HistoricalRecords()
 
     class Meta:
         ordering = ["work_order_id", "test_equipment__tag"]
         constraints = [models.UniqueConstraint(fields=["work_order", "test_equipment"], name="uniq_test_equipment_use")]
-        indexes = [models.Index(fields=["tenant", "test_equipment"])]
+        indexes = [models.Index(fields=["tenant", "test_equipment"]), models.Index(fields=["tenant", "used_on"])]
 
     def __str__(self):
         return f"{self.test_equipment.tag} on work order {self.work_order_id}"

@@ -198,7 +198,8 @@ class ItemForm(ServiceForm):
 
 class NewItemForm(ItemForm, CertificateFields):
     """Add test equipment, with its latest certificate optional (services.add_test_equipment(calibration=...)): left empty, the item is
-    added with no calibration on file. Any certificate field filled sends the certificate, and the service checks all of it."""
+    added with no calibration on file. Any certificate field filled (has_certificate: never the accreditation mark alone) sends the
+    certificate, and the service checks all of it."""
     layout = (*ITEM_LAYOUT, *CALIBRATION_LAYOUT)
 
     def __init__(self, *args, **kwargs):
@@ -207,8 +208,11 @@ class NewItemForm(ItemForm, CertificateFields):
                                            "or label shows (at most the end of the month the interval ends in).")
 
     def has_certificate(self) -> bool:
+        """A certificate is being entered when a day, the provider, its number, as found (a select with a blank choice), adjusted, or
+        Failed is given. Never by the accreditation mark alone: it is a radio a browser cannot untick, so a stray click would make the
+        optional certificate required (review fix)."""
         d = self.cleaned_data
-        typed = any((d.get(name) or "").strip() for name in ("calibrated_on", "due_on", "provider", "certificate", "accreditation", "as_found"))
+        typed = any((d.get(name) or "").strip() for name in ("calibrated_on", "due_on", "provider", "certificate", "as_found"))
         return typed or bool(d.get("adjusted")) or d.get("result") == Result.FAILED
 
     def calibration(self) -> dict | None:

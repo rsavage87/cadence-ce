@@ -128,12 +128,15 @@ rest, never preselected:
   work order's history has it). keep_open records no finding: the repair is not over.
 
 Slice 35, the test equipment used (apps.testequipment; the rule is its rules, the checks its services.check_uses), keyed test_equipment
-with the rest, never preselected: KEEP (left out) keeps what the work order recorded; a list of item ids (text or UUID) replaces the set
-as a diff (each use added or taken off is a history row of its own); [] clears. Refused when the work is not offered (imported; vendor
-service, except a repair completed with an outcome other than the vendor's report: the outcome chosen in the same call), for a scoped
-user (a non-empty list; an empty one changes nothing), and for an unknown id or another facility's. A new item must be usable today
-(in use, or its status changed today); one already on the work order passes whatever its status; one is taken off only under the
-kept-use rule (rules.may_remove on the day the work was last completed: a reopened work order's uses stay once a calibration dated on or
+with the rest, never preselected: KEEP (left out) keeps what the work order recorded (but a completion as checked by the vendor takes
+off our uses the kept-use rule does not keep: the vendor's report names its own); a list of item ids (text or UUID) replaces the set as
+a diff (each use added or taken off is a history row of its own); [] clears. A use added is recorded on today, the completion's day (its
+used_on); a use that stays keeps its own day (a reopened work order's), however the work is completed again. Refused when the work is
+not offered (imported; vendor service, except a repair completed with an outcome other than the vendor's report: the outcome chosen in
+the same call), but for sending back the kept uses there (any other refused; the rest come off as KEEP takes them off), for a scoped
+user (a non-empty list; an empty one changes nothing) or one without Equipment View, and for an unknown id or another facility's. A new
+item must be usable today (in use at some moment of today: rules.in_use_today); one already on the work order passes whatever its
+status; one is taken off only under the kept-use rule (rules.may_remove on the use's own day: it stays once a calibration dated on or
 after that day is on file). Read on the locked rows: the items' rows are locked after lock_work and the work order's row, in pk order,
 before anything else this takes (a failed PM's repair number, the device's row). keep_open records no test equipment (its day is not
 the completion's).

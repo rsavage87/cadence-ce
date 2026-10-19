@@ -21,23 +21,26 @@ calibration, every use on or before its day. A use in a live window reads "found
 not reviewed; reviewed (the basis's words), when the use is in the review's frozen list; or added since the review (a binder GAP).
 
 A use counts (counted_uses_q, a positive condition: never negate it) when its work order is completed or closed, not imported, and either
-a repair whose outcome is not the vendor's report, or not vendor service; its day is the work order's completed_on (a reopened work order
-has none, and its uses count again when it is completed again, on the new day). offered(wo, user) says whether a work order may record
-test equipment at all; usable_today(item, today) whether an item may be newly recorded today; may_remove whether a recorded use may be
-taken off (the kept-use rule: never once a live calibration dated on or after the work's day is on file: the use has been judged since;
-for a reopened work order the day is the one it was last completed on, work_day).
+a repair whose outcome is not the vendor's report, or not vendor service. Its day is its own (TestEquipmentUse.used_on: the day of the
+work it was recorded on, never moved), and every reader judges it on that day, never on the work order's completed_on: its standing,
+the look-back windows (window_q, in_window), the kept-use rule, the rechecks, the item's work, the binder. A reopened work order's uses
+count nowhere until it is completed again, then again on their own days (a use added at that completion gets the new day).
+offered(wo, user) says whether a work order may record test equipment at all; usable_today(item, today) whether an item may be newly
+recorded today; may_remove whether a recorded use may be taken off (the kept-use rule: never once a live calibration dated on or after
+the use's day is on file: the use has been judged since), and kept which of a work order's uses it keeps.
 
 Batches (a fixed number of queries, whatever the number of items or uses): calibrations_by_item (one query), entered_days (one),
-reviews_by_calibration (one), then standings (items on one day) and judge_uses (uses on their work's days, with "found out of tolerance
+reviews_by_calibration (one), then standings (items on one day) and judge_uses (uses on their own days, with "found out of tolerance
 later") in Python. The list, the CSV, the API, the binder, and the work order's row and list all read through them.
 """
 from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 
 from django.db.models import Min, Q
+from django.utils import timezone
 
 from apps.vendors.rules import fmt
 from apps.workorders.models import RepairCheck, Source, WoStatus, WoType
@@ -161,16 +164,17 @@ def window(calibration, calibrations) -> tuple[date | None, date]:
 
 
 def in_window(day: date | None, bounds: tuple[date | None, date]) -> bool:
-    """Whether work done on `day` falls in the window `bounds` (window's): after its start (exclusive), through its end (inclusive)."""
+    """Whether a use on `day` (its used_on) falls in the window `bounds` (window's): after its start (exclusive), through its end
+    (inclusive)."""
     start, end = bounds
     return day is not None and day <= end and (start is None or day > start)
 
 
 def window_q(bounds: tuple[date | None, date], prefix: str = "") -> Q:
-    """The window as a Q on the work order's completed_on (`prefix` reaches the work order: "work_order__" from a use)."""
+    """The window as a Q on a use's own day, used_on (`prefix` reaches the use from another model; "" on TestEquipmentUse)."""
     start, end = bounds
-    q = Q(**{f"{prefix}completed_on__lte": end})
-    return q & Q(**{f"{prefix}completed_on__gt": start}) if start is not None else q
+    q = Q(**{f"{prefix}used_on__lte": end})
+    return q & Q(**{f"{prefix}used_on__gt": start}) if start is not None else q
 
 
 def counted_work_q(prefix: str = "") -> Q:
@@ -216,37 +220,60 @@ def offered(wo, user=None, *, repair_check: str | None = None) -> bool:
     return repair_check != RepairCheck.VENDOR_REPORT
 
 
-def usable_today(item, today: date) -> bool:
-    """Whether `item` may be newly recorded on work completed today: in use, or its status changed today (work done this morning with
-    an analyzer that failed its self-test at noon is recorded truthfully)."""
-    return item.status == Status.IN_USE or item.status_since == today
-
-
-def may_remove(item, completed_on: date | None, calibrations) -> bool:
-    """The kept-use rule: a recorded use may be taken off unless a live calibration of `item` dated on or after `completed_on` is on
-    file. `completed_on` is the work's day (work_day: for a reopened work order, the day it was last completed); None (never completed)
-    takes off freely."""
-    if completed_on is None:
-        return True
-    return not any(c.test_equipment_id == item.pk and c.calibrated_on >= completed_on for c in live(calibrations))
-
-
-def work_day(wo) -> date | None:
-    """The day a work order's uses are judged by for the kept-use rule: its completed_on, or for a reopened one (completed_on cleared)
-    the day it was last completed, from its history (one query); None when it was never completed."""
-    if wo.completed_on is not None:
-        return wo.completed_on
+def in_use_today(items, today: date) -> set:
+    """The ids of `items` in use at some moment of the facility's `today`: in use now, or a status changed today (status_since: always
+    the day of the change) from in use (its history: in use in the last row written before today, or in a row written today). Work done
+    this morning with an analyzer that failed its self-test at noon, or whose failed certificate (whatever its own day) was typed at
+    noon, is recorded truthfully; an item reinstated or found today that lands out of service, or one retired today from out of service,
+    was never in use today (review fix). One query, only for the items whose status changed today."""
     from apps.core.history import _rows
-    from apps.workorders.models import WorkOrder
 
-    return (_rows(WorkOrder.history.model).filter(id=wo.pk, completed_on__isnull=False).order_by("-history_date", "-history_id")
-            .values_list("completed_on", flat=True).first())
+    from .models import TestEquipment
+
+    items = list(items)
+    out = {i.pk for i in items if i.status == Status.IN_USE}
+    changed = [i.pk for i in items if i.pk not in out and i.status_since == today]
+    if not changed:
+        return out
+    start = timezone.make_aware(datetime.combine(today, time.min))  # the facility's midnight (its time zone is active)
+    before: dict = {}
+    rows = (_rows(TestEquipment.history.model).filter(id__in=changed).order_by("id", "history_date", "history_id")
+            .values_list("id", "status", "history_date"))
+    for pk, status, at in rows:
+        if at < start:
+            before[pk] = status  # the last row before today, rows in time order
+        elif status == Status.IN_USE:
+            out.add(pk)
+    return out | {pk for pk, status in before.items() if status == Status.IN_USE}
+
+
+def usable_today(item, today: date) -> bool:
+    """Whether `item` may be newly recorded on work completed today: in use at some moment of today (in_use_today)."""
+    return item.pk in in_use_today([item], today)
+
+
+def _judged_since(item_id, used_on: date, calibrations) -> bool:
+    return any(c.test_equipment_id == item_id and c.calibrated_on >= used_on for c in live(calibrations))
+
+
+def may_remove(item, used_on: date, calibrations) -> bool:
+    """The kept-use rule: a recorded use of `item` may be taken off unless a live calibration of it dated on or after the use's own day
+    (`used_on`) is on file: the use has been judged since, whatever has become of its work order (reopened, completed again later,
+    moved to a vendor, cancelled). Judged per use: a use added at a later completion has that later day."""
+    return not _judged_since(item.pk, used_on, calibrations)
+
+
+def kept(uses, calibrations: dict) -> set:
+    """The item ids of `uses` (TestEquipmentUse rows of one work order) the kept-use rule keeps, each on its own day (may_remove);
+    `calibrations` is calibrations_by_item's for their items. No query."""
+    return {u.test_equipment_id for u in uses if _judged_since(u.test_equipment_id, u.used_on, calibrations.get(u.test_equipment_id, ()))}
 
 
 def retired_throughout(item, day: date) -> date | None:
-    """When `item` was retired before `day` and still retired on it (its history: the status in force on `day` is retired, set before
-    it), the day it was retired; else None. One query. An item added after `day` was not retired then (a facility adding its test
-    equipment after the work records it truthfully)."""
+    """When `item` was retired before `day` and still retired on it (its history: the status in force on `day`, the newest row whose
+    status_since, always the day of its change, is on or before `day`, is retired, set before it), the day it was retired; else None.
+    One query. An item added after `day` was not retired then (a facility adding its test equipment after the work records it
+    truthfully)."""
     from apps.core.history import _rows
 
     from .models import TestEquipment
@@ -337,7 +364,7 @@ class FoundLater:
 
 
 def found_later(work_order_id, day: date | None, calibrations, reviews: dict) -> tuple:
-    """The FoundLater of work done on `day` (work order `work_order_id`) with the item whose records are `calibrations`, by the
+    """The FoundLater of a use on `day` (its used_on; work order `work_order_id`) of the item whose records are `calibrations`, by the
     calibrations' days. `reviews`: reviews_by_calibration's."""
     if day is None:
         return ()
@@ -356,12 +383,10 @@ def found_later(work_order_id, day: date | None, calibrations, reviews: dict) ->
     return tuple(out)
 
 
-def use_words(item, standing: Standing | None, later=()) -> str:
-    """One use in words on the work's day: "SA-03 (Fluke ESA612): calibration due Mar 31, 2027 on the day of this work", then "(on
-    file since <day>)" when the record was entered later, then each "found out of tolerance on <day>; <its review>". A use whose work
-    has no day yet (reopened, not completed again): "SA-03 (Fluke ESA612): judged on the day the work is completed"."""
-    if standing is None:
-        return f"{item_name(item)}: judged on the day the work is completed"
+def use_words(item, standing: Standing, later=()) -> str:
+    """One use in words on its own day (the day of the work it was recorded on): "SA-03 (Fluke ESA612): calibration due Mar 31, 2027
+    on the day of this work", then "(on file since <day>)" when the record was entered later, then each "found out of tolerance on
+    <day>; <its review>". A reopened work order's uses read the same: their day stays when it is completed again."""
     text = f"{item_name(item)}: {_lower_first(standing.plain)} on the day of this work"
     if standing.entered_after:
         first = "first certificate " if standing.state == NO_RECORD else ""
@@ -373,24 +398,29 @@ def use_words(item, standing: Standing | None, later=()) -> str:
 
 @dataclass(frozen=True)
 class JudgedUse:
-    """A use judged on its work's day: `day` (the work order's completed_on, None while it is not completed), its item's `standing`
-    then (None without a day), `later` (FoundLater, by calibration day), and `words` (use_words)."""
+    """A use judged on its own day: `day` (TestEquipmentUse.used_on, the day of the work it was recorded on), its item's `standing`
+    then, `later` (FoundLater, by calibration day), and `words` (use_words)."""
     use: object
     item: object
-    day: date | None
-    standing: Standing | None
+    day: date
+    standing: Standing
     later: tuple
     words: str
 
     @property
     def flagged(self) -> bool:
         """Past due, no calibration on file, or failed on its day, or found out of tolerance later (whatever its review)."""
-        return self.standing is not None and (self.standing.flagged or bool(self.later))
+        return self.standing.flagged or bool(self.later)
 
 
-def judge_uses(uses, *, calibrations: dict | None = None, entered: dict | None = None, reviews: dict | None = None) -> list:
-    """Each of `uses` (TestEquipmentUse rows with work_order and test_equipment selected) judged on its work's day, in the same order:
-    at most three queries for any number of uses (calibrations_by_item, entered_days, reviews_by_calibration), none for what is given."""
+def judge_uses(uses, *, calibrations: dict | None = None, entered: dict | None = None, reviews: dict | None = None,
+               all_counted: bool = False) -> list:
+    """Each of `uses` (TestEquipmentUse rows with test_equipment selected, and work_order unless `all_counted`) judged on its own day
+    (used_on), in the same order: at most three queries for any number of uses (calibrations_by_item, entered_days,
+    reviews_by_calibration), none for what is given. A use on work that does not count now (counted: reopened and not completed again,
+    imported, or vendor work the vendor checked) is in no look-back window, as the item's side, the review, and the binder leave it out.
+    `all_counted`: the caller read only counted_uses_q (the binder, Work done with it), so the work orders' fields `counted` reads need
+    not be loaded (they may be deferred)."""
     uses = list(uses)
     cals = calibrations if calibrations is not None else calibrations_by_item(u.test_equipment_id for u in uses)
     every = [c for records in cals.values() for c in records]
@@ -398,10 +428,10 @@ def judge_uses(uses, *, calibrations: dict | None = None, entered: dict | None =
     reviews = reviews if reviews is not None else reviews_by_calibration(live(every))
     out = []
     for u in uses:
-        item, wo = u.test_equipment, u.work_order
-        day = wo.completed_on
+        item, day = u.test_equipment, u.used_on
         records = cals.get(item.pk, ())
-        standing = standing_on(item, day, records, entered=entered) if day is not None else None
-        later = found_later(wo.pk, day, records, reviews)
+        standing = standing_on(item, day, records, entered=entered)
+        # Review fix: only work that counts is in a look-back window (the item's side, the review, and the binder read counted_uses_q)
+        later = found_later(u.work_order_id, day, records, reviews) if all_counted or counted(u.work_order) else ()
         out.append(JudgedUse(u, item, day, standing, later, use_words(item, standing, later)))
     return out

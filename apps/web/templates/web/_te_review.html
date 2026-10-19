@@ -14,7 +14,7 @@
       <p><strong>{{ found }}</strong>: certificate {{ c.certificate }} of {{ c.calibrated_on|date:"M j, Y" }} from {{ c.provider }}.</p>
       <p class="hint">{{ window }}</p>
       <p>The decision covers the {{ count }} work order{{ count|pluralize }} in this window now.</p>
-      {% if recent %}<ol class="te-wlist">{% for r in recent %}<li>{{ r.w.number }} · {{ r.w.completed_on|date:"M j, Y" }} · {{ r.w.asset.tag }}</li>{% endfor %}</ol>
+      {% if recent %}<ol class="te-wlist">{% for r in recent %}<li>{{ r.w.number }} · {{ r.w.used_on|date:"M j, Y" }} · {{ r.w.asset.tag }}</li>{% endfor %}</ol>
       <p>{% if count > recent|length %}<span class="hint">The latest {{ recent|length }} of {{ count }}.</span> {% endif %}<a class="link" href="{% url 'web:test_equipment_review_csv' item.tag c.pk %}" download>The whole list as CSV</a></p>{% endif %}
     </div>
     {% include "web/_te_radios.html" with field=form.basis cls="full te-basis" %}

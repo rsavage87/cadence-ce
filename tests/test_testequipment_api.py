@@ -6,7 +6,7 @@ GET /api/v1/test-equipment/ lists the items with their standing in rules' words 
 queries, filtered by ?standing (rules.FILTERS), ?status, ?kind, ?held_by, ?search; GET .../<id or tag>/ one item (by tag in any letter
 case) with its calibrations and tolerance reviews (the window's work orders only with Work orders View). Equipment View; never a scoped
 user (a custom scoped role with Full everywhere neither); every write a 405 with Edit, a 403 in words without. A work order reads the test
-equipment it recorded ([{id, tag, words}] on the day of the work; null for a scoped user and without Equipment View; a page at once), the
+equipment it recorded ([{id, tag, used_on, words}] on the day of the work; null for a scoped user and without Equipment View; a page at once), the
 transition to completed takes test_equipment (a list of ids as text: KEEP when left out, [] clears, a diff; type-checked, keyed
 test_equipment; refused on other moves, and from a scoped user when not empty), POST work-orders/{id}/test-equipment/ corrects it
 afterwards (Edit, Approve once closed, never scoped), and a work order with test equipment recorded is never deleted (a 400 in words).
@@ -47,8 +47,8 @@ API = "/api/v1/test-equipment/"
 WOS = "/api/v1/work-orders/"
 DAY = timedelta(days=1)
 LIST_FIELDS = {"id", "tag", "kind", "kind_label", "manufacturer", "model", "serial", "program", "program_label", "interval_months", "status",
-               "status_label", "status_reason", "status_reason_label", "status_since", "held_by", "held_by_name", "standing", "due_on",
-               "last_calibrated_on", "url"}
+               "status_label", "status_reason", "status_reason_label", "status_since", "held_since", "held_by", "held_by_name", "standing",
+               "due_on", "last_calibrated_on", "url"}
 
 
 @pytest.fixture
@@ -98,7 +98,7 @@ def wo_url(wo, tail=""):
 
 def shown(wo) -> list:
     """What the work order's field reads: rules' words on the day of the work (services.judged_for), never composed here."""
-    return [{"id": str(j.item.pk), "tag": j.item.tag, "words": j.words} for j in services.judged_for(wo)]
+    return [{"id": str(j.item.pk), "tag": j.item.tag, "used_on": j.day.isoformat(), "words": j.words} for j in services.judged_for(wo)]
 
 
 def tags_on(wo) -> list:
@@ -156,7 +156,7 @@ def test_the_list_reads_each_item_with_its_standing_in_the_rules_words(client, m
     failed = rows["TE-FL"]
     assert failed["standing"] == f"Failed calibration {fmt(today - 10 * DAY)}" and failed["due_on"] is None
     assert (failed["status"], failed["status_label"], failed["status_reason"], failed["status_reason_label"], failed["status_since"]) == (
-        "out_of_service", "Out of service", "failed_calibration", "Failed calibration", today.isoformat())
+        "out_of_service", "Out of service", "failed_calibration", "Failed calibration", today.isoformat())  # V1: the day it was typed
     assert (rows["TE-IN"]["status_reason"], rows["TE-IN"]["status_reason_label"]) == ("", "")
     body = client.get(API).content.decode()
     assert "in date" not in body.lower() and "uncalibrated" not in body.lower() and "instrument" not in body.lower()
@@ -340,9 +340,10 @@ def test_a_work_order_reads_its_test_equipment_on_the_day_of_the_work(client, ma
     later = ok(client.get(wo_url(te_world.unreviewed.work[0])))["test_equipment"]
     assert later == shown(te_world.unreviewed.work[0]) and "found out of tolerance on" in later[0]["words"] and "not reviewed" in later[0]["words"]
     assert ok(client.get(wo_url(te_world.vendor)))["test_equipment"] == []
-    # reopened: judged on the day it is completed again
+    # reopened: each use keeps its own day (used_on), so its words stay as they were
     change_status(te_world.pm, WoStatus.IN_PROGRESS, note="Reopened")
-    assert ok(client.get(wo_url(te_world.pm)))["test_equipment"][0]["words"] == "TE-IN (Fluke Biomedical ESA612): judged on the day the work is completed"
+    assert ok(client.get(wo_url(te_world.pm)))["test_equipment"] == [row]
+    assert row["words"] == f"TE-IN (Fluke Biomedical ESA612): calibration due {fmt(services.default_due(today - 100 * DAY, 12))} on the day of this work"
 
 
 def test_the_list_reads_the_same_as_each_work_order(client, make_user, te_world):  # noqa: F811

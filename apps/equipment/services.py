@@ -236,7 +236,8 @@ TAGS_LOCK = "tags"  # slice 35: the facility's tag lock (a Sequence row that nev
 def lock_tags() -> None:
     """Hold the facility's tag lock until the transaction ends (slice 35): a device's tag and a test equipment item's tag are one
     sticker space, unique in any letter case across both tables, so create_asset (and through it add_temporary_device, the devices
-    import, and the API) and apps.testequipment.services.add_test_equipment take it first, then check both tables, then insert. A row
+    import, and the API) and apps.testequipment.services (add_test_equipment, update_test_equipment's tag and unit changes, set_status's
+    moves to in use) take it first, then check both tables, then write. A row
     of its own that nothing else locks, taken before anything else (as pm.services.lock_planner); SQLite runs one writer at a time."""
     from apps.core.models import Sequence
     from apps.tenants.context import get_current_tenant

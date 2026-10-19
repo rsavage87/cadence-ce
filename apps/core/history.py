@@ -93,6 +93,7 @@ class Area:
     select: tuple = ()  # the historical rows' foreign keys `name` and `url` read, joined in the same query
     url_module: str | None = None  # the module whose View following `url` needs, when it is not `module` (the change log drops the link)
     also: tuple = ()  # more modules whose View reading this area needs, beside `module` (a vendor review: Contracts View too)
+    urls: object = None  # (historical records) -> {record id: url}: one query for a batch, in place of `url` (slice 35: a corrected tag)
 
     @property
     def model(self):
@@ -122,6 +123,15 @@ def _last_name(model_path: str, pk, namer) -> str:
 def _wo_number(rec) -> str:
     wo = rec.work_order
     return wo.number if wo is not None else _last_name("workorders.WorkOrder", rec.work_order_id, lambda r: r.number)
+
+
+def _test_equipment_urls(recs) -> dict:
+    """{item id: its drawer by its current tag} for a batch of the item's historical rows, in one query (slice 35 review fix: a tag may
+    be corrected before its first calibration or use, so an earlier row's tag may now be another item's); none once the item is gone."""
+    from apps.testequipment.models import TestEquipment
+
+    tags = dict(TestEquipment.objects.filter(pk__in={r.id for r in recs}).values_list("pk", "tag"))
+    return {pk: reverse("web:test_equipment_item", args=[tag]) for pk, tag in tags.items()}
 
 
 def _wo_url(rec):
@@ -198,8 +208,7 @@ AREAS = {a.key: a for a in (
          select=("review",), also=("contracts",)),
     # Slice 35: the CE department's test equipment, its calibrations and tolerance reviews (Equipment View), and which test equipment
     # each work order recorded (Work orders View and Equipment View).
-    Area("test_equipment", "Test equipment", "testequipment.TestEquipment", "equipment", _safe(lambda r: r.tag),
-         _safe(lambda r: reverse("web:test_equipment_item", args=[r.tag]))),
+    Area("test_equipment", "Test equipment", "testequipment.TestEquipment", "equipment", _safe(lambda r: r.tag), urls=_test_equipment_urls),
     Area("calibrations", "Test equipment calibrations", "testequipment.Calibration", "equipment",
          _safe(lambda r: f"{r.test_equipment.tag} · calibration {r.certificate}"),
          _safe(lambda r: reverse("web:test_equipment_item", args=[r.test_equipment.tag])), select=("test_equipment",)),
@@ -354,13 +363,15 @@ LABELS = {
     "evaluations.vendorreviewreport": {"body": "Committee", "meeting_on": "Meeting", "minutes_reference": "Minutes", "recorded_by": "Recorded by"},
     # Slice 35
     "testequipment.testequipment": {"tag": "Tag", "kind": "Kind", "serial": "Serial number", "program": "Certificates",
-                                    "interval_months": "Interval", "status_reason": "Why", "status_since": "Since", "held_by": "Held by"},
+                                    "interval_months": "Interval", "status_reason": "Why", "status_since": "Since", "held_by": "Held by",
+                                    "held_since": "Needs a pass dated on or after"},  # out of service: the one release rule's day
     "testequipment.calibration": {"calibrated_on": "Calibrated", "due_on": "Due", "provider": "Provider", "certificate": "Certificate number",
                                   "accreditation": "Accreditation mark", "as_found": "As found", "adjusted": "Adjusted", "result": "Result",
                                   "recorded_by": "Recorded by", "entered_in_error": "Entered in error",
                                   "entered_in_error_by": "Marked in error by", "entered_in_error_on": "Marked in error on"},
     "testequipment.tolerancereview": {"basis": "Decision", "quality_reference": "Quality record", "decided_on": "Decided",
                                       "decided_by": "Decided by", "window_start": "After", "window_end": "Through", "work_count": "Work orders"},
+    "testequipment.testequipmentuse": {"used_on": "Day of the work"},  # the use's own day (the rules judge it on it)
     "accounts.role": {"is_system": "System role", "scope": "What its users see"},
     "facility.facilitysettings": {"portal_require_callback": "Portal: callback number required", "portal_hotline": "Portal: hotline",
                                   "portal_confirmation": "Portal: confirmation", "portal_email_domains": "Portal: email domains",
@@ -820,6 +831,7 @@ def _build(area: Area, pairs: list[tuple]) -> list[Entry | None]:
                 names.want_models(after)
         raw.append((rec, prev, diffs))
     names.load()
+    batch_urls = area.urls([item[0] for item in raw if item is not None]) if area.urls else None  # one query for the batch
     out: list[Entry | None] = []
     for item in raw:
         if item is None:
@@ -837,7 +849,8 @@ def _build(area: Area, pairs: list[tuple]) -> list[Entry | None]:
                 if before_text == after_text:
                     after_text += EDITED  # a checklist reworded, long text changed past the cut: the same words, a different value
             changes.append(Change(_label(f, model), before_text, after_text, private=f.name in private))
-        out.append(Entry(at=rec.history_date, area=area.key, area_label=area.label, record=area.name(rec), url=area.url(rec) if area.url else None,
+        url = batch_urls.get(rec.id) if batch_urls is not None else (area.url(rec) if area.url else None)
+        out.append(Entry(at=rec.history_date, area=area.key, area_label=area.label, record=area.name(rec), url=url,
                          who=who, who_id=who_id, action=action, reason=_reason(rec, changes), changes=changes))
     return out
 

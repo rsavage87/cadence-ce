@@ -20,7 +20,7 @@
   {% endwith %}{% endif %}
   {% if b.recent %}
   <ol class="te-wlist">
-    {% for r in b.recent %}{% with w=r.w %}<li><a class="link" href="{% url 'web:wo' w.number %}" hx-get="{% url 'web:wo' w.number %}" hx-target="#drawer">{{ w.number }}</a> · {{ w.completed_on|date:"M j, Y" }} · {{ w.asset.tag }}{% if r.added %} <span class="chip warn">Added since the review</span>{% endif %}</li>{% endwith %}{% endfor %}
+    {% for r in b.recent %}{% with w=r.w %}<li><a class="link" href="{% url 'web:wo' w.number %}" hx-get="{% url 'web:wo' w.number %}" hx-target="#drawer">{{ w.number }}</a> · {{ w.used_on|date:"M j, Y" }} · {{ w.asset.tag }}{% if r.added %} <span class="chip warn">Added since the review</span>{% endif %}</li>{% endwith %}{% endfor %}
   </ol>
   <p class="te-line">{% if b.count > b.recent|length %}<span class="hint">The latest {{ b.recent|length }} of {{ b.count }}.</span> {% endif %}<a class="link" href="{% url 'web:test_equipment_review_csv' item.tag b.s.calibration.pk %}" download>The whole list as CSV</a></p>
   {% endif %}

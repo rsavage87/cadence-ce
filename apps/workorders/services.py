@@ -41,7 +41,9 @@ its investigation (an investigation never records one: who erred stays in the fa
 Slice 35, the test equipment a work order recorded (apps.testequipment: TestEquipmentUse): completion.complete_work_order records it, and
 set_test_equipment records or corrects it afterwards on a completed or closed work order (the same rules: testequipment.services
 .check_uses). assign clears it when an open work order moves to a vendor (testequipment.services.clear_for_vendor, audited): that work
-is the vendor's, and its report names its own test equipment. A work order with test equipment recorded is never deleted (PROTECT).
+is the vendor's, and its report names its own test equipment; change_status clears it on a cancel (clear_for_cancel, taking no item's
+row: see lock_work); neither ever takes off a use the kept-use rule keeps (each use judged on its own day, used_on). A work order with
+test equipment recorded is never deleted (PROTECT).
 """
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -166,6 +168,10 @@ def change_status(wo: WorkOrder, to_status: str, by=None, note: str = "", as_of=
         _on_completed(wo, as_of, by=by)
     wo.save()
     WorkOrderStatusHistory.objects.create(tenant=wo.tenant, work_order=wo, from_status=from_status, to_status=to_status, changed_by=by, note=note)
+    if to_status == WoStatus.CANCELLED:  # slice 35 review fix: a cancelled work order records no test equipment (kept uses stay)
+        from apps.testequipment.services import clear_for_cancel
+
+        clear_for_cancel(wo, by=by)
     if to_status == WoStatus.COMPLETED and wo.source == Source.PORTAL:
         from apps.portal.notifications import request_done_after_commit  # the portal imports this module
 
@@ -233,9 +239,12 @@ def lock_work(asset_id, *also) -> None:
     Slice 35, test equipment: a writer of a work order's test equipment (complete_work_order, set_test_equipment) takes this, then the
     work order's row, then the test equipment items' rows (those it names and those already on the work order, in pk order:
     testequipment.services.check_uses), and only then what else it takes (a failed PM's repair number, the device's row). assign takes
-    the work order's row, then the items' rows of the uses it clears. Every test equipment writer of its own (apps.testequipment
-    .services: details, status, calibrations, entered in error, the review) locks only its item's row (after the facility's tag lock when
-    it takes one) and takes nothing after it, so no writer waits for a work order while holding an item."""
+    the work order's row, then the items' rows of the uses it clears. A cancel (change_status: testequipment.services.clear_for_cancel)
+    takes no item's row: equipment's retirement and a passed incoming inspection cancel several work orders after taking the device's
+    row, and items locked there would wait in a circle with a writer above holding items before the device (review fix). Every test
+    equipment writer of its own (apps.testequipment.services: details, status, calibrations, entered in error, the review) locks only its
+    item's row (after the facility's tag lock when it takes one) and takes nothing after it, so no writer waits for a work order while
+    holding an item."""
     rows = WorkOrder.objects.select_for_update().filter(Q(asset_id=asset_id, status__in=OPEN_STATUSES) | Q(pk__in=also)).order_by("number")
     list(rows.values_list("pk", flat=True))
 
@@ -541,8 +550,10 @@ def set_test_equipment(wo: WorkOrder, ids, *, by, today: date | None = None) -> 
     that replaces the set as a diff, [] clears (KEEP changes nothing). The rules of completing (testequipment.services.check_uses), but a
     new item need only not have been retired before the work's day: it is judged on that day, and its standing flags it. Never a scoped
     user's; Work orders Edit, Approve once closed (permissions.can_set_test_equipment, checked here on the locked row for a user given
-    as `by`). Locks as completing does: lock_work, this row, then the items' rows. Refusals keyed test_equipment. Each use added or taken
-    off is a history row of its own ("Recorded after completion", "Taken off after completion"). Returns the row."""
+    as `by`). Locks as completing does: lock_work, this row, then the items' rows. Refusals keyed test_equipment (a cancelled one: "was
+    cancelled: it records no test equipment"). A use added is recorded on the work order's completed_on (its used_on); those that stay
+    keep their own day. Each use added or taken off is a history row of its own ("Recorded after completion", "Taken off after
+    completion"). Returns the row."""
     from django.core.exceptions import PermissionDenied
 
     from apps.testequipment import services as te
@@ -554,6 +565,8 @@ def set_test_equipment(wo: WorkOrder, ids, *, by, today: date | None = None) -> 
         raise ValidationError({"test_equipment": te.SCOPED})
     lock_work(wo.asset_id, wo.pk)
     locked = WorkOrder.objects.select_for_update().get(pk=wo.pk)
+    if locked.status == WoStatus.CANCELLED:  # review fix: the web's words (Change's blocker)
+        raise ValidationError({"test_equipment": te.CANCELLED.format(number=locked.number)})
     if locked.status not in (WoStatus.COMPLETED, WoStatus.CLOSED):
         raise ValidationError({"test_equipment": te.NOT_DONE.format(number=locked.number)})
     if by is not None and not permissions.can_set_test_equipment(by, locked):

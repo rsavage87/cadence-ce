@@ -370,7 +370,8 @@ def _engineer_value(body):
 TEST_EQUIPMENT_RECORDED = ("The test equipment used is recorded when the work order is completed (POST /api/v1/work-orders/{id}/transition/ "
                            "with status completed and test_equipment), or afterwards with POST /api/v1/work-orders/{id}/test-equipment/.")
 TEST_EQUIPMENT_IDS = "Send test_equipment as a list of ids, each as text (GET /api/v1/test-equipment/ lists them), [] for none."
-TEST_EQUIPMENT_KEPT = " Left out, the test equipment the work order recorded stays."
+TEST_EQUIPMENT_KEPT = (" Left out, the test equipment the work order recorded stays (completed as checked by the vendor, only the items a "
+                       "calibration since has judged stay).")
 
 
 def _test_equipment_ids(value):
@@ -382,7 +383,7 @@ def _test_equipment_ids(value):
 
 
 def _ids_sent_back(value):
-    """The item ids in a test_equipment an edit sent back (slice 35): the field as a GET returned it ([{"id", "tag", "words"}]) or a list
+    """The item ids in a test_equipment an edit sent back (slice 35): the field as a GET returned it ([{"id", "tag", "used_on", "words"}]) or a list
     of ids, as a set of UUIDs; None when it is neither."""
     if not isinstance(value, list):
         return None
@@ -515,7 +516,8 @@ class WorkOrderViewSet(TenantViewSet):
             if sent is not None:
                 raise DRFValidationError({"test_equipment": [TEST_EQUIPMENT_RECORDED]})
             return
-        recorded = set(TestEquipmentUse.objects.filter(work_order=wo).values_list("test_equipment_id", flat=True))
+        recorded = (set() if wo.status == WoStatus.CANCELLED  # as the field shows it (review fix: kept uses left on a cancel)
+                    else set(TestEquipmentUse.objects.filter(work_order=wo).values_list("test_equipment_id", flat=True)))
         if _ids_sent_back(sent) != recorded:
             raise DRFValidationError({"test_equipment": [TEST_EQUIPMENT_RECORDED]})
 
@@ -620,10 +622,13 @@ class WorkOrderViewSet(TenantViewSet):
           and leaves a finding the facility recorded as it is. Refused on any other type.
         - any type (slice 35, optional): "test_equipment", the test equipment used, a list of item ids as text (GET
           /api/v1/test-equipment/), never preselected: it replaces what the work order recorded ([] clears it; left out, it stays: a
-          reopened work order keeps its own). A new item must be in use (or its status changed today); one the work order recorded
-          already stays whatever its status, and stays on once a calibration dated on or after the day of the work is on file. Refused
-          on imported work, on vendor service but for a repair completed with an outcome other than "vendor_report", and from a scoped
-          user (a non-empty list). The work order's test_equipment then reads each item with its words on the day of the work.
+          reopened work order keeps its own, each on the day it was recorded). A new item must have been in use at some moment of today,
+          and is recorded on today; one the work order recorded already stays whatever its status, on its own day, and stays on once a
+          calibration dated on or after that day is on file. Completed with "vendor_report" (the vendor's report names its test
+          equipment), ours comes off, but for those a calibration since has judged: left out, they stay, and a list may name only them.
+          Refused on imported work, on other vendor service, from a user without Equipment View, and from a scoped user (a non-empty
+          list). The work order's test_equipment then reads each item with its words on its own day. A cancel takes off every item but
+          those a calibration since has judged, and the field then reads [].
         "signature" (optional): the completion_checklist's (or the PM procedure checklist's) signature the results were typed against;
         a checklist revised since is refused. A text field sent as a list, number, or object is a 400 keyed by it. Refusals are a 400
         keyed by field in the service's words, but a repair sent with no repair_check, or "passed" with no results, or with no
@@ -705,7 +710,8 @@ class WorkOrderViewSet(TenantViewSet):
         """Slice 28: an incident's investigation (Incident.work_order, PROTECT) stays with the incident's file, which is never deleted:
         a 400 in words, never a 500. The incident's number only for Incidents View (the delete needs Work orders Full, not that).
         Slice 35: so does a work order with test equipment recorded (TestEquipmentUse.work_order, PROTECT: the record of the work done
-        with it, which a tolerance review reads), in its own words (testequipment.services.delete_refusal); an incident's words first."""
+        with it, which a tolerance review reads), in its own words (testequipment.services.delete_refusal: a cancelled one keeps only the
+        uses a calibration since has judged, and says so); an incident's words first."""
         try:
             instance.delete()
         except ProtectedError as e:
@@ -821,9 +827,11 @@ class WorkOrderViewSet(TenantViewSet):
     def test_equipment(self, request, pk=None):
         """Slice 35, the drawer's "Test equipment" Change: record or correct which test equipment a completed or closed work order
         recorded: body {"test_equipment": [item ids as text]} (GET /api/v1/test-equipment/ lists them), replacing the set ([] clears it),
-        through wo_services.set_test_equipment. An item added need only not have been retired before the day of the work (it is judged on
-        that day: its words say how it stood); one already recorded stays on once a calibration dated on or after that day is on file.
-        Refused on imported work and vendor service (but a repair the facility checked). Work orders Edit, Approve once closed
+        through wo_services.set_test_equipment. An item added need only not have been retired before the day of the work (it is recorded
+        and judged on that day, the work order's completed_on: its words say how it stood); one already recorded keeps its own day and
+        stays on once a calibration dated on or after that day is on file. Refused on a work order not completed or closed (a cancelled
+        one records no test equipment), on imported work, and on vendor service (but a repair the facility checked; one the vendor checked
+        takes back only the items a calibration since has judged). Work orders Edit, Approve once closed
         (permissions.can_set_test_equipment); never a scoped user (not in scoped_actions: the facility's test equipment is never theirs).
         A refusal is a 400 keyed test_equipment in the service's words. Each item added or taken off is in the work order's history
         ("Recorded after completion", "Taken off after completion")."""

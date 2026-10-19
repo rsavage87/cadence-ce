@@ -256,7 +256,7 @@ def test_usable_today_and_the_kept_use_rule(today):
     services.set_status(te, to=Status.OUT_FOR_CALIBRATION, by=None, today=today - DAY)
     assert not rules.usable_today(te, today) and rules.usable_today(te, today - DAY)  # its status changed that day
     cals = list(Calibration.objects.filter(test_equipment=te))
-    assert rules.may_remove(te, None, cals) and rules.may_remove(te, today - 99 * DAY, cals)
+    assert rules.may_remove(te, today - 99 * DAY, cals) and rules.may_remove(te, today, cals)  # each use on its own day (used_on)
     assert not rules.may_remove(te, today - 100 * DAY, cals)  # calibrated on the work's day: judged since
     assert not rules.may_remove(te, today - 300 * DAY, cals)
 
@@ -368,7 +368,16 @@ def test_the_status_table_by_level(today, users):
     assert denied(services.set_status, te, to=Status.RETIRED, reason=Reason.WORN_OUT, by=tech) == services.RETIRE_PERMISSION
     services.set_status(te, to=Status.RETIRED, reason=Reason.WORN_OUT, by=director)
     assert denied(services.set_status, te, to=Status.IN_USE, by=users.manager) == services.RETIRE_PERMISSION  # reinstating: Approve
+    # review fix: retired while out of service, Reinstate lands out of service with its reason (no passed certificate since its day out)
     services.set_status(te, to=Status.IN_USE, by=director)
+    assert (te.status, te.status_reason, te.status_since) == (Status.OUT_OF_SERVICE, Reason.DAMAGED, today)
+    assert refused(services.set_status, te, to=Status.MISSING, by=tech) == {"status": "TE-01 is out of service: from there it goes retired."}
+    services.set_status(te, to=Status.RETIRED, reason=Reason.WORN_OUT, by=director)
+    certificate(te, today, today=today)  # passed, dated on or after its day out, recorded while retired: it moves nothing
+    te.refresh_from_db()
+    assert te.status == Status.RETIRED
+    services.set_status(te, to=Status.IN_USE, by=director)  # with that certificate on file, Reinstate puts it back in use
+    assert (te.status, te.status_reason, te.status_since) == (Status.IN_USE, "", today)
     services.set_status(te, to=Status.MISSING, by=tech)
     assert refused(services.set_status, te, to=Status.RETIRED, reason=Reason.WORN_OUT, by=director) == {"status_reason": "Choose why: lost."}
     services.set_status(te, to=Status.RETIRED, reason=Reason.LOST, by=director)
@@ -377,8 +386,8 @@ def test_the_status_table_by_level(today, users):
     reasons = list(_rows(TestEquipment.history.model).filter(id=te.pk).order_by("history_date", "history_id")
                    .values_list("history_change_reason", flat=True))
     assert reasons[1:] == ["Out for calibration", "Back from calibration", "Missing", "Found", "Out of service: damaged",
-                           "Retired: worn out or obsolete", "Reinstated", "Missing", "Retired: lost", "Reinstated",
-                           "Retired: returned to its owner"]
+                           "Retired: worn out or obsolete", "Reinstated: out of service (damaged)", "Retired: worn out or obsolete",
+                           "Reinstated", "Missing", "Retired: lost", "Reinstated", "Retired: returned to its owner"]
 
 
 def test_status_moves_that_are_never_made_by_hand(today):
@@ -956,6 +965,6 @@ def test_the_helpers_wave_2_calls():
                  "entered_in_error_note", "work_since_last_calibration", "default_due", "due_cap"):
         assert callable(getattr(services, name)), name
     for name in ("standing_on", "entered_days", "window", "in_window", "window_q", "counted_uses_q", "counted_work_q", "counted", "offered",
-                 "usable_today", "may_remove", "work_day", "retired_throughout", "judge_uses", "standings", "calibrations_by_item",
+                 "usable_today", "may_remove", "kept", "retired_throughout", "judge_uses", "standings", "calibrations_by_item",
                  "reviews_by_calibration", "found_later", "use_words", "item_name", "basis_words", "matches"):
         assert callable(getattr(rules, name)), name

@@ -410,9 +410,18 @@ def test_equipment_edit(request, tag):
         return render(request, EDIT, {"item": item, "form": _edit_form(item, request.user)})
     form = _edit_form(item, request.user, request.POST)
     saved = None
-    if form.is_valid():
+    # Review fix: a field offered when the modal opened and locked since (a certificate recorded meanwhile) is refused, never dropped
+    stored = _item_initial(item)
+    changed_locked = [why for name, why in form.locks.items()
+                      if name in request.POST and str(request.POST.get(name, "")).strip() != str(stored[name])]
+    if changed_locked:
+        form.is_valid()
+        form.add_error(None, " ".join(changed_locked))
+    elif form.is_valid():
         try:
-            saved = tes.update_test_equipment(item, by=request.user, today=timezone.localdate(), **form.item_kwargs())
+            # Review fix: only the fields the modal posted (a field locked when it opened and unlocked since is not sent as blank)
+            fields = {name: value for name, value in form.item_kwargs().items() if name in request.POST}
+            saved = tes.update_test_equipment(item, by=request.user, today=timezone.localdate(), **fields)
         except (ValidationError, PermissionDenied) as e:
             form.add_service_errors(e)
     if saved is None:
@@ -561,8 +570,8 @@ def test_equipment_review(request, tag, pk):
 
 @web_view(Module.EQUIPMENT, Level.VIEW)
 def test_equipment_review_csv(request, tag, pk):
-    """A review box's whole work list (Work orders View too): each work order in the window now, its day and device, and whether the
-    review's decision covers it."""
+    """A review box's whole work list (Work orders View too): each work order in the window now, the day of the work (the use's own
+    day, the one the window reads) and its device, and whether the review's decision covers it."""
     item = _item(tag)
     if not reads_work(request.user):
         raise PermissionDenied(WORK_VIEW)
@@ -577,16 +586,16 @@ def test_equipment_review_csv(request, tag, pk):
             return "Not reviewed"
         return "Yes" if str(wo.pk) in reviewed else "Added since the review"
 
-    rows = [(w.number, w.get_type_display(), w.asset.tag, w.completed_on, covered(w)) for w in s.work]
+    rows = [(w.number, w.get_type_display(), w.asset.tag, w.used_on, covered(w)) for w in s.work]  # the use's day, the window's
     today = timezone.localdate()
     name = f"cadence-{_file_part(item.tag)}-review-{_file_part(cal.certificate)}-{today:%Y-%m-%d}.csv"
-    return csv_response(name, ["Work order", "Type", "Device", "Completed", "In the review"], rows)
+    return csv_response(name, ["Work order", "Type", "Device", "Day of the work", "In the review"], rows)
 
 
 @web_view(Module.EQUIPMENT, Level.VIEW)
 def test_equipment_uses_csv(request, tag):
-    """Every use of the item (Work orders View too): each work order, its day and device, the item's standing on that day, and
-    whether a later certificate found it out of tolerance, in the rules' words."""
+    """Every use of the item (Work orders View too): each work order, the day of the work (the use's own day) and its device, the
+    item's standing on that day, and whether a later certificate found it out of tolerance, in the rules' words."""
     item = _item(tag)
     if not reads_work(request.user):
         raise PermissionDenied(WORK_VIEW)
@@ -595,5 +604,5 @@ def test_equipment_uses_csv(request, tag):
              j.standing.words if j.standing else "", "; ".join(f.words for f in j.later)) for j in judged]
     today = timezone.localdate()
     return csv_response(f"cadence-{_file_part(item.tag)}-work-{today:%Y-%m-%d}.csv",
-                        ["Work order", "Type", "Device", "Completed", "Standing that day", "Found out of tolerance later"], rows)
+                        ["Work order", "Type", "Device", "Day of the work", "Standing that day", "Found out of tolerance later"], rows)
 

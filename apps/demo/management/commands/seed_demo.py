@@ -1022,7 +1022,7 @@ class Command(BaseCommand):
         if analyzer is not None:
             standing = te_rules.standings([analyzer], done)[analyzer.pk]
             if standing.state != te_rules.PAST_DUE or not TestEquipmentUse.objects.filter(
-                    test_equipment=analyzer, work_order__completed_on__gt=standing.due_on).exists():
+                    test_equipment=analyzer, used_on__gt=standing.due_on).exists():
                 used.append(analyzer)
         return [str(i.pk) for i in used]
 

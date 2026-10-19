@@ -1,11 +1,12 @@
 {% comment %}The work order drawer's "Test equipment" (slice 35, views_wo_test_equipment.drawer_context, under "test_equipment_row"): on a
-   completed or closed work order, for a reader who sees the whole facility. Each item it recorded in rules' words on the day of the
+   completed or closed work order, for a reader who sees the whole facility. Each item it recorded in rules' words on its own day of the
    work (the tag a link to the item for Equipment View), flagged ones marked (past due, failed, no certificate on file then, or found out
-   of tolerance later); "None recorded" when it recorded none; Change ("Record" when none) for whoever may set it (Work orders Edit,
-   Approve once closed). Included by web/_wo_results.html.{% endcomment %}
+   of tolerance later); the heading's "used on <day>" only when every use shares it (t.day), else each line names its own day (a
+   reopened work order completed again keeps its earlier uses on their days); "None recorded" when it recorded none; Change ("Record"
+   when none) for whoever may set it (Work orders Edit, Approve once closed). Included by web/_wo_results.html.{% endcomment %}
 {% with t=test_equipment_row %}{% if t %}
-<div class="sec wte-row" id="wo-te"><h3>Test equipment <span>{% if t.uses %}{{ t.uses|length }} used on {{ t.day|date:"M j, Y" }}{% else %}{{ t.none|lower }}{% endif %}</span></h3>
-  {% if t.uses %}<ul class="wte-used">{% for u in t.uses %}<li{% if u.flagged %} class="flag"{% endif %}>{% if u.url %}<a class="link" href="{{ u.url }}" hx-get="{{ u.url }}" hx-target="#drawer">{{ u.name }}</a>{% else %}{{ u.name }}{% endif %}{{ u.rest }}</li>{% endfor %}</ul>{% endif %}
+<div class="sec wte-row" id="wo-te"><h3>Test equipment <span>{% if t.uses %}{{ t.uses|length }} used{% if t.day %} on {{ t.day|date:"M j, Y" }}{% endif %}{% else %}{{ t.none|lower }}{% endif %}</span></h3>
+  {% if t.uses %}<ul class="wte-used">{% for u in t.uses %}<li{% if u.flagged %} class="flag"{% endif %}>{% if u.url %}<a class="link" href="{{ u.url }}" hx-get="{{ u.url }}" hx-target="#drawer">{{ u.name }}</a>{% else %}{{ u.name }}{% endif %}{% if not t.day %} <span class="muted">used on {{ u.day|date:"M j, Y" }}</span>{% endif %}{{ u.rest }}</li>{% endfor %}</ul>{% endif %}
   {% if t.can_change or not t.uses %}<div class="wte-act">{% if not t.uses %}<span class="muted">{{ t.none }}.</span>{% endif %}
     {% if t.can_change %}<button class="btn sm" type="button" hx-get="{% url 'web:wo_test_equipment' wo.number %}" hx-target="#modal-card">{% if t.uses %}Change{% else %}Record{% endif %}</button>{% endif %}</div>{% endif %}
 </div>

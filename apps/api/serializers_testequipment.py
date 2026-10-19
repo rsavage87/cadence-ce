@@ -13,7 +13,7 @@ list's ?standing= filter takes rules.FILTERS' keys.
   live calibration that needs one: its look-back window, the work in it now, the decision and its frozen count, work added since, and
   recheck progress). Which work orders are in a window only for Work orders View too (as the item's History shows the uses).
 - test_equipment_of(...) and the work order's field (serializers.WorkOrderSerializer.test_equipment): each item a work order recorded with
-  its words on the day of the work (services.judged_by_work_order: a page at once).
+  its words on its own day, the day of the work it was recorded on (services.judged_by_work_order: a page at once).
 """
 from django.urls import reverse
 from rest_framework import serializers
@@ -55,13 +55,18 @@ def shows_test_equipment(user) -> bool:
 
 
 def test_equipment_of(work_orders, user) -> dict | None:
-    """{work order id: [{"id", "tag", "words"}, ...] by tag} for `work_orders` (a page at once: services.judged_by_work_order, at most
-    four queries), each item's words on the day of the work (rules.use_words); None when `user` does not read test equipment (no query)."""
+    """{work order id: [{"id", "tag", "used_on", "words"}, ...] by tag} for `work_orders` (a page at once: services.judged_by_work_order, at most
+    four queries), each item's words on its own day (rules.use_words); None when `user` does not read test equipment (no query).
+    A cancelled work order records none, as its drawer and print say (review fix: uses left from before a reopen and a cancel count
+    nowhere)."""
+    from apps.workorders.models import WoStatus
+
     if not shows_test_equipment(user):
         return None
     rows = list(work_orders)
-    found = te_services.judged_by_work_order(rows)
-    return {w.pk: [{"id": str(j.item.pk), "tag": j.item.tag, "words": j.words} for j in found.get(w.pk, ())] for w in rows}
+    found = te_services.judged_by_work_order([w for w in rows if w.status != WoStatus.CANCELLED])
+    return {w.pk: [{"id": str(j.item.pk), "tag": j.item.tag, "used_on": _day(j.day), "words": j.words} for j in found.get(w.pk, ())]
+            for w in rows}
 
 
 test_equipment_of.__test__ = False  # pytest: not a test
@@ -86,8 +91,8 @@ class TestEquipmentListSerializer(serializers.ModelSerializer):
     class Meta:
         model = TestEquipment
         fields = ["id", "tag", "kind", "kind_label", "manufacturer", "model", "serial", "program", "program_label", "interval_months", "status",
-                  "status_label", "status_reason", "status_reason_label", "status_since", "held_by", "held_by_name", "standing", "due_on",
-                  "last_calibrated_on", "url"]
+                  "status_label", "status_reason", "status_reason_label", "status_since", "held_since", "held_by", "held_by_name", "standing",
+                  "due_on", "last_calibrated_on", "url"]
         read_only_fields = fields
 
     def _standing(self, item) -> rules.Standing:
@@ -140,7 +145,8 @@ def review_data(cal: Calibration, *, work_orders: bool) -> dict:
     """The tolerance review of one live calibration that needs one (services.review_summary, services.recheck_progress): the look-back
     window as it is now and the work in it, the state in words ("Not reviewed", "Reviewed Oct 10, 2026: ..."), the decision (its basis,
     quality record, day, who, and the window and count it was drawn with, frozen), the work added since, and recheck progress ("1 of 2
-    rechecked"). `work_orders`: list the work orders in the window (Work orders View), else null."""
+    rechecked"). `work_orders`: list the work orders in the window (Work orders View; each with used_on, the day of its use of the item,
+    the one the window reads, beside its completed_on), else null."""
     summary = te_services.review_summary(cal)
     review = summary.review
     start, end = summary.window
@@ -152,8 +158,8 @@ def review_data(cal: Calibration, *, work_orders: bool) -> dict:
     listed = None
     if work_orders:
         reviewed = rules.reviewed_ids(review) if review is not None else set()
-        listed = [{"id": str(w.pk), "number": w.number, "completed_on": _day(w.completed_on), "asset_tag": w.asset.tag,
-                   "in_review": str(w.pk) in reviewed} for w in summary.work]
+        listed = [{"id": str(w.pk), "number": w.number, "completed_on": _day(w.completed_on), "used_on": _day(w.used_on),
+                   "asset_tag": w.asset.tag, "in_review": str(w.pk) in reviewed} for w in summary.work]
     return {"calibration": str(cal.pk), "certificate": cal.certificate, "calibrated_on": _day(cal.calibrated_on),
             "state": rules.REVIEWED if review is not None else rules.NOT_REVIEWED, "words": summary.words, "window_start": _day(start),
             "window_end": _day(end), "work_count": len(summary.work), "decision": decision, "added_since_review": len(summary.added),

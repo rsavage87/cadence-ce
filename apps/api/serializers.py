@@ -369,10 +369,10 @@ class WorkOrderSerializer(serializers.ModelSerializer):
         return ""
 
     def get_test_equipment(self, wo):
-        """Slice 35: [{"id", "tag", "words"}] by tag, each item the work order recorded with its words on the day of the work
-        (rules.use_words: "SA-03 (Fluke ESA612): calibration due Mar 31, 2027 on the day of this work", "(on file since ...)" when its
-        certificate was entered later, "found out of tolerance on ..." with its review; while a reopened one is not completed again,
-        "judged on the day the work is completed"); [] when none. Null for a reader who does not read test equipment: a scoped user
+        """Slice 35: [{"id", "tag", "used_on", "words"}] by tag, each item the work order recorded with its words on its own day, the day of the
+        work it was recorded on (rules.use_words: "SA-03 (Fluke ESA612): calibration due Mar 31, 2027 on the day of this work", "(on
+        file since ...)" when its certificate was entered later, "found out of tolerance on ..." with its review; a reopened one's keep
+        their days); [] when none (a cancelled one's too). Null for a reader who does not read test equipment: a scoped user
         (never theirs), or one without Equipment View. A list's page is read at once (WorkOrderListSerializer), else this work order alone."""
         if "_test_equipment" not in self.context:
             self.context["_test_equipment"] = test_equipment_of([wo], self._user())
