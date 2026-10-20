@@ -22,10 +22,11 @@ numbering, when it opens one; releases; devices; security rows; update rows. Not
 device's row: a completion that records what an update did takes it first, before lock_work (updates' module docstring).
 
 Nothing here is deleted: a release entered in error is marked (removed_on, removed_by) and refused while a device on site names it
-(rules.on_site, of the release's model: the devices the Models panel counts, review fix C4); a retired or returned device's record keeps
-naming it (its history reads it as it was; the rules read a release entered in error as not recorded); adding the same version again
-restores it. A device's facts stay with its history when it is retired; a retired device (or a returned temporary one) is refused, in
-words.
+(rules.on_site, of the release's model: the devices the Models panel counts, review fix C4), or (slice 38) while an open software update
+work order is to install it (OPEN_TO_INSTALL); a retired or returned device's record keeps naming it, as an update's record that is not
+open does (its history reads it as it was; the rules read a release entered in error as not recorded, an update's words as "<version>
+(entered in error since)"); adding the same version again restores it. A device's facts stay with its history when it is retired; a
+retired device (or a returned temporary one) is refused, in words.
 
 Field checks (one helper for add and update, every problem keyed by field, all at once): dates are days (date objects or ISO text), from
 EARLIEST_YEAR, at most HORIZON_YEARS ahead, and the days something happened (support checked, MDS2 released, MDS2 requested) not after
@@ -477,20 +478,40 @@ def _running_words(named: int) -> str:
             f"{named} devices run this release: set them to another first.")
 
 
+OPEN_TO_INSTALL = "{number} is open to install this release: complete or cancel it first."  # slice 38
+
+
+def _open_update_number(release) -> str:
+    """The lowest number of an open software update work order (open, in progress, or awaiting parts) whose target is `release`, or ""
+    (slice 38: its picker hides a release entered in error, and its completion could not name it)."""
+    from apps.workorders.models import OPEN_STATUSES
+
+    from .models import SoftwareUpdate
+
+    return (SoftwareUpdate.objects.filter(target_release_id=release.pk, work_order__status__in=OPEN_STATUSES).order_by("work_order__number")
+            .values_list("work_order__number", flat=True).first()) or ""
+
+
 def removal_refusal(release) -> str:
-    """Why Entered in error is refused for `release` now, in remove_release's words (a screen says it before it is tried), or ""."""
+    """Why Entered in error is refused for `release` now, in remove_release's words (a screen says it before it is tried), or "": already
+    removed, the profile, devices on site naming it, or (slice 38) an open software update work order to install it (OPEN_TO_INSTALL).
+    A cancelled, completed, or recorded update naming it never stops it: those read the release as it was ("(entered in error since)")."""
     if release.removed_on is not None:
         return ALREADY_REMOVED
     if release.is_profile:
         return PROFILE_KEPT
     named = running(release)
-    return _running_words(named) if named else ""
+    if named:
+        return _running_words(named)
+    number = _open_update_number(release)
+    return OPEN_TO_INSTALL.format(number=number) if number else ""
 
 
 def remove_release(release, *, by, today: date | None = None):
     """Entered in error: refused while a device on site names it (running: as the Models panel counts; a retired or returned device's
-    record keeps naming it) or for the profile, which is cleared field by field (removal_refusal's words). Sets removed_on (today) and
-    removed_by, history "Entered in error"; the row stays (history keeps it), hidden from lists and pickers."""
+    record keeps naming it), while an open software update work order is to install it (slice 38: the register lock held, its openers
+    wait), or for the profile, which is cleared field by field (removal_refusal's words). Sets removed_on (today) and removed_by, history
+    "Entered in error"; the row stays (history keeps it), hidden from lists and pickers."""
     _check(by, perms.can_edit, EDIT_PERMISSION)
     today = _today(today)
     with transaction.atomic():

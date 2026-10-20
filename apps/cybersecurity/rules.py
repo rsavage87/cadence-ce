@@ -22,6 +22,12 @@ filter; each figure says which devices it counts. Read in a fixed number of quer
 
 A release names its model: a device whose stored release belongs to another model (a model change racing a record) reads as "Release not
 recorded", never another model's facts (equipment.services.update_asset clears it through services.model_changed).
+
+Slice 38, software updates (written by apps.cybersecurity.updates): release_offer (offer_or_why) is the one predicate for recording what
+an update work order did (the completion modal, the API's software_choices, and updates.check_choice read it); update_state and
+update_words word a record on every door (the Security tab, the work order drawer and print, the API), for Device security View and
+Equipment View only; updates_of (the Security tab's list) and campaigns (a model's releases' update work orders by state) are one query
+each.
 """
 from __future__ import annotations
 
@@ -565,7 +571,7 @@ def changes_for_it(today: date, days: int = 30) -> list:
     return [c[3] for c in out]
 
 
-# --- slice 38: software updates (wave 1 builds the bodies; every door reads these, never the fields) ---------------------------------
+# --- slice 38: software updates (every door reads these, never the fields) ----------------------------------------------------------
 
 @dataclass(frozen=True)
 class Offer:
@@ -580,39 +586,203 @@ class Offer:
     bases: dict
     needed: bool
 
+    @property
+    def target(self) -> str:
+        """The record's target (UpdateTarget: a release of the model, or the manufacturer's patches)."""
+        return self.update.target
+
+    @property
+    def target_release(self):
+        """The release the work order was opened to install, or None (patches)."""
+        return self.update.target_release if self.update.target_release_id else None
+
+    @property
+    def target_reference(self) -> str:
+        """The manufacturer's patch list the work order was opened to apply (a token), or ""."""
+        return self.update.target_reference
+
+
+# Why release_offer offers nothing (offer_or_why), in the order checked: the work order is not a software update; it has no record (an
+# update imported from another system: history only); its device is not on site (retired, or returned to its owner); the user may not
+# record (a scoped user, or one without Device security Edit and Equipment View)
+NOT_AN_UPDATE, NO_RECORD, NOT_ON_SITE, NO_PERMISSION = "not_an_update", "no_record", "not_on_site", "no_permission"
+
+
+def offer_or_why(wo, user) -> tuple:
+    """(Offer, "") where release_offer holds, else (None, why): NOT_AN_UPDATE, NO_RECORD, NOT_ON_SITE, NO_PERMISSION, checked in that
+    order (updates.check_choice words each refusal by it). `user` None is the system: it may record. Queries: none for another type;
+    the record (one); with an offer, the releases and the recorded release (two; and the device when `wo` has not read it)."""
+    from apps.workorders.models import Source, WoType
+
+    from . import permissions as perms
+    from .models import RECORDED_OUTCOMES, SoftwareUpdate
+    from .updates import BASES
+
+    if wo.type != WoType.SOFTWARE_UPDATE:
+        return None, NOT_AN_UPDATE
+    update = None
+    if wo.source != Source.IMPORTED:
+        update = SoftwareUpdate.objects.filter(work_order_id=wo.pk).select_related("target_release").order_by("pk").first()
+    if update is None:
+        return None, NO_RECORD
+    asset = wo.asset
+    if asset.status == AssetStatus.RETIRED:
+        return None, NOT_ON_SITE
+    if user is not None and not perms.can_edit_devices(user):
+        return None, NO_PERMISSION
+    update.work_order = wo  # read already: the record's words need no query of their own
+    return Offer(update=update, releases=tuple(releases(asset.device_model_id)), recorded=release_of(asset),
+                 outcomes=tuple(RECORDED_OUTCOMES), bases=dict(BASES), needed=not update.outcome), ""
+
 
 def release_offer(wo, user):
     """The one predicate (slice 38) the completion modal, the work order serializer's software_choices, and updates.check_choice read:
     an Offer, or None unless the work order is a software update with its record (register-opened, so never imported), its device on
     site (on_site: not retired, not returned), and `user` may record (permissions.can_edit_devices; None is the system). Slice 40 widens
-    the type gate. Wave 1."""
-    raise NotImplementedError
+    the type gate. Offer.outcomes are installed, patches, and already, always (whether already fits the target is the service's check);
+    Offer.needed is True while nothing is recorded (a completion by a user must then choose, or Not confirmed now)."""
+    return offer_or_why(wo, user)[0]
 
 
 OPEN, NOT_CONFIRMED, DONE, CANCELLED, REMOVED = "open", "not_confirmed", "done", "cancelled", "removed"
+STATES = (OPEN, DONE, NOT_CONFIRMED, CANCELLED)  # a work order's record's states, in the campaign's order (REMOVED: a hand row's)
+STATE_LABELS = {OPEN: "Open", DONE: "Done", NOT_CONFIRMED: "Version not confirmed", CANCELLED: "Cancelled", REMOVED: "Entered in error"}
+_CAMPAIGN_WORDS = {OPEN: "open", DONE: "done", NOT_CONFIRMED: "not confirmed", CANCELLED: "cancelled"}
+ENTERED_IN_ERROR_SINCE = " (entered in error since)"
+LATER_KEPT_WORDS = "a later record of the device is kept"
+# Where a hand-recorded install came from (InstalledBy's values), as its sentence ends
+INSTALLER_WORDS = {"ce": "installed by clinical engineering", "it": "installed by information technology",
+                   "manufacturer": "installed by the manufacturer remotely", "automatic": "installed automatically",
+                   "department": "installed by the department that uses it"}
+
+
+def _work_order_state(status: str, outcome: str) -> str:
+    from apps.workorders.models import OPEN_STATUSES, WoStatus
+
+    if status in OPEN_STATUSES:
+        return OPEN
+    if status == WoStatus.CANCELLED:
+        return CANCELLED
+    return DONE if outcome else NOT_CONFIRMED
 
 
 def update_state(update) -> str:
     """An update's state key: open (its work order open, in progress, or awaiting parts), not_confirmed (completed or closed, nothing
     recorded), done (an outcome recorded, a hand row's always), cancelled (its work order cancelled), removed (a hand row entered in
-    error). Wave 1."""
-    raise NotImplementedError
+    error). A work order's record follows its work order's status: a reopened one is open again, whatever it recorded before."""
+    if update.work_order_id is None:
+        return REMOVED if update.removed_on is not None else DONE
+    return _work_order_state(update.work_order.status, update.outcome)
+
+
+def release_name(release) -> str:
+    """A release in an update's words: its version, "<version> (entered in error since)" for one entered in error since, "" for none."""
+    if release is None:
+        return ""
+    return f"{release.version}{ENTERED_IN_ERROR_SINCE}" if release.removed_on is not None else release.version
+
+
+def _source_words(update) -> str:
+    """Where the record came from, as its sentence ends: the vendor's job ("as the vendor's report <number> states"), an install recorded
+    by hand (by whom), else "" (in-house work)."""
+    if update.work_order_id is None:
+        return INSTALLER_WORDS.get(update.installed_by, "")
+    wo = update.work_order
+    if wo.vendor_service:
+        return f"as the vendor's report {wo.checks_reference} states" if wo.checks_reference else "as the vendor's report states"
+    return ""
+
+
+def _open_words(update) -> str:
+    if update.target_release_id:
+        return f"Open: to install {release_name(update.target_release)}"
+    if update.target_reference:
+        return f"Open: to apply the manufacturer's patches (ref {update.target_reference})"
+    return "Open: to apply the manufacturer's patches"
+
+
+def _outcome_words(update) -> str:
+    from .models import UpdateBasis, UpdateOutcome
+
+    day = day_words(update.applied_on) if update.applied_on else "on a day not recorded"
+    after = release_name(update.release_after) if update.release_after_id else ""
+    ref = f"; ref {update.reference}" if update.reference else ""
+    if update.outcome == UpdateOutcome.INSTALLED:
+        before = release_name(update.release_before) if update.release_before_id else NOT_RECORDED
+        text = f"{after or 'A release'} installed {day} (recorded before: {before}){ref}"
+    elif update.outcome == UpdateOutcome.PATCHES:
+        what = "Patches on the manufacturer's validated patch list" if update.basis == UpdateBasis.VALIDATED_LIST else "Patches"
+        text = f"{what} applied {day}, version unchanged ({after or 'version not recorded'}){ref}"
+    else:
+        text = f"Checked {day}: already on {after or 'the update'}; nothing installed{ref}"
+    source = _source_words(update)
+    if source:
+        text += f"; {source}"
+    if update.later_kept:
+        text += f"; {LATER_KEPT_WORDS}"
+    return text
 
 
 def update_words(update, *, today=None) -> str:
-    """The update in words (build38 "Words"): its state sentence, or its outcome's sentence with where it came from ("as the vendor's
-    report states", "installed by information technology") and "; a later record of the device is kept" when later_kept. Never a never
-    word; the basis's "validated" only for UpdateBasis.VALIDATED_LIST. Wave 1."""
-    raise NotImplementedError
+    """The update in words (build38 "Words"), for readers with Device security View and Equipment View (permissions.can_view_devices):
+    - open: "Open: to install 5.6 (demo)", or "Open: to apply the manufacturer's patches (ref ICAR-2026-09)";
+    - not confirmed: "Completed Oct 20, 2026; version not confirmed" ("Completed by the vendor ..." only for vendor service);
+    - cancelled: "Cancelled"; a hand row entered in error: "Entered in error";
+    - done: "5.6 (demo) installed Oct 20, 2026 (recorded before: 5.2 (demo))" ("not recorded" with none before); "Patches applied Oct
+      20, 2026, version unchanged (5.6 (demo)); ref ICAR-2026-09" ("(version not recorded)" with none; "Patches on the manufacturer's
+      validated patch list applied ..." only for UpdateBasis.VALIDATED_LIST); "Checked Oct 20, 2026: already on 5.6 (demo); nothing
+      installed"; a reference as "; ref <it>"; then where it came from ("; as the vendor's report <number> states" on vendor service,
+      "; installed by information technology" by hand, nothing for in-house work), and "; a later record of the device is kept" when
+      later_kept.
+    Never "updated from X to Y" (Cadence cannot order versions; the before is the record, not a reading), never a never word. A release
+    entered in error since reads "<version> (entered in error since)". `today` is unused: every day named is the record's own."""
+    state = update_state(update)
+    if state == REMOVED:
+        return STATE_LABELS[REMOVED]
+    if state == CANCELLED:
+        return STATE_LABELS[CANCELLED]
+    if state == OPEN:
+        return _open_words(update)
+    if state == NOT_CONFIRMED:
+        wo = update.work_order
+        day = f" {day_words(wo.completed_on)}" if wo.completed_on else ""
+        return f"Completed by the vendor{day}; version not confirmed" if wo.vendor_service else f"Completed{day}; version not confirmed"
+    return _outcome_words(update)
 
 
 def updates_of(asset) -> list:
     """The device's updates for its Security tab, newest first: every work order's record and the hand rows not entered in error, each
-    with its work order and releases read in the same query. One query. Wave 1."""
-    raise NotImplementedError
+    with its work order and releases read in the same query. One query. Newest by the record's day (the day it was done, applied_on;
+    else its work order's completion, version not confirmed; else the day it was opened, open or cancelled), then the newest row."""
+    from django.db.models import F
+    from django.db.models.functions import Coalesce
+
+    from .models import SoftwareUpdate
+
+    day = Coalesce(F("applied_on"), F("work_order__completed_on"), F("opened_on"))
+    return list(SoftwareUpdate.objects.filter(asset_id=asset.pk).filter(Q(work_order__isnull=False) | Q(removed_on__isnull=True))
+                .select_related("work_order", "target_release", "release_before", "release_after")
+                .order_by(day.desc(), "-created_at", "-pk"))
 
 
 def campaigns(model) -> dict:
-    """{release id: {state key: count}} for every release of `model` that update work orders target (open, done, not_confirmed,
-    cancelled): the model panel's "Updates to 5.6 (demo): 3 open, 1 done, 1 not confirmed". One aggregate query. Wave 1."""
-    raise NotImplementedError
+    """{release id: {state key: count}} for every release of `model` that update work orders target, each with every state of STATES
+    (open, done, not_confirmed, cancelled; 0 where none): the model panel's "Updates to 5.6 (demo): 3 open, 1 done, 1 not confirmed"
+    (campaign_words). One aggregate query (the work orders' statuses and the records' outcomes, grouped)."""
+    from django.db.models import Count
+
+    from .models import SoftwareUpdate
+
+    rows = (SoftwareUpdate.objects.filter(target_release__device_model_id=_model_id(model), work_order__isnull=False).order_by()
+            .values("target_release_id", "work_order__status", "outcome").annotate(n=Count("pk")))
+    out: dict = {}
+    for row in rows:
+        counts = out.setdefault(row["target_release_id"], dict.fromkeys(STATES, 0))
+        counts[_work_order_state(row["work_order__status"], row["outcome"])] += row["n"]
+    return out
+
+
+def campaign_words(release, counts: dict | None) -> str:
+    """ "Updates to 5.6 (demo): 3 open, 1 done, 1 not confirmed" (the states with a count, in STATES order), or "" for none."""
+    parts = [f"{counts[s]} {_CAMPAIGN_WORDS[s]}" for s in STATES if counts and counts.get(s)]
+    return f"Updates to {release_name(release)}: {', '.join(parts)}" if parts else ""

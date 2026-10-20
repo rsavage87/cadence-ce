@@ -15,8 +15,9 @@ calls a routine cybersecurity update an enhancement, "not considered a repair"; 
 - An install with no work order (the manufacturer remotely, automatic, IT, the department) is recorded by hand (record), and may be
   marked entered in error at Approve (remove). A work order's recorded outcome is cleared at Approve instead (remove), and can be
   confirmed again; the device's facts are never rolled back (Record facts corrects them).
-- The device's facts follow what was recorded (installed: its release since the day; patches and already: the day checked), never
-  backwards: a record dated before the device's facts (checked_on or release_since after it) is kept as a record only (later_kept).
+- The device's facts follow what was recorded (installed: its release since the day; patches and already: the day checked; already
+  also names the release when none was recorded), never backwards: a record dated before the device's facts (checked_on or
+  release_since after it) is kept as a record only (later_kept), at a confirmation or a hand record dated in the past.
 
 Lock order (every writer here and every register writer in services.py; review of design38, critique38_rules C):
   1. the facility's register lock (services.lock_register)
@@ -33,15 +34,43 @@ completion holds the numbering and waits for its device): each device is held by
 read again. A transaction PostgreSQL ends for a lock conflict (services._lock_conflict: equipment's reinstate and use-before-inspection take
 a device's row and then numbering, the known meeting) answers services.RACE in words, never a 500.
 
+As each writer takes them:
+- complete_work_order recording (record_at_completion): register, lock_work, the work order, (its test equipment, a failed PM's numbering
+  never: an update has neither), the device FOR UPDATE (change_status), then the chosen release, the security row, the update row.
+- confirm: register, lock_work (the work order read again there), the release, the device FOR KEY SHARE, the security row, the update row.
+- record: register, the release, the device FOR KEY SHARE, the security row, the new row.
+- remove: register, lock_work for a work order's row, the update row.
+- open_update / open_updates: register, the target release, then per device (tag order) numbering and the insert (the device KEY SHARE),
+  the device's model, status, and hold read again, the new row, the assignment (the new work order's own row).
+
 Every function here checks its level itself (permissions.py) and refuses in words keyed by field (a ValidationError); `by` None is the
-system (the seed, tests). History reasons never carry a reference.
+system (the seed, tests). History reasons never carry a reference. No refusal says "required" (rules.NEVER_WORDS): "Choose ..." or
+"Enter ...".
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 
-from .models import RECORDED_OUTCOMES, UpdateBasis, UpdateOutcome
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError, OperationalError, transaction
+
+from . import permissions as perms
+from . import rules, services
+from .models import (
+    INSTALL_OUTCOMES,
+    RECORDED_OUTCOMES,
+    UPDATE_REFERENCE_MAX,
+    UPDATE_REFERENCE_VALIDATOR,
+    DeviceSecurity,
+    InstalledBy,
+    SoftwareRelease,
+    SoftwareUpdate,
+    UpdateBasis,
+    UpdateOutcome,
+    UpdatesBy,
+    UpdateTarget,
+)
 from .services import KEEP
 
 UPDATE_PROBLEM = "Software update: install the manufacturer's update and confirm the version on the device."
@@ -49,6 +78,8 @@ PATCHES_PROBLEM = "Software update: apply the manufacturer's patches and confirm
 UPDATE_BATCH_MAX = 100  # update work orders opened at once (one release's devices)
 NOT_CONFIRMED = "not_confirmed"  # a completion's choice: what the device runs is not confirmed now (records nothing)
 OUTCOME_VALUES = (*UpdateOutcome.values, NOT_CONFIRMED)
+OPEN_PRIORITIES = ("normal", "high")  # workorders.Priority's NORMAL and HIGH: never "Critical" (a never word) for an update
+CLINICAL_ENGINEERING = "Clinical engineering"  # an update work order's requester when the system opens it (by None)
 
 # The default resolution of an update work order completed with an outcome recorded and no resolution typed (never a version: the
 # resolution reaches scoped users, the print, and the timeline)
@@ -78,6 +109,64 @@ RECORDED_MEANWHILE = "This update was recorded meanwhile."
 HELD = "{tag} is held as evidence for an incident: its software stays as it is until the incident releases it."
 ALREADY_OPEN = "{tag} already has an open software update ({number})."
 ALREADY_RUNS = "{tag} already runs {version}."
+# check_choice, confirm, record
+ONLY_UPDATES = "Only a software update records what it did."
+NOT_FROM_REGISTER = "This work order was not opened from the Device security screen: nothing is recorded on it."
+ALREADY_RAN = "It already ran {version} before: choose Already on the update, or Patches applied."
+ALREADY_RAN_BY_HAND = "It already ran {version} before: choose Patches applied, or the release it runs now."
+PATCHES_UNCHANGED = "Patches leave the version unchanged: choose installed if it changed."
+PATCHES_NONE_RECORDED = ("No release is recorded for this device: leave the release out (version not recorded), or record it with "
+                         "Record facts.")
+RECORDED_AS = "Its record says it runs {version}: choose that release, or Installed if it changed."
+NOT_THE_TARGET = "The device runs {version}, not {target}: keep the work order open, or cancel it."
+VALIDATED_PATCHES_ONLY = "The manufacturer's validated patch list is for patches applied: choose another basis."
+NO_BASIS = "Already on the update names no basis: leave it blank."
+REFERENCE_LENGTH = f"Keep the reference to {UPDATE_REFERENCE_MAX} characters."
+CHOOSE_UPDATE = "Choose a software update of this facility."
+CONFIRM_WHAT = "Confirm version is for an update work order completed with the version not confirmed."
+CONFIRM_OUTCOME = "Choose what this update did: installed, patches applied, or already on the update."
+REOPENED = "{number} is not completed now: its completion records what it did."
+HAND_OUTCOME = "Choose installed or patches applied: an install recorded by hand is one of them."
+INSTALLER_WORDS = "Choose who installed it."
+APPLIED_NEEDED = "Enter the day it was installed."
+BEFORE_INSTALL = "Installed on cannot be before the device was installed ({day})."
+NOTHING_RECORDED = "Nothing is recorded on this update."
+# opening
+CHOOSE_TARGET = "Choose the release to install."
+TARGET_WORDS = "Choose a release of the model, or the manufacturer's patches."
+NO_TARGET_RELEASE = "Patches leave the version unchanged: choose no release to install."
+NO_TARGET_REFERENCE = "A release to install names no patch list: leave it blank."
+PRIORITY_WORDS = "Choose normal or high."
+DUE_NEEDED = "Enter the day it is due."
+DUE_PAST = "Due cannot be before today."
+DUE_FAR = f"Enter a due day within {services.HORIZON_YEARS} years."
+CHOOSE_TECHNICIAN = "Choose an active technician of this facility."
+ASSIGN_PERMISSION = "Assigning needs Work orders Approve: leave Assign to blank."
+OWNER_INSTALLS = "{tag} is a {kind}: its owner installs its updates, so leave Assign to blank."
+INSTALLER_NOT_CE = "Updates to this model are installed here by {who}: leave Assign to blank."
+MODEL_CHANGED = "{tag}'s model changed meanwhile: choose a release of its model."
+CHOOSE_FROM = "Choose releases of this model to update from."
+FROM_NEEDED = "Choose the releases to update from, or the devices with no release recorded."
+FROM_TARGET = "Devices on {version} already run it: leave it out."
+NONE_SELECTED = "No device of this model on site runs the releases chosen."
+CHOOSE_DEPARTMENT = "Choose a department of this facility."
+TOO_MANY = f"Open at most {UPDATE_BATCH_MAX} updates at once: choose a department to narrow them."
+TOO_MANY_IN_ONE = (f"Open at most {UPDATE_BATCH_MAX} updates at once: these {{count}} devices are all in one department, so choose fewer "
+                   "releases to update from, or open them on each device's Security tab.")
+# Why opened work orders stay unassigned (UpdateBatch.unassigned_reason)
+ASSIGN_NEEDS = "Assigning needs Work orders Approve: a manager assigns them, or a technician takes one."
+NOBODY_CHOSEN = "Nobody was chosen to assign: a manager assigns them, or a technician takes one."
+INSTALLED_HERE = "Left unassigned: updates to this model are installed here by {who}."
+# History reasons (never a reference)
+OPENED_WITH = "Opened with {number}"
+RECORDED_AT = "Recorded at completion of {number}"
+CONFIRMED = "Confirmed"
+RECORDED = "Recorded"
+ENTERED_IN_ERROR = services.ENTERED_IN_ERROR  # "Entered in error": a hand row
+OUTCOME_IN_ERROR = "Outcome entered in error"  # a work order's row
+FACTS_AT = "Facts recorded at {number}"  # the device's security row, at a completion
+FACTS_CONFIRMED = "Facts recorded when {number} was confirmed"
+FACTS_BY_HAND = "Facts recorded with an update recorded by hand"
 
 
 @dataclass(frozen=True)
@@ -130,6 +219,23 @@ def choice_from(data, errors: dict, prefix: str = "software_"):
 
 
 @dataclass(frozen=True)
+class Checked:
+    """check_choice's answer for a choice that records an outcome, for record_at_completion: the outcome, the release the device runs
+    after (a SoftwareRelease; None only for patches on a device with no release recorded), the reference and the basis as cleaned, and
+    the record's target release (None for patches). `records` is always True."""
+
+    outcome: str
+    release: object | None
+    reference: str = ""
+    basis: str = ""
+    target_release: object | None = None
+
+    @property
+    def records(self) -> bool:
+        return True
+
+
+@dataclass(frozen=True)
 class UpdateBatch:
     """What opening updates did: work orders created, how many were left unassigned (and why, in words), and the devices skipped: held
     as evidence, with an open update already, or whose model changed meanwhile (each a list of tags)."""
@@ -143,36 +249,266 @@ class UpdateBatch:
     work_orders: tuple = ()  # the work orders opened, in tag order
 
 
+# --- small parts ----------------------------------------------------------------------------------------------------------------------
+
+def _token(value, field: str, errors: dict, *, needed: bool = False) -> str:
+    """A reference (the manufacturer's patch list, notice, or field change number): a token of at most UPDATE_REFERENCE_MAX characters;
+    REFERENCE_NEEDED when `needed` and blank."""
+    if value is None:
+        value = ""
+    if not isinstance(value, str):
+        errors[field] = "Enter it as text."
+        return ""
+    text = value.strip()
+    if not text:
+        if needed:
+            errors[field] = REFERENCE_NEEDED
+        return ""
+    if len(text) > UPDATE_REFERENCE_MAX:
+        errors[field] = REFERENCE_LENGTH
+        return text
+    try:
+        UPDATE_REFERENCE_VALIDATOR(text)
+    except ValidationError as e:
+        errors[field] = " ".join(e.messages)
+    return text
+
+
+def _fields(choice: UpdateChoice, errors: dict) -> tuple[str, str]:
+    """The choice's reference and basis for its outcome (one of RECORDED_OUTCOMES), cleaned: patches need a reference; installed and
+    patches a basis of BASES[outcome]; already none."""
+    reference = _token(choice.reference, "software_reference", errors, needed=choice.outcome == UpdateOutcome.PATCHES)
+    raw = "" if choice.basis is None else choice.basis
+    basis = raw.strip() if isinstance(raw, str) else None
+    if choice.outcome == UpdateOutcome.ALREADY:
+        if basis is None or basis:
+            errors["software_basis"] = NO_BASIS
+        return reference, ""
+    if basis == UpdateBasis.VALIDATED_LIST and basis not in BASES[choice.outcome]:
+        errors["software_basis"] = VALIDATED_PATCHES_ONLY
+    elif basis not in BASES[choice.outcome]:
+        errors["software_basis"] = BASIS_WORDS
+    return reference, basis or ""
+
+
+def _names(release, model_id) -> bool:
+    """A release a device of `model_id` may be read as running: versioned, not entered in error, of that model."""
+    return (release is not None and bool(release.version_key) and release.removed_on is None
+            and release.device_model_id == model_id)
+
+
+def _release_read(release_id, model_id, errors: dict):
+    """The release a choice names (an id as text, a UUID, or a SoftwareRelease), read without a lock (check_choice: the completion
+    holds the register when the choice records), if it is a versioned, not removed release of the device's model; else CHOOSE_RUNS_NOW
+    keyed software_release and None."""
+    pk = services._pk(release_id, SoftwareRelease)
+    found = SoftwareRelease.objects.filter(pk=pk).order_by("pk").first() if pk is not None else None
+    if not _names(found, model_id):
+        errors["software_release"] = CHOOSE_RUNS_NOW
+        return None
+    return found
+
+
+def _release_locked(release_id):
+    """The release a choice names, FOR UPDATE of its own row (services._locked_release; another facility's or unknown id refused,
+    keyed software_release). Its model is checked once the device is held."""
+    return services._locked_release(release_id, field="software_release", message=CHOOSE_RUNS_NOW)
+
+
+def _release_checks(outcome: str, *, release, recorded, target, errors: dict, by_hand: bool = False):
+    """The outcome against what the device's record says (`recorded`: its release, or None) and the record's `target` (a release, or
+    None for patches), given the release the choice names (`release`: None when none was sent). Returns the release it runs after:
+    - installed: the release named, other than the recorded one;
+    - patches: the recorded one (or none); a release named must be it;
+    - already: the recorded one, or the one named when none is recorded; the target when the target is a release.
+    Problems keyed software_release."""
+    key = "software_release"
+    if outcome == UpdateOutcome.INSTALLED:
+        if release is None:
+            errors[key] = CHOOSE_RUNS_NOW
+        elif recorded is not None and release.pk == recorded.pk:
+            errors[key] = (ALREADY_RAN_BY_HAND if by_hand else ALREADY_RAN).format(version=recorded.version)
+        return release
+    if outcome == UpdateOutcome.PATCHES:
+        if release is not None and (recorded is None or release.pk != recorded.pk):
+            errors[key] = PATCHES_UNCHANGED if recorded is not None else PATCHES_NONE_RECORDED
+        return recorded
+    if release is None and recorded is None:
+        errors[key] = CHOOSE_RUNS_NOW
+        return None
+    if release is not None and recorded is not None and release.pk != recorded.pk:
+        errors[key] = RECORDED_AS.format(version=recorded.version)
+        return release
+    runs = release or recorded
+    if target is not None and runs.pk != target.pk:
+        errors[key] = NOT_THE_TARGET.format(version=runs.version, target=rules.release_name(target))
+    return runs
+
+
+def _recorded(sec, device):
+    """The release the device's security row names, as the rules read it (rules.release_of): versioned, not removed, of its model."""
+    release = sec.release if sec is not None and sec.release_id else None
+    return release if _names(release, device.device_model_id) else None
+
+
+def _newer(sec, day: date) -> bool:
+    """Whether the device's facts are dated after `day` (checked_on or release_since): a record of `day` never moves them back."""
+    return (sec.checked_on is not None and sec.checked_on > day) or (sec.release_since is not None and sec.release_since > day)
+
+
+def _facts(sec, *, outcome: str, after, before, day: date, by, prefix: str) -> str | None:
+    """Write what `outcome` says on the device's security row `sec` (not saved), on `day`: installed, its release `after` since the day;
+    already, the release `after` since the day when none was recorded (`before` None); the day checked and who, always. Returns the
+    history reason (prefix, ": release set to <version>" when it changed), or None when the facts are newer than `day` (kept)."""
+    if _newer(sec, day):
+        return None
+    changed = False
+    if outcome == UpdateOutcome.INSTALLED or (outcome == UpdateOutcome.ALREADY and before is None):
+        changed = sec.release_id != after.pk
+        sec.release, sec.release_since = after, day
+    sec.checked_on, sec.checked_by = day, by
+    return f"{prefix}: release set to {after.version}" if changed else prefix
+
+
+def _write_security(device, by, apply):
+    """The device's security row FOR UPDATE, got or created as services.record_facts does (a create that loses a race reads the row
+    back, locked): `apply(row)` writes on it and returns the history reason, or None to save nothing (a row it did not find is then not
+    created). Returns the row, or None."""
+    sec = DeviceSecurity.objects.select_for_update().filter(asset_id=device.pk).first()
+    if sec is not None:
+        reason = apply(sec)
+        if reason:
+            services._save(sec, by, reason)
+        return sec
+    sec = DeviceSecurity(asset=device)
+    reason = apply(sec)
+    if not reason:
+        return None
+    try:
+        with transaction.atomic():
+            services._save(sec, by, reason)
+    except IntegrityError:  # another writer created it meanwhile: read it back, locked, and write on it
+        sec = DeviceSecurity.objects.select_for_update().get(asset_id=device.pk)
+        reason = apply(sec)
+        if reason:
+            services._save(sec, by, reason)
+    return sec
+
+
+def _set_outcome(row, *, outcome: str, before, after, reference: str, basis: str, day: date, by, later_kept: bool) -> None:
+    row.outcome, row.release_before, row.release_after = outcome, before, after
+    row.reference, row.basis, row.applied_on = reference, basis, day
+    row.recorded_by, row.later_kept = by, later_kept
+
+
+def _update_row(update):
+    """The update, resolved through this facility (another facility's or unknown id refused, keyed update), with its work order and
+    target read."""
+    pk = services._pk(update, SoftwareUpdate)
+    found = (SoftwareUpdate.objects.filter(pk=pk).select_related("work_order", "target_release").order_by("pk").first()
+             if pk is not None else None)
+    if found is None:
+        raise ValidationError({"update": CHOOSE_UPDATE})
+    return found
+
+
+def _race(field: str):
+    """A lock conflict PostgreSQL ended this writer's transaction for (services._lock_conflict): RACE, keyed `field`."""
+    return ValidationError({field: services.RACE})
+
+
 # --- the work order's side ------------------------------------------------------------------------------------------------------------
 
 def check_choice(wo, choice, by, errors: dict, *, today: date):
     """complete_work_order's check of `choice` (KEEP, or an UpdateChoice), before its `if errors`, so every problem is reported at once.
-    Reads rules.release_offer(wo, by), the one predicate:
-    - a choice other than KEEP from a user with no offer (a scoped user, one without Device security Edit and Equipment View, a work order
-      that is not a register-opened update, a device not on site) is refused, keyed software_outcome (RECORD_PERMISSION, or _gone's words
-      for a device not on site), never dropped;
-    - an offer with no outcome recorded yet and KEEP, from a user (None: the system), is refused, keyed software_outcome (CHOOSE_OUTCOME);
+    Reads rules.offer_or_why(wo, by), the one predicate (rules.release_offer). In order, each keyed software_outcome:
+    - a choice other than KEEP on a work order that is not a software update: ONLY_UPDATES;
+    - on an update with no record (one imported from another system): NOT_FROM_REGISTER;
+    - on a device not on site: services._gone's words;
+    - from a user with no offer (a scoped user, one without Device security Edit and Equipment View): RECORD_PERMISSION (never dropped;
+      a scoped user learns nothing more);
+    - KEEP from a user (None: the system) on an update with nothing recorded yet: CHOOSE_OUTCOME (KEEP with no offer, a vendor's account
+      among them, records nothing and is never refused).
+    Then the outcome (NOT_CONFIRMED records nothing: its release, reference, and basis are not read):
     - installed: a versioned, not removed release of the device's model (software_release: CHOOSE_RUNS_NOW), other than the recorded one
-      ("It already ran <v> before: choose Already on the update, or Patches applied."), and a basis of BASES[installed];
+      (ALREADY_RAN), and a basis of BASES[installed] (software_basis);
     - patches: a reference (software_reference: REFERENCE_NEEDED; a token), a basis of BASES[patches], and the release when sent equal to
-      the recorded one ("Patches leave the version unchanged: choose installed if it changed."); not sent: the recorded one, or none;
-    - already: the recorded release (or one chosen when none is recorded), the target when the target is a release ("The device runs
-      <v>, not <target>: keep the work order open, or cancel it."), and no basis.
-    Returns the checked choice for record_at_completion (the release resolved), or KEEP / NOT_CONFIRMED as given. Wave 1."""
+      the recorded one (PATCHES_UNCHANGED, or PATCHES_NONE_RECORDED); not sent: the recorded one, or none;
+    - already: the recorded release (RECORDED_AS for another), or one chosen when none is recorded (CHOOSE_RUNS_NOW when neither), the
+      target when the target is a release (NOT_THE_TARGET), and no basis (NO_BASIS).
+    Returns a Checked for record_at_completion, or KEEP / the NOT_CONFIRMED choice as given (KEEP also after a refusal). No query for KEEP
+    on another type."""
+    from apps.workorders.models import WoType
+
     if choice is KEEP:
-        return KEEP  # wave 1: the "required" rule (an offer with nothing recorded)
-    raise NotImplementedError
+        if wo.type != WoType.SOFTWARE_UPDATE or by is None:
+            return KEEP
+        offer = rules.release_offer(wo, by)
+        if offer is not None and offer.needed:
+            errors["software_outcome"] = CHOOSE_OUTCOME
+        return KEEP
+    if not isinstance(choice, UpdateChoice) or choice.outcome not in OUTCOME_VALUES:
+        errors["software_outcome"] = OUTCOME_WORDS
+        return KEEP
+    if wo.type != WoType.SOFTWARE_UPDATE:
+        errors["software_outcome"] = ONLY_UPDATES
+        return KEEP
+    offer, why = rules.offer_or_why(wo, by)
+    if offer is None:
+        errors["software_outcome"] = {rules.NO_RECORD: NOT_FROM_REGISTER, rules.NOT_ON_SITE: services._gone(wo.asset)}.get(
+            why, RECORD_PERMISSION)
+        return KEEP
+    if choice.outcome == NOT_CONFIRMED:
+        return choice
+    mine: dict = {}
+    reference, basis = _fields(choice, mine)
+    release = _release_read(choice.release_id, wo.asset.device_model_id, mine) if choice.release_id else None
+    after = None
+    if "software_release" not in mine:
+        after = _release_checks(choice.outcome, release=release, recorded=offer.recorded, target=offer.target_release, errors=mine)
+    if mine:
+        errors.update(mine)
+        return KEEP
+    return Checked(outcome=choice.outcome, release=after, reference=reference, basis=basis, target_release=offer.target_release)
 
 
 def record_at_completion(wo, asset, checked, by, today: date):
     """Write what `checked` (check_choice's) says the update did on `wo`'s record, inside complete_work_order after it moved `wo` to
     completed (and applied its test equipment): that transaction holds the register, the device's work and `wo`, and the device FOR
-    UPDATE. Takes the chosen release FOR UPDATE, the device's security row (got or created, as services.record_facts), then the update
-    row FOR UPDATE; writes outcome, applied_on (today), release_before (the recorded release), release_after, reference, basis,
-    recorded_by; then the facts (installed: the release since today, checked today; patches: checked today; already: checked today, and
-    the release when none was recorded), history "Recorded at completion of <number>" on the update row and "Facts recorded at <number>"
-    on the security row. A re-completion replaces the row's outcome (with history). Returns the update row. Wave 1."""
-    raise NotImplementedError
+    UPDATE. Takes the chosen release FOR UPDATE (of the device's model, read from the held row), the device's security row (got or
+    created, as services.record_facts), then the update row FOR UPDATE; writes outcome, applied_on (today), release_before (the
+    recorded release), release_after, reference, basis, recorded_by, later_kept (False: a completion is dated today, after any fact);
+    then the facts (installed: the release since today, checked today; patches: checked today; already: checked today, and the release
+    since today when none was recorded), history "Recorded at completion of <number>" on the update row and "Facts recorded at
+    <number>" (": release set to <version>" when it changed) on the security row. A re-completion replaces the row's outcome (with
+    history). Returns the update row."""
+    from apps.equipment.models import Asset
+
+    device = Asset.objects.get(pk=asset.pk)  # held FOR UPDATE by the completion (change_status): its model as it is now
+    release = None
+    if checked.release is not None:
+        release = _release_locked(checked.release)
+        if not _names(release, device.device_model_id):
+            raise ValidationError({"software_release": CHOOSE_RUNS_NOW})
+    state: dict = {}
+
+    def apply(sec):
+        before = _recorded(sec, device)
+        problems: dict = {}
+        after = _release_checks(checked.outcome, release=release, recorded=before, target=checked.target_release, errors=problems)
+        if problems:  # the record moved since the check (the register is held, so never in practice): refused, never written over
+            raise ValidationError(problems)
+        state.update(before=before, after=after)
+        reason = _facts(sec, outcome=checked.outcome, after=after, before=before, day=today, by=by, prefix=FACTS_AT.format(number=wo.number))
+        state["later_kept"] = reason is None
+        return reason
+
+    _write_security(device, by, apply)
+    row = SoftwareUpdate.objects.select_for_update().get(work_order_id=wo.pk)
+    _set_outcome(row, outcome=checked.outcome, before=state["before"], after=state["after"], reference=checked.reference,
+                 basis=checked.basis, day=today, by=by, later_kept=state["later_kept"])
+    services._save(row, by, RECORDED_AT.format(number=wo.number))
+    return row
 
 
 def default_resolution(outcome: str) -> str:
@@ -185,53 +521,504 @@ def default_resolution(outcome: str) -> str:
 def confirm(update, choice, *, by, today: date | None = None):
     """Record what a completed or closed update work order did, when its completion did not (the vendor's job, or "not confirmed now"):
     at permissions.can_edit_devices. Locks: the register, lock_work(asset, its work order), the work order read again (completed or
-    closed, its outcome still blank: else RECORDED_MEANWHILE), the release, the device FOR KEY SHARE (its model and status read again),
-    the security row, the update row. The choice is checked as check_choice checks it (never NOT_CONFIRMED); applied_on is the work
-    order's completed_on; the facts are written only when the device's checked_on and release_since are null or on or before it, else
-    later_kept. History "Confirmed". Returns the update row. Wave 1."""
-    raise NotImplementedError
+    closed: else REOPENED; its outcome still blank: else RECORDED_MEANWHILE), the release, the device FOR KEY SHARE (its model and
+    status read again: a device no longer on site refused in services._gone's words), the security row, the update row. The choice is
+    checked as check_choice checks it (KEEP and NOT_CONFIRMED refused: CONFIRM_OUTCOME); applied_on is the work order's completed_on;
+    the facts are written only when the device's checked_on and release_since are null or on or before it, else the row alone, with
+    later_kept (the toast: "a later record of the device is kept"). History "Confirmed" on the row, "Facts recorded when <number> was
+    confirmed" on the security row. `today` is not read: the day is the work order's. A lock conflict answers services.RACE, keyed
+    software_outcome. Returns the update row (the caller's copy follows it)."""
+    from apps.workorders import services as wo_services
+    from apps.workorders.models import WorkOrder, WoStatus, WoType
+
+    services._check(by, perms.can_edit_devices, RECORD_PERMISSION)
+    row = _update_row(update)
+    if row.work_order_id is None:
+        raise ValidationError({"software_outcome": CONFIRM_WHAT})
+    errors: dict = {}
+    reference = basis = ""
+    if not isinstance(choice, UpdateChoice) or choice.outcome not in RECORDED_OUTCOMES:
+        errors["software_outcome"] = CONFIRM_OUTCOME
+    else:
+        reference, basis = _fields(choice, errors)
+        if choice.release_id is not None and services._pk(choice.release_id, SoftwareRelease) is None:
+            errors["software_release"] = CHOOSE_RUNS_NOW
+    if errors:
+        raise ValidationError(errors)
+    try:
+        with transaction.atomic():
+            services.lock_register()
+            wo_services.lock_work(row.asset_id, row.work_order_id)
+            wo = WorkOrder.objects.get(pk=row.work_order_id)  # held by lock_work: its status as it is now
+            if wo.type != WoType.SOFTWARE_UPDATE or wo.status not in (WoStatus.COMPLETED, WoStatus.CLOSED):
+                raise ValidationError({"software_outcome": REOPENED.format(number=wo.number)})
+            # every writer of the outcome holds this work order first (a completion, confirm, remove): read as it is now
+            if SoftwareUpdate.objects.filter(pk=row.pk).exclude(outcome="").exists():
+                raise ValidationError({"software_outcome": RECORDED_MEANWHILE})
+            release = _release_locked(choice.release_id) if choice.release_id else None
+            device = _held_device(row.asset_id, "software_outcome")
+            if release is not None and not _names(release, device.device_model_id):
+                raise ValidationError({"software_release": CHOOSE_RUNS_NOW})
+            day = wo.completed_on
+            state: dict = {}
+
+            def apply(sec):
+                before = _recorded(sec, device)
+                problems: dict = {}
+                after = _release_checks(choice.outcome, release=release, recorded=before, target=row.target_release, errors=problems)
+                if problems:
+                    raise ValidationError(problems)
+                state.update(before=before, after=after)
+                reason = _facts(sec, outcome=choice.outcome, after=after, before=before, day=day, by=by,
+                                prefix=FACTS_CONFIRMED.format(number=wo.number))
+                state["later_kept"] = reason is None
+                return reason
+
+            _write_security(device, by, apply)
+            locked = SoftwareUpdate.objects.select_for_update().get(pk=row.pk)
+            _set_outcome(locked, outcome=choice.outcome, before=state["before"], after=state["after"], reference=reference, basis=basis,
+                         day=day, by=by, later_kept=state["later_kept"])
+            services._save(locked, by, CONFIRMED)
+    except OperationalError as e:
+        if not services._lock_conflict(e):
+            raise
+        raise _race("software_outcome") from None
+    services._sync(update, locked)
+    return locked
+
+
+def _held_device(asset_id, field: str):
+    """The device FOR KEY SHARE (services._locked_devices), read once held: refused in services._gone's words, keyed `field`, when it
+    is no longer on site."""
+    held = services._locked_devices([asset_id])
+    if not held:
+        raise ValidationError({"asset": services.CHOOSE_DEVICE})
+    device = held[0]
+    gone = services._gone(device)
+    if gone:
+        raise ValidationError({field: gone})
+    return device
+
+
+def _applied_day(value, device, errors: dict, *, today: date):
+    day = services._day(value, "applied_on", "Installed on", errors, today=today, happened=True)
+    if day is None:
+        if "applied_on" not in errors:
+            errors["applied_on"] = APPLIED_NEEDED
+        return None
+    if "applied_on" not in errors and device.installed_on is not None and day < device.installed_on:
+        errors["applied_on"] = BEFORE_INSTALL.format(day=rules.day_words(device.installed_on))
+    return day
 
 
 def record(asset, choice, *, installed_by: str, applied_on, by, today: date | None = None):
-    """An install recorded by hand, with no work order (installed or patches), installed by `installed_by` (InstalledBy) on `applied_on`
-    (a day, not after today, not before the device was installed): at permissions.can_edit_devices. Locks: the register, the release, the
-    device FOR KEY SHARE (read again; a retired or returned device refused: services._gone), the security row, the new row. The facts
-    as confirm writes them (never backwards). History "Recorded". Returns the new row. Wave 1."""
-    raise NotImplementedError
+    """An install recorded by hand, with no work order (installed or patches: HAND_OUTCOME otherwise), installed by `installed_by`
+    (InstalledBy: INSTALLER_WORDS otherwise) on `applied_on` (a day or its ISO text, not after today, not before the device was
+    installed: BEFORE_INSTALL), at permissions.can_edit_devices. The choice is checked as check_choice checks it (with no target).
+    Locks: the register, the release, the device FOR KEY SHARE (read again; a retired or returned device refused: services._gone, keyed
+    asset), the security row, the new row. The facts as confirm writes them, on applied_on (never backwards: later_kept). History
+    "Recorded" on the row, "Facts recorded with an update recorded by hand" on the security row. Returns the new row."""
+    services._check(by, perms.can_edit_devices, RECORD_PERMISSION)
+    today = services._today(today)
+    device = services._asset(asset)
+    gone = services._gone(device)
+    if gone:
+        raise ValidationError({"asset": gone})
+    errors: dict = {}
+    reference = basis = ""
+    if not isinstance(choice, UpdateChoice) or choice.outcome not in INSTALL_OUTCOMES:
+        errors["software_outcome"] = HAND_OUTCOME
+    else:
+        reference, basis = _fields(choice, errors)
+        if choice.release_id is not None and services._pk(choice.release_id, SoftwareRelease) is None:
+            errors["software_release"] = CHOOSE_RUNS_NOW
+    if not isinstance(installed_by, str) or installed_by not in InstalledBy.values:
+        errors["installed_by"] = INSTALLER_WORDS
+    day = _applied_day(applied_on, device, errors, today=today)
+    if errors:
+        raise ValidationError(errors)
+    try:
+        with transaction.atomic():
+            services.lock_register()
+            release = _release_locked(choice.release_id) if choice.release_id else None
+            device = _held_device(device.pk, "asset")
+            problems: dict = {}
+            _applied_day(day, device, problems, today=today)  # the install date as it is now
+            if problems:
+                raise ValidationError(problems)
+            if release is not None and not _names(release, device.device_model_id):
+                raise ValidationError({"software_release": CHOOSE_RUNS_NOW})
+            state: dict = {}
+
+            def apply(sec):
+                before = _recorded(sec, device)
+                found: dict = {}
+                after = _release_checks(choice.outcome, release=release, recorded=before, target=None, errors=found, by_hand=True)
+                if found:
+                    raise ValidationError(found)
+                state.update(before=before, after=after)
+                reason = _facts(sec, outcome=choice.outcome, after=after, before=before, day=day, by=by, prefix=FACTS_BY_HAND)
+                state["later_kept"] = reason is None
+                return reason
+
+            _write_security(device, by, apply)
+            row = SoftwareUpdate(asset=device, installed_by=installed_by)
+            _set_outcome(row, outcome=choice.outcome, before=state["before"], after=state["after"], reference=reference, basis=basis,
+                         day=day, by=by, later_kept=state["later_kept"])
+            services._save(row, by, RECORDED)
+    except OperationalError as e:
+        if not services._lock_conflict(e):
+            raise
+        raise _race("asset") from None
+    return row
 
 
 def remove(update, *, by, today: date | None = None):
     """Entered in error, at permissions.can_correct_updates: a hand row is marked (removed_on, removed_by; history "Entered in error");
     a work order's row has its outcome cleared (OUTCOME_FIELDS; history "Outcome entered in error"), and Confirm version is offered
-    again. Locks: the register, lock_work(asset, its work order) for a work order's row, the update row. The device's facts are never
-    touched (Record facts corrects them). Returns the row. Wave 1."""
-    raise NotImplementedError
+    again. Refused (NOTHING_RECORDED, keyed software_outcome) for a row with nothing recorded or already marked. Locks: the register,
+    lock_work(asset, its work order) for a work order's row, the update row. The device's facts are never touched (Record facts
+    corrects them). Returns the row (the caller's copy follows it)."""
+    services._check(by, perms.can_correct_updates, CORRECT_PERMISSION)
+    today = services._today(today)
+    row = _update_row(update)
+    try:
+        with transaction.atomic():
+            services.lock_register()
+            if row.work_order_id is not None:
+                from apps.workorders import services as wo_services
+
+                wo_services.lock_work(row.asset_id, row.work_order_id)
+            locked = SoftwareUpdate.objects.select_for_update().get(pk=row.pk)
+            if locked.removed_on is not None or not locked.outcome:
+                raise ValidationError({"software_outcome": NOTHING_RECORDED})
+            if locked.work_order_id is None:
+                locked.removed_on, locked.removed_by = today, by
+                reason = ENTERED_IN_ERROR
+            else:
+                _set_outcome(locked, outcome="", before=None, after=None, reference="", basis="", day=None, by=None, later_kept=False)
+                reason = OUTCOME_IN_ERROR
+            services._save(locked, by, reason)
+    except OperationalError as e:
+        if not services._lock_conflict(e):
+            raise
+        raise _race("software_outcome") from None
+    services._sync(update, locked)
+    return locked
 
 
 # --- opening updates ------------------------------------------------------------------------------------------------------------------
 
+class _Skip(Exception):
+    """A device the insert's lock found changed (its model or status) or held as evidence: open_update refuses it (`field`, `words`),
+    the batch skips it (`kind`: "changed" or "held")."""
+
+    def __init__(self, kind: str, field: str, words: str):
+        super().__init__(words)
+        self.kind, self.field, self.words = kind, field, words
+
+
+def _lower_first(text: str) -> str:
+    return text[:1].lower() + text[1:]
+
+
+def _requester(by) -> str:
+    """The opener's name, as New work order sets it (str(user): the full name, else the email); CLINICAL_ENGINEERING for the system."""
+    from apps.workorders.services import NAME_MAX
+
+    return str(by)[:NAME_MAX] if by is not None else CLINICAL_ENGINEERING
+
+
+def _due(value, errors: dict, *, today: date):
+    """A due day (a date or its ISO text) from today to services.HORIZON_YEARS ahead."""
+    if isinstance(value, str):
+        try:
+            value = date.fromisoformat(value.strip()) if value.strip() else None
+        except ValueError:
+            value = False
+    if value is None or value is False or isinstance(value, datetime) or not isinstance(value, date):
+        errors["due_on"] = DUE_NEEDED
+        return None
+    if value < today:
+        errors["due_on"] = DUE_PAST
+    elif value > services._years_ahead(today, services.HORIZON_YEARS):
+        errors["due_on"] = DUE_FAR
+    return value
+
+
+def _technician(assign_to, by, errors: dict):
+    """The technician `assign_to` names (an active Technician of this facility, or its id), or None for nobody. Only a user who may
+    assign (Work orders Approve) names one: else ASSIGN_PERMISSION."""
+    if assign_to in (None, ""):
+        return None
+    from apps.credentials.models import Technician
+    from apps.workorders import permissions as wo_perms
+
+    if by is not None and not wo_perms.can_assign(by):
+        errors["assign_to"] = ASSIGN_PERMISSION
+        return None
+    pk = services._pk(assign_to, Technician)
+    found = Technician.objects.filter(pk=pk, is_active=True).first() if pk is not None else None
+    if found is None:
+        errors["assign_to"] = CHOOSE_TECHNICIAN
+    return found
+
+
+def _opening(priority, due_on, assign_to, by, errors: dict, *, today: date):
+    if priority not in OPEN_PRIORITIES:
+        errors["priority"] = PRIORITY_WORDS
+    return _due(due_on, errors, today=today), _technician(assign_to, by, errors)
+
+
+def _updates_by(model_id) -> str:
+    """Who installs updates here for the model (its profile's UpdatesBy), or "" when not recorded."""
+    profile = rules.profile(model_id)
+    return profile.updates_by if profile is not None else ""
+
+
+def _open_numbers(asset_ids) -> dict:
+    """{device id: the number of its open software update (open, in progress, or awaiting parts), the lowest} (one query)."""
+    from apps.workorders.models import OPEN_STATUSES
+
+    out: dict = {}
+    for asset_id, number in (SoftwareUpdate.objects.filter(asset_id__in=list(asset_ids), work_order__status__in=OPEN_STATUSES)
+                             .order_by("work_order__number").values_list("asset_id", "work_order__number")):
+        out.setdefault(asset_id, number)
+    return out
+
+
+def _assign(wo, device, *, may: bool, updates_by: str, technician, by) -> str:
+    """Assign a new update work order as open_update's rule says; returns why it stays unassigned, or "" when assigned:
+    - nobody unless `by` may assign (Work orders Approve; None: the system): ASSIGN_NEEDS;
+    - a temporary device, or a model whose updates the manufacturer installs here: vendor service (equipment.services.service_vendor);
+    - updates_by CE or not recorded: `technician`, or nobody (NOBODY_CHOSEN);
+    - IT or the department that uses it: nobody (INSTALLED_HERE, naming them)."""
+    from apps.equipment.services import owner_maintains, service_vendor
+    from apps.workorders import services as wo_services
+
+    if not may:
+        return ASSIGN_NEEDS
+    if owner_maintains(device) or updates_by == UpdatesBy.MANUFACTURER:
+        wo_services.assign(wo, vendor_name=service_vendor(device), by=by)
+        return ""
+    if updates_by in (UpdatesBy.CE, ""):
+        if technician is None:
+            return NOBODY_CHOSEN
+        wo_services.assign(wo, technician=technician, by=by)
+        return ""
+    return INSTALLED_HERE.format(who=_lower_first(UpdatesBy(updates_by).label))
+
+
+def _open_one(device, *, model_id, target: str, release, reference: str, due: date, priority: str, may: bool, updates_by: str,
+              technician, by, today: date):
+    """One update work order and its record on `device` (the register and the release held): its number and insert (the device held
+    FOR KEY SHARE by the insert), the device's model, status, and hold read again (_Skip when changed or held), the record (history
+    "Opened with <number>"), the assignment. Returns (work order, why unassigned or "")."""
+    from apps.equipment.models import Asset, AssetStatus
+    from apps.workorders import services as wo_services
+    from apps.workorders.models import Source, WoType
+
+    wo = wo_services.create_work_order(asset=device, type=WoType.SOFTWARE_UPDATE, priority=priority,
+                                       problem=UPDATE_PROBLEM if target == UpdateTarget.RELEASE else PATCHES_PROBLEM,
+                                       requester=_requester(by), source=Source.MANUAL, opened_on=today, due_on=due, created_by=by,
+                                       _register_opener=True)
+    now = Asset.objects.filter(pk=device.pk).values("device_model_id", "status", "incident_hold").get()  # held by the insert
+    if now["status"] == AssetStatus.RETIRED:
+        device.status = now["status"]
+        raise _Skip("changed", "asset", services._gone(device))
+    if now["device_model_id"] != model_id:
+        raise _Skip("changed", "target_release", MODEL_CHANGED.format(tag=device.tag))
+    if now["incident_hold"]:
+        raise _Skip("held", "asset", HELD.format(tag=device.tag))
+    row = SoftwareUpdate(asset=device, work_order=wo, target=target, target_release=release, target_reference=reference, opened_on=today,
+                         opened_by=by)
+    services._save(row, by, OPENED_WITH.format(number=wo.number))
+    return wo, _assign(wo, device, may=may, updates_by=updates_by, technician=technician, by=by)
+
+
+def _target_release(release_id, model_id, field: str):
+    """The release to install, FOR UPDATE of its own row: a versioned, not removed release of the model (CHOOSE_TARGET, keyed `field`)."""
+    locked = services._locked_release(release_id, field=field, message=CHOOSE_TARGET)
+    if not _names(locked, model_id):
+        raise ValidationError({field: CHOOSE_TARGET})
+    return locked
+
+
 def open_update(asset, *, target: str, target_release=None, target_reference: str = "", due_on, priority: str, assign_to=None, by,
                 today: date | None = None) -> UpdateBatch:
     """Open one update work order on `asset` (at permissions.can_open_updates): its target a release of the device's model other than
-    the recorded one (ALREADY_RUNS), or the manufacturer's patches with a reference. Refused for a device not on site, held as evidence
-    (HELD), or with an open update (ALREADY_OPEN); a device waiting for its incoming inspection is allowed. Priority normal or high;
-    due_on from today, at most services.HORIZON_YEARS ahead. Locks: the register, the release, create_work_order (type SOFTWARE_UPDATE,
-    source manual, the requester the opener's name, the problem UPDATE_PROBLEM or PATCHES_PROBLEM, _register_opener=True: its number,
-    then the device held by the insert), the device's model read again (changed: refused keyed target_release, all rolled back), the
-    update row (history "Opened with <number>"), the assignment: only when workorders.permissions.can_assign(by) (else unassigned), a
-    temporary device or a model whose updates_by is the manufacturer to vendor service (equipment.services.service_vendor), updates_by
-    CE or blank to `assign_to` (a technician, or nobody), IT or the department to nobody (the result says who installs updates here).
-    Returns an UpdateBatch of one. Wave 1."""
-    raise NotImplementedError
+    the recorded one (ALREADY_RUNS), or the manufacturer's patches with a reference (target_reference: REFERENCE_NEEDED; a release target
+    names none). Refused for a device not on site (services._gone's words, keyed asset), held as evidence (HELD), or with an open update
+    (ALREADY_OPEN); a device waiting for its incoming inspection is allowed. Priority normal or high (PRIORITY_WORDS); due_on from today,
+    at most services.HORIZON_YEARS ahead. Locks: the register, the release, create_work_order (type SOFTWARE_UPDATE, source manual, the
+    requester the opener's name (CLINICAL_ENGINEERING for the system), the problem UPDATE_PROBLEM or PATCHES_PROBLEM, _register_opener=True:
+    its number, then the device held by the insert), the device's model, status, and hold read again (a model changed meanwhile:
+    MODEL_CHANGED keyed target_release; all rolled back, the number included), the update row (history "Opened with <number>"), the
+    assignment: only when workorders.permissions.can_assign(by) (else unassigned: ASSIGN_NEEDS; `assign_to` then refused,
+    ASSIGN_PERMISSION), a temporary device or a model whose updates_by is the manufacturer to vendor service
+    (equipment.services.service_vendor), updates_by CE or blank to `assign_to` (an active technician, or nobody: NOBODY_CHOSEN), IT or
+    the department to nobody (INSTALLED_HERE); `assign_to` is refused where it would not be used (OWNER_INSTALLS, INSTALLER_NOT_CE).
+    A lock conflict answers services.RACE, keyed asset. Returns an UpdateBatch of one."""
+    from apps.equipment.services import owner_maintains
+    from apps.workorders import permissions as wo_perms
+
+    services._check(by, perms.can_open_updates, OPEN_PERMISSION)
+    today = services._today(today)
+    device = services._asset(asset)
+    errors: dict = {}
+    reference = ""
+    if target not in UpdateTarget.values:
+        errors["target"] = TARGET_WORDS
+    elif target == UpdateTarget.RELEASE:
+        if target_release in (None, ""):
+            errors["target_release"] = CHOOSE_TARGET
+        if target_reference not in (None, ""):
+            errors["target_reference"] = NO_TARGET_REFERENCE
+    else:
+        if target_release not in (None, ""):
+            errors["target_release"] = NO_TARGET_RELEASE
+        reference = _token(target_reference, "target_reference", errors, needed=True)
+    due, technician = _opening(priority, due_on, assign_to, by, errors, today=today)
+    if errors:
+        raise ValidationError(errors)
+    try:
+        with transaction.atomic():
+            services.lock_register()
+            release = (_target_release(target_release, device.device_model_id, "target_release") if target == UpdateTarget.RELEASE
+                       else None)
+            gone = services._gone(device)
+            if gone:
+                raise ValidationError({"asset": gone})
+            if device.incident_hold:
+                raise ValidationError({"asset": HELD.format(tag=device.tag)})
+            number = _open_numbers([device.pk]).get(device.pk)
+            if number:
+                raise ValidationError({"asset": ALREADY_OPEN.format(tag=device.tag, number=number)})
+            recorded = rules.release_of(device)
+            if release is not None and recorded is not None and recorded.pk == release.pk:
+                raise ValidationError({"target_release": ALREADY_RUNS.format(tag=device.tag, version=release.version)})
+            updates_by = _updates_by(device.device_model_id)
+            if technician is not None and owner_maintains(device):
+                raise ValidationError({"assign_to": OWNER_INSTALLS.format(tag=device.tag, kind=device.get_ownership_display().lower())})
+            if technician is not None and updates_by not in (UpdatesBy.CE, ""):
+                raise ValidationError({"assign_to": INSTALLER_NOT_CE.format(who=_lower_first(UpdatesBy(updates_by).label))})
+            try:
+                wo, why = _open_one(device, model_id=device.device_model_id, target=target, release=release, reference=reference, due=due,
+                                    priority=priority, may=by is None or wo_perms.can_assign(by), updates_by=updates_by,
+                                    technician=technician, by=by, today=today)
+            except _Skip as skip:
+                raise ValidationError({skip.field: skip.words}) from None
+    except OperationalError as e:
+        if not services._lock_conflict(e):
+            raise
+        raise _race("asset") from None
+    return UpdateBatch(created=1, unassigned=1 if why else 0, unassigned_reason=why, work_orders=(wo,))
+
+
+def _batch_devices(model_id, from_ids: set, include_not_recorded: bool, department) -> list:
+    """The release's model's devices on site (rules.on_site: retired and returned ones never), in `department` when given, whose
+    recorded release (rules.release_of) is one of `from_ids`, or none when `include_not_recorded`: in tag order, with their records,
+    owners' contracts, and tenant read (one query)."""
+    qs = (rules.on_site().filter(device_model_id=model_id).select_related("cyber__release", "contract", "tenant").order_by("tag"))
+    if department is not None:
+        qs = qs.filter(department_id=department.pk)
+    out = []
+    for device in qs:
+        recorded = rules.release_of(device)
+        if (recorded is not None and recorded.pk in from_ids) or (recorded is None and include_not_recorded):
+            out.append(device)
+    return out
 
 
 def open_updates(release, *, from_releases=(), include_not_recorded: bool = False, department=None, due_on=None,
                  due_at_next_pm: bool = False, priority: str, assign_to=None, by, today: date | None = None) -> UpdateBatch:
-    """Open one update work order to `release` (a versioned, not removed release) per device of its model on site whose recorded release
-    is one of `from_releases` (or not recorded, with `include_not_recorded`), optionally in `department`, in tag order, at most
-    UPDATE_BATCH_MAX (services.TOO_MANY / TOO_MANY_IN_ONE's words with this cap): at permissions.can_open_updates. Due on `due_on`, or
-    with `due_at_next_pm` on each device's next PM date (never before today), else `due_on`. Skipped, with words: held as evidence, an
-    open update already, a model changed meanwhile. Locks: the register, the release, then per device (tag order) numbering, the insert
-    (the device held), its model read again, the update row, the assignment (open_update's rule), inside assignments.batch(). A lock
-    conflict answers services.RACE. Returns the UpdateBatch. Wave 1."""
-    raise NotImplementedError
+    """Open one update work order to `release` (a versioned, not removed release: CHOOSE_TARGET, keyed release) per device of its model
+    on site whose recorded release is one of `from_releases` (releases of the model, the target never: CHOOSE_FROM, FROM_TARGET) or not
+    recorded, with `include_not_recorded` (FROM_NEEDED with neither), optionally in `department`, in tag order, at most UPDATE_BATCH_MAX
+    (TOO_MANY / TOO_MANY_IN_ONE, keyed release; none: NONE_SELECTED, keyed from_releases): at permissions.can_open_updates. Due on
+    `due_on` (always given: the day, and the fallback), or with `due_at_next_pm` on each device's next PM date (never before today), else
+    `due_on`. Skipped, each counted with its tag: held as evidence, an open update already, a model changed (or the device retired)
+    meanwhile. Locks: the register, the release, then per device (tag order, each in a savepoint) numbering, the insert (the device
+    held), its model read again, the update row, the assignment (open_update's rule; `assign_to` for every device assigned in-house),
+    inside assignments.batch() (each technician one email). A lock conflict answers services.RACE (keyed release), nothing opened.
+    Returns the UpdateBatch."""
+    from apps.equipment.models import Department
+    from apps.notifications import assignments
+    from apps.workorders import permissions as wo_perms
+
+    services._check(by, perms.can_open_updates, OPEN_PERMISSION)
+    today = services._today(today)
+    errors: dict = {}
+    target_pk = services._pk(release, SoftwareRelease)
+    if target_pk is None:
+        errors["release"] = CHOOSE_TARGET
+    from_ids = set()
+    for value in from_releases or ():
+        pk = services._pk(value, SoftwareRelease)
+        if pk is None:
+            errors["from_releases"] = CHOOSE_FROM
+            break
+        from_ids.add(pk)
+    if "from_releases" not in errors and not from_ids and not include_not_recorded:
+        errors["from_releases"] = FROM_NEEDED
+    dept = None
+    if department not in (None, ""):
+        pk = services._pk(department, Department)
+        dept = Department.objects.filter(pk=pk).first() if pk is not None else None
+        if dept is None:
+            errors["department"] = CHOOSE_DEPARTMENT
+    due, technician = _opening(priority, due_on, assign_to, by, errors, today=today)
+    if errors:
+        raise ValidationError(errors)
+    created, held, already_open, changed, opened, reasons = 0, [], [], [], [], []
+    try:
+        with transaction.atomic():
+            services.lock_register()
+            target = services._locked_release(target_pk, field="release", message=CHOOSE_TARGET)
+            if not target.version_key or target.removed_on is not None:
+                raise ValidationError({"release": CHOOSE_TARGET})
+            model_id = target.device_model_id
+            if target.pk in from_ids:
+                raise ValidationError({"from_releases": FROM_TARGET.format(version=target.version)})
+            found = (SoftwareRelease.objects.filter(pk__in=from_ids, device_model_id=model_id, removed_on__isnull=True)
+                     .exclude(version_key="").count()) if from_ids else 0
+            if found != len(from_ids):
+                raise ValidationError({"from_releases": CHOOSE_FROM})
+            devices = _batch_devices(model_id, from_ids, include_not_recorded, dept)
+            if not devices:
+                raise ValidationError({"from_releases": NONE_SELECTED})
+            if len(devices) > UPDATE_BATCH_MAX:
+                one = len({d.department_id for d in devices}) == 1
+                raise ValidationError({"release": TOO_MANY_IN_ONE.format(count=len(devices)) if one else TOO_MANY})
+            updates_by = _updates_by(model_id)
+            if technician is not None and updates_by not in (UpdatesBy.CE, ""):
+                raise ValidationError({"assign_to": INSTALLER_NOT_CE.format(who=_lower_first(UpdatesBy(updates_by).label))})
+            may = by is None or wo_perms.can_assign(by)
+            numbers = _open_numbers(d.pk for d in devices)
+            with assignments.batch():  # each technician hears once, listing every work order, after the commit
+                for device in devices:  # tag order
+                    if device.incident_hold:
+                        held.append(device.tag)
+                        continue
+                    if device.pk in numbers:
+                        already_open.append(device.tag)
+                        continue
+                    due_here = max(device.next_pm_on, today) if due_at_next_pm and device.next_pm_on is not None else due
+                    try:
+                        with transaction.atomic():  # a device found changed or held goes back alone, its number with it
+                            wo, why = _open_one(device, model_id=model_id, target=UpdateTarget.RELEASE, release=target, reference="",
+                                                due=due_here, priority=priority, may=may, updates_by=updates_by, technician=technician,
+                                                by=by, today=today)
+                    except _Skip as skip:
+                        (held if skip.kind == "held" else changed).append(device.tag)
+                        continue
+                    created += 1
+                    opened.append(wo)
+                    if why:
+                        reasons.append(why)
+    except OperationalError as e:  # a deadlock with a writer of these devices against the lock order: nothing opened
+        if not services._lock_conflict(e):
+            raise
+        raise _race("release") from None
+    return UpdateBatch(created=created, unassigned=len(reasons), unassigned_reason=reasons[0] if reasons else "", held=tuple(held),
+                       already_open=tuple(already_open), changed=tuple(changed), work_orders=tuple(opened))
