@@ -16,5 +16,5 @@ urlpatterns = [
     path("releases/<uuid:pk>/remove/", v.release_remove, name="cybersecurity_release_remove"),
     path("changes/", v.changes, name="cybersecurity_changes"),  # Changes for IT
     path("changes.csv", v.changes_csv, name="cybersecurity_changes_csv"),
-    path("devices/<str:tag>/facts/", v.record_facts, name="cybersecurity_facts"),  # the device drawer's Record facts
+    path("devices/<str:tag>/facts/", __import__("apps.web.views_cyber_facts", fromlist=["record_facts"]).record_facts, name="cybersecurity_facts"),
 ]
