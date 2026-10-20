@@ -83,6 +83,20 @@ PMs up to its due day and on one after it (the survey binder's finding, and its 
 whose certificate last week found it out of tolerance, with the pumps' PMs done with it since its previous certificate not reviewed (the
 binder's gap). Constants only: nothing is drawn from the demo's generators, and no work order or device is added. The North Campus has
 none.
+
+Slice 36: Riverside plans replacements by a fiscal year starting in July (FISCAL_YEAR_START, Settings), and CE recorded what it knows
+about a few models through equipment.services.update_device_model, as the model drawer's Record support records it (MODEL_LIVES,
+SUPPORT_RECORDS), so the Replacement planning report and the device drawer's outlook (apps.capital.priority) have something real: the
+smart beds' expected life lowered to the manufacturer's 10 years, which puts a few of them past it; the infusion pumps' life as the AHA
+guide's; the dialysis machines' manufacturer support ended a few months ago, after their sale ended (the notice on file, checked
+recently: the review flag "Manufacturer support ended" on each, which TechCare services under contract); the vital signs monitors' parts
+available until a day announced about two and a half years ahead; and the patient monitors' support checked with Philips, nothing
+announced. The other models read "Support not checked" and "life source not recorded": the report's worklist. The smart bed found beyond
+repair (slice 30) stays retired: kept out of service waiting for its replacement, it would raise the must-act flag "Kept out of use after a
+repair", but the survey binder's repairs section would then ask for it to be retired or repaired (a check the slice 30 demo does not
+have), so the demo shows review flags only. The demo's work begins 180 days back, so failures and service cost read "too little history"
+on every device (35 points unknown beside each score), as for any facility in its first year on Cadence. Calls that draw nothing, after
+the draws: no device's install date moves, and every later draw is as before. The North Campus keeps a calendar fiscal year.
 """
 import random
 from datetime import date, datetime, time, timedelta
@@ -106,6 +120,7 @@ from apps.equipment.models import (
     AssetStatus,
     Department,
     DeviceModel,
+    LifeSource,
     Ownership,
     ReturnCleaning,
     ReturnData,
@@ -425,6 +440,23 @@ TEST_EQUIPMENT = [
 # The analyzer a PM of these models records, beside its technician's electrical safety analyzer.
 TE_FOR_MODELS = {"IntelliVue MX750": "TE-201", "Connex Spot": "TE-201", "R Series Plus": "TE-301", "Alaris 8015 PCU": "TE-401"}
 
+# Slice 36, replacement planning (_replacement_planning), recorded by SUPPORT_RECORDED_BY (the CE manager) after every draw. Fictional:
+# no life, date, or notice here describes a real product or a real guide's figure.
+FISCAL_YEAR_START = 7  # July: FY2027 runs Jul 1, 2026 to Jun 30, 2027
+SUPPORT_RECORDED_BY = "rfeldman"
+# Where a model's expected life comes from, and its new life where CE changed it: model, life in years (None: as MODELS has it), source.
+# The beds' life (12 in MODELS) lowered to 10 puts a few of ours past it, not all (their install dates are drawn up to 12 years back).
+MODEL_LIVES = [("Centrella", 10, LifeSource.MANUFACTURER), ("Alaris 8015 PCU", None, LifeSource.AHA)]
+# The manufacturers' support CE recorded: model; sale ended, support ends, and parts available until, each the last day of the month
+# that many months from today's (None: none announced); the notice (its reference, {year} the year it was issued, and months ago) or
+# None; checked, days ago. The dialysis machines' support ended after their sale did (the review flag); the vital signs monitors' parts
+# end is announced for a later day; the patient monitors are supported (checked, nothing announced).
+SUPPORT_RECORDS = [
+    ("2008T BlueStar", -30, -4, None, ("FSN-{year}-014", 32), 12),
+    ("Connex Spot", None, None, 30, ("PSN-{year}-207", 3), 20),
+    ("IntelliVue MX750", None, None, None, None, 35),
+]
+
 
 def _noon(day: date) -> datetime:
     """Noon of `day` in the current time zone (the facility's, inside tenant_context): a backdated timestamp's moment."""
@@ -593,6 +625,7 @@ class Command(BaseCommand):
             self._late_reasons(today)
             self._incidents(today, domain)
             self._not_returned(today)
+            self._replacement_planning(today, domain)  # slice 36: draws nothing, after every draw (no install date moves)
             self._vendor_review(today, domain)  # slice 34: before the program evaluation, which stays made last
             self._program_evaluation(today, domain)  # slice 32: last, so its figures count everything above
         devices = len(assets) + len(NEW_DEVICES) + len(TEMPORARY_DEVICES)
@@ -810,6 +843,29 @@ class Command(BaseCommand):
                             today=done)
         change_status(wo, "closed", as_of=done)
         equipment.set_status(Asset.objects.get(pk=bed.pk), AssetStatus.RETIRED, note=NOT_RETURNED_RETIRED, today=today)
+
+    @staticmethod
+    def _replacement_planning(today: date, domain: str) -> None:
+        """Slice 36: the fiscal year Riverside plans by (Settings, FISCAL_YEAR_START), and what the CE manager recorded about the models'
+        expected lives (MODEL_LIVES) and the manufacturers' support (SUPPORT_RECORDS), through equipment.services.update_device_model as
+        Record support writes it (each model's history says who). Draws nothing and moves no device."""
+        manager = User.objects.get(username=f"{SUPPORT_RECORDED_BY}@{domain}")
+        update_settings(by=manager, fiscal_year_start_month=FISCAL_YEAR_START)
+        for model, life, source in MODEL_LIVES:
+            fields = {"life_source": source} if life is None else {"life_source": source, "expected_life_years": life}
+            equipment.update_device_model(DeviceModel.objects.get(model=model), by=manager, **fields)
+
+        def month_end(months: int | None) -> date | None:  # the last day of the month `months` from today's
+            return None if months is None else add_months(today.replace(day=1), months + 1) - timedelta(days=1)
+
+        for model, sale_ended, support_ends, parts_end, notice, checked_days_ago in SUPPORT_RECORDS:
+            reference = ""
+            if notice is not None:
+                text, issued_months_ago = notice
+                reference = text.format(year=add_months(today, -issued_months_ago).year)
+            equipment.update_device_model(
+                DeviceModel.objects.get(model=model), by=manager, sale_ended_on=month_end(sale_ended), support_ends_on=month_end(support_ends),
+                parts_end_on=month_end(parts_end), support_notice=reference, support_checked_on=today - timedelta(days=checked_days_ago))
 
     @staticmethod
     def _credential_lapse(today: date) -> None:
