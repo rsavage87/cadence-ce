@@ -37,7 +37,8 @@ from .views_equipment import _give_out, _inspect_now, _new_department, _saved, i
 
 NEW = "web/_temporary_new.html"
 MATCH = "web/_temporary_match.html"
-CANCELLABLE = (WoType.PM, WoType.INSPECTION)  # what a return cancels when open (equipment.services._retire), the rest blocks it
+# What a return cancels when open (equipment.services._retire; slice 38: open software updates too), the rest blocks it
+CANCELLABLE = (WoType.PM, WoType.INSPECTION, WoType.SOFTWARE_UPDATE)
 CANCELLABLE_STATUSES = (WoStatus.OPEN, WoStatus.AWAITING_PARTS)
 
 

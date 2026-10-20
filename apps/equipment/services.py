@@ -1040,14 +1040,16 @@ def _retire(fresh: Asset, *, by, note: str, today: date, changed_on: date | None
     (slice 29), which sets returned_on and the return's cleaning and data on `fresh` first so they go in the same save. Refused in
     words while work is open that retiring does not cancel, naming it: complete it, or cancel it (an in-progress work order goes back
     to open first). Cancels the device's open PMs and, for a device waiting for its incoming inspection or a temporary device on its
-    way back to its owner, its open incoming inspections (only open or awaiting parts: one in progress blocks). The device leaves the
+    way back to its owner, its open incoming inspections, and (slice 38) its open software updates (only open or awaiting parts: one
+    in progress blocks; nothing on the Device security side is written: the update reads "Cancelled"). The device leaves the
     PM schedule (no next PM) and is saved retired with `note` as its history reason (default "Status: Retired"), dated `changed_on`
     when given (set_status's importer case)."""
     from apps.workorders.models import OPEN_STATUSES, WoStatus, WoType
     from apps.workorders.services import change_status
 
     temporary = owner_maintains(fresh)
-    cancellable = (WoType.PM, WoType.INSPECTION) if fresh.awaiting_inspection or temporary else (WoType.PM,)
+    cancellable = ((WoType.PM, WoType.SOFTWARE_UPDATE, WoType.INSPECTION) if fresh.awaiting_inspection or temporary
+                   else (WoType.PM, WoType.SOFTWARE_UPDATE))
     open_wos = list(fresh.work_orders.filter(status__in=OPEN_STATUSES).order_by("number"))
     blocking = [w for w in open_wos if not (w.type in cancellable and w.status in (WoStatus.OPEN, WoStatus.AWAITING_PARTS))]
     if blocking:

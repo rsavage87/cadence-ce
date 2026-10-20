@@ -31,6 +31,7 @@
           <button class="link" type="button" hx-get="{{ x.remove_url }}" hx-target="#modal-card">Entered in error</button>{% endif %}
           {% if can_edit_devices and on_site %}<button class="link" type="button" hx-get="{{ x.set_url }}" hx-target="#modal-card">Set devices to this release</button>{% endif %}
         </div>{% endif %}
+        {% include "web/_cyber_release_actions.html" %}
       </article>
       {% empty %}<div class="empty">No release recorded. Add each version the devices run, as the manufacturer writes it.</div>{% endfor %}
     </div>

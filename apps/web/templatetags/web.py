@@ -63,7 +63,8 @@ ASSET_STATUS_CSS = {AssetStatus.IN_SERVICE: "ok", AssetStatus.IN_REPAIR: "violet
                     AssetStatus.MISSING: "warn", AssetStatus.RETIRED: "neutral"}
 WO_STATUS_CSS = {WoStatus.OPEN: "neutral", WoStatus.IN_PROGRESS: "info", WoStatus.AWAITING_PARTS: "warn", WoStatus.COMPLETED: "ok"}
 PRIORITY_CSS = {Priority.CRITICAL: "crit", Priority.HIGH: "warn"}
-WO_TYPE_SHORT = {WoType.PM: "PM", WoType.REPAIR: "Repair", WoType.INSPECTION: "Inspection", WoType.RECALL: "Recall", WoType.SAFETY: "Safety"}
+WO_TYPE_SHORT = {WoType.PM: "PM", WoType.REPAIR: "Repair", WoType.INSPECTION: "Inspection", WoType.RECALL: "Recall", WoType.SAFETY: "Safety",
+                 WoType.SOFTWARE_UPDATE: "Update"}
 
 
 @register.simple_tag

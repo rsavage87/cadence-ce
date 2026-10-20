@@ -17,6 +17,9 @@ class WoType(models.TextChoices):
     INSPECTION = "inspection", "Incoming inspection"
     RECALL = "recall", "Recall action"
     SAFETY = "safety", "Safety check"
+    # Slice 38: the manufacturer's software or patches installed (FDA 2016: an update "is not considered a repair"); opened only from the
+    # Device security screen (apps.cybersecurity.updates), never New work order or the API's create (services.create_work_order refuses it)
+    SOFTWARE_UPDATE = "software_update", "Software update"
 
 
 class Priority(models.TextChoices):

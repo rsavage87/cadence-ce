@@ -140,6 +140,17 @@ status; one is taken off only under the kept-use rule (rules.may_remove on the u
 after that day is on file). Read on the locked rows: the items' rows are locked after lock_work and the work order's row, in pk order,
 before anything else this takes (a failed PM's repair number, the device's row). keep_open records no test equipment (its day is not
 the completion's).
+
+Slice 38, software updates (apps.cybersecurity.updates; the rule is cybersecurity.rules.release_offer, the one predicate), keyed
+software_outcome, software_release, software_reference, and software_basis with the rest: `software` is KEEP (left out: nothing
+recorded; a re-completion keeps what was recorded) or an updates.UpdateChoice: installed, patches, already, or "not confirmed now"
+(updates.NOT_CONFIRMED: nothing recorded). Checked by updates.check_choice before anything is saved (a user with no offer is refused,
+never dropped; an update work order with nothing recorded yet needs a choice from a user who may record: KEEP is refused then); a
+choice that records an outcome takes the facility's register lock (cybersecurity.services.lock_register) FIRST, before lock_work: the
+register's lock order (updates' module docstring: nothing takes the register lock after a work order's or a device's row), and is written
+by updates.record_at_completion after the completion (the device held FOR UPDATE by change_status), its record and the device's facts.
+An update completed with an outcome recorded and no resolution typed gets updates.default_resolution (never a version: the resolution
+reaches scoped users). keep_open records nothing.
 """
 import hashlib
 import json
@@ -151,6 +162,8 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.credentials.services import qualification
+from apps.cybersecurity import services as cyber_services
+from apps.cybersecurity import updates as cyber_updates
 from apps.equipment.models import AssetStatus, RiskClass
 from apps.pm.procedures import step_parts
 from apps.pm.windows import window_of
@@ -207,6 +220,7 @@ class Completion:
     reinspection_opened: bool = False  # ...opened by this completion (else it was already open)
     passed: bool = False  # slice 26: the device stopped waiting for its incoming inspection with this completion (its pass)
     returned: bool = False  # slice 30: a repair's device went back in service with this completion (checked, or the vendor's report)
+    software: object | None = None  # slice 38: the update's record (cybersecurity.SoftwareUpdate) when this completion recorded what it did
 
 
 @dataclass
@@ -268,9 +282,9 @@ def checklist_signature(steps) -> str:
 
 def starts_on_completion(wo: WorkOrder, by=None) -> bool:
     """Whether completing `wo` starts it first (slice 24): a PM still open, done in one visit, by someone who may both start and
-    complete it (no user: services and commands); slice 26, an incoming inspection likewise. A repair is started on its own: its start
-    date matters for downtime and turnaround."""
-    if wo.type not in (WoType.PM, WoType.INSPECTION) or wo.status != WoStatus.OPEN:
+    complete it (no user: services and commands); slice 26, an incoming inspection likewise; slice 38, a software update. A repair is
+    started on its own: its start date matters for downtime and turnaround."""
+    if wo.type not in (WoType.PM, WoType.INSPECTION, WoType.SOFTWARE_UPDATE) or wo.status != WoStatus.OPEN:
         return False
     return by is None or (wo_perms.can_transition(by, WoStatus.OPEN, WoStatus.IN_PROGRESS)
                           and wo_perms.can_transition(by, WoStatus.IN_PROGRESS, WoStatus.COMPLETED))
@@ -1036,8 +1050,8 @@ def result_note(result: str, done: Completion) -> str:
 def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str = "", inspection_result: str = "", repair_check: str = "",
                         checks_reference=vendor_services.KEEP, results=None, open_repair: bool = True, tag_out: bool | None = None,
                         signature: str | None = None, hours=None, late_reason=None, vendor_engineer=vendor_services.KEEP,
-                        engineer_name: str = "", repair_finding=vendor_services.KEEP, test_equipment=vendor_services.KEEP, by=None,
-                        today: date | None = None) -> Completion:
+                        engineer_name: str = "", repair_finding=vendor_services.KEEP, test_equipment=vendor_services.KEEP,
+                        software=cyber_services.KEEP, by=None, today: date | None = None) -> Completion:
     """Complete `wo` with its resolution and, for a PM, its result and checklist results (the module's rules); a PM still open is
     started first (starts_on_completion). `results` is one {"result": "pass" | "fail" | "na", "reading": "..."} per checklist step, in
     order. `hours` (None or blank: none) are logged with it, and `late_reason` (None or blank: none; slice 25) is recorded on a PM
@@ -1046,12 +1060,17 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
     checklist's `results` for passed, and `checks_reference` for vendor_report. Slice 31: vendor service takes `vendor_engineer` or
     `engineer_name` and `checks_reference` (the module's Slice 31 paragraph; left out, the number on file stays). Slice 33: a repair
     takes `repair_finding` (RepairFinding; KEEP, None, or blank keeps the one stored, required when none is: the module's Slice 33
-    paragraph). Slice 35: `test_equipment` (KEEP, or a list of item ids: the module's Slice 35 paragraph). Raises ValidationError: a
-    plain message when the work order cannot be completed now, else a dict keyed by resolution, pm_result, inspection_result,
-    repair_check, checks_reference, checklist, step_<n>, reading_<n>, open_repair, hours, late_reason, vendor_engineer, engineer_name,
-    repair_finding, and test_equipment. `wo` is refreshed from the database afterwards (and its device with it)."""
+    paragraph). Slice 35: `test_equipment` (KEEP, or a list of item ids: the module's Slice 35 paragraph). Slice 38: `software` (KEEP,
+    or a cybersecurity.updates.UpdateChoice: the module's Slice 38 paragraph). Raises ValidationError: a plain message when the work
+    order cannot be completed now, else a dict keyed by resolution, pm_result, inspection_result, repair_check, checks_reference,
+    checklist, step_<n>, reading_<n>, open_repair, hours, late_reason, vendor_engineer, engineer_name, repair_finding, test_equipment,
+    software_outcome, software_release, software_reference, and software_basis. `wo` is refreshed from the database afterwards (and its
+    device with it)."""
     today = today or timezone.localdate()
     _check_tenant(wo)
+    if getattr(software, "records", False):
+        # Slice 38: the register's lock first, before any work order's or device's row (cybersecurity.updates' lock order)
+        cyber_services.lock_register()
     # The device's open work orders and this one first, in number order (its open inspections among them: two of its inspections
     # completed at once take turns, and the second finds itself cancelled by the first's pass), then the device's row (slice 28 review
     # fix: locking this one alone first waited on a lower number a start held while it waited for this one: services.lock_work).
@@ -1073,6 +1092,10 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
         checks_reference = locked.checks_reference if locked.vendor_service else ""
     errors: dict[str, str] = {}
     text = _resolution(resolution, errors)
+    # Slice 38: what a software update did (the offer, the required choice, the outcome's checks), with every other problem
+    checked = cyber_updates.check_choice(locked, software, by, errors, today=today)
+    if not text and getattr(checked, "records", False):
+        text = cyber_updates.default_resolution(checked.outcome)
     snapshot: list[dict] = []
     reference = ""
     if is_repair:  # slice 30: the checks after it, by the outcome chosen
@@ -1164,6 +1187,8 @@ def complete_work_order(wo: WorkOrder, *, resolution: str = "", pm_result: str =
     services.change_status(locked, WoStatus.COMPLETED, by=by, note=note, as_of=today)
     if uses is not vendor_services.KEEP:
         test_equipment_services.apply_uses(locked, uses, by=by, completing=True)  # slice 35: each use added or taken off
+    if getattr(checked, "records", False):  # slice 38: the update's record and the device's facts (the device held by the completion)
+        done.software = cyber_updates.record_at_completion(locked, asset, checked, by, today)
     if late:
         _record_late_reason(locked, late, by, today)  # once completed late, it is a PM that missed its due date (missed_pms)
     asset.refresh_from_db(fields=["status", "last_pm_on", "next_pm_on", "awaiting_inspection"])

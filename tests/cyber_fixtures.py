@@ -20,3 +20,23 @@ def facts(asset, release=None, **fields) -> DeviceSecurity:
         setattr(sec, name, value)
     sec.save()
     return sec
+
+
+def update_wo(asset, target_release=None, *, reference: str = "", by=None, **wo_fields):
+    """Slice 38: an update work order as updates.open_update makes one (made directly: the scaffold's; the service is wave 1's): the work
+    order through create_work_order with the opener's keyword, the fixed problem, and its record holding the target (a release, or the
+    patches with `reference`). Returns (work order, its SoftwareUpdate)."""
+    from django.utils import timezone
+
+    from apps.cybersecurity.models import SoftwareUpdate, UpdateTarget
+    from apps.cybersecurity.updates import PATCHES_PROBLEM, UPDATE_PROBLEM
+    from apps.workorders.models import Priority, WoType
+    from apps.workorders.services import create_work_order
+
+    wo = create_work_order(asset=asset, type=WoType.SOFTWARE_UPDATE, priority=wo_fields.pop("priority", Priority.NORMAL),
+                           problem=UPDATE_PROBLEM if target_release is not None else PATCHES_PROBLEM, requester="Clinical engineering",
+                           created_by=by, _register_opener=True, **wo_fields)
+    update = SoftwareUpdate.objects.create(asset=asset, work_order=wo, target=UpdateTarget.RELEASE if target_release else UpdateTarget.PATCHES,
+                                           target_release=target_release, target_reference=reference, opened_on=timezone.localdate(),
+                                           opened_by=by)
+    return wo, update

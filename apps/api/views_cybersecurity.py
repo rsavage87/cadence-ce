@@ -47,7 +47,7 @@ from rest_framework.response import Response
 from apps.accounts.models import Level, Module
 from apps.cybersecurity import filters, rules
 from apps.cybersecurity import permissions as perms
-from apps.cybersecurity.models import DeviceSecurity, SoftwareRelease
+from apps.cybersecurity.models import DeviceSecurity, SoftwareRelease, SoftwareUpdate
 from apps.equipment.models import Asset, AssetStatus
 
 from . import serializers_cybersecurity as scs
@@ -240,6 +240,26 @@ class DeviceSecurityViewSet(_ReadOnly):
         return Response(scs.device_data(rules.standings([asset], self._today())[asset.pk]))
 
 
+UPDATES_REFUSAL = "Reading software updates needs Device security View and Equipment View."
+
+
+class SoftwareUpdateViewSet(_ReadOnly):
+    """Slice 38: the software updates (update work orders' records and installs recorded by hand), read only, as the device's Security
+    tab shows them (rules' words). Device security View and Equipment View (they name devices); never a scoped user. Filters: ?device=
+    (an id or tag), ?release= (a release's id: the target or what it runs after), ?state= (rules.update_state's keys). Recorded on the
+    Device security screen and by completing an update work order (POST work-orders/{id}/transition/ with software_outcome). Wave 2
+    fills in the fields and filters."""
+
+    permission_classes = [IsAuthenticated, ModulePermission, EquipmentView]
+    serializer_class = scs.SoftwareUpdateSerializer
+    view_refusal = UPDATES_REFUSAL
+
+    def get_queryset(self):
+        qs = SoftwareUpdate.objects.select_related("asset", "work_order", "target_release", "release_before", "release_after")
+        return qs.filter(removed_on__isnull=True).order_by("-created_at", "pk")
+
+
 def register(router) -> None:
     router.register("software-releases", SoftwareReleaseViewSet, basename="software-release")
     router.register("device-security", DeviceSecurityViewSet, basename="device-security")
+    router.register("software-updates", SoftwareUpdateViewSet, basename="software-update")  # slice 38

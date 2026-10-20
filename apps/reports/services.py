@@ -306,7 +306,8 @@ def _shift_month(year: int, month: int, delta: int) -> tuple[int, int]:
 
 
 WO_TYPE_SERIES = [("pm", "Preventive maintenance", (WoType.PM,)), ("repair", "Corrective repair", (WoType.REPAIR,)),
-                  ("other", "Inspection, safety, and recall", (WoType.INSPECTION, WoType.SAFETY, WoType.RECALL))]
+                  ("other", "Inspection, safety, recall, and updates",
+                   (WoType.INSPECTION, WoType.SAFETY, WoType.RECALL, WoType.SOFTWARE_UPDATE))]  # slice 38: never a fourth key (overview.py's colors)
 
 
 def work_orders_opened_by_type(year: int, month: int, months: int = 6) -> dict:

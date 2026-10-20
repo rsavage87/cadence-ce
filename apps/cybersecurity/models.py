@@ -16,12 +16,17 @@ text of any kind. References are tokens and https links; answers are choices, bl
 - DeviceSecurity: one device's facts here: the versioned release it runs and since when, how it is connected here when that differs from
   what the model discloses, and the day someone checked. Its own record, so nothing reaches the device's API, CSV, history area, or a
   scoped reader by default.
+- SoftwareUpdate (slice 38): one software update work order's record, made when it is opened (its target: a release of the device's
+  model, or the manufacturer's patches) and filled in with what was done (installed, patches applied, or already on it) when it is
+  completed or confirmed afterwards; or an install recorded by hand, with no work order (the manufacturer remotely, automatic, IT). The
+  work order carries only the neutral type and a fixed problem: the target and the versions are here, behind Device security View.
 
 Every rule is apps.cybersecurity.rules; every write is apps.cybersecurity.services (and equipment.services.update_asset's model change,
-through services.model_changed).
+through services.model_changed), and slice 38's updates are apps.cybersecurity.updates.
 """
 from django.conf import settings
 from django.db import models
+from django.db.models import Q
 from simple_history.models import HistoricalRecords
 
 from apps.core.models import TenantModel
@@ -31,7 +36,9 @@ VERSION_VALIDATOR = product_text("Enter the version as the manufacturer writes i
 OS_NAME_VALIDATOR = product_text("Enter the operating system with its edition, e.g. Windows 10 IoT Enterprise LTSC 2021: letters, digits, "
                                  "spaces, and . _ / ( ) + - only.")
 MDS2_DOCUMENT_VALIDATOR = reference_token("Enter the MDS2's document number as the form shows it, without spaces.")
-VERSION_MAX, OS_NAME_MAX, DOCUMENT_MAX = 60, 80, 40
+UPDATE_REFERENCE_VALIDATOR = reference_token("Enter the manufacturer's patch list, notice, or field change number as it is written, "
+                                             "without spaces, e.g. ICAR-2026-09.")
+VERSION_MAX, OS_NAME_MAX, DOCUMENT_MAX, UPDATE_REFERENCE_MAX = 60, 80, 40, 40
 
 
 class OsFamily(models.TextChoices):
@@ -193,3 +200,95 @@ class DeviceSecurity(TenantModel):
 
     def __str__(self):
         return f"{self.asset} security"
+
+
+# --- slice 38: software updates ------------------------------------------------------------------------------------------------------
+
+class UpdateTarget(models.TextChoices):
+    """What an update work order was opened to install."""
+
+    RELEASE = "release", "A release of the model"
+    PATCHES = "patches", "The manufacturer's patches"
+
+
+class UpdateOutcome(models.TextChoices):
+    """What an update did, as recorded (blank: not recorded: an open work order's, or one completed with the version not confirmed)."""
+
+    INSTALLED = "installed", "Release installed"
+    PATCHES = "patches", "Patches applied, version unchanged"
+    ALREADY = "already", "Already on the update; nothing installed"
+
+
+class UpdateBasis(models.TextChoices):
+    """The basis for an update, as the person recording it states it (never that Cadence knows it was authorized)."""
+
+    VALIDATED_LIST = "validated_list", "On the manufacturer's validated patch list"
+    MANUFACTURER_RELEASE = "manufacturer_release", "The manufacturer's release, service notice, or field change"
+    NOT_STATED = "not_stated", "Not stated"
+
+
+class InstalledBy(models.TextChoices):
+    """Who installed an update recorded by hand (a work order's says who did the work itself)."""
+
+    CE = "ce", "Clinical engineering"
+    IT = "it", "Information technology"
+    MANUFACTURER = "manufacturer", "The manufacturer or its service"
+    AUTOMATIC = "automatic", "Installed automatically by the manufacturer"
+    DEPARTMENT = "department", "The department that uses it"
+
+
+RECORDED_OUTCOMES = (UpdateOutcome.INSTALLED, UpdateOutcome.PATCHES, UpdateOutcome.ALREADY)
+INSTALL_OUTCOMES = (UpdateOutcome.INSTALLED, UpdateOutcome.PATCHES)  # counted as installs; "already" never is
+OUTCOME_FIELDS = ("outcome", "release_before", "release_after", "reference", "basis", "applied_on", "recorded_by", "later_kept")
+
+
+def _update_rules():
+    """The row's shape (database constraints, SQLite and PostgreSQL): a work order's row has its opening and target and no installer or
+    removal; a hand row (no work order) has neither opening nor target, is an install (installed or patches) by someone, and may be
+    entered in error; a release target names its release, a patches target none."""
+    wo_row = Q(work_order__isnull=False, opened_on__isnull=False, installed_by="", removed_on__isnull=True) & ~Q(target="")
+    hand_row = (Q(work_order__isnull=True, opened_on__isnull=True, target="", outcome__in=[o.value for o in INSTALL_OUTCOMES])
+                & ~Q(installed_by=""))
+    return wo_row | hand_row
+
+
+class SoftwareUpdate(TenantModel):
+    """One software update: an update work order's record (made when it is opened, with its target; what was done filled in when it is
+    completed or confirmed), or an install recorded by hand with no work order. Its one writer is apps.cybersecurity.updates."""
+
+    asset = models.ForeignKey("equipment.Asset", on_delete=models.CASCADE, related_name="software_updates")
+    work_order = models.OneToOneField("workorders.WorkOrder", null=True, blank=True, on_delete=models.PROTECT, related_name="software_update")
+    # The target (a work order's only)
+    target = models.CharField(max_length=10, choices=UpdateTarget.choices, blank=True)
+    target_release = models.ForeignKey(SoftwareRelease, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    target_reference = models.CharField(max_length=UPDATE_REFERENCE_MAX, blank=True, validators=[UPDATE_REFERENCE_VALIDATOR])
+    opened_on = models.DateField(null=True, blank=True)
+    opened_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, editable=False,
+                                  related_name="+")
+    # What was done (blank while not recorded)
+    outcome = models.CharField(max_length=10, choices=UpdateOutcome.choices, blank=True)
+    release_before = models.ForeignKey(SoftwareRelease, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    release_after = models.ForeignKey(SoftwareRelease, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    reference = models.CharField(max_length=UPDATE_REFERENCE_MAX, blank=True, validators=[UPDATE_REFERENCE_VALIDATOR])
+    basis = models.CharField(max_length=24, choices=UpdateBasis.choices, blank=True)
+    installed_by = models.CharField(max_length=14, choices=InstalledBy.choices, blank=True)  # a hand row's only
+    applied_on = models.DateField(null=True, blank=True)
+    recorded_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, editable=False,
+                                    related_name="+")
+    later_kept = models.BooleanField(default=False, editable=False)  # the device's facts were newer than applied_on: kept, not written
+    # Entered in error (a hand row's only; a work order's outcome is cleared instead): never deleted, hidden, kept in history
+    removed_on = models.DateField(null=True, blank=True, editable=False)
+    removed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, editable=False,
+                                   related_name="+")
+    history = HistoricalRecords()
+
+    class Meta:
+        ordering = ["-applied_on", "-opened_on", "-created_at"]
+        constraints = [
+            models.CheckConstraint(condition=_update_rules(), name="software_update_shape"),
+            models.CheckConstraint(condition=Q(target=UpdateTarget.RELEASE.value, target_release__isnull=False)
+                                   | (~Q(target=UpdateTarget.RELEASE.value) & Q(target_release__isnull=True)), name="software_update_target"),
+        ]
+
+    def __str__(self):
+        return f"{self.work_order.number} software update" if self.work_order_id else f"{self.asset} software update"

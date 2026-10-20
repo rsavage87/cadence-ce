@@ -214,7 +214,7 @@ def _cards(user, groups, today) -> dict:
 
 
 def _repairs_rows(groups, cards, open_batches) -> list[dict]:
-    """Repairs and requests with the recall batches among them, by priority then due date: a batch ranks by its most urgent work
+    """Repairs, updates (slice 38), and requests with the recall batches among them, by priority then due date: a batch ranks by its most urgent work
     order and earliest due date, after a repair that ranks the same. Each row is {"card": Card} or {"batch": {...}}."""
     rows = [((PRIORITY_ORDER.get(c.wo.priority, 9), c.wo.due_on, 0), {"card": c}) for c in cards["repairs"]]
     for batch, batch_cards in zip(groups.recalls, cards["recalls"], strict=True):

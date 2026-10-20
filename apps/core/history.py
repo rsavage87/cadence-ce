@@ -107,6 +107,11 @@ def _release_name(r) -> str:
     return f"{r.device_model.manufacturer} {r.device_model.model} {r.version or '(all versions)'}"
 
 
+def _update_name(r) -> str:
+    """A software update in the change log: "CE-10002 · software update WO-26-0042", or "CE-10002 · software update recorded"."""
+    return f"{r.asset.tag} · software update {r.work_order.number}" if r.work_order_id else f"{r.asset.tag} · software update recorded"
+
+
 def _safe(fn):
     """A name or link that reads a related row the history no longer finds (deleted since) gives "" rather than failing the page."""
     def wrapped(rec):
@@ -229,6 +234,10 @@ AREAS = {a.key: a for a in (
          _safe(lambda r: reverse("web:cybersecurity_model", args=[r.device_model_id])), select=("device_model",)),
     Area("device_security", "Device security", "cybersecurity.DeviceSecurity", "cybersecurity", _safe(lambda r: f"{r.asset.tag} · security"),
          _safe(lambda r: reverse("web:asset", args=[r.asset.tag]) + "?tab=security"), select=("asset",), also=("equipment",)),
+    # Slice 38: software updates (a work order's record, or an install recorded by hand), on the device's Security tab; never a work
+    # order drawer's history (history_tabs.RELATED): its target and versions are Device security View's
+    Area("software_updates", "Software updates", "cybersecurity.SoftwareUpdate", "cybersecurity", _safe(_update_name),
+         _safe(lambda r: reverse("web:asset", args=[r.asset.tag]) + "?tab=security"), select=("asset", "work_order"), also=("equipment",)),
 )}
 ACCESS = Area("access", "Access", "accounts.AccessEvent", "users", _safe(lambda e: str(e.user) if e.user_id else ""))
 ALL_AREAS = {**AREAS, ACCESS.key: ACCESS}
@@ -313,6 +322,7 @@ HIDE = {
     # Slice 37 (the model and the device are in each record's name; the stored key is the version's)
     "cybersecurity.softwarerelease": {"device_model", "version_key"},
     "cybersecurity.devicesecurity": {"asset"},
+    "cybersecurity.softwareupdate": {"asset", "work_order"},  # slice 38: both in the record's name
 }
 
 # Labels that read better than the verbose names, per model; `_label` falls back to the verbose name.
@@ -391,6 +401,12 @@ LABELS = {
                                       "segmented": "Network segment here", "removed_on": "Entered in error", "removed_by": "Marked by"},
     "cybersecurity.devicesecurity": {"release": "Software release", "release_since": "Running it since", "network": "Connected here",
                                      "checked_on": "Checked", "checked_by": "Checked by"},
+    # Slice 38
+    "cybersecurity.softwareupdate": {"target": "To install", "target_release": "Release to install", "target_reference": "Patches to apply",
+                                     "opened_on": "Opened", "opened_by": "Opened by", "outcome": "What it did",
+                                     "release_before": "Recorded before", "release_after": "Runs after", "reference": "Manufacturer's reference",
+                                     "basis": "Basis", "installed_by": "Installed by", "applied_on": "Done on", "recorded_by": "Recorded by",
+                                     "later_kept": "A later record kept", "removed_on": "Entered in error", "removed_by": "Marked by"},
     "testequipment.testequipment": {"tag": "Tag", "kind": "Kind", "serial": "Serial number", "program": "Certificates",
                                     "interval_months": "Interval", "status_reason": "Why", "status_since": "Since", "held_by": "Held by",
                                     "held_since": "Needs a pass dated on or after"},  # out of service: the one release rule's day
@@ -785,6 +801,9 @@ EMPTY_WORDS = {
         "os_family", "os_name", "os_support_ends_on", "security_updates_end_on", "support_checked_on", "mds2", "mds2_edition",
         "mds2_document", "mds2_released_on", "mds2_requested_on", "mds2_url", "patient_data", "connects", "remote_service", "patching",
         "sbom", "updates_by", "segmented")},
+    # Slice 38: an update's outcome is not recorded while its work order is open, or once it was completed with the version not confirmed
+    "cybersecurity.softwareupdate": {"outcome": "Not recorded", "release_before": "Not recorded", "release_after": "Not recorded",
+                                     "basis": "Not recorded", "applied_on": "Not recorded"},
 }
 
 

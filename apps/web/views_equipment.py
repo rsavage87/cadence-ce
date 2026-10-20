@@ -71,12 +71,14 @@ def _count(n: int, noun: str) -> str:
     return f"{n} {noun}{'' if n == 1 else 's'}"
 
 
-def status_toast(tag: str, from_status: str, to_status: str, cancelled: int = 0, inspections: int = 0) -> str:
-    """The toast for a status change. Retiring cancels the device's open PM work orders (`cancelled`) and, for a device waiting for its
-    incoming inspection (slice 26: one going back to the vendor), its open incoming inspections (`inspections`)."""
+def status_toast(tag: str, from_status: str, to_status: str, cancelled: int = 0, inspections: int = 0, updates: int = 0) -> str:
+    """The toast for a status change. Retiring cancels the device's open PM work orders (`cancelled`), its open software updates
+    (`updates`, slice 38) and, for a device waiting for its incoming inspection (slice 26: one going back to the vendor), its open
+    incoming inspections (`inspections`)."""
     template = STATUS_TOASTS.get((to_status, from_status)) or STATUS_TOASTS[(to_status, None)]
     message = template.format(tag=tag)
-    parts = [_count(n, noun) for n, noun in ((cancelled, "PM work order"), (inspections, "incoming inspection")) if n]
+    parts = [_count(n, noun) for n, noun in ((cancelled, "PM work order"), (inspections, "incoming inspection"), (updates, "software update"))
+             if n]
     if parts:
         message += f"; {' and '.join(parts)} cancelled"
     return message
@@ -256,7 +258,8 @@ def asset_status(request, tag):
     _require(eq_perms.can_set_status(request.user, from_status, to_status))
     if to_status not in AssetStatus.values:
         return HttpResponseBadRequest("Unknown status.")
-    # Retiring cancels the device's open PM work orders (and a waiting device's open incoming inspections); count them for the toast.
+    # Retiring cancels the device's open PM work orders and software updates (and a waiting device's open incoming inspections); count
+    # them for the toast.
     open_wos = set(asset.work_orders.filter(status__in=OPEN_STATUSES).values_list("pk", flat=True)) if to_status == AssetStatus.RETIRED else set()
     try:
         eq.set_status(asset, to_status, by=request.user)
@@ -265,7 +268,8 @@ def asset_status(request, tag):
     cancelled = list(asset.work_orders.filter(pk__in=open_wos, status=WoStatus.CANCELLED).values_list("type", flat=True)) if open_wos else []
     # wo-changed too: retiring cancels the device's open PM work orders, reinstating a waiting device may open an inspection.
     return toast(_changed(_drawer(request, tag), "wo-changed"),
-                 status_toast(asset.tag, from_status, to_status, cancelled.count(WoType.PM), cancelled.count(WoType.INSPECTION)))
+                 status_toast(asset.tag, from_status, to_status, cancelled.count(WoType.PM), cancelled.count(WoType.INSPECTION),
+                              cancelled.count(WoType.SOFTWARE_UPDATE)))
 
 
 # --- in use before its incoming inspection (slice 26) ----------------------------------------------------------

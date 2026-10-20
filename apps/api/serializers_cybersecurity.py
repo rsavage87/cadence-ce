@@ -128,3 +128,16 @@ class DeviceSecuritySerializer(serializers.BaseSerializer):
 
     def to_representation(self, standing):
         return device_data(standing)
+
+
+def update_data(update) -> dict:
+    """GET software-updates/ (slice 38): one update as the device's Security tab shows it. Scaffold: the identity only; wave 2 adds the
+    target, the outcome and its words (rules.update_words), the state (rules.update_state), and the work order's number (never a link)."""
+    return {"id": str(update.pk), "tag": update.asset.tag}
+
+
+class SoftwareUpdateSerializer(serializers.BaseSerializer):
+    """GET software-updates/: each a SoftwareUpdate, read with its device, work order, and releases (the viewset's select_related)."""
+
+    def to_representation(self, update):
+        return update_data(update)

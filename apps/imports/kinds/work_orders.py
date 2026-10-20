@@ -64,6 +64,9 @@ TYPE_WORDS = _words(WoType, {
     **_all(WoType.RECALL, "recall", "recall action", "field action", "field correction", "field corrective action", "fca", "hazard alert",
            "safety alert"),
     **_all(WoType.SAFETY, "safety", "safety check", "safety test", "electrical safety", "electrical safety test", "electrical safety check", "est"),
+    # Slice 38: never a bare "upgrade" (a legacy system's hardware field modification); open ones are refused (legacy.OPEN_UPDATE)
+    **_all(WoType.SOFTWARE_UPDATE, "software update", "software upgrade", "firmware update", "firmware upgrade", "sw update", "patch",
+           "patching"),
 })
 STATUS_WORDS = _words(WoStatus, {
     **_all(WoStatus.OPEN, "open", "new", "assigned", "pending", "not started", "scheduled", "requested", "submitted"),
@@ -79,7 +82,8 @@ PRIORITY_WORDS = _words(Priority, {
     **_all(Priority.NORMAL, "normal", "medium", "routine", "standard", "moderate"),
 })
 
-TYPE_HELP = "repair (corrective), PM (preventive), inspection (incoming, install), recall, or safety check"
+TYPE_HELP = ("repair (corrective), PM (preventive), inspection (incoming, install), recall, safety check, or software update (firmware, "
+             "patch; completed ones only)")
 STATUS_HELP = "open, in progress, awaiting parts, completed, closed, or cancelled"
 REPEATED = "This work order number is on more than one row: one row per work order (add up labor lines first)"
 ALREADY = "Already imported"

@@ -42,7 +42,7 @@ from apps.cybersecurity.models import (
 from apps.equipment.models import AssetStatus
 from apps.equipment.services import owner_maintains
 
-from . import history_tabs
+from . import asset_cyber_updates, history_tabs
 
 AREA = "device_security"
 TAB = "security"
@@ -160,4 +160,4 @@ def tab_context(request, asset, today) -> dict:
     return {"cyber": {"standing": s, "lines": lines, "card": release_card(s.facts, _others(asset, s)),
                       "mds2_sentence": rules.MDS2_SENTENCE, "gone": gone, "can_record": cyber_perms.can_edit_devices(user) and not gone,
                       "facts_url": facts_url(asset), "model_url": reverse("web:cybersecurity_model", args=[asset.device_model_id]),
-                      "hist": hist}}
+                      "hist": hist, "updates": asset_cyber_updates.context(request, asset, today)}}  # slice 38

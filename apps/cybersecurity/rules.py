@@ -563,3 +563,56 @@ def changes_for_it(today: date, days: int = 30) -> list:
     out.sort(key=lambda c: c[2])  # by tag within one moment
     out.sort(key=lambda c: (c[0], c[1]), reverse=True)  # newest first (a stable sort keeps the tags' order)
     return [c[3] for c in out]
+
+
+# --- slice 38: software updates (wave 1 builds the bodies; every door reads these, never the fields) ---------------------------------
+
+@dataclass(frozen=True)
+class Offer:
+    """What a completion (or Confirm version) may record on an update work order (release_offer): its record, the model's versioned
+    releases not removed (version_key order), the device's recorded release (or None), the target, the outcomes and the bases allowed
+    for each (updates.BASES), and whether a choice is needed (nothing recorded yet)."""
+
+    update: object
+    releases: tuple
+    recorded: object | None
+    outcomes: tuple
+    bases: dict
+    needed: bool
+
+
+def release_offer(wo, user):
+    """The one predicate (slice 38) the completion modal, the work order serializer's software_choices, and updates.check_choice read:
+    an Offer, or None unless the work order is a software update with its record (register-opened, so never imported), its device on
+    site (on_site: not retired, not returned), and `user` may record (permissions.can_edit_devices; None is the system). Slice 40 widens
+    the type gate. Wave 1."""
+    raise NotImplementedError
+
+
+OPEN, NOT_CONFIRMED, DONE, CANCELLED, REMOVED = "open", "not_confirmed", "done", "cancelled", "removed"
+
+
+def update_state(update) -> str:
+    """An update's state key: open (its work order open, in progress, or awaiting parts), not_confirmed (completed or closed, nothing
+    recorded), done (an outcome recorded, a hand row's always), cancelled (its work order cancelled), removed (a hand row entered in
+    error). Wave 1."""
+    raise NotImplementedError
+
+
+def update_words(update, *, today=None) -> str:
+    """The update in words (build38 "Words"): its state sentence, or its outcome's sentence with where it came from ("as the vendor's
+    report states", "installed by information technology") and "; a later record of the device is kept" when later_kept. Never a never
+    word; the basis's "validated" only for UpdateBasis.VALIDATED_LIST. Wave 1."""
+    raise NotImplementedError
+
+
+def updates_of(asset) -> list:
+    """The device's updates for its Security tab, newest first: every work order's record and the hand rows not entered in error, each
+    with its work order and releases read in the same query. One query. Wave 1."""
+    raise NotImplementedError
+
+
+def campaigns(model) -> dict:
+    """{release id: {state key: count}} for every release of `model` that update work orders target (open, done, not_confirmed,
+    cancelled): the model panel's "Updates to 5.6 (demo): 3 open, 1 done, 1 not confirmed". One aggregate query. Wave 1."""
+    raise NotImplementedError

@@ -50,6 +50,7 @@ from apps.cybersecurity import services as cyber
 from apps.cybersecurity.models import DISCLOSURE_GROUP, FACILITY_GROUP, GROUPS, Mds2Status, OsFamily, SoftwareRelease
 from apps.equipment.models import AssetStatus, Department, DeviceModel
 
+from . import cyber_release_actions
 from .decorators import web_view
 from .exports import csv_response
 from .forms import parse_uuid
@@ -321,7 +322,9 @@ def _panel_context(request, dm) -> dict:
                          "edit_url": reverse("web:cybersecurity_release_edit", args=[r.pk]) + _qs(params),
                          "remove_url": reverse("web:cybersecurity_release_remove", args=[r.pk]) + _qs(params),
                          "set_url": reverse("web:cybersecurity_set_release", args=[dm.pk]) + _qs({**params, "release": r.pk})})
+    campaigns = cyber_release_actions.annotate(request, dm, releases, params)  # slice 38: each release's updates (x["update"])
     return {
+        **campaigns,
         "dm": dm, "today": today, "profile": profile_row, "profile_card": _card(rules.facts(None, profile_row), dm, today, profile=True),
         "releases": releases, "mds2_words": _mds2_words(dm, held), "can_devices": can_devices, "can_edit": can_edit,
         "can_edit_devices": cyber_perms.can_edit_devices(user), "can_view_asset": can_devices,

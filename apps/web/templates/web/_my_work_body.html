@@ -12,10 +12,10 @@
   {% if credential_note %}<div class="note warn mw-cred">{{ credential_note.text }}{% if credential_note.url %} <a href="{{ credential_note.url }}">See your credentials</a>{% else %} Ask a CE manager about renewing it.{% endif %}</div>{% endif %}
 
   <section class="mw-grp" aria-labelledby="mw-h-repairs">
-    <h2 id="mw-h-repairs">Repairs and requests{% if repairs_count %} <span class="n">{{ repairs_count }}</span>{% endif %}</h2>
+    <h2 id="mw-h-repairs">Repairs, updates, and requests{% if repairs_count %} <span class="n">{{ repairs_count }}</span>{% endif %}</h2>
     {% if repairs %}<div class="mw-cards">
       {% for row in repairs %}{% if row.batch %}{% include "web/_my_work_batch.html" with batch=row.batch %}{% else %}{% include "web/_my_work_card.html" with card=row.card %}{% endif %}{% endfor %}
-    </div>{% else %}<p class="mw-none">No repairs or requests open.</p>{% endif %}
+    </div>{% else %}<p class="mw-none">No repairs, updates, or requests open.</p>{% endif %}
   </section>
 
   <section class="mw-grp" aria-labelledby="mw-h-pms">

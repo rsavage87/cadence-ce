@@ -108,6 +108,17 @@ def no_pm_message(asset) -> str:
     return f"{asset.tag} is a {asset.get_ownership_display().lower()}: its owner maintains it, so it gets no PM work orders here."
 
 
+# Slice 38: a software update is opened only by the Device security screen's openers (apps.cybersecurity.updates.open_update and
+# open_updates), which write its update record with its target and pass the private keyword: never New work order, the API's create, or
+# any later door that passes a user's type (keyed "type", the field both doors name it in).
+UPDATE_OPENED_ELSEWHERE = "Software updates are opened from the Device security screen or a device's Security tab."
+
+
+def _check_update_type(type, register_opener: bool) -> None:
+    if type == WoType.SOFTWARE_UPDATE and not register_opener:
+        raise ValidationError({"type": UPDATE_OPENED_ELSEWHERE})
+
+
 def _check_owner_maintained(asset, type) -> None:
     """Slice 29: no PM work order on a device its owner maintains (equipment.services.owner_maintains)."""
     from apps.equipment.services import owner_maintains  # equipment.services imports this app inside its functions; keep it one way
@@ -121,7 +132,9 @@ def create_work_order(*, asset, type, priority, problem, requester="", source=So
                       vendor_name="", opened_on=None, due_on=None, created_by=None, tag_out=False, **extra) -> WorkOrder:
     """Open a work order. Slice 26: refused, keyed "type", for a PM on a device waiting for its incoming inspection, and for a second
     open incoming inspection on one (_check_waiting_device). Slice 29: refused, keyed "type", for a PM on a temporary device
-    (_check_owner_maintained)."""
+    (_check_owner_maintained). Slice 38: refused, keyed "type", for a software update unless `_register_opener` (apps.cybersecurity.updates
+    only: _check_update_type)."""
+    _check_update_type(type, bool(extra.pop("_register_opener", False)))
     _check_owner_maintained(asset, type)
     _check_waiting_device(asset, type, extra.get("follow_up_of"))
     opened_on = opened_on or timezone.localdate()

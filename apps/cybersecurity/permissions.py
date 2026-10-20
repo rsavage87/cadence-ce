@@ -7,7 +7,10 @@ retires devices), and every existing custom role reads None for it until a direc
   devices by tag and location).
 - Edit records a model's profile and releases (and marks one entered in error), and a device's facts (one device, or one model's devices
   at once).
-- Approve decides nothing yet: slice 38's decisions (an advisory not affected, a risk accepted) will be Approve.
+- Slice 38, software updates (apps.cybersecurity.updates): what an update did is recorded (at a completion, by Confirm version, or by
+  hand) at Edit and Equipment View (can_edit_devices); opening update work orders also needs Work orders Edit (can_open_updates), and
+  assigning them Work orders Approve (workorders.permissions.can_assign: unassigned otherwise); Approve marks a hand-recorded update
+  entered in error and clears a work order's recorded outcome (can_correct_updates). Slice 39's decisions will be Approve too.
 
 Scoped users (a vendor's company, a requester's unit) are refused everywhere, whatever their levels: the register is never theirs.
 The suggested IT security role (README) is a custom role with Device security Edit and Equipment View.
@@ -38,3 +41,19 @@ def can_edit(user) -> bool:
 def can_edit_devices(user) -> bool:
     """A device's facts (one, or one model's devices at once)."""
     return can_edit(user) and user.has_level(Module.EQUIPMENT, Level.VIEW)
+
+
+APPROVE_LEVEL = Level.APPROVE
+
+
+def can_open_updates(user) -> bool:
+    """Open software update work orders (slice 38: one device's, or a release's devices'): Device security Edit, Equipment View, and
+    Work orders Edit (the level that opens work orders). Assigning them is Work orders Approve (workorders.permissions.can_assign)."""
+    from apps.workorders import permissions as wo_perms
+
+    return can_edit_devices(user) and user.has_level(wo_perms.MODULE, wo_perms.CREATE_LEVEL)
+
+
+def can_correct_updates(user) -> bool:
+    """Mark a hand-recorded software update entered in error, or clear a work order's recorded outcome (slice 38)."""
+    return user.has_level(MODULE, APPROVE_LEVEL) and not scoping.is_scoped(user) and user.has_level(Module.EQUIPMENT, Level.VIEW)

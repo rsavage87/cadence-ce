@@ -320,7 +320,7 @@ def test_jobs_by_type_and_by_who_imported_apart(jobs_world, today, span):
     f = fig(data, "jobs_completed")
     assert f["value"] == 4
     assert {s["key"]: s["value"] for s in f["splits"]} == {"pm": 1, "repair": 3, "inspection": 0, "recall": 0, "safety": 0,
-                                                           "vendor": 2, "facility": 2}
+                                                           "software_update": 0, "vendor": 2, "facility": 2}
     assert split(f, "vendor")["label"] == "Completed by the vendor's account" and split(f, "vendor")["detail"] == "2 of 4"
     assert fig(data, "jobs_imported")["value"] == 1
     assert data["names"] == ["Philips", "Philips field service"]

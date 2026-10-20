@@ -24,7 +24,7 @@ from apps.equipment.services import (
     service_vendor,
 )
 from apps.workorders.models import Priority, WoStatus, WoType
-from apps.workorders.services import UNASSIGNED, WorkOrderFilters, no_pm_message
+from apps.workorders.services import UNASSIGNED, UPDATE_OPENED_ELSEWHERE, WorkOrderFilters, no_pm_message
 
 VENDOR = "vendor"
 
@@ -148,9 +148,26 @@ def vendor_name_for(asset) -> str:
     return service_vendor(asset)
 
 
+class _TypeField(forms.ChoiceField):
+    """A work order type select whose refused values answer in their own words (`refusals`: value -> words), whatever else is offered."""
+
+    def __init__(self, *args, refusals=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.refusals = dict(refusals or {})
+
+    def validate(self, value):
+        if value in self.refusals:
+            raise forms.ValidationError(self.refusals[value], code="invalid_choice")
+        super().validate(value)
+
+
+# Slice 38: never a software update (opened from the Device security screen, with its target: apps.cybersecurity.updates)
+NEW_WO_TYPES = [c for c in WoType.choices if c[0] != WoType.SOFTWARE_UPDATE]
+
+
 class NewWorkOrderForm(forms.Form):
     asset = forms.CharField(widget=forms.HiddenInput, required=False)
-    type = forms.ChoiceField(choices=WoType.choices, initial=WoType.REPAIR)
+    type = _TypeField(choices=NEW_WO_TYPES, initial=WoType.REPAIR, refusals={WoType.SOFTWARE_UPDATE: UPDATE_OPENED_ELSEWHERE})
     priority = forms.ChoiceField(choices=Priority.choices, initial=Priority.NORMAL)
     requester = forms.CharField(max_length=120, required=False, label="Requested by")
     assignee = forms.ChoiceField(required=False, label="Assign to")
@@ -170,8 +187,8 @@ class NewWorkOrderForm(forms.Form):
         if self.asset_obj is not None and owner_maintains(self.asset_obj):
             # Slice 29: a rental, vendor loaner, or demo unit gets no PM work orders (its owner maintains it; create_work_order refuses
             # one too). Posted anyway, the refusal names why.
-            self.fields["type"].choices = [c for c in WoType.choices if c[0] != WoType.PM]
-            self.fields["type"].error_messages["invalid_choice"] = no_pm_message(self.asset_obj)
+            self.fields["type"].choices = [c for c in NEW_WO_TYPES if c[0] != WoType.PM]
+            self.fields["type"].refusals[WoType.PM] = no_pm_message(self.asset_obj)
         if can_assign:
             self.fields["assignee"].choices = [("", "Leave unassigned")] + technician_choices(self.asset_obj)
         else:

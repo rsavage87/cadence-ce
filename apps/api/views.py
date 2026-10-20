@@ -28,7 +28,10 @@ from rest_framework.views import APIView
 from apps.accounts.models import DataScope, Level
 from apps.credentials.models import Technician
 from apps.credentials.services import qualified_technicians
-from apps.cybersecurity.models import SoftwareRelease
+from apps.cybersecurity import permissions as cyber_perms
+from apps.cybersecurity import updates as cyber_updates
+from apps.cybersecurity.models import SoftwareRelease, SoftwareUpdate
+from apps.cybersecurity.services import KEEP as CYBER_KEEP
 from apps.equipment import permissions as eq_perms
 from apps.equipment import services as eq_services
 from apps.equipment.models import AddedAs, Asset, AssetStatus, Department, DeviceModel
@@ -418,6 +421,20 @@ TEST_EQUIPMENT_KEPT = (" Left out, the test equipment the work order recorded st
                        "calibration since has judged stay).")
 
 
+# Slice 38: what a software update did, for a write that sends it anywhere but the completion (refused rather than dropped), and the
+# completion's refusal for a missing choice, in the API's words (the modal's "Choose what this update did" speaks of its radios).
+SOFTWARE_RECORDED = ("What a software update did is recorded when it is completed (POST /api/v1/work-orders/{id}/transition/ with status "
+                     "completed and software_outcome), or on the Device security screen.")
+
+
+def _software_words(errors: dict) -> dict:
+    """The completion's refusal of a missing software choice (updates.CHOOSE_OUTCOME) names what to send (updates.SEND_OUTCOME); every
+    other refusal keeps the service's words."""
+    if errors.get("software_outcome") == [cyber_updates.CHOOSE_OUTCOME]:
+        return {**errors, "software_outcome": [cyber_updates.SEND_OUTCOME]}
+    return errors
+
+
 def _test_equipment_ids(value):
     """The test_equipment a body sent (slice 35): a list of ids as text (the services check each one), or None for anything else (null,
     text, a number, an object, a list holding one): the caller's 400, keyed test_equipment."""
@@ -479,6 +496,7 @@ class WorkOrderViewSet(TenantViewSet):
             raise DRFValidationError({"repair_finding": [FINDING_RECORDED]})
         if body.get("test_equipment") not in (None, []):  # slice 35: nor used any test equipment yet
             raise DRFValidationError({"test_equipment": [TEST_EQUIPMENT_RECORDED]})
+        self._refuse_software(body)  # slice 38: what an update did is recorded only by completing (refused, never dropped)
         if (d.get("assigned_to") or d.get("vendor_service")) and not wo_perms.can_assign(self.request.user):
             raise PermissionDenied("Assigning work orders needs Approve access.")
         # Slice 26: a refusal is a 400 in the service's words (keyed type: a PM, or a second open incoming inspection, on a device
@@ -498,6 +516,16 @@ class WorkOrderViewSet(TenantViewSet):
                             "status completed and checks_reference (vendor service).",
         "repair_finding": FINDING_RECORDED,  # slice 33
     }
+
+    SOFTWARE_FIELDS = tuple(f"software_{name}" for name in cyber_updates.FIELDS)
+
+    @classmethod
+    def _refuse_software(cls, body):
+        """Slice 38: what a software update did is recorded only by completing it (transition to completed) or on the Device security
+        screen: sent anywhere else, refused keyed by the field rather than dropped, so a client never thinks it was saved."""
+        sent = [f for f in cls.SOFTWARE_FIELDS if body.get(f) not in (None, "")]
+        if sent:
+            raise DRFValidationError({f: [SOFTWARE_RECORDED] for f in sent})
 
     @staticmethod
     def _refuse_engineer(body, wo=None):
@@ -540,6 +568,7 @@ class WorkOrderViewSet(TenantViewSet):
         self._refuse_engineer(body, wo)  # slice 31: the vendor's engineer, likewise
         self._refuse_test_equipment(body, wo)  # slice 35: the test equipment it recorded, likewise
         changed = [f for f, v in d.items() if v != getattr(wo, f)]
+        self._check_update_change(wo, d, changed)  # slice 38: before anything else, as an investigation's
         self._check_investigation_change(wo, changed)
         self._check_repair_hold_change(wo, changed)
         if changed and wo.status not in OPEN_STATUSES:
@@ -564,6 +593,23 @@ class WorkOrderViewSet(TenantViewSet):
                     else set(TestEquipmentUse.objects.filter(work_order=wo).values_list("test_equipment_id", flat=True)))
         if _ids_sent_back(sent) != recorded:
             raise DRFValidationError({"test_equipment": [TEST_EQUIPMENT_RECORDED]})
+
+    def _check_update_change(self, wo, d, changed):
+        """Slice 38: a software update work order (opened from the Device security screen, with its record holding the target) stays a
+        software update on its device, with its fixed problem: a type, device, or problem changed on one is refused, and no work order
+        becomes one or stops being one (its record would name another device, or none). Refused keyed by field, in words that name no
+        version (a reader of the work order may not read the register)."""
+        new_type = d.get("type", wo.type)
+        if "type" in changed and WoType.SOFTWARE_UPDATE in (wo.type, new_type):
+            words = (f"{wo.number} is a software update and stays one: cancel it (transition to cancelled) and open the work order you need."
+                     if wo.type == WoType.SOFTWARE_UPDATE else wo_services.UPDATE_OPENED_ELSEWHERE)
+            raise DRFValidationError({"type": [words]})
+        if wo.type != WoType.SOFTWARE_UPDATE:
+            return
+        stays = {"asset": f"it stays with {wo.asset.tag}", "problem": "its description is the Device security screen's"}
+        fields = [f for f in ("asset", "problem") if f in changed]
+        if fields:
+            raise DRFValidationError({f: [f"{wo.number} is a software update: {stays[f]}."] for f in fields})
 
     def _check_investigation_change(self, wo, changed):
         """Slice 28 review fix: an incident's investigation (any incident's Incident.work_order, whatever its status: the file keeps
@@ -637,7 +683,7 @@ class WorkOrderViewSet(TenantViewSet):
     # The completion's text fields (transition to completed): a list, number, or object in one is refused keyed by it, never read as
     # its Python text ("['passed']") and answered with a refusal about something else (slice 30).
     COMPLETION_TEXT = ("resolution", "pm_result", "inspection_result", "repair_check", "checks_reference", "signature", "late_reason",
-                       "engineer_name", "repair_finding")  # slice 31; slice 33
+                       "engineer_name", "repair_finding")  # slice 31; slice 33 (slice 38's software fields: updates.choice_from checks them)
 
     @action(detail=True, methods=["post"])
     def transition(self, request, pk=None):
@@ -673,6 +719,12 @@ class WorkOrderViewSet(TenantViewSet):
           Refused on imported work, on other vendor service, from a user without Equipment View, and from a scoped user (a non-empty
           list). The work order's test_equipment then reads each item with its words on its own day. A cancel takes off every item but
           those a calibration since has judged, and the field then reads [].
+        - a software update (slice 38), for a user who may record what it did (the work order's software_choices: GET it):
+          "software_outcome" ("installed", "patches", "already", or "not_confirmed"; required while nothing is recorded, then left out
+          keeps what was recorded), "software_release" (the id of the release the device runs now, from software_choices),
+          "software_reference" (the manufacturer's patch list and its month or revision, or a notice number: a token), and
+          "software_basis" (one of software_choices' bases for the outcome). Refused from a user who may not record (a scoped user
+          among them), never dropped; refused on another type.
         "signature" (optional): the completion_checklist's (or the PM procedure checklist's) signature the results were typed against;
         a checklist revised since is refused. A text field sent as a list, number, or object is a 400 keyed by it. Refusals are a 400
         keyed by field in the service's words, but a repair sent with no repair_check, or "passed" with no results, or with no
@@ -705,6 +757,7 @@ class WorkOrderViewSet(TenantViewSet):
                 test_equipment = _test_equipment_ids(d.get("test_equipment"))
                 if test_equipment is None:
                     not_text["test_equipment"] = [TEST_EQUIPMENT_IDS + TEST_EQUIPMENT_KEPT]
+            software = cyber_updates.choice_from(d, not_text)  # slice 38: left out, nothing recorded (KEEP)
             if not_text:
                 raise DRFValidationError(not_text)
             kwargs = {"resolution": d.get("resolution") or "", "pm_result": d.get("pm_result") or "", "results": d.get("results"),
@@ -714,6 +767,8 @@ class WorkOrderViewSet(TenantViewSet):
                       "late_reason": d.get("late_reason"),  # slice 25: why a PM completed after its due date was late, optional
                       "engineer_name": d.get("engineer_name") or "",  # slice 31: someone else, by name
                       "test_equipment": test_equipment}  # slice 35
+            if software is not CYBER_KEEP:
+                kwargs["software"] = software
             if "checks_reference" in d:  # slice 31: left out, the vendor's report number on file stays (completion's KEEP)
                 kwargs["checks_reference"] = d.get("checks_reference") or ""
             if "vendor_engineer" in d:  # slice 31: left out, the engineer named stays (completion's KEEP)
@@ -728,7 +783,8 @@ class WorkOrderViewSet(TenantViewSet):
             except ValidationError as e:
                 if not hasattr(e, "error_dict"):
                     return Response({"detail": " ".join(e.messages)}, status=status.HTTP_400_BAD_REQUEST)
-                return Response(_repair_words(wo, request.user, kwargs["repair_check"], e.message_dict), status=status.HTTP_400_BAD_REQUEST)
+                return Response(_repair_words(wo, request.user, kwargs["repair_check"], _software_words(e.message_dict)),
+                                status=status.HTTP_400_BAD_REQUEST)
             return Response(self.get_serializer(wo).data)
         for field in ("vendor_engineer", "engineer_name"):  # slice 31: named only by completing, or by vendor-engineer
             if request.data.get(field) not in (None, ""):
@@ -737,6 +793,7 @@ class WorkOrderViewSet(TenantViewSet):
             raise DRFValidationError({"repair_finding": [FINDING_RECORDED]})
         if "test_equipment" in request.data:  # slice 35: recorded only by completing, or by test-equipment ([] would clear it)
             raise DRFValidationError({"test_equipment": [TEST_EQUIPMENT_RECORDED]})
+        self._refuse_software(request.data)  # slice 38: recorded only by completing
         note = request.data.get("note")
         if note is not None and not isinstance(note, str):  # slice 28 review fix: a list, number, or object reached the service's strip (a 500)
             raise DRFValidationError({"note": ["Send this as text."]})
@@ -755,19 +812,28 @@ class WorkOrderViewSet(TenantViewSet):
         a 400 in words, never a 500. The incident's number only for Incidents View (the delete needs Work orders Full, not that).
         Slice 35: so does a work order with test equipment recorded (TestEquipmentUse.work_order, PROTECT: the record of the work done
         with it, which a tolerance review reads), in its own words (testequipment.services.delete_refusal: a cancelled one keeps only the
-        uses a calibration since has judged, and says so); an incident's words first."""
+        uses a calibration since has judged, and says so); an incident's words first. Slice 38: a software update work order (its record,
+        SoftwareUpdate.work_order, PROTECT) after those, worded by whether this reader reads the register; then a refusal in general words,
+        never another record's."""
         try:
             instance.delete()
         except ProtectedError as e:
             protected = list(e.protected_objects)
-            if not any(isinstance(o, Incident) for o in protected) and any(isinstance(o, TestEquipmentUse) for o in protected):
-                raise DRFValidationError({"detail": te_services.delete_refusal(instance)}) from None
             numbers = sorted(o.number for o in protected if isinstance(o, Incident))
-            which = "an incident"
-            if numbers and inc_perms.can_view(self.request.user):
-                which = f"incident {numbers[0]}" if len(numbers) == 1 else f"incidents {', '.join(numbers)}"
-            raise DRFValidationError({"detail": f"{instance.number} is the investigation of {which}, so it cannot be deleted: the "
-                                                "incident's file keeps it."}) from None
+            if numbers:
+                which = "an incident"
+                if inc_perms.can_view(self.request.user):
+                    which = f"incident {numbers[0]}" if len(numbers) == 1 else f"incidents {', '.join(numbers)}"
+                raise DRFValidationError({"detail": f"{instance.number} is the investigation of {which}, so it cannot be deleted: the "
+                                                    "incident's file keeps it."}) from None
+            if any(isinstance(o, TestEquipmentUse) for o in protected):
+                raise DRFValidationError({"detail": te_services.delete_refusal(instance)}) from None
+            if any(isinstance(o, SoftwareUpdate) for o in protected):
+                words = (f"{instance.number} was opened from the Device security screen: cancel it instead."
+                         if cyber_perms.can_view_devices(self.request.user)
+                         else f"{instance.number} has a record on the Device security screen: cancel it instead.")
+                raise DRFValidationError({"detail": words}) from None
+            raise DRFValidationError({"detail": f"{instance.number} has records that keep it: cancel it instead."}) from None
 
     @action(detail=True, methods=["post"])
     def assign(self, request, pk=None):

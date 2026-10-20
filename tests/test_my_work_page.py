@@ -124,7 +124,7 @@ def test_the_groups_come_in_a_technicians_order_with_a_recall_batch_as_one_row(c
     wo(floor["pump2"], type=WoType.PM, due=TODAY + timedelta(days=30), tech=t)
     body = page(client)
 
-    order = [body.index(s) for s in ("Repairs and requests", crit.number, "Recall: FDA Z-1 · 2 devices", low.number, "Today's PMs",
+    order = [body.index(s) for s in ("Repairs, updates, and requests", crit.number, "Recall: FDA Z-1 · 2 devices", low.number, "Today's PMs",
                                      pm_today.number, "Waiting on parts", waiting.number, "Coming up this week", soon.number, "1 more PM later")]
     assert order == sorted(order)  # the critical repair, then the batch (normal, 2 d late) ahead of the low one
     batch = body[body.index('<details class="mw-batch"'):body.index("</details>")]
@@ -140,7 +140,7 @@ def test_the_groups_come_in_a_technicians_order_with_a_recall_batch_as_one_row(c
 
 def test_empty_groups_say_so_or_stay_out_of_the_way(client, dana):
     body = page(client)
-    assert "No repairs or requests open." in body and "No PMs due today." in body
+    assert "No repairs, updates, or requests open." in body and "No PMs due today." in body
     assert "Waiting on parts" not in body and "Coming up" not in body and "You could take" not in body
     assert "<b>0</b> due today or late" in body
 

@@ -66,6 +66,9 @@ CENT = Decimal("0.01")
 # Why a row is not imported, and notes on one that is: generic words, so the import screen groups them.
 CANCELLED = "Cancelled in the previous system: not imported"
 OPEN_PM = "Open PMs come from each device's next PM date: not imported"
+# Slice 38: an open software update is opened from the Device security screen here, with its target (apps.cybersecurity.updates); a done
+# one imports as history, with no update record: it never changes the device's facts (the slice 23 rule)
+OPEN_UPDATE = "Open software updates are opened from the Device security screen here: not imported"
 RETIRED = "An open work order on a retired device: not imported"
 OWNER_PM = "A rental, vendor loaner, or demo unit is maintained by its owner: its PM history is not imported"  # slice 29 review fix
 ALREADY = "This number is already on a work order here"
@@ -149,6 +152,8 @@ def _validate(*, tenant, asset, number, type, priority, status, opened_on, due_o
     is_open = status in OPEN_STATUSES
     if is_open and type == WoType.PM:
         _refuse(OPEN_PM)
+    if is_open and type == WoType.SOFTWARE_UPDATE:
+        _refuse(OPEN_UPDATE)
     if type == WoType.PM and asset.ownership != Ownership.OWNED:  # slice 29: no PM of ours, open or done, ever counts on a temporary device
         _refuse(OWNER_PM)
     if is_open and asset.status == AssetStatus.RETIRED:

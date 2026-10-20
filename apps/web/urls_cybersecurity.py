@@ -2,7 +2,7 @@
 device drawer's Security tab link to them. Device models are named by their UUID; a device by its tag (any letter case)."""
 from django.urls import path
 
-from . import views_cyber_facts
+from . import views_cyber_facts, views_cyber_updates
 from . import views_cybersecurity as v
 
 urlpatterns = [
@@ -18,4 +18,10 @@ urlpatterns = [
     path("changes/", v.changes, name="cybersecurity_changes"),  # Changes for IT
     path("changes.csv", v.changes_csv, name="cybersecurity_changes_csv"),
     path("devices/<str:tag>/facts/", views_cyber_facts.record_facts, name="cybersecurity_facts"),  # the device drawer's Record facts
+    # Slice 38: software updates (the Security tab's doors; a release row's batch)
+    path("devices/<str:tag>/updates/open/", views_cyber_updates.update_open, name="cybersecurity_update_open"),
+    path("devices/<str:tag>/updates/record/", views_cyber_updates.update_record, name="cybersecurity_update_record"),
+    path("updates/<uuid:pk>/confirm/", views_cyber_updates.update_confirm, name="cybersecurity_update_confirm"),
+    path("updates/<uuid:pk>/remove/", views_cyber_updates.update_remove, name="cybersecurity_update_remove"),
+    path("releases/<uuid:pk>/open-updates/", views_cyber_updates.release_open_updates, name="cybersecurity_release_open_updates"),
 ]

@@ -16,8 +16,10 @@ equipment.services.update_asset -> model_changed, which runs with the device's w
 (never the register lock: a writer of devices waits on its devices, never on the register). Writers that lock a model's devices FOR UPDATE
 in tag order (AEM's pull-in) wait for the bulk set, or it for them, in turn. A transaction locking several devices FOR UPDATE in another
 order (an import chunk, in its file's order) can still meet the bulk set in a deadlock: PostgreSQL ends one side; the bulk set then answers
-the RACE refusal in words, and an import chunk reports the row it could not save. Slice 38's update events, recorded at a work order's
-completion, take the security row last too.
+the RACE refusal in words, and an import chunk reports the row it could not save. Slice 38 (apps.cybersecurity.updates) keeps one order
+for every register writer: the register lock; work orders in workorders.services.lock_work order, when a writer names one; work order
+numbering, when it opens one; releases; devices; security rows; update rows. Nothing takes the register lock after a work order's or a
+device's row: a completion that records what an update did takes it first, before lock_work (updates' module docstring).
 
 Nothing here is deleted: a release entered in error is marked (removed_on, removed_by) and refused while a device on site names it
 (rules.on_site, of the release's model: the devices the Models panel counts, review fix C4); a retired or returned device's record keeps
