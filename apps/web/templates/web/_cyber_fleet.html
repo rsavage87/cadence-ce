@@ -1,7 +1,8 @@
 {% load web %}
 {% comment %}Slice 37: the Fleet tab's body (views_cybersecurity._fleet_context). HICP 2023's recommendation once, small; the head figures
    (rules.fleet's words, each saying which devices it counts; two of them link to the devices they count, a page load so the filters
-   above show them); one row per model with devices
+   above show them, every filter on screen kept: no link where those filters and the figure's cannot be one query); one row per model
+   with devices
    on site, each opening the model's panel with the filters on screen. Re-fetches itself on cyber-changed (a modal saved).{% endcomment %}
 <div id="cy-fleet" class="cy-fleet" hx-get="{{ list_url }}{% query request.GET %}" hx-trigger="cyber-changed from:body" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap hx-target">
   <p class="hint cy-hicp">{{ hicp }}</p>

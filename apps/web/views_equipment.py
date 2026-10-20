@@ -29,6 +29,7 @@ from django_htmx.http import retarget, trigger_client_event
 
 from apps.accounts.models import Level, Module
 from apps.credentials.services import technician_of
+from apps.cybersecurity import permissions as cyber_perms
 from apps.equipment import permissions as eq_perms
 from apps.equipment import services as eq
 from apps.equipment.models import AssetStatus, UseBeforeInspection
@@ -44,6 +45,10 @@ from .htmx import toast
 from .views import asset_drawer_context, get_asset
 
 DRAWER = "web/_asset_drawer.html"
+# Slice 37: Edit details changing the model clears the device's software release (cybersecurity.services.model_changed); the toast says
+# so, and the Device security screen's lists refetch, for a reader of the register only (cybersecurity.permissions.can_view_devices)
+RELEASE_CLEARED = "its software release was cleared (Device security)"
+CYBER_CHANGED = "cyber-changed"  # the register changed: the Device security screen's lists refetch themselves (views_cybersecurity.CHANGED)
 
 # The toast after each status change, by (to, from); None matches any other from. The mock's two are "tagged out of service" and
 # "returned to service"; the others say what happened the same way.
@@ -234,6 +239,10 @@ def asset_edit(request, tag):
             form.add_service_errors(e)
     if not form.is_valid():
         return _edit_modal(request, form)
+    if getattr(asset, "security_release_cleared", False) and cyber_perms.can_view_devices(request.user):
+        # Slice 37: another model's releases are its own, so update_asset cleared the device's recorded release (history "Device model
+        # changed"). Said, and the Device security screen's lists refreshed, only to a reader of the register.
+        return _saved(request, asset, f"{asset.tag} updated; {RELEASE_CLEARED}", CYBER_CHANGED)
     return _saved(request, asset, f"{asset.tag} updated")
 
 

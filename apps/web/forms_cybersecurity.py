@@ -9,11 +9,10 @@ service; every answer is a choice, "Not recorded" where nothing is. The MDS2's a
 form's question number (a 2013 or 2008 form numbers them otherwise). Nothing here says "required": a field the service needs says so in
 its refusal.
 """
-from dataclasses import dataclass, fields
-
 from django import forms
 
-from apps.cybersecurity import rules
+from apps.cybersecurity import filters, rules
+from apps.cybersecurity.filters import EITHER, WHOSE_OURS, WHOSE_TEMPORARY, FleetFilters
 from apps.cybersecurity.models import (
     DISCLOSURE_GROUP,
     DOCUMENT_MAX,
@@ -35,92 +34,28 @@ from apps.cybersecurity.models import (
     UpdatesBy,
 )
 from apps.cybersecurity.services import KEEP, URL_MAX
-from apps.equipment.models import Ownership
-
-from .forms import WHOSE_OURS, WHOSE_TEMPORARY, parse_uuid
 
 NOT_RECORDED = ("", "Not recorded")
 DATE = {"type": "date"}
 
-# --- the Fleet's filters -----------------------------------------------------------------------------------------------------------
+# --- the Fleet's filters (apps.cybersecurity.filters: the API's device-security list reads the same) ---------------------------------
 
+# The choices the Fleet's filters offer, in words (the values are filters' own)
 WHOSE_FILTERS = [("", "Ours and temporary"), (WHOSE_OURS, "Ours"), (WHOSE_TEMPORARY, "Temporary on site")]
-EITHER = "either"  # connected here or able to connect: what the head figures count (rules.ON_SITE_KEYS)
 CONNECTED_FILTERS = [("", "Any connection"), (EITHER, "Connected here or able to connect"), ("connected", "Connected here, as recorded"),
                      ("can_connect", "Can connect, as disclosed"), ("not_connected", "Not connected"),
                      ("not_recorded", "Connection not recorded")]
-_CONNECTED_KEYS = {EITHER: rules.ON_SITE_KEYS, "connected": (rules.CONNECTED,), "can_connect": (rules.CAN_CONNECT,),
-                   "not_connected": (rules.NOT_CONNECTED,), "not_recorded": (rules.CONNECTION_NOT_RECORDED,)}
 STANDING_FILTERS = [("", "Any standing"), ("updates_ended", "Past security updates or the model's support"),
                     ("updates_end_announced", "Security updates end announced"),
                     ("security_not_recorded", "Security updates end not recorded"),
                     ("os_ended", "OS past its vendor's published support"), ("os_end_announced", "OS support end announced")]
-_STANDING = {"updates_ended": lambda s: s.security.key in rules.ENDED_KEYS,
-             "updates_end_announced": lambda s: s.security.key == rules.UPDATES_END_ANNOUNCED,
-             "security_not_recorded": lambda s: s.security.key == rules.SECURITY_NOT_RECORDED,
-             "os_ended": lambda s: s.os.key == rules.OS_ENDED,
-             "os_end_announced": lambda s: s.os.key == rules.OS_END_ANNOUNCED}
-NORELEASE = "1"
-
-
-@dataclass(frozen=True)
-class FleetFilters:
-    """The Fleet's filters (and a model panel's, carried from the Fleet): whose, department (its id), category, the device's connection
-    as the register reads it, its standing, and "release not recorded". The last three read each device's facts (rules.standings)."""
-
-    whose: str = ""
-    dept: str = ""
-    category: str = ""
-    connected: str = ""
-    standing: str = ""
-    norelease: bool = False
-
-    @property
-    def any(self) -> bool:
-        return any(getattr(self, f.name) for f in fields(self))
-
-    @property
-    def by_device(self) -> bool:
-        """A filter on a device's facts: read through rules.standings, then kept or left out one by one."""
-        return bool(self.connected or self.standing or self.norelease)
-
-    def matches(self, s) -> bool:
-        """A device's standing (rules.DeviceStanding) passes the facts' filters."""
-        if self.connected and s.connection.key not in _CONNECTED_KEYS[self.connected]:
-            return False
-        if self.standing and not _STANDING[self.standing](s):
-            return False
-        return not (self.norelease and s.release is not None)
-
-    def keeps(self, s) -> bool:
-        """Every filter on one device's standing (a model panel's devices, already read)."""
-        a = s.asset
-        ours = a.ownership == Ownership.OWNED
-        if (self.whose == WHOSE_OURS and not ours) or (self.whose == WHOSE_TEMPORARY and ours):
-            return False
-        if (self.dept and str(a.department_id) != self.dept) or (self.category and a.device_model.category != self.category):
-            return False
-        return self.matches(s)
-
-    def params(self) -> dict:
-        """The filters as query parameters (the panel's links carry them)."""
-        out = {"whose": self.whose, "dept": self.dept, "category": self.category, "connected": self.connected, "standing": self.standing,
-               "norelease": NORELEASE if self.norelease else ""}
-        return {k: v for k, v in out.items() if v}
+assert [v for v, _ in CONNECTED_FILTERS[1:]] == list(filters.CONNECTED_KEYS) and [v for v, _ in STANDING_FILTERS[1:]] == list(filters.STANDINGS)
 
 
 def parse_fleet_filters(params, options: dict) -> FleetFilters:
-    """The filters from the address: unknown values are dropped, never a 500. `options`: the departments ([(id, name)]) and categories
-    the Fleet offers."""
-    def one_of(name, allowed):
-        value = params.get(name, "")
-        return value if value in allowed else ""
-
-    dept = params.get("dept", "")
-    dept = dept if parse_uuid(dept) is not None and dept in {d for d, _ in options["departments"]} else ""
-    return FleetFilters(whose=one_of("whose", {v for v, _ in WHOSE_FILTERS}), dept=dept, category=one_of("category", options["categories"]),
-                        connected=one_of("connected", _CONNECTED_KEYS), standing=one_of("standing", _STANDING),
-                        norelease=params.get("norelease") == NORELEASE)
+    """The filters from the address (filters.parse): unknown values are dropped, never a 500. `options`: the departments ([(id, name)])
+    and categories the Fleet offers."""
+    return filters.parse(params, departments=[d for d, _ in options["departments"]], categories=options["categories"])
 
 
 def parse_search(params, limit: int = 120) -> str:

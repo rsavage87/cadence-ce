@@ -1675,8 +1675,9 @@ a.cy-fig:hover{background:var(--surface-2)}
 .cy-foot{margin-top:10px}
 .cy-window{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:12px}
 .cy-window .hint{flex:1;min-width:220px}
-/* A model's panel: the profile and each release a card; a group's source at its heading's end; a release's two standing lines as chips
-   that wrap (the words are the record: never cut off); the devices a list, each line wrapping. */
+/* A model's panel: the profile and each release a card; a group's source at its heading's end; a release's two standing lines and the
+   panel header's chips (.cy-panel-h, never another drawer's header) as chips that wrap (the words are the record: never cut off); the
+   devices a list, each line wrapping. */
 .cy-act{margin:-4px 0 8px}
 .cy-card{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--surface);min-width:0}
 .cy-releases{display:flex;flex-direction:column;gap:10px}
@@ -1684,7 +1685,7 @@ a.cy-fig:hover{background:var(--surface-2)}
 .cy-release-h .t{font-weight:600;overflow-wrap:anywhere}
 .cy-release-h .muted{font-size:12.5px}
 .cy-lines{display:flex;flex-wrap:wrap;gap:6px}
-.cy-lines .chip,.dr-h .chips .chip{white-space:normal;line-height:1.35;padding-top:2px;padding-bottom:2px;max-width:100%}
+.cy-lines .chip,.cy-panel-h .chips .chip{white-space:normal;line-height:1.35;padding-top:2px;padding-bottom:2px;max-width:100%}
 .cy-more{margin-top:8px}
 .cy-more>summary{cursor:pointer;color:var(--accent);font-size:12.5px;font-weight:500;padding:2px 0}
 .cy-more[open]>summary{margin-bottom:6px}
