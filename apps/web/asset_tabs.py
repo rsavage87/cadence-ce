@@ -411,6 +411,8 @@ def contract_share(asset) -> float | None:
     contract = asset.contract if asset.contract_id else None
     if contract is None or contract.is_expired or asset.status == AssetStatus.RETIRED:
         return None
+    if not contract.annual_cost:
+        return 0.0  # a contract that costs nothing in Cadence: a known share of $0 (the rule reads it the same way)
     if not asset.acquisition_cost:
         return None  # nothing to allocate by: the tab says the share cannot be worked out rather than showing $0
     return contract.cost_share_for(asset)
@@ -464,7 +466,7 @@ def _window_words(p) -> str:
     since = f"{p.window_start:%b} {p.window_start.day}, {p.window_start.year}"
     if p.failures is None:
         # review fix: when it has enough, never a rounded month count that reads as the minimum already reached
-        enough_on = add_months(p.window_start, priority.MIN_HISTORY_MONTHS)
+        enough_on = priority.enough_history_on(p.window_start)
         return (f"Failures and service cost have {priority.TOO_LITTLE_HISTORY}: the records start {since}, and "
                 f"{priority.MIN_HISTORY_MONTHS} months are needed (from {enough_on:%b} {enough_on.day}, {enough_on.year}).")
     return f"Failures and service cost count the {months} month{'' if months == 1 else 's'} since {since}."

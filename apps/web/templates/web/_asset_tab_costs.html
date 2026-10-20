@@ -21,7 +21,7 @@
     {# Unknown points are shown beside the score, never scored as 0; flags are apart from the score: must act filled, for review outlined. #}
     {% if o.priority %}<div class="stats cap-stats">
       <div class="stat"><div class="v">{{ o.score_pct }}{% if o.points_unknown %}<small class="cap-unk">+{{ o.points_unknown }} unknown</small>{% endif %}</div><div class="l">replacement score, of 100</div></div>
-      <div class="stat"><div class="v"{% if o.fy_dates %} title="{{ o.fy_label }}: {{ o.fy_dates }}"{% endif %}>{% if o.fy_label %}{{ o.fy_label }}{% else %}—{% endif %}</div><div class="l">{% if o.fy_label %}suggested fiscal year, {{ o.fy_dates }}{% else %}not placed: no install date, support end, or parts end on record{% endif %}</div></div>
+      <div class="stat"><div class="v"{% if o.fy_dates %} title="{{ o.fy_label }}: {{ o.fy_dates }}"{% endif %}>{% if o.fy_label %}{{ o.fy_label }}{% else %}—{% endif %}</div><div class="l">{% if o.fy_label %}suggested fiscal year{% if o.fy_dates %}, {{ o.fy_dates }}{% endif %}{% else %}not placed: no install date, support end, or parts end on record{% endif %}</div></div>
       <div class="stat"><div class="v">{% if o.estimate.amount is not None %}{{ o.estimate.amount|money_k }}{% else %}—{% endif %}</div><div class="l">{% if o.estimate.amount is not None %}{{ o.estimate_words }}{% else %}no replacement estimate{% endif %}</div></div>
     </div>
     {% if o.flags %}<div class="cap-flags cap-flags-dr">{% for f in o.flags %}<span class="cap-flag"><span class="cap-flag-k">{% if f.kind == "crit" %}Must act{% else %}For review{% endif %}</span><span class="chip {{ f.kind }}">{{ f.words }}</span></span>{% endfor %}</div>{% endif %}{% endif %}

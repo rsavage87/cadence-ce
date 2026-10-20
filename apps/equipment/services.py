@@ -512,7 +512,7 @@ def _support_fields(raw: dict, out: dict, errors: dict) -> None:
         if not isinstance(value, date) or isinstance(value, datetime):
             errors[name] = "Enter a day."
             continue
-        if value.year < 2000:
+        if value.year < (2000 if name == "support_checked_on" else SUPPORT_EARLIEST_YEAR):  # a two-digit year typed as 0028
             errors[name] = "Enter the day in full (the year looks wrong)."
         elif name == "support_checked_on" and value > today:
             errors[name] = "The day support was checked cannot be after today."
@@ -545,6 +545,7 @@ class SupportStatus:
 SUPPORT_VALUES = {"parts_ended": 1.0, "support_ended": 0.8, "sale_ended": 0.4, "announced": 0.2, "supported": 0.0}
 SUPPORT_CHECK_MONTHS = 12  # "supported" only when support was checked within this many months and no end is announced
 SUPPORT_HORIZON_YEARS = 50  # a support day further ahead is refused (a "never" placeholder, or a mistyped year)
+SUPPORT_EARLIEST_YEAR = 1950  # a sale's, support's, or parts' end before it is refused (a mistyped year); the check day from 2000
 
 
 def support_status(dm, today: date) -> SupportStatus:
@@ -565,7 +566,7 @@ def support_status(dm, today: date) -> SupportStatus:
                  "sale_ended": f"No longer sold since {fmt(day)}"}[key]
         return SupportStatus(key, SUPPORT_VALUES[key], words)
     future = [(d, label) for d, label in ((dm.support_ends_on, "Support ends"), (dm.parts_end_on, "Parts available until"),
-                                          (dm.sale_ended_on, "Sale ends")) if d is not None]
+                                          (dm.sale_ended_on, "No longer sold from")) if d is not None]  # a sale's end is its first day
     if future:
         day, label = min(future)
         return SupportStatus("announced", SUPPORT_VALUES["announced"], f"{label} {fmt(day)}")

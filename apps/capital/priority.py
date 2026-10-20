@@ -170,19 +170,22 @@ def cost_value(ratio: Decimal) -> float:
     return float((ratio - COST_FLOOR) / (COST_FULL - COST_FLOOR))
 
 
-def contract_covers(coverage: str, wo_type: str, part: bool) -> bool:
-    """Whether a live contract's annual cost already pays for a line of its vendor's work (review fix: by what the contract covers):
-    full service and parts and labor cover the vendor's work; preventive maintenance only covers its PMs; parts only covers parts;
-    time and materials covers nothing (each job is billed). A line it does not cover is counted on top of the device's share."""
+def contract_covers(coverage: str, wo_type: str, part: bool, by_vendor: bool = True) -> bool:
+    """Whether a live contract's annual cost already pays for a line of work on its device (review fix: by what the contract covers):
+    full service and parts and labor cover the vendor's work; preventive maintenance only covers the vendor's PMs; parts only covers
+    parts (the vendor's, or fitted in-house); time and materials covers nothing (each job is billed). In-house labor is never the
+    contract's. A line it does not cover is counted on top of the device's share."""
     from apps.contracts.models import Coverage
     from apps.workorders.models import WoType
 
+    if coverage == Coverage.PARTS:
+        return part
+    if not by_vendor:
+        return False
     if coverage in (Coverage.FULL, Coverage.PARTS_LABOR):
         return True
     if coverage == Coverage.PM_ONLY:
         return wo_type == WoType.PM
-    if coverage == Coverage.PARTS:
-        return part
     return False
 
 
@@ -270,8 +273,9 @@ QUERIES = 9  # score_assets' queries with `start` given; one more (Settings) wit
 class _Inputs:
     first_day: date | None  # the facility's first work order (imported ones included), None before any
     failures: dict  # asset id: [(opened_on, recorded, imported, still open)], failures opened in the earliest window
-    spent: dict  # asset id: [(completed_on, vendor_service, vendor_name, type, a part line, amount)], labor and parts of work completed
-    # in the earliest window
+    spent: dict  # asset id: [(completed_on, the vendor's line, the work order's vendor name, its type, a part, amount)], labor and parts
+    # of work completed in the earliest window (a vendor's line: labor with no technician, else a part line on vendor service; a part: a
+    # part line that is not an imported outside cost, total, or in-house time)
     contracts: dict  # live contract id: (annual cost, the acquisition cost of the devices it covers, coverage, the vendor's key)
     matches: dict  # device model id: [(alert id, status, Class I)], confirmed or under review
     recalls_done: set  # (asset id, alert id): the device's own recall work order completed
@@ -309,7 +313,8 @@ def _read(devices, today: date) -> _Inputs:
     from apps.recalls.models import AlertMatch
     from apps.reports.survey.recalls import is_class_one
     from apps.vendors.rules import vendor_key
-    from apps.workorders import findings
+    from apps.workorders import findings, legacy
+    from apps.workorders.costs import UNNAMED_LABOR
     from apps.workorders.models import LABOR_AMOUNT, OPEN_STATUSES, PART_AMOUNT, LaborLine, PartLine, Source, WorkOrder, WoType
 
     ids = devices.values("pk")
@@ -335,13 +340,22 @@ def _read(devices, today: date) -> _Inputs:
     lines = {"work_order__asset__in": ids, "work_order__completed_on__gte": earliest, "work_order__completed_on__lte": today,
              "work_order__status__in": done, "work_order__type__in": cost_types}
     spent: dict = {}
-    for model, amount, part in ((LaborLine, LABOR_AMOUNT, False), (PartLine, PART_AMOUNT, True)):
-        for row in (model.objects.filter(**lines).order_by()
-                    .values("work_order__asset", "work_order__completed_on", "work_order__vendor_service", "work_order__vendor_name",
-                            "work_order__type").annotate(v=Sum(amount, output_field=money))):
+    # Who a line is: labor with no technician is the vendor's time whatever the work order's assignment says now (as cost_of_service and
+    # costs.py read it); a part line is the vendor's on vendor service. What it is: a part, unless the import wrote an outside cost, a
+    # total, or in-house time as a part line (legacy, costs.add_imported_*).
+    not_parts = (legacy.OUTSIDE, legacy.TOTAL_ONLY, UNNAMED_LABOR)
+    flag = BooleanField()
+    kinds = ((LaborLine, LABOR_AMOUNT, Case(When(technician__isnull=True, then=Value(True)), default=Value(False), output_field=flag),
+              Value(False, output_field=flag)),
+             (PartLine, PART_AMOUNT, Case(When(work_order__vendor_service=True, then=Value(True)), default=Value(False), output_field=flag),
+              Case(When(description__in=not_parts, then=Value(False)), default=Value(True), output_field=flag)))
+    for model, amount, by_vendor, is_part in kinds:
+        for row in (model.objects.filter(**lines).annotate(by_vendor=by_vendor, is_part=is_part).order_by()
+                    .values("work_order__asset", "work_order__completed_on", "by_vendor", "work_order__vendor_name", "work_order__type", "is_part")
+                    .annotate(v=Sum(amount, output_field=money))):
             spent.setdefault(row["work_order__asset"], []).append(
-                (row["work_order__completed_on"], row["work_order__vendor_service"], row["work_order__vendor_name"], row["work_order__type"],
-                 part, Decimal(row["v"] or 0)))
+                (row["work_order__completed_on"], bool(row["by_vendor"]), row["work_order__vendor_name"], row["work_order__type"],
+                 bool(row["is_part"]), Decimal(row["v"] or 0)))
 
     # 6. Live contracts today with the acquisition cost of the devices each covers (Contract.covered_assets: not retired), for each
     # device's share (Contract.cost_share_for's rule, grouped)
@@ -390,6 +404,17 @@ def _day(d: date) -> str:
 
 def _plural(n: int, one: str, many: str) -> str:
     return f"{n} {one if n == 1 else many}"
+
+
+def enough_history_on(start: date) -> date:
+    """The first day a window starting on `start` has MIN_HISTORY_MONTHS of history (window_of's own test: start <=
+    add_months(day, -MIN_HISTORY_MONTHS)); a start on Feb 29 has it from Mar 1."""
+    from datetime import timedelta
+
+    from apps.pm.dates import add_months
+
+    day = add_months(start, MIN_HISTORY_MONTHS)
+    return day if start <= add_months(day, -MIN_HISTORY_MONTHS) else day + timedelta(days=1)
 
 
 def window_of(asset, today: date, first_day: date | None) -> tuple[date, int, bool]:
@@ -490,18 +515,30 @@ def _score(a, today: date, start: int, inp: _Inputs) -> Priority:
         else:
             unallocated = True  # as the Costs tab says (asset_tabs.contract_share): never a silent $0
 
-    def paid_by_contract(vendor, vendor_name, wo_type, part) -> bool:
-        """A vendor line the live contract's annual cost already pays for (contract_covers, by that contract's vendor)."""
-        return (vendor and contract is not None and vendor_key(vendor_name) == contract_vendor
-                and contract_covers(coverage, wo_type, part))
+    def paid_by_contract(by_vendor, vendor_name, wo_type, part) -> bool:
+        """A line the live contract's annual cost already pays for (contract_covers): never under a contract that costs nothing in
+        Cadence (its vendor's billed work is the only cost on record); the vendor's own lines when the work order names the contract's
+        vendor, or no vendor; under parts only, the parts fitted in-house too."""
+        if contract is None or contract[0] <= 0 or not contract_covers(coverage, wo_type, part, by_vendor):
+            return False
+        return not by_vendor or vendor_key(vendor_name) in ("", contract_vendor)
 
     spent = sum((amount for day, vendor, vendor_name, wo_type, part, amount in inp.spent.get(a.pk, ())
                  if w_start <= day <= today and not paid_by_contract(vendor, vendor_name, wo_type, part)), Decimal("0"))
     cost_year = ratio = None
+    at_least = False
     if not enough:
         cost_c = Component(COST, None, TOO_LITTLE_HISTORY)
     elif unallocated:
-        cost_c = Component(COST, None, CONTRACT_SHARE_UNKNOWN)
+        # The share is unknown but never below 0: when the lines counted already reach the top of the scale, the value is known (1.0)
+        floor = (spent / years).quantize(Decimal("0.01"), rounding="ROUND_HALF_UP")
+        if estimate.amount is not None and floor / estimate.amount >= COST_FULL:
+            ratio, at_least = floor / estimate.amount, True
+            pct = (ratio * 100).quantize(Decimal("1"), rounding="ROUND_HALF_UP")
+            cost_c = Component(COST, 1.0, f"at least {pct}% a year of replacement ({_money(floor)} a year before its contract share)",
+                               CONTRACT_SHARE_UNKNOWN)
+        else:
+            cost_c = Component(COST, None, CONTRACT_SHARE_UNKNOWN)
     else:
         cost_year = (spent / years + (share or 0)).quantize(Decimal("0.01"), rounding="ROUND_HALF_UP")
         if estimate.amount is None:
@@ -524,9 +561,9 @@ def _score(a, today: date, start: int, inp: _Inputs) -> Priority:
                              _plural(len(confirmed), "confirmed recall", "confirmed recalls") + " not done on this device"
                              + (", Class I" if class_one else ""), "recall under review" if reviewing else "")
     else:
-        done_here = any(status == AlertMatch.Status.IN_PROGRESS for _alert, status, _one in model_matches)
-        safety_c = Component(SAFETY, 0.0, "confirmed recall done on this device" if done_here else "no confirmed recall",
-                             "recall under review" if reviewing else "")
+        done_here = len({alert for alert, status, _one in model_matches if status == AlertMatch.Status.IN_PROGRESS})
+        safety_c = Component(SAFETY, 0.0, _plural(done_here, "confirmed recall", "confirmed recalls") + " done on this device" if done_here
+                             else "no confirmed recall", "recall under review" if reviewing else "")
 
     # Kept out of use after its latest repair
     if a.latest_repair_check == RepairCheck.NOT_RETURNED and a.status != AssetStatus.IN_SERVICE:
@@ -544,7 +581,7 @@ def _score(a, today: date, start: int, inp: _Inputs) -> Priority:
         condition=a.condition, window_start=w_start, window_years=window_years, failures=failures, unrecorded=unrecorded,
         service_cost_year=cost_year,
         extras={"window_months": months, "failures_per_year": per_year, "still_open": still_open, "imported": imported,
-                "spent": spent if enough else None, "contract_share": share, "cost_ratio": ratio, "recalls": len(confirmed),
+                "spent": spent if enough else None, "contract_share": share, "cost_ratio": ratio, "cost_at_least": at_least, "recalls": len(confirmed),
                 "recall_under_review": reviewing},
     )
 
@@ -573,6 +610,15 @@ def version_words() -> str:
     mult = ", ".join(f"{_mult(MULTIPLIERS[r])} {w}" for r, w in ((RiskClass.LIFE_SUPPORT, "life support"), (RiskClass.HIGH, "high"),
                                                                  (RiskClass.MEDIUM, "medium"), (RiskClass.LOW, "low risk")))
     return f"Score v{SCORE_VERSION}: {parts}; times {mult}"
+
+
+def version_cell() -> str:
+    """The rule's version for a CSV, email, or API row, compact (every row carries it): "v2 (age 30, support 25, failures 20, service
+    cost 15, recall 10; risk x1.0/0.95/0.9/0.85)"."""
+    weights = ", ".join(f"{short} {WEIGHTS[k]}" for k, short in ((AGE, "age"), (SUPPORT, "support"), (RELIABILITY, "failures"),
+                                                                 (COST, "service cost"), (SAFETY, "recall")))
+    mult = "/".join(_mult(MULTIPLIERS[r]) for r in (RiskClass.LIFE_SUPPORT, RiskClass.HIGH, RiskClass.MEDIUM, RiskClass.LOW))
+    return f"v{SCORE_VERSION} ({weights}; risk x{mult})"
 
 
 def _mult(m: float) -> str:

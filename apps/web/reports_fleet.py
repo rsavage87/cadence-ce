@@ -38,7 +38,10 @@ def flag_chips(flags) -> list[dict]:
 def cost_pct(p) -> str:
     """Service cost a year against the replacement estimate as a whole percentage ("18%"), "" when unknown."""
     ratio = p.extras.get("cost_ratio")
-    return "" if ratio is None or p.component(priority.COST).value is None else f"{(ratio * 100).quantize(Decimal('1'), rounding=ROUND_HALF_UP)}%"
+    if ratio is None or p.component(priority.COST).value is None:
+        return ""
+    pct = f"{(ratio * 100).quantize(Decimal('1'), rounding=ROUND_HALF_UP)}%"
+    return f"at least {pct}" if p.extras.get("cost_at_least") else pct  # its contract share unknown, the lines alone at the top
 
 
 def suggested_words(p) -> str:
