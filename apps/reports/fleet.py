@@ -197,9 +197,9 @@ def report_mtbf(today: date) -> dict:
 
 # The first seven columns as before; "Failures, 36 mo" was "Repairs, 6 mo"; the rest appended (each component's points, the flags,
 # support, the suggested fiscal year, the estimate's source, and the install date and acquisition cost the devices import reads back),
-# and last the rule's version with its weights (priority.version_cell: "v2 (age 30, ...)"). A CSV has no header note here (its first
-# row is the columns, and it reads back through the devices import, which leaves a column it has no name for unused), so the version
-# rides on every row, the same words for every reader.
+# and last the rule's version ("v2", priority.SCORE_VERSION; its weights are printed on the screen, the print, and the drawer, and in the
+# README: review fix, round 3, a full-size fleet's CSV stays under the devices import's upload limit). A CSV has no header note here (its
+# first row is the columns, and it reads back through the devices import, which leaves a column it has no name for unused).
 REPLACE_COLUMNS = ["Asset tag", "Device", "Manufacturer", "Model", "Location", "Age years", "Expected life years", "Failures, 36 mo", "Condition",
                    "Score", "Est. replacement", "Points unknown", "Age points", "Support points", "Failure points", "Service cost points",
                    "Recall points", "Multiplier", "Flags", "Support", "Suggested fiscal year", "Estimate source", "Installed on",
@@ -221,7 +221,7 @@ def replace_row(p) -> list:
             "; ".join(priority.FLAG_WORDS[f] for f in p.flags), p.support.words,
             fy_label(p.suggested_fy) if p.suggested_fy is not None else None, ESTIMATE_SOURCE_WORDS.get(p.estimate.source),
             a.installed_on, a.acquisition_cost,
-            "yes" if p.ranked else "no: " + ", ".join(priority.UNRANKED_WORDS[r] for r in p.unranked_reasons), priority.version_cell()]
+            "yes" if p.ranked else "no: " + ", ".join(priority.UNRANKED_WORDS[r] for r in p.unranked_reasons), f"v{priority.SCORE_VERSION}"]
 
 
 def _fleets(every: list) -> list[dict]:

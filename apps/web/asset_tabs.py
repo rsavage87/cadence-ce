@@ -464,6 +464,8 @@ def _window_words(p) -> str:
     are unknown ("... have too little history: 4 months since Jun 19, 2026, and 12 are needed.")."""
     months = p.extras.get("window_months", 0)
     since = f"{p.window_start:%b} {p.window_start.day}, {p.window_start.year}"
+    if p.failures is None and p.extras.get("first_day") is None:
+        return f"Failures and service cost have {priority.TOO_LITTLE_HISTORY}: no work orders in Cadence yet."
     if p.failures is None:
         # review fix: when it has enough, never a rounded month count that reads as the minimum already reached
         enough_on = priority.enough_history_on(p.window_start)

@@ -20,8 +20,9 @@ class DeviceModelAdmin(TenantModelAdmin):
     # Only an approved AEM case sets the AEM interval (apps.pm.aem, the PM program's AEM tab), with the committee's sign-off on record.
     # The CMS mark is set in the model's Edit details (Equipment Approve): marking ends an AEM in force and brings next PMs in
     # (equipment.services._save_model), which a save here would skip.
-    # slice 36: the life source and the manufacturer's support are recorded through Record support (update_device_model checks them)
-    readonly_fields = TenantModelAdmin.readonly_fields + ("aem_interval_months", "oem_schedule_required", "life_source", "sale_ended_on",
+    # slice 36: the expected life (Edit details), its source, and the manufacturer's support (Record support) go through update_device_model
+    readonly_fields = TenantModelAdmin.readonly_fields + ("aem_interval_months", "oem_schedule_required", "expected_life_years", "life_source",
+                                                          "sale_ended_on",
                                                           "support_ends_on", "parts_end_on", "support_notice", "support_checked_on")
 
 
