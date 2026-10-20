@@ -196,11 +196,13 @@ def report_mtbf(today: date) -> dict:
 # device drawer read. The mock's score (age 50%, repairs in six months 30%, condition 20%) and its flat 5% markup are gone.
 
 # The first seven columns as before; "Failures, 36 mo" was "Repairs, 6 mo"; the rest appended (each component's points, the flags,
-# support, the suggested fiscal year, the estimate's source, and the install date and acquisition cost the devices import reads back).
+# support, the suggested fiscal year, the estimate's source, and the install date and acquisition cost the devices import reads back),
+# and last the rule's version ("v2", priority.SCORE_VERSION). A CSV has no header note here (its first row is the columns, and it reads
+# back through the devices import, which leaves a column it has no name for unused), so the version rides on every row.
 REPLACE_COLUMNS = ["Asset tag", "Device", "Manufacturer", "Model", "Location", "Age years", "Expected life years", "Failures, 36 mo", "Condition",
                    "Score", "Est. replacement", "Points unknown", "Age points", "Support points", "Failure points", "Service cost points",
                    "Recall points", "Multiplier", "Flags", "Support", "Suggested fiscal year", "Estimate source", "Installed on",
-                   "Acquisition cost", "Ranked"]
+                   "Acquisition cost", "Ranked", "Score version"]
 ESTIMATE_SOURCE_WORDS = {priority.ESTIMATE_LIST: "list price", priority.ESTIMATE_ACQUISITION: "acquisition cost"}
 OUTLOOK_YEARS = 5  # the current fiscal year and the four after it
 
@@ -218,7 +220,7 @@ def replace_row(p) -> list:
             "; ".join(priority.FLAG_WORDS[f] for f in p.flags), p.support.words,
             fy_label(p.suggested_fy) if p.suggested_fy is not None else None, ESTIMATE_SOURCE_WORDS.get(p.estimate.source),
             a.installed_on, a.acquisition_cost,
-            "yes" if p.ranked else "no: " + ", ".join(priority.UNRANKED_WORDS[r] for r in p.unranked_reasons)]
+            "yes" if p.ranked else "no: " + ", ".join(priority.UNRANKED_WORDS[r] for r in p.unranked_reasons), f"v{priority.SCORE_VERSION}"]
 
 
 def _fleets(every: list) -> list[dict]:
@@ -272,12 +274,15 @@ def _outlook(every: list, today: date, start: int) -> dict:
 
 def _gaps(every: list) -> list[dict]:
     """What the scores do not know, in GAPS order: the devices each gap touches, and for a model's gap (the life source, support not
-    checked) the models too (None for a device's gap)."""
+    checked) the models too (None for a device's gap). `assets` lists the devices by tag and `device_models` the models by name (None
+    for a device's gap), for the screen's links; the counts are their lengths."""
     out = []
     for key in priority.GAPS:
-        hit = [p for p in every if key in p.gaps]
-        models = len({p.asset.device_model_id for p in hit}) if key in (priority.LIFE_SOURCE, priority.SUPPORT_UNCHECKED) else None
-        out.append({"key": key, "words": priority.GAP_WORDS[key], "devices": len(hit), "models": models})
+        hit = sorted((p for p in every if key in p.gaps), key=lambda p: p.asset.tag)
+        dms = {p.asset.device_model_id: p.asset.device_model for p in hit} if key in (priority.LIFE_SOURCE, priority.SUPPORT_UNCHECKED) else None
+        out.append({"key": key, "words": priority.GAP_WORDS[key], "devices": len(hit), "models": None if dms is None else len(dms),
+                    "assets": [p.asset for p in hit],
+                    "device_models": None if dms is None else sorted(dms.values(), key=lambda dm: (dm.manufacturer, dm.model))})
     return out
 
 

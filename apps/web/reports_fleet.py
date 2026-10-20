@@ -1,9 +1,11 @@
 """Presenters for the fleet reports: chart geometry and display values built from apps.reports.fleet's data."""
+from collections import Counter
 from decimal import ROUND_HALF_UP, Decimal
 
 from apps.capital import priority
 from apps.facility.fiscal import describe, fy_label, month_name
 from apps.pm.services import pm_on_time_series
+from apps.workorders import findings
 
 from .overview import pct_label, pm_trend_chart
 
@@ -44,13 +46,28 @@ def suggested_words(p) -> str:
     return f"Suggested for {fy_label(p.suggested_fy)}" if p.suggested_fy is not None else "Not placed"
 
 
+def unknown_words(p) -> str:
+    """ "+25 unknown": the points the rule could not score beside the score ("" when every input is known). Never scored as 0."""
+    return f"+{p.points_unknown} unknown" if p.points_unknown else ""
+
+
+def estimate_source(p) -> str:
+    """The estimate's source in a few words for a table cell ("list price", "acquisition cost, 2017"); the full words go in its title."""
+    e = p.estimate
+    if e.source == priority.ESTIMATE_LIST:
+        return "list price"
+    if e.source == priority.ESTIMATE_ACQUISITION:
+        return f"acquisition cost, {p.asset.installed_on.year}" if p.asset.installed_on else "acquisition cost"
+    return "no estimate"
+
+
 def _top_row(p) -> dict:
     age = p.component(priority.AGE)
     return {"p": p, "asset": p.asset, "chips": flag_chips(p.flags), "age": age.input, "over_life": p.age_years is not None and p.age_years > p.life_years,
             "support": p.support.words, "failures": "" if p.failures is None else str(p.failures),
             "failures_title": p.component(priority.RELIABILITY).input, "cost_pct": cost_pct(p), "cost_title": p.component(priority.COST).input,
-            "score": p.score, "points_unknown": p.points_unknown, "estimate": p.estimate.amount, "estimate_words": p.estimate.words,
-            "suggested": suggested_words(p)}
+            "score": p.score, "points_unknown": p.points_unknown, "unknown": unknown_words(p), "estimate": p.estimate.amount,
+            "estimate_words": p.estimate.words, "estimate_source": estimate_source(p), "suggested": suggested_words(p)}
 
 
 def _fleet_row(f: dict) -> dict:
@@ -63,20 +80,59 @@ def _fleet_row(f: dict) -> dict:
     else:
         median = f"{f['median_score']:g} ({f['min_score']} to {f['max_score']})"
     return {"model": dm, "devices": f["devices"], "past_life": f["past_life"], "life_years": f["life_years"], "support": f["support"].words,
-            "rate": "" if rate is None else f"{rate:.2f}", "median": median, "total": f["total"], "unestimated": f["unestimated"]}
+            "rate": "" if rate is None else f"{rate:.2f}", "median": median, "total": f["total"],
+            "unestimated": f["unestimated"]}
+
+
+GAP_LIMIT = 12  # devices or models listed under each gap; the count is every one, and the CSV carries every device
+UNRANKED_LIMIT = 25  # devices listed under Not ranked; the CSV carries them all (its Ranked column says why)
+# Where each gap is filled in. Life source and support are the model's (its PM program tab, Record support: slice 36 wave 2B).
+GAP_FIX = {
+    priority.NO_INSTALL_DATE: "Add it in the device's Edit details, or fill the CSV's Installed on column and import the file "
+                              "(Settings, Import data, Devices).",
+    priority.NO_ESTIMATE: "Set the model's list price in its Edit details, or the device's acquisition cost.",
+    priority.LIFE_SOURCE: "Record where the model's expected life comes from: its PM program tab, Record support.",
+    priority.SUPPORT_UNCHECKED: "Record what the manufacturer says about support, or that nothing is announced: the model's PM program tab, "
+                                "Record support.",
+}
+
+
+def _gap(g: dict) -> dict:
+    """One gap for the screen: its count, how it is filled in, and the first GAP_LIMIT of its models (a model's gap, each with how many
+    of its devices the gap touches) or devices (by tag)."""
+    of_models = g["device_models"] is not None
+    if of_models:
+        per_model = Counter(a.device_model_id for a in g["assets"])
+        items = [{"model": dm, "devices": per_model[dm.pk]} for dm in g["device_models"]]
+    else:
+        items = g["assets"]
+    return {"key": g["key"], "words": g["words"], "devices": g["devices"], "models": g["models"], "of_models": of_models,
+            "fix": GAP_FIX[g["key"]], "items": items[:GAP_LIMIT], "more": max(len(items) - GAP_LIMIT, 0)}
+
+
+def _year(y: dict, start: int, now: int) -> dict:
+    title = describe(y["fy"], start)  # "FY2027: Jul 1, 2026 to Jun 30, 2027"
+    return {**y, "title": title, "dates": title.partition(": ")[2], "current": y["fy"] == now}
 
 
 def present_replace(r: dict) -> dict:
     """The Replacement planning panel's display values: the top rows with their chips and words, the fleets (the first FLEET_LIMIT), the
-    outlook's fiscal years with their bounds as titles, the gaps, the devices not ranked with why, and the rule's version words."""
+    outlook's fiscal years with their dates, the gaps with how each is filled in and the first of what they touch (the reader's access
+    decides the links, in the template), the devices not ranked with why (the first UNRANKED_LIMIT), and the rule's version words."""
     start = r["start"]
     outlook = r["outlook"]
+    now = outlook["years"][0]["fy"] if outlook["years"] else None
+    unranked = r["unranked"]
     return {
-        "shown": len(r["top"]), "rows": [_top_row(p) for p in r["top"]], "version": r["version"],
+        "shown": len(r["top"]), "rows": [_top_row(p) for p in r["top"]], "version": r["version"], "failure_rule": findings.FAILURE_RULE,
+        "ranked": r["ranked_count"], "not_ranked": len(unranked),
         "fleets": [_fleet_row(f) for f in r["fleets"][:FLEET_LIMIT]], "fleets_total": len(r["fleets"]),
         "fleets_truncated": len(r["fleets"]) > FLEET_LIMIT,
-        "years": [{**y, "title": describe(y["fy"], start)} for y in outlook["years"]], "later": outlook["later"],
+        "years": [_year(y, start, now) for y in outlook["years"]], "later": outlook["later"],
+        "last_label": outlook["years"][-1]["label"] if outlook["years"] else "",
         "not_placed": outlook["not_placed"], "fiscal_start": month_name(start),
-        "gaps": [g for g in r["gaps"] if g["devices"]],
-        "unranked": [{"p": p, "asset": p.asset, "why": ", ".join(priority.UNRANKED_WORDS[k] for k in p.unranked_reasons)} for p in r["unranked"]],
+        "gaps": [_gap(g) for g in r["gaps"] if g["devices"]],
+        "unranked": [{"p": p, "asset": p.asset, "why": ", ".join(priority.UNRANKED_WORDS[k] for k in p.unranked_reasons), "unknown": unknown_words(p)}
+                     for p in unranked[:UNRANKED_LIMIT]],
+        "unranked_more": max(len(unranked) - UNRANKED_LIMIT, 0),
     }

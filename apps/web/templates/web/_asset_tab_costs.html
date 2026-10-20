@@ -16,23 +16,26 @@
     {% else %}<div class="empty">No labor or parts on work orders completed since {{ c.first_year }}.</div>{% endif %}
   </div>
 
-  {% if not c.temporary %}{% with o=c.outlook %}<div class="sec"><h3>Replacement outlook</h3>
-    {# Slice 36: the replacement priority rule (apps.capital.priority), the one the Replacement planning report ranks by. #}
-    {% if o.priority %}<div class="stats">
-      <div class="stat"><div class="v">{{ o.score_pct }}</div><div class="l">score of 100{% if o.points_unknown %}, {{ o.points_unknown }} points unknown{% endif %}</div></div>
-      <div class="stat"><div class="v">{% if o.priority.suggested_fy %}FY{{ o.priority.suggested_fy }}{% else %}—{% endif %}</div><div class="l">{{ o.suggested|lower }}</div></div>
-      <div class="stat"><div class="v">{% if o.estimate.amount is not None %}{{ o.estimate.amount|money_k }}{% else %}—{% endif %}</div><div class="l">{{ o.estimate.words|lower }}</div></div>
+  {% if not c.temporary %}{% with o=c.outlook %}<div class="sec cap-outlook"><h3>Replacement outlook <span>a recommendation, never a decision</span></h3>
+    {# Slice 36: the replacement priority rule (apps.capital.priority), the one the Replacement planning report ranks by (asset_tabs.replacement_outlook). #}
+    {# Unknown points are shown beside the score, never scored as 0; flags are apart from the score: must act filled, for review outlined. #}
+    {% if o.priority %}<div class="stats cap-stats">
+      <div class="stat"><div class="v">{{ o.score_pct }}{% if o.points_unknown %}<small class="cap-unk">+{{ o.points_unknown }} unknown</small>{% endif %}</div><div class="l">replacement score, of 100</div></div>
+      <div class="stat"><div class="v"{% if o.fy_dates %} title="{{ o.fy_label }}: {{ o.fy_dates }}"{% endif %}>{% if o.fy_label %}{{ o.fy_label }}{% else %}—{% endif %}</div><div class="l">{% if o.fy_label %}suggested fiscal year, {{ o.fy_dates }}{% else %}not placed: no install date, support end, or parts end on record{% endif %}</div></div>
+      <div class="stat"><div class="v">{% if o.estimate.amount is not None %}{{ o.estimate.amount|money_k }}{% else %}—{% endif %}</div><div class="l">{% if o.estimate.amount is not None %}{{ o.estimate_words }}{% else %}no replacement estimate{% endif %}</div></div>
     </div>
-    {% if o.flags %}<div style="margin-top:8px">{% for f in o.flags %}<span class="chip {{ f.kind }}">{{ f.words }}</span> {% endfor %}</div>{% endif %}{% endif %}
-    <div class="note"{% if o.priority %} style="margin-top:8px"{% endif %}>{{ o.note }}</div>
-    {% if o.priority %}<details style="margin-top:8px"><summary>How it is scored</summary>
+    {% if o.flags %}<div class="cap-flags cap-flags-dr">{% for f in o.flags %}<span class="cap-flag"><span class="cap-flag-k">{% if f.kind == "crit" %}Must act{% else %}For review{% endif %}</span><span class="chip {{ f.kind }}">{{ f.words }}</span></span>{% endfor %}</div>{% endif %}{% endif %}
+    <div class="note cap-note">{{ o.note }}</div>
+    {% if o.priority %}<details class="cap-how"><summary>How it is scored</summary>
       <div class="tbl-wrap"><table>
         <thead><tr><th>Component</th><th>From</th><th class="num">Weight</th><th class="num">Points</th></tr></thead>
         <tbody>{% for x in o.components %}
-          <tr><td>{{ x.label }}</td><td>{{ x.input }}{% if x.note %}<small>{{ x.note }}</small>{% endif %}</td><td class="num">{{ x.weight }}</td><td class="num">{% if x.points is None %}unknown{% else %}{{ x.points|floatformat:1 }}{% endif %}</td></tr>
+          <tr><td>{{ x.label }}</td><td class="two">{{ x.input }}{% if x.note %}<small>{{ x.note }}</small>{% endif %}</td><td class="num">{{ x.weight }}</td><td class="num">{% if x.points is None %}<span class="muted">unknown</span>{% else %}{{ x.points|floatformat:1 }}{% endif %}</td></tr>
         {% endfor %}</tbody>
       </table></div>
-      <div class="hint" style="margin-top:4px">Times {{ o.priority.multiplier }} for its risk class. Recorded condition {{ o.priority.condition }} of 5 (undated): shown, never scored. {{ o.version }}.</div>
+      <p class="hint">{{ o.known_points|floatformat:1 }} points known{% if o.points_unknown %} ({{ o.points_unknown }} unknown, never scored as 0 and never spread over the others){% endif %}, times {{ o.priority.multiplier }} for its risk class ({{ o.risk_class|lower }}): {{ o.score_pct }}. {{ o.window_words }}</p>
+      <p class="hint">Recorded condition {{ o.priority.condition }} of 5 (undated): shown, never scored.</p>
+      <p class="hint cap-version">{{ o.version }}.</p>
     </details>{% endif %}
   </div>{% endwith %}{% endif %}
 {% endwith %}

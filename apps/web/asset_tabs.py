@@ -10,7 +10,8 @@ on file or say plainly that there is none; the AEM note names the committee's da
 The read models below (pm_upcoming, pm_history, cost_by_year) are plain ORM reads with no web concerns. They belong in
 apps/pm/schedule.py (the first two) and apps/reports/cost.py, and sit here only because this slice's files are split by owner. Each
 runs a fixed number of queries however long the device's history is. Slice 36: replacement_outlook reads the replacement priority rule
-(apps.capital.priority.for_asset), the one the Replacement planning report ranks by, and only words it.
+(apps.capital.priority.for_asset), the one the Replacement planning report ranks by, and only words it; expected_life is the
+Overview's "Expected life 10 yr, through FY2031" line, by the rule's arithmetic and the facility's fiscal year.
 
 Slice 26, incoming inspections: the PM tab's history lists the device's incoming inspections with its PMs (the inspection is its first
 maintenance record, with its result), and a device waiting for its inspection has no upcoming PMs ("After its incoming inspection":
@@ -32,8 +33,9 @@ from django.utils import timezone
 
 from apps.capital import priority
 from apps.equipment import permissions as eq_perms
-from apps.equipment.models import Asset, AssetStatus, Ownership, RiskClass
+from apps.equipment.models import Asset, AssetStatus, LifeSource, Ownership, RiskClass
 from apps.equipment.services import OWNED, USE_BEFORE_FROM, loaner_device_back, owner_maintains, repair_hold_message, status_label
+from apps.facility import fiscal
 from apps.pm.dates import add_months
 from apps.pm.models import AemDecision, AemStatus
 from apps.pm.schedule import DEFAULT_PM_HOURS, planned_technicians
@@ -427,7 +429,8 @@ def replacement_outlook(asset, today: date) -> dict:
                 "temporary": True, "priority": None}
     if asset.status == AssetStatus.RETIRED:
         return {"note": "Retired. Replacement planning scores devices in use only.", "score_pct": None, "priority": None}
-    p = priority.for_asset(asset, today)
+    start = fiscal.start_month()  # read once: the rule's suggested fiscal year and its dates below
+    p = priority.for_asset(asset, today, start)
     if p is None:  # the copy in hand was in use; the row no longer is
         return {"note": "Replacement planning scores our devices in use only.", "score_pct": None, "priority": None}
     drivers = sorted((c for c in p.components if c.points), key=lambda c: -c.points)[:DRIVERS]
@@ -440,11 +443,50 @@ def replacement_outlook(asset, today: date) -> dict:
         parts.append(f"Not ranked: {', '.join(priority.UNRANKED_WORDS[k] for k in p.unranked_reasons)}.")
     if drivers:
         parts.append("Driven most by " + " and ".join(f"{c.label.lower()} ({c.points:.1f} points)" for c in drivers) + ".")
+    estimate_words = f"{p.estimate.words[:1].lower()}{p.estimate.words[1:]}"  # "list price, set Oct 19, 2026": never the month lowered
     if p.estimate.amount is not None:
-        parts.append(f"Estimated replacement {money(p.estimate.amount)} ({p.estimate.words[:1].lower()}{p.estimate.words[1:]}).")
+        parts.append(f"Estimated replacement {money(p.estimate.amount)} ({estimate_words}).")
+    fy = p.suggested_fy
     return {"note": " ".join(parts), "score_pct": p.score, "priority": p, "points_unknown": p.points_unknown, "suggested": suggested,
             "flags": flag_chips(p.flags), "drivers": drivers, "components": p.components, "estimate": p.estimate,
-            "version": priority.version_words(), "failures": p.failures, "cost_pct": cost_pct(p)}
+            "version": priority.version_words(), "failures": p.failures, "cost_pct": cost_pct(p),
+            # display values (slice 36 wave 2): the fiscal year with its dates, the estimate's words, the known points the score is made of
+            "fy_label": fiscal.fy_label(fy) if fy is not None else "", "fy_dates": fiscal.describe(fy, start).partition(": ")[2] if fy is not None else "",
+            "estimate_words": estimate_words, "known_points": sum(c.points for c in p.components if c.points is not None),
+            "risk_class": p.asset.device_model.get_risk_class_display(),
+            "window_words": _window_words(p)}
+
+
+def _window_words(p) -> str:
+    """Failures' and service cost's window in words: "Failures and service cost count the 36 months since Oct 19, 2023.", or why they
+    are unknown ("... have too little history: 4 months since Jun 19, 2026, and 12 are needed.")."""
+    months = p.extras.get("window_months", 0)
+    since = f"{p.window_start:%b} {p.window_start.day}, {p.window_start.year}"
+    if p.failures is None:
+        return (f"Failures and service cost have {priority.TOO_LITTLE_HISTORY}: {months} month{'' if months == 1 else 's'} since {since}, "
+                f"and {priority.MIN_HISTORY_MONTHS} are needed.")
+    return f"Failures and service cost count the {months} month{'' if months == 1 else 's'} since {since}."
+
+
+LIFE_SOURCE_WORDS = {LifeSource.AHA: "from the AHA's estimated useful lives", LifeSource.ECRI: "from ECRI",
+                     LifeSource.MANUFACTURER: "from the manufacturer", LifeSource.OWN_HISTORY: "from our own history"}
+
+
+def expected_life(asset, start: int | None = None) -> dict:
+    """The Overview's Expected life line (slice 36): "10 yr, through FY2031", the fiscal year its life ends by the replacement priority
+    rule's arithmetic (installed_on plus the model's life, a 0 read as 1: the day the rule's suggested fiscal year starts from), and
+    where the life comes from when the model records it ("from the manufacturer"). With no install date, the years alone. Settings
+    (the fiscal year's start) is read once, only when there is an install date and `start` is not given."""
+    dm = asset.device_model
+    life = dm.expected_life_years or 1
+    out = {"words": f"{life} yr", "source": LIFE_SOURCE_WORDS.get(dm.life_source, ""), "title": "", "fy": None}
+    if asset.installed_on is None:
+        return out
+    start = start or fiscal.start_month()
+    ends = add_months(asset.installed_on, 12 * life)
+    fy = fiscal.fiscal_year_of(ends, start)
+    return {**out, "words": f"{life} yr, through {fiscal.fy_label(fy)}", "fy": fy, "ends_on": ends,
+            "title": f"Its expected life ends {ends:%b} {ends.day}, {ends.year} ({fiscal.describe(fy, start)})"}
 
 
 def costs_tab(asset, today: date | None = None) -> dict:

@@ -1,4 +1,4 @@
-{% load web contracts_tags recalls_tags %}
+{% load web contracts_tags recalls_tags capital_tags %}
 {% contracts_access request.user as ct %}
 {# Slice 16: "scoped" (views.asset_drawer_context) hides the contract link and the support editor; the Contracts screen refuses scoped users. #}
 {# Slice 26: a device waiting for its incoming inspection: its status reads "Awaiting inspection", the Overview opens with the banner (asset_tabs.incoming_banner), and the footer offers "Put in use before inspection" to Equipment Approve. #}
@@ -46,7 +46,8 @@
     <div><dt>Condition</dt><dd>{{ asset.condition }} of 5</dd></div>
     {% else %}
     <div><dt>Installed</dt><dd>{% if asset.installed_on %}{{ asset.installed_on|date:"M j, Y" }} ({{ asset.age_years|floatformat:1 }} yr){% else %}—{% endif %}</dd></div>
-    <div><dt>Expected life</dt><dd>{{ dm.expected_life_years }} yr</dd></div>
+    {# Slice 36: the fiscal year its expected life ends (asset_tabs.expected_life, the replacement priority's arithmetic) and where the life comes from, when recorded #}
+    {% expected_life asset as life %}<div><dt>Expected life</dt><dd class="cap-life"{% if life.title %} title="{{ life.title }}"{% endif %}>{{ life.words }}{% if life.source %}<small>{{ life.source }}</small>{% endif %}</dd></div>
     <div><dt>Acquisition cost</dt><dd>{{ asset.acquisition_cost|money }}</dd></div>
     <div><dt>Warranty</dt><dd>{% if asset.warranty_end %}{% if asset.warranty_end|days_until >= 0 %}Through{% else %}Expired{% endif %} {{ asset.warranty_end|date:"M Y" }}{% else %}—{% endif %}</dd></div>
     <div><dt>Support</dt><dd>{{ asset.get_support_type_display }}{% if ct.edit and not scoped %} <button class="link" type="button" hx-get="{% url 'web:asset_support' asset.tag %}" hx-target="#sp-host">Edit</button>{% endif %}</dd></div>

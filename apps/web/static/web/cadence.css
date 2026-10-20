@@ -1569,6 +1569,69 @@ td small.tmp-late{color:var(--crit)}
 
 /* Slice 36 A: the Replacement planning report's panel (flag chips, points unknown, fleets, the fiscal year outlook, the gaps) and the
    device drawer's outlook. Wave 2A owns this block, up to the A end marker. */
+/* The report (web/_report_replace.html; the committee's print, web/print_report.html, includes the same panel and keeps it light). Flags
+   stand apart from the score: must act is a filled chip, for review an outlined one, and the words say which (cap-vh: for screen
+   readers) so colour is never the only sign. Unknown points read "+25 unknown" under the score. Long cells wrap; the tables scroll inside
+   their frame, never the page. */
+.cap-intro{display:grid;gap:6px;margin-bottom:10px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2)}
+.cap-what{font-size:13px;color:var(--ink-2);line-height:1.5}
+.cap-what b{color:var(--ink);font-weight:600}
+.cap-version{font-size:12.5px;color:var(--ink);font-weight:500;overflow-wrap:anywhere}
+.cap-legend{font-size:12.5px;color:var(--ink-3);line-height:1.9}
+.cap-legend .cap-flags{display:inline-flex;margin:0 2px 0 0;vertical-align:baseline}
+.cap-count{margin-bottom:8px}
+.cap-h{margin:18px 0 8px}
+.cap-after{margin-top:6px}
+.cap-before{margin-bottom:6px}
+.cap-flags{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px}
+.cap-flags .chip{white-space:normal;line-height:1.35;padding-top:2px;padding-bottom:2px}
+.cap-flags .chip.crit{background:var(--crit);color:var(--surface)}
+.cap-flags .chip.warn{background:transparent;border-color:var(--warn)}
+.cap-vh{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.cap-tbl th,.cap-tbl td{white-space:normal;padding-left:8px;padding-right:8px}
+.cap-tbl th:first-child,.cap-tbl td:first-child{padding-left:12px}
+.cap-tbl th:last-child,.cap-tbl td:last-child{padding-right:12px}
+.cap-tbl td.num{white-space:nowrap}
+.cap-tbl td .muted,.cap-tbl td.cap-score small{white-space:normal}
+td.cap-asset{min-width:160px;max-width:300px}
+td.cap-model{min-width:150px}
+td.cap-wrap{min-width:110px}
+td.cap-score b{font-size:14px}
+.cap-fy tr.cap-now td{background:var(--accent-soft)}
+.cap-fy .chip{margin-left:4px;vertical-align:1px}
+.cap-gaps{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.cap-gap{padding:8px 12px;border:1px solid var(--line);border-left:3px solid var(--warn);border-radius:8px;background:var(--surface);min-width:0}
+.cap-gap-n{font-weight:500;font-size:13px}
+.cap-gap-items{font-size:12.5px;margin:3px 0 2px;overflow-wrap:anywhere;line-height:1.7}
+.cap-gap-items a.link{font-weight:600}
+/* The committee's print (web/print_report.html's .rp-body: a Letter page's width, 7.5in): every column on the page, so cells shrink and
+   chips wrap rather than the table running off the paper. */
+.rp-body .cap-tbl th,.rp-body .cap-tbl td{padding-left:6px;padding-right:6px}
+.rp-body td.cap-asset{min-width:0;max-width:none}
+.rp-body td.cap-wrap,.rp-body td.cap-model{min-width:0}
+.rp-body .cap-flags .chip{white-space:normal}
+.rp-body .cap-intro{background:none}
+/* The device drawer: the Costs tab's outlook (web/_asset_tab_costs.html) and the Overview's expected life (web/_asset_drawer.html) */
+.cap-stats .v small.cap-unk{font-size:12px;font-weight:500;color:var(--ink-3);letter-spacing:0;margin-left:6px;white-space:nowrap}
+.cap-flags-dr{margin-top:10px;gap:6px 12px}
+.cap-flag{display:inline-flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0}
+.cap-flag-k{font-size:11.5px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--ink-3)}
+.cap-note{margin-top:10px}
+.cap-how{margin-top:10px}
+.cap-how>summary{cursor:pointer;color:var(--accent);font-size:12.5px;font-weight:500;padding:4px 0}
+.cap-how[open]>summary{margin-bottom:6px}
+.cap-how td{white-space:normal;vertical-align:top}
+.cap-how .hint{margin-top:6px}
+.dl dd.cap-life small{display:block;color:var(--ink-3);font-size:12px;font-weight:400}
+@media (max-width:760px){
+  .cap-intro{padding:10px}
+  td.cap-asset{min-width:170px}
+  .cap-how>summary{display:flex;align-items:center;min-height:44px}
+  .cap-gap-items a.link{display:inline-block;padding:6px 0}
+}
+@media (max-width:480px){
+  .cap-stats{grid-template-columns:1fr}
+}
 /* Slice 36 A: end */
 
 /* Slice 36 B: the model drawer's Life and support section and its Record support modal, Settings' Fiscal year panel. Wave 2B owns

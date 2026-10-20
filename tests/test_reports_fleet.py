@@ -312,16 +312,17 @@ def test_replace_rows_rank_on_the_rule_with_unknowns_blank(replace_data):
     assert r["columns"] == REPLACE_COLUMNS and r["columns"][:11] == [
         "Asset tag", "Device", "Manufacturer", "Model", "Location", "Age years", "Expected life years", "Failures, 36 mo", "Condition", "Score",
         "Est. replacement"]
+    assert r["columns"][-2:] == ["Ranked", "Score version"]  # wave 2A: the rule's version rides on every row (a CSV has no header note)
     vent, scale, pump = r["rows"]
     assert vent == ["CE-10001", "ICU ventilator", "Hamilton Medical", "Hamilton-G5", "ICU", pytest.approx(12.0), 10, 3, 1, 31, Decimal("38000"), 25,
                     Decimal("24.0"), None, Decimal("6.7"), Decimal("0.0"), Decimal("0.0"), Decimal("1.0"), "", "Support not checked", "FY2026",
-                    "list price", VENT_INSTALLED, Decimal("38000"), "yes"]
+                    "list price", VENT_INSTALLED, Decimal("38000"), "yes", "v2"]
     assert scale == ["CE-10003", "Scale", "Acme", "Z", "ICU", pytest.approx(730 / 365.25), 1, 0, 3, 27, Decimal("1000"), 25, Decimal("30.0"), None,
                      Decimal("0.0"), Decimal("0.0"), Decimal("0.0"), Decimal("0.9"), "", "Support not checked", "FY2026", "acquisition cost",
-                     SCALE_INSTALLED, Decimal("1000"), "yes"]
+                     SCALE_INSTALLED, Decimal("1000"), "yes", "v2"]
     assert pump == ["CE-10002", "Infusion pump", "BD", "Alaris 8015 PCU", "ICU", None, 8, 0, 5, 0, Decimal("3200"), 55, None, None, Decimal("0.0"),
                     Decimal("0.0"), Decimal("0.0"), Decimal("0.95"), "", "Support not checked", None, "list price", None, Decimal("3200"),
-                    "no: no install date"]
+                    "no: no install date", "v2"]
     assert r["total"] == Decimal("39000") and r["version"] == version_words() and r["start"] == 1 and r["today"] == TODAY
 
 
@@ -357,7 +358,7 @@ def test_replace_lists_a_future_install_date_apart(ctx, dept, pump_model, client
     """A device dated ahead has no age yet: not ranked, its age a blank cell (never 0 or negative)."""
     Asset.objects.create(tag="CE-10010", device_model=pump_model, department=dept, installed_on=TODAY + timedelta(days=200), condition=5)
     r = report_replace(TODAY)
-    assert r["top"] == [] and r["unranked"][0].asset.tag == "CE-10010" and r["rows"][0][5] is None and r["rows"][0][-1] == "no: no install date"
+    assert r["top"] == [] and r["unranked"][0].asset.tag == "CE-10010" and r["rows"][0][5] is None and r["rows"][0][-2] == "no: no install date"
     assert r["unranked"][0].component("age").input == "install date after today"
     freeze_today(TODAY)
     signed_in("director")
@@ -406,8 +407,8 @@ def test_replace_renders_rows_that_open_the_drawer(client, signed_in, replace_da
     body = r.content.decode()
     assert '<tr class="row" hx-get="/equipment/CE-10001/" hx-target="#drawer">' in body
     assert '<a class="tag" href="/equipment/CE-10001/">CE-10001</a> ICU ventilator<small>Hamilton Medical Hamilton-G5 · Suggested for FY2026</small>' in body
-    assert '<td class="num down">12.0 of 10 yr</td>' in body and "<td>Support not checked</td>" in body
-    assert '<td class="num"><b>31</b><small>25 points unknown</small></td>' in body and "$38,000" in body
+    assert '<td class="num down">12.0 of 10 yr</td>' in body and '<td class="cap-wrap">Support not checked</td>' in body
+    assert '<td class="num two cap-score"><b>31</b><small>+25 unknown</small></td>' in body and "$38,000" in body
     assert "for these 2: <b style=\"color:var(--ink)\">$39,000</b>" in body and "no markup" in body and "plus 5%" not in body
     assert version_words() in body and "The top 2 ranked are shown; the CSV carries all 3 devices of ours in use" in body
     assert "Fleets by model" in body and "Outlook by fiscal year" in body and 'title="FY2026: Jan 1, 2026 to Dec 31, 2026"' in body
@@ -416,9 +417,10 @@ def test_replace_renders_rows_that_open_the_drawer(client, signed_in, replace_da
     csv = csv_text(client.get("/reports/replace.csv"))
     assert csv.startswith('Asset tag,Device,Manufacturer,Model,Location,Age years,Expected life years,"Failures, 36 mo",Condition,Score,'
                           "Est. replacement,Points unknown,Age points,Support points,Failure points,Service cost points,Recall points,Multiplier,"
-                          "Flags,Support,Suggested fiscal year,Estimate source,Installed on,Acquisition cost,Ranked")
+                          "Flags,Support,Suggested fiscal year,Estimate source,Installed on,Acquisition cost,Ranked,Score version")
+    assert csv.splitlines()[0].endswith(",Ranked,Score version")
     assert csv.splitlines()[1] == ("CE-10001,ICU ventilator,Hamilton Medical,Hamilton-G5,ICU,12.00,10,3,1,31,38000.00,25,24.0,,6.7,0.0,0.0,1.0,,"
-                                   "Support not checked,FY2026,list price,2014-09-28,38000.00,yes")
+                                   "Support not checked,FY2026,list price,2014-09-28,38000.00,yes,v2")
 
 
 def test_the_api_serves_the_csvs_rows(client, signed_in, replace_data, monkeypatch):
@@ -427,8 +429,8 @@ def test_the_api_serves_the_csvs_rows(client, signed_in, replace_data, monkeypat
     data = client.get("/api/v1/reports/replace/").json()
     assert data["columns"] == REPLACE_COLUMNS
     assert data["rows"][0] == ["CE-10001", "ICU ventilator", "Hamilton Medical", "Hamilton-G5", "ICU", 12.0, 10, 3, 1, 31, 38000.0, 25, 24.0, None,
-                               6.7, 0.0, 0.0, 1.0, "", "Support not checked", "FY2026", "list price", "2014-09-28", 38000.0, "yes"]
-    assert data["rows"][2][5] is None and data["rows"][2][-1] == "no: no install date"
+                               6.7, 0.0, 0.0, 1.0, "", "Support not checked", "FY2026", "list price", "2014-09-28", 38000.0, "yes", "v2"]
+    assert data["rows"][2][5] is None and data["rows"][2][-2] == "no: no install date"
 
 
 def test_replace_rows_are_plain_without_equipment_view(client, signed_in, replace_data, freeze_today):
