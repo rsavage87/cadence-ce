@@ -256,7 +256,7 @@ def _pages(seeded) -> tuple[list, dict]:
         f"/equipment/{c_arm}/?tab=security": ["Not connected here", "Demo embedded OS 7"],
         "/equipment/T-0102/?tab=security": ["5.6 (demo)", "Connected (wireless)"],
         "/api/v1/software-releases/": ["DEMO-MDS2-0001", "5.2 (demo)"],
-        f"/api/v1/device-security/?model={pump_model.pk}": ["5.2 (demo)"],
+        f"/api/v1/device-security/?device_model={pump_model.pk}": ["5.2 (demo)"],
         "/api/v1/device-security/T-0102/": ["5.6 (demo)", "Connected (wireless)"],
     }
     never = {"/security/changes/": [fleet_pump], "/security/changes.csv": [fleet_pump]}
