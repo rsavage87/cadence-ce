@@ -1,0 +1,16 @@
+{% comment %}Slice 37: the device drawer's Security tab (apps.web.asset_cyber.tab_context, under "cyber"; Device security View and Equipment View,
+   never a scoped user). The device's facts and the two standing lines in rules' words, the release card (each group with its source), Record
+   facts (Device security Edit, never on a retired device), and the facts' own history (Show older through the Record facts URL).{% endcomment %}
+{% if cyber.can_record %}<div class="sec-actions"><button class="link" type="button" hx-get="{{ cyber.facts_url }}" hx-target="#modal-card">Record facts</button></div>{% endif %}
+<div class="sec"><h3>This device <span>what this facility knows about this unit</span></h3>
+  {% if cyber.gone %}<div class="note">{{ cyber.gone }}</div>{% endif %}
+  <dl class="dl">{% for r in cyber.lines %}<div{% if r.wide %} class="inc-wide"{% endif %}><dt>{{ r.label }}</dt><dd>{{ r.words }}</dd></div>{% endfor %}</dl>
+</div>
+{% for g in cyber.card %}<div class="sec"><h3>{{ g.title }} <span>{{ g.source }}</span></h3>
+  <dl class="dl">{% for r in g.rows %}<div{% if r.wide %} class="inc-wide"{% endif %}><dt>{{ r.label }}</dt><dd>{% if r.url %}<a class="link" href="{{ r.url }}" target="_blank" rel="noopener noreferrer">{{ r.words }}</a>{% else %}{{ r.words }}{% endif %}</dd></div>{% endfor %}</dl>
+  {% if g.key == "mds2" %}<p class="hint">{{ cyber.mds2_sentence }}</p>{% endif %}
+</div>{% endfor %}
+<div class="sec"><p class="hint">{{ dm.manufacturer }} {{ dm.model }}'s profile and releases are on the <a class="link" href="{{ cyber.model_url }}">Device security screen</a>.</p></div>
+<div class="sec hist-sec"><h3>History <span>this device's security facts, newest first</span></h3>
+  {% if cyber.hist %}{% include "web/_history_entries.html" with hist=cyber.hist %}{% else %}<div class="empty">No facts recorded yet.</div>{% endif %}
+</div>

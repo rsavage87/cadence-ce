@@ -1,0 +1,18 @@
+{% load web %}
+{% comment %}Slice 37: Record facts (views_cyber_facts.record_facts; Device security Edit and Equipment View): the device's release (a version of
+   its model on file, or not recorded), since when, how it is connected here (blank: as the model discloses), and the day checked. The
+   service words every refusal; each comes back under its field with what was typed kept.{% endcomment %}
+{% with dm=asset.device_model %}
+<div class="modal-h"><h2>{{ asset.tag }}: record facts</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+<form id="cf-form" class="dv-form" hx-post="{% url 'web:cybersecurity_facts' asset.tag %}?tab=security" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    <p class="full hint">{{ dm.manufacturer }} {{ dm.model }} · {{ asset.department }}{% if asset.room %}, room {{ asset.room }}{% endif %}. What this facility knows about this unit; what the model can do is its profile's.</p>
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    {% include "web/_asset_field.html" with field=form.release %}
+    {% include "web/_asset_field.html" with field=form.release_since %}
+    {% include "web/_asset_field.html" with field=form.network %}
+    {% include "web/_asset_field.html" with field=form.checked_on %}
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Save</button></div>
+</form>
+{% endwith %}
