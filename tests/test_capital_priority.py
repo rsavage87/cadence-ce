@@ -204,7 +204,8 @@ def test_a_live_contracts_share_replaces_its_vendors_work(history, dept, model):
     for x in (a, b, gone):
         ct_services.add_asset(contract, x)
     eq.set_status(gone, AssetStatus.RETIRED)  # not covered: no part of the share
-    work(a, WoType.REPAIR, TODAY - timedelta(days=40), completed=TODAY - timedelta(days=38), labor=[(5, 100)], vendor=True)  # the contract's
+    work(a, WoType.REPAIR, TODAY - timedelta(days=40), completed=TODAY - timedelta(days=38), labor=[(5, 100)], vendor=True,
+         vendor_name="Acme")  # the contract's vendor, under full service: the share pays for it
     work(a, WoType.REPAIR, TODAY - timedelta(days=30), completed=TODAY - timedelta(days=28), labor=[(1, 100)])  # in-house: counted
     p = score(a)
     years = Decimal(1096) / Decimal("365.25")
@@ -219,13 +220,15 @@ def test_a_live_contracts_share_replaces_its_vendors_work(history, dept, model):
     assert score(a).extras["contract_share"] is None
 
 
-def test_a_device_with_no_acquisition_cost_has_no_share_and_a_contract_with_none_covered_shares_nothing(history, dept, model):
+def test_a_device_with_no_acquisition_cost_on_a_contract_none_covered_can_share_has_an_unknown_service_cost(history, dept, model):
     a = device(model, dept, "CE-1", years=6, acquisition_cost=Decimal("0"))
     contract = ct_services.create_contract(reference="SC-1", vendor="Acme", start_on=TODAY - timedelta(days=100), end_on=TODAY + timedelta(days=100),
                                            annual_cost=Decimal("1000"))
     ct_services.add_asset(contract, a)
-    p = score(a)
-    assert p.extras["contract_share"] == 0 and p.service_cost_year == 0 and p.component(P.COST).value == 0.0
+    p = score(a)  # its share cannot be worked out (as the Costs tab says): never a silent $0
+    cost = p.component(P.COST)
+    assert p.extras["contract_share"] is None and p.service_cost_year is None
+    assert (cost.value, cost.input) == (None, P.CONTRACT_SHARE_UNKNOWN) and p.points_unknown == P.WEIGHTS[P.COST]
 
 
 # --- the replacement estimate -------------------------------------------------------------------------------------------------

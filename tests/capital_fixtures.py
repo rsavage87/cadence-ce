@@ -5,9 +5,10 @@ Slice 36, the replacement priority (apps.capital.priority): helpers for its inpu
 - TODAY: the day the tests score on (a Monday in October 2026; passed to score_assets, never read from the clock).
 - device(model, dept, tag, *, years=None, **fields): a device of ours installed `years` before TODAY (None: no install date).
 - work(asset, type, opened, *, completed=None, cancelled=False, labor=(), parts=(), finding=None, check=None, vendor=False,
-  imported=False, alert=None): a work order opened on `opened` and, when given, completed (or cancelled); labor (hours, rate) and part
-  (quantity, unit cost) lines; the stored finding, checks after repair, and source set as completion and the import would (they are
-  not editable by hand).
+  vendor_name=None, imported=False, alert=None): a work order opened on `opened` and, when given, completed (or cancelled); labor
+  (hours, rate) and part (quantity, unit cost) lines; on vendor service, the vendor's name ("Vendor field service" unless given; a live
+  contract pays only for its own vendor's work); the stored finding, checks after repair, and source set as completion and the
+  import would (they are not editable by hand).
 - recall_match(model, *, classification="Class II", status=IN_PROGRESS): an alert matched to the model, with its status.
 """
 from datetime import date, timedelta
@@ -32,9 +33,9 @@ def device(model, dept, tag, *, years=None, **fields) -> Asset:
 
 
 def work(asset, type, opened, *, completed=None, cancelled=False, labor=(), parts=(), finding=None, check=None, vendor=False,
-         imported=False, alert=None) -> WorkOrder:
+         vendor_name=None, imported=False, alert=None) -> WorkOrder:
     wo = create_work_order(asset=asset, type=type, priority="normal", problem="Test", opened_on=opened, vendor_service=vendor,
-                           vendor_name="Vendor field service" if vendor else "", alert=alert)
+                           vendor_name=(vendor_name or "Vendor field service") if vendor else "", alert=alert)
     for hours, rate in labor:
         LaborLine.objects.create(work_order=wo, hours=Decimal(str(hours)), rate=Decimal(str(rate)))
     for quantity, unit_cost in parts:

@@ -312,17 +312,17 @@ def test_replace_rows_rank_on_the_rule_with_unknowns_blank(replace_data):
     assert r["columns"] == REPLACE_COLUMNS and r["columns"][:11] == [
         "Asset tag", "Device", "Manufacturer", "Model", "Location", "Age years", "Expected life years", "Failures, 36 mo", "Condition", "Score",
         "Est. replacement"]
-    assert r["columns"][-2:] == ["Ranked", "Score version"]  # wave 2A: the rule's version rides on every row (a CSV has no header note)
+    assert r["columns"][-2:] == ["Ranked", "Score version"]  # the rule's version with its weights rides on every row (a CSV has no header note)
     vent, scale, pump = r["rows"]
     assert vent == ["CE-10001", "ICU ventilator", "Hamilton Medical", "Hamilton-G5", "ICU", pytest.approx(12.0), 10, 3, 1, 31, Decimal("38000"), 25,
                     Decimal("24.0"), None, Decimal("6.7"), Decimal("0.0"), Decimal("0.0"), Decimal("1.0"), "", "Support not checked", "FY2026",
-                    "list price", VENT_INSTALLED, Decimal("38000"), "yes", "v2"]
+                    "list price", VENT_INSTALLED, Decimal("38000"), "yes", version_words()]
     assert scale == ["CE-10003", "Scale", "Acme", "Z", "ICU", pytest.approx(730 / 365.25), 1, 0, 3, 27, Decimal("1000"), 25, Decimal("30.0"), None,
                      Decimal("0.0"), Decimal("0.0"), Decimal("0.0"), Decimal("0.9"), "", "Support not checked", "FY2026", "acquisition cost",
-                     SCALE_INSTALLED, Decimal("1000"), "yes", "v2"]
+                     SCALE_INSTALLED, Decimal("1000"), "yes", version_words()]
     assert pump == ["CE-10002", "Infusion pump", "BD", "Alaris 8015 PCU", "ICU", None, 8, 0, 5, 0, Decimal("3200"), 55, None, None, Decimal("0.0"),
                     Decimal("0.0"), Decimal("0.0"), Decimal("0.95"), "", "Support not checked", None, "list price", None, Decimal("3200"),
-                    "no: no install date", "v2"]
+                    "no: no install date", version_words()]
     assert r["total"] == Decimal("39000") and r["version"] == version_words() and r["start"] == 1 and r["today"] == TODAY
 
 
@@ -420,7 +420,7 @@ def test_replace_renders_rows_that_open_the_drawer(client, signed_in, replace_da
                           "Flags,Support,Suggested fiscal year,Estimate source,Installed on,Acquisition cost,Ranked,Score version")
     assert csv.splitlines()[0].endswith(",Ranked,Score version")
     assert csv.splitlines()[1] == ("CE-10001,ICU ventilator,Hamilton Medical,Hamilton-G5,ICU,12.00,10,3,1,31,38000.00,25,24.0,,6.7,0.0,0.0,1.0,,"
-                                   "Support not checked,FY2026,list price,2014-09-28,38000.00,yes,v2")
+                                   f'Support not checked,FY2026,list price,2014-09-28,38000.00,yes,"{version_words()}"')
 
 
 def test_the_api_serves_the_csvs_rows(client, signed_in, replace_data, monkeypatch):
@@ -429,7 +429,8 @@ def test_the_api_serves_the_csvs_rows(client, signed_in, replace_data, monkeypat
     data = client.get("/api/v1/reports/replace/").json()
     assert data["columns"] == REPLACE_COLUMNS
     assert data["rows"][0] == ["CE-10001", "ICU ventilator", "Hamilton Medical", "Hamilton-G5", "ICU", 12.0, 10, 3, 1, 31, 38000.0, 25, 24.0, None,
-                               6.7, 0.0, 0.0, 1.0, "", "Support not checked", "FY2026", "list price", "2014-09-28", 38000.0, "yes", "v2"]
+                               6.7, 0.0, 0.0, 1.0, "", "Support not checked", "FY2026", "list price", "2014-09-28", 38000.0, "yes",
+                               version_words()]
     assert data["rows"][2][5] is None and data["rows"][2][-2] == "no: no install date"
 
 

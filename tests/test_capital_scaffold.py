@@ -86,7 +86,10 @@ def model(**kw):
     ({"support_ends_on": date(2028, 3, 31)}, "announced", 0.2, "Support ends Mar 31, 2028"),
     ({"sale_ended_on": date(2027, 1, 1), "parts_end_on": date(2030, 1, 1)}, "announced", 0.2, "Sale ends Jan 1, 2027"),
     ({"sale_ended_on": date(2025, 1, 1), "support_ends_on": date(2028, 3, 31)}, "sale_ended", 0.4, "No longer sold since Jan 1, 2025"),
-    ({"sale_ended_on": date(2024, 1, 1), "support_ends_on": TODAY}, "support_ended", 0.8, "Manufacturer support ended Oct 19, 2026"),
+    ({"sale_ended_on": date(2024, 1, 1), "support_ends_on": TODAY}, "sale_ended", 0.4,  # support's last day: still supported
+     "No longer sold since Jan 1, 2024"),
+    ({"sale_ended_on": date(2024, 1, 1), "support_ends_on": date(2026, 10, 18)}, "support_ended", 0.8,
+     "Manufacturer support ended Oct 18, 2026"),
     ({"support_ends_on": date(2025, 1, 1), "parts_end_on": date(2026, 6, 1)}, "parts_ended", 1.0,
      "Parts no longer available after Jun 1, 2026"),
     ({"parts_end_on": date(2020, 1, 1), "support_ends_on": date(2025, 1, 1)}, "parts_ended", 1.0,  # any order: the gravest passed
