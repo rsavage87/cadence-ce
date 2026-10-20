@@ -10,11 +10,13 @@ Slice 37 review fixes, F1 (apps/cybersecurity/rules.py and services.py), each on
 - C6: the MDS2 link refuses session and secret keys (sessionid, PHPSESSID, JSESSIONID, a path parameter, client_secret, ...).
 - C7: the bulk cap's refusal never asks for a department when the devices are all one department's.
 - C2 / C3 (PostgreSQL): a model change in progress is waited for and seen (the old model's release refused, never saved); the bulk set
-  locks the devices before their security rows, so it never deadlocks with an import chunk changing models in pk order; a deadlock it
-  does meet answers RACE in words, never a server error.
+  locks the devices before their security rows, so it never deadlocks with an import chunk changing models in tag order (rounds 2 and
+  3: the device lock's order; the devices are tagged against their pks, so no test leans on random UUIDs); a deadlock it does meet
+  answers RACE in words, never a server error.
 """
 import threading
 import time
+import uuid
 from datetime import datetime, timedelta
 from datetime import time as clock
 
@@ -369,12 +371,15 @@ def _another_waits_on_a_lock(timeout: float = 15) -> bool:
 
 
 def _two_models(tenant, tags=("CE-1",)):
+    """Models A (its releases 1.0 and 2.0) and B, and A's devices tagged `tags` in order, their pks against it (review round 3: the
+    ids are drawn and sorted first, so the first tag has the highest pk: tag order, the device lock's, is never pk order by chance)."""
+    ids = sorted((uuid.uuid4() for _ in tags), reverse=True)
     with tenant_context(tenant):
         dept = Department.objects.create(name="ICU")
         a = DeviceModel.objects.create(manufacturer="BD", model="Alaris A", description="Pump", category="Infusion pumps")
         b = DeviceModel.objects.create(manufacturer="BD", model="Alaris B", description="Pump", category="Infusion pumps")
         rel_a, rel_a2 = release(a, "1.0"), release(a, "2.0")
-        assets = [Asset.objects.create(tag=tag, device_model=a, department=dept) for tag in tags]
+        assets = [Asset.objects.create(id=pk, tag=tag, device_model=a, department=dept) for pk, tag in zip(ids, tags)]
     return a, b, rel_a, rel_a2, assets
 
 
@@ -465,48 +470,52 @@ def _chunk(tenant, devices, model, changing: threading.Event):
 
 @needs_postgres
 @pytest.mark.django_db(transaction=True)
-def test_a_bulk_set_and_an_import_chunk_in_pk_order_never_deadlock(tenant):
-    """C3's scenario: L and H (L's pk lower) are model A, only H has a security row. A chunk changes L then H to model B while Set
-    devices to this release runs on A: the bulk waits on L's row before taking any security row, the chunk changes H and commits, and
-    the bulk refuses in words. Never a deadlock, never A's release on a model-B device."""
-    a, b, rel_a, rel_a2, devices = _two_models(tenant, tags=("CE-1", "CE-2"))
-    low, high = sorted(devices, key=lambda d: d.pk)
+def test_a_bulk_set_and_an_import_chunk_in_tag_order_never_deadlock(tenant):
+    """C3's scenario, in tag order (review rounds 2 and 3 changed this test: the device lock runs in tag order, so the chunk's order
+    that never deadlocks is tag order; it was pk order, and the tags' random pks made the test pass or fail by chance). CE-1 and CE-2
+    (CE-1's pk the higher) are model A, only CE-2 has a security row. A chunk changes CE-1 then CE-2 to model B while Set devices to
+    this release runs on A: the bulk waits on CE-1's row before it holds CE-2 or any security row, the chunk changes CE-2 and commits,
+    and the bulk refuses in words. Never a deadlock, never A's release on a model-B device."""
+    a, b, rel_a, rel_a2, (ce1, ce2) = _two_models(tenant, tags=("CE-1", "CE-2"))
+    assert ce1.pk > ce2.pk  # tag order is not pk order
     with tenant_context(tenant):
-        record_facts(high, by=None, release=rel_a2)
+        record_facts(ce2, by=None, release=rel_a2)
     changing = threading.Event()
     errors, results = {}, {}
 
     def bulk():
         assert changing.wait(20)
         with tenant_context(tenant):
-            return record_facts_for(a, [low, high], by=None, release=rel_a)
+            return record_facts_for(a, [ce2, ce1], by=None, release=rel_a)
 
-    _both(_chunk(tenant, [low, high], b, changing), bulk, errors, results)
+    _both(_chunk(tenant, [ce1, ce2], b, changing), bulk, errors, results)
     assert results.get("first") == ["ok", "ok"], (results, errors)
     assert isinstance(errors.get("second"), ValidationError), (results, errors)  # it saw both moved: no deadlock (RACE), no 500
     assert errors["second"].message_dict == {"assets": ["CE-1, CE-2 are not BD Alaris A: set one model's devices at a time."]}
     assert _crossed(tenant) == []
     with tenant_context(tenant):
         assert set(Asset.objects.values_list("device_model_id", flat=True)) == {b.pk}
-        assert list(DeviceSecurity.objects.values_list("release_id", flat=True)) == [None]  # model_changed cleared H's
+        assert list(DeviceSecurity.objects.values_list("release_id", flat=True)) == [None]  # model_changed cleared CE-2's
 
 
 @needs_postgres
 @pytest.mark.django_db(transaction=True)
 def test_a_bulk_set_that_meets_a_chunk_in_another_order_answers_race(tenant):
-    """A chunk changing H then L (its file's order, not pk order) holds H while the bulk holds L: PostgreSQL ends the bulk (it waited
-    first), which answers RACE in words, and the chunk commits both rows."""
-    a, b, rel_a, _rel_a2, devices = _two_models(tenant, tags=("CE-1", "CE-2"))
-    low, high = sorted(devices, key=lambda d: d.pk)
+    """A chunk changing CE-2 then CE-1 (its file's order, against tag order; review round 3 changed this test: tag order, the tags set
+    against their pks, where it was pk order with random pks) holds CE-2 while the bulk holds CE-1 (FOR KEY SHARE) and waits on CE-2;
+    the chunk then waits on CE-1: PostgreSQL ends the bulk (it waited first), which answers RACE in words, and the chunk commits both
+    rows."""
+    a, b, rel_a, _rel_a2, (ce1, ce2) = _two_models(tenant, tags=("CE-1", "CE-2"))
+    assert ce1.pk > ce2.pk  # the chunk's order is pk order: tag order alone decides
     changing = threading.Event()
     errors, results = {}, {}
 
     def bulk():
         assert changing.wait(20)
         with tenant_context(tenant):
-            return record_facts_for(a, [low, high], by=None, release=rel_a)
+            return record_facts_for(a, [ce1, ce2], by=None, release=rel_a)
 
-    _both(_chunk(tenant, [high, low], b, changing), bulk, errors, results)
+    _both(_chunk(tenant, [ce2, ce1], b, changing), bulk, errors, results)
     assert results.get("first") == ["ok", "ok"], (results, errors)
     assert isinstance(errors.get("second"), ValidationError), (results, errors)
     assert errors["second"].message_dict == {"assets": [services.RACE]}

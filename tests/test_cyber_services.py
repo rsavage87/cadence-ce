@@ -537,47 +537,71 @@ def _both(first, second, errors, results):
     assert not a.is_alive() and not b.is_alive()
 
 
+def _another_waits_on_a_lock(timeout: float = 10) -> bool:
+    """Until another connection to this database waits on a lock (pg_stat_activity), read on this thread's connection (inside its
+    transaction: the statistics snapshot is cleared before each look, else the first one is read again until the transaction ends)."""
+    deadline = time.monotonic() + timeout
+    with connection.cursor() as cur:
+        while time.monotonic() < deadline:
+            cur.execute("SELECT pg_stat_clear_snapshot()")
+            cur.execute("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() "
+                        "AND wait_event_type = 'Lock'")
+            if cur.fetchone()[0]:
+                return True
+            time.sleep(0.05)
+    return False
+
+
 @needs_postgres
 @pytest.mark.django_db(transaction=True)
 def test_two_adds_of_one_version_at_once(tenant, monkeypatch):
-    """Both pass the look for the version before either inserts (a barrier in the field check): the second insert waits on the unique
-    key, then fails, and reads back as already on file, in words (never an IntegrityError)."""
+    """Review round 3 changed this test: every register writer takes the facility's register lock first, so two adds of one version
+    queue. The first pauses after its field check (it has looked: no release) until the second waits on a lock (the register's); the
+    second then looks, finds the first's release, and reads as already on file, in words, before any insert (no IntegrityError read
+    back). (Was: both passed the look behind a barrier, and the second's insert failed on the unique key, read back as on file.)"""
     with tenant_context(tenant):
         model = DeviceModel.objects.create(manufacturer="BD", model="Alaris", description="Pump", category="Infusion pumps")
-    barrier = threading.Barrier(2, timeout=20)
+    started, looked, waited = threading.Event(), {}, {}
     real = services._check_row
 
-    def meet(*args, **kwargs):
-        real(*args, **kwargs)
-        barrier.wait()
+    def check_row(values, *, versioned, errors):
+        name = threading.current_thread().name
+        looked[name] = errors.get("version")  # what its look for the version found
+        real(values, versioned=versioned, errors=errors)
+        if name == "first":
+            started.set()
+            waited["first"] = _another_waits_on_a_lock()
 
-    monkeypatch.setattr(services, "_check_row", meet)
+    monkeypatch.setattr(services, "_check_row", check_row)
     errors, results = {}, {}
 
-    def add(typed):
+    def add(typed, wait):
         def call():
+            if wait:
+                assert started.wait(20)
             with tenant_context(tenant):
                 return add_release(model, by=None, version=typed).version
         return call
 
-    _both(add("9.33.1"), add("V9.33.1"), errors, results)
-    assert len(results) == 1 and len(errors) == 1, (results, errors)
-    (won,), (lost,) = results.values(), errors.values()
-    assert isinstance(lost, ValidationError) and lost.message_dict == {"version": [f"Version {won} is already on file for this model."]}
+    _both(add("9.33.1", False), add("V9.33.1", True), errors, results)
+    assert results == {"first": "9.33.1"} and isinstance(errors.get("second"), ValidationError), (results, errors)
+    assert errors["second"].message_dict == {"version": ["Version 9.33.1 is already on file for this model."]}
+    assert waited == {"first": True}  # the second waited for the first
+    assert looked == {"first": None, "second": "Version 9.33.1 is already on file for this model."}  # refused by its look
     with tenant_context(tenant):
         assert SoftwareRelease.objects.count() == 1
 
 
-def _hold_device_lock(monkeypatch, who: str, held: threading.Event):
-    """The thread named `who` sleeps while it holds the devices' rows (services._locked_devices: after the release, before any security
-    row)."""
+def _hold_device_lock(monkeypatch, who: str, held: threading.Event, waited: dict):
+    """The thread named `who` holds the devices' rows (services._locked_devices: after the register lock and the release, before any
+    security row) until another connection waits on a lock (waited[who]: whether one did)."""
     real = services._locked_devices
 
     def slow(ids):
         found = real(ids)
         if threading.current_thread().name == who:
             held.set()
-            time.sleep(1.0)
+            waited[who] = _another_waits_on_a_lock()
         return found
 
     monkeypatch.setattr(services, "_locked_devices", slow)
@@ -586,16 +610,17 @@ def _hold_device_lock(monkeypatch, who: str, held: threading.Event):
 @needs_postgres
 @pytest.mark.django_db(transaction=True)
 def test_two_records_on_a_new_device_at_once(tenant, monkeypatch):
-    """Review fixes C2 and C3 changed this test: the device's row is locked before its security row, so two records on a new device
-    no longer both find no row: the second waits for the first's commit, then records on the row it created. One row, two history
-    rows, no IntegrityError. (Was: both found no row behind a barrier, and the loser's insert read the row back.)"""
+    """Review round 3 changed this test: every register writer takes the facility's register lock first, so the second record waits
+    for the first's commit (on the register lock, not the device's row: round 2's FOR KEY SHARE let both through), then records on the
+    row the first created. One row, two history rows, no IntegrityError. (Review fixes C2 and C3: the second waited on the device's row
+    FOR UPDATE; before them: both found no row behind a barrier, and the loser's insert read the row back.)"""
     with tenant_context(tenant):
         dept = Department.objects.create(name="ICU")
         model = DeviceModel.objects.create(manufacturer="BD", model="Alaris", description="Pump", category="Infusion pumps")
         rel = release(model, "9.33.1")
         asset = Asset.objects.create(tag="CE-1", device_model=model, department=dept)
-    held = threading.Event()
-    _hold_device_lock(monkeypatch, "first", held)
+    held, waited = threading.Event(), {}
+    _hold_device_lock(monkeypatch, "first", held, waited)
     real, calls = services._reason, []
 
     def counted(*args, **kwargs):
@@ -616,6 +641,7 @@ def test_two_records_on_a_new_device_at_once(tenant, monkeypatch):
 
     _both(first, second, errors, results)
     assert not errors and results == {"first": rel.pk, "second": Network.WIRELESS}, (results, errors)
+    assert waited == {"first": True}  # the second waited for the first (on the register lock)
     assert calls == ["first", "second"]  # one record each: the second found the first's row
     with tenant_context(tenant):
         sec = DeviceSecurity.objects.get()
@@ -758,15 +784,16 @@ def test_a_bulk_set_while_the_release_is_removed(tenant, monkeypatch):
 @needs_postgres
 @pytest.mark.django_db(transaction=True)
 def test_a_bulk_set_waits_for_a_record_on_a_new_device(tenant, monkeypatch):
-    """Review fixes C2 and C3 changed this test: the bulk set locks the devices' rows before their security rows, so a record on a new
-    device that holds the device's row makes the bulk wait; it then sets the row the record created (never a second insert): both
-    devices set, the record's network kept. (Was: both found no row, and the bulk's insert lost the create race: RACE.)"""
+    """Review round 3 changed this test: every register writer takes the facility's register lock first, so a record on a new device
+    makes the bulk set wait (on the register lock: round 2's FOR KEY SHARE let both through to the create race); it then sets the row the
+    record created (never a second insert): both devices set, the record's network kept. (Review fixes C2 and C3: the bulk waited on the
+    device's row; before them: both found no row, and the bulk's insert lost the create race: RACE.)"""
     model, rel, asset = _setup_release(tenant)
     with tenant_context(tenant):
         dept = Department.objects.get()
         other = Asset.objects.create(tag="CE-0", device_model=model, department=dept)
-    held = threading.Event()
-    _hold_device_lock(monkeypatch, "first", held)
+    held, waited = threading.Event(), {}
+    _hold_device_lock(monkeypatch, "first", held, waited)
     errors, results = {}, {}
 
     def single():
@@ -780,6 +807,7 @@ def test_a_bulk_set_waits_for_a_record_on_a_new_device(tenant, monkeypatch):
 
     _both(single, bulk, errors, results)
     assert not errors and results == {"first": Network.WIRED, "second": 2}, (results, errors)
+    assert waited == {"first": True}  # the bulk set waited for the record (on the register lock)
     with tenant_context(tenant):
         assert sorted(DeviceSecurity.objects.values_list("asset__tag", "release_id", "network")) == [
             ("CE-0", rel.pk, ""), ("CE-1", rel.pk, Network.WIRED)]
