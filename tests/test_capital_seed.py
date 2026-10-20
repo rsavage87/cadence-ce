@@ -23,6 +23,7 @@ from apps.tenants.models import Tenant
 from apps.workorders.models import RepairCheck, WorkOrder
 
 DIALYSIS, VITALS, MONITOR, BED, PUMP = "2008T BlueStar", "Connex Spot", "IntelliVue MX750", "Centrella", "Alaris 8015 PCU"
+STERILIZER = "Amsco 400"
 DAY = timedelta(days=1)
 
 
@@ -54,7 +55,11 @@ def test_riverside_plans_by_july_and_ce_recorded_support_and_life_sources_on_a_f
         # the vital signs monitors: parts available until a later day; the patient monitors: supported, checked, nothing announced
         assert models[VITALS].parts_end_on > today and support_status(models[VITALS], today).words.startswith("Parts available until ")
         assert support_status(models[MONITOR], today).key == "supported" and models[MONITOR].support_notice == ""
-        recorded = {DIALYSIS, VITALS, MONITOR}
+        # the sterilizers: parts no longer available (after support ended): the must-act flag
+        st = models[STERILIZER]
+        assert st.sale_ended_on < st.support_ends_on < st.parts_end_on < today and re.fullmatch(r"FSN-\d{4}-031", st.support_notice)
+        assert support_status(st, today).words.startswith("Parts no longer available since ")
+        recorded = {DIALYSIS, STERILIZER, VITALS, MONITOR}
         assert {m for m, dm in models.items() if dm.support_checked_on} == recorded
         assert all(support_status(dm, today).key == "unknown" for m, dm in models.items() if m not in recorded)
         # each through update_device_model by the CE manager: the model's history says who
@@ -75,9 +80,12 @@ def test_the_replacement_report_has_something_in_every_section(client, seeded):
         scored = priority.score_assets(priority.scored_assets(), today)
         assert r["scored_count"] == len(scored) == len(r["rows"]) and r["ranked_count"] > REPLACE_LIMIT == len(r["top"])
 
-        # the top shows chips: each of the top is flagged (the dialysis machines' support, the pumps' recall); review flags only
+        # the top shows chips: each of the top is flagged (the dialysis machines' support, the pumps' recall, the sterilizers' parts)
         assert all(p.flags for p in r["top"])
-        assert {f for p in scored for f in p.flags} == {priority.SUPPORT_ENDED, priority.RECALL} and not any(p.must_act for p in scored)
+        assert {f for p in scored for f in p.flags} == {priority.PARTS_ENDED, priority.SUPPORT_ENDED, priority.RECALL}
+        sterilizers = [p for p in scored if p.asset.device_model.model == STERILIZER]
+        assert [p for p in scored if p.must_act] == sterilizers and len(sterilizers) == 3
+        assert all(p.flags == (priority.PARTS_ENDED, priority.SUPPORT_ENDED) and p.suggested_fy == now for p in sterilizers)
         dialysis = [p for p in scored if p.asset.device_model.model == DIALYSIS]
         assert len(dialysis) == 8 and all(priority.SUPPORT_ENDED in p.flags for p in dialysis)
         assert {p.suggested_fy for p in dialysis} == {now}  # support ended: the current fiscal year
@@ -86,8 +94,8 @@ def test_the_replacement_report_has_something_in_every_section(client, seeded):
         fleets = {f["device_model"].model: f for f in r["fleets"]}
         assert (fleets[BED]["past_life"], fleets[BED]["devices"]) == (4, 25)
         assert all(f["past_life"] == 0 for m, f in fleets.items() if m != BED)
-        assert (fleets[DIALYSIS]["support"].key, fleets[VITALS]["support"].key, fleets[MONITOR]["support"].key) == (
-            "support_ended", "announced", "supported")
+        assert (fleets[DIALYSIS]["support"].key, fleets[VITALS]["support"].key, fleets[MONITOR]["support"].key,
+                fleets[STERILIZER]["support"].key) == ("support_ended", "announced", "supported", "parts_ended")
 
         # the outlook: July's current fiscal year and the four after it, devices in more than one, one device not placed
         years = r["outlook"]["years"]
@@ -100,7 +108,7 @@ def test_the_replacement_report_has_something_in_every_section(client, seeded):
         # what the scores do not know: the model-level gaps counted with their models; the new defibrillator waiting for its incoming
         # inspection has no install date, so it is listed apart, never ranked
         gaps = {g["key"]: g for g in r["gaps"]}
-        assert (gaps[priority.LIFE_SOURCE]["models"], gaps[priority.SUPPORT_UNCHECKED]["models"]) == (8, 7)
+        assert (gaps[priority.LIFE_SOURCE]["models"], gaps[priority.SUPPORT_UNCHECKED]["models"]) == (8, 6)
         assert gaps[priority.LIFE_SOURCE]["devices"] > 0 and gaps[priority.SUPPORT_UNCHECKED]["devices"] > 0
         assert (gaps[priority.NO_INSTALL_DATE]["devices"], gaps[priority.NO_ESTIMATE]["devices"]) == (1, 0)
         assert [(p.asset.tag, p.unranked_reasons) for p in r["unranked"]] == [("CE-11001", (priority.NO_INSTALL_DATE,))]

@@ -449,10 +449,12 @@ SUPPORT_RECORDED_BY = "rfeldman"
 MODEL_LIVES = [("Centrella", 10, LifeSource.MANUFACTURER), ("Alaris 8015 PCU", None, LifeSource.AHA)]
 # The manufacturers' support CE recorded: model; sale ended, support ends, and parts available until, each the last day of the month
 # that many months from today's (None: none announced); the notice (its reference, {year} the year it was issued, and months ago) or
-# None; checked, days ago. The dialysis machines' support ended after their sale did (the review flag); the vital signs monitors' parts
-# end is announced for a later day; the patient monitors are supported (checked, nothing announced).
+# None; checked, days ago. The dialysis machines' support ended after their sale did (the review flag); the sterilizers' parts are no
+# longer available (the must-act flag: plan them this fiscal year); the vital signs monitors' parts end is announced for a later day;
+# the patient monitors are supported (checked, nothing announced).
 SUPPORT_RECORDS = [
     ("2008T BlueStar", -30, -4, None, ("FSN-{year}-014", 32), 12),
+    ("Amsco 400", -72, -30, -3, ("FSN-{year}-031", 74), 9),
     ("Connex Spot", None, None, 30, ("PSN-{year}-207", 3), 20),
     ("IntelliVue MX750", None, None, None, None, 35),
 ]
