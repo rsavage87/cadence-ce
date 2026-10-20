@@ -130,7 +130,9 @@ class DeviceModelViewSet(EquipmentWrites, TenantViewSet):
         d = serializer.validated_data
         if d.get("aem_interval_months") not in (None, ""):
             raise DRFValidationError({"aem_interval_months": ["An AEM interval is set by approving an AEM proposal (PM schedule, PM library)."]})
-        _refuse_on_create(d, ("pm_procedure",), "model")
+        # Slice 36: the expected life's source and the manufacturer's support are recorded on a model in the catalog (update_device_model,
+        # the model drawer's Record support), never by create_device_model: refused here rather than dropped
+        _refuse_on_create(d, ("pm_procedure", *eq_services.SUPPORT_FIELDS), "model")
         serializer.instance = _via_service(eq_services.create_device_model, risk_class=d.get("risk_class"), by=self.request.user,
                                            **{f: d[f] for f in self.CREATE_FIELDS if f in d})
 
@@ -151,8 +153,9 @@ class DeviceModelViewSet(EquipmentWrites, TenantViewSet):
                 from apps.pm.procedures import set_model_procedure
 
                 _via_service(set_model_procedure, dm, d["pm_procedure"], by=user)
+            # UPDATE_MODEL_FIELDS: the model's fields and slice 36's support fields (Equipment Edit, this viewset's write level)
             _via_service(eq_services.update_device_model, dm, by=user,
-                         **{f: v for f, v in d.items() if f in eq_services.MODEL_FIELDS and f != "pm_procedure"})
+                         **{f: v for f, v in d.items() if f in eq_services.UPDATE_MODEL_FIELDS and f != "pm_procedure"})
 
 
 class AssetViewSet(EquipmentWrites, TenantViewSet):

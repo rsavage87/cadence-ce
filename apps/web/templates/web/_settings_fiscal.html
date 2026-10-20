@@ -1,0 +1,26 @@
+{% comment %}The Settings screen's Fiscal year panel (slice 36): the month the facility's fiscal year starts (FacilitySettings.
+   fiscal_year_start_month; apps.facility.fiscal names a fiscal year by the calendar year it ends), with this fiscal year and the next
+   in real dates. Context from apps.web.views_settings._fiscal_ctx. A month select saved with its own button (as the time zone's),
+   posted to /settings/fiscal-year/; the panel swaps itself (#set-fiscal). Read-only without Settings Edit: the month and the dates.{% endcomment %}
+<div class="panel mt" id="set-fiscal">
+  <div class="panel-h"><h2>Fiscal year</h2><span class="sub">Starts in {{ fiscal.month }}</span></div>
+  <div class="panel-b">
+    {% if can_edit %}<form hx-post="{% url 'web:settings_fiscal' %}" hx-target="#set-fiscal" hx-swap="outerHTML" hx-disinherit="hx-swap hx-target">
+      <div class="form set-form">
+        <label>Fiscal year starts in
+          <select id="set-fiscal-month" name="fiscal_year_start_month" aria-describedby="{% if fiscal.error %}set-fiscal-err {% endif %}set-fiscal-help"{% if fiscal.error %} aria-invalid="true"{% endif %}>
+            {% for m in fiscal.months %}<option value="{{ m.value }}"{% if m.chosen %} selected{% endif %}>{{ m.label }} (today in {{ m.now }})</option>{% endfor %}
+          </select>
+          {% if fiscal.error %}<span class="hint err" id="set-fiscal-err">{{ fiscal.error }}</span>{% endif %}
+          <span class="hint" id="set-fiscal-help">A fiscal year is named by the calendar year it ends{% if fiscal.calendar %}: starting in January, it is the calendar year{% endif %}.</span>
+        </label>
+      </div>{% endif %}
+    <div class="set-rows fy-rows">
+      <div class="set-row"><span class="lbl">This fiscal year</span><span class="fy-dates">{{ fiscal.current }}</span></div>
+      <div class="set-row last"><span class="lbl">Next</span><span class="fy-dates">{{ fiscal.next }}</span></div>
+    </div>
+    <div class="hint fy-what">The fiscal year groups the Replacement planning report's outlook and each device's suggested fiscal year. A change takes effect at once: the replacement outlook re-buckets; nothing stored moves.</div>
+    {% if can_edit %}<div class="set-actions"><button class="btn sm primary" type="submit">Save fiscal year</button></div>
+    </form>{% else %}<div class="hint" style="margin-top:8px">Changing settings needs Settings Edit access.</div>{% endif %}
+  </div>
+</div>

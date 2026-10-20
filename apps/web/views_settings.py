@@ -22,6 +22,11 @@ contradicts its window (windows.policy_disagrees) is warned about in the panel (
 policy is saved or reset), and when a window change makes a default PM policy line follow it (update_settings), the policy panel is
 swapped out of band too, so it never shows the old line to be saved back. Read-only users see the windows in words.
 
+Fiscal year (slice 36, #set-fiscal, under the PM window): the month the facility's fiscal year starts (FacilitySettings.
+fiscal_year_start_month; apps.facility.fiscal names a fiscal year by the calendar year it ends), shown with this fiscal year's and the
+next one's real dates. A month select saved with its own button, posted to /settings/fiscal-year/ (settings_fiscal, Settings Edit); no
+confirm: nothing stored moves, the replacement outlook re-buckets. Read-only users see the month and the dates.
+
 Import data (slice 23, #set-import): a link to /settings/import/ (views_imports) for anyone who may import a kind of file
 (apps.imports.permissions.importable: each kind its own module's level), with the files of those kinds not finished yet (those
 left for too long are ended first: apps.imports.services.expire_stale).
@@ -33,6 +38,7 @@ from django.views.decorators.http import require_POST
 
 from apps.accounts.models import Level, Module
 from apps.equipment.models import Department
+from apps.facility import fiscal
 from apps.facility import permissions as fac_perms
 from apps.facility import services as fs
 from apps.facility.models import PmWindow
@@ -145,6 +151,20 @@ def _pm_window_ctx(request, s, typed: dict | None = None, errors: dict | None = 
     return {"pm_window_groups": groups, "pm_window_days_max": fs.PM_WINDOW_DAYS_MAX, **_pm_window_warn_ctx(request, s)}
 
 
+def _fiscal_ctx(request, s, today=None, error: str = "") -> dict:
+    """The Fiscal year panel (slice 36): the month it starts, this fiscal year and the next in real dates from the facility's today
+    (fiscal.describe: "FY2027: Jul 1, 2026 to Jun 30, 2027"), and the twelve months to choose from, each with the fiscal year today would
+    fall in. Settings View reads it; Settings Edit changes it (can_edit)."""
+    today = today or timezone.localdate()
+    start = s.fiscal_year_start_month or 1
+    fy = fiscal.current_fy(today, start)
+    months = [{"value": m, "label": fiscal.month_name(m), "now": fiscal.fy_label(fiscal.current_fy(today, m)), "chosen": m == start}
+              for m in range(1, 13)]
+    return {"fiscal": {"start": start, "month": fiscal.month_name(start), "current": fiscal.describe(fy, start),
+                       "next": fiscal.describe(fy + 1, start), "calendar": start == 1, "months": months, "error": error},
+            "can_edit": fac_perms.can_edit(request.user)}
+
+
 def _integrations() -> dict:
     items = fs.integrations()
     for item in items:
@@ -189,7 +209,7 @@ def settings_page(request):
     s = fs.get_settings()
     user = request.user
     ctx = {"nav_active": "settings", **_integrations(), **_portal_ctx(request, s), **_policy_ctx(request, s), **_targets_ctx(request, s),
-           **_zone_ctx(request), **_imports_ctx(user), **_take_ctx(request, s), **_pm_window_ctx(request, s),
+           **_zone_ctx(request), **_imports_ctx(user), **_take_ctx(request, s), **_pm_window_ctx(request, s), **_fiscal_ctx(request, s),
            "risk_rubric": fs.RISK_RUBRIC, "risk_rows": fs.risk_summary(), "risk_scoring": fs.risk_scoring_summary(),
            "can_view_contracts": user.has_level(Module.CONTRACTS, Level.VIEW), "can_view_users": user.has_level(Module.USERS, Level.VIEW),
            "can_view_recalls": user.has_level(Module.RECALLS, Level.VIEW), "can_view_equipment": user.has_level(Module.EQUIPMENT, Level.VIEW)}
@@ -328,15 +348,32 @@ def settings_pm_window(request):
 
 # --- the fiscal year (slice 36) -------------------------------------------------------------------------
 
+def _fy_runs(fy: int, start: int) -> str:
+    """ "FY2027 runs Jul 1, 2026 to Jun 30, 2027" (the toast's words; the panel shows fiscal.describe's)."""
+    first, last = fiscal.fiscal_bounds(fy, start)
+    return f"{fiscal.fy_label(fy)} runs {first:%b} {first.day}, {first.year} to {last:%b} {last.day}, {last.year}"
+
+
 @require_POST
 @web_view(fac_perms.MODULE, fac_perms.EDIT_LEVEL)
 def settings_fiscal(request):
-    """Save the month the fiscal year starts (fs.update_settings: fiscal_year_start_month, 1 to 12). Answers with the panel as saved
-    (web/_settings_fiscal.html), a refused post with the refusal; nothing stored moves (the replacement outlook re-buckets).
-    (Wave 2 builds the panel.)"""
-    from django.core.exceptions import PermissionDenied
-
-    raise PermissionDenied  # scaffold: wave 2 builds the panel
+    """Save the month the fiscal year starts (fs.update_settings: fiscal_year_start_month, 1 to 12, which records who). Answers with the
+    panel as saved (web/_settings_fiscal.html) and a toast naming this fiscal year's dates; a refused post changes nothing and answers
+    with the saved panel, the refusal under the select. Nothing stored moves: the replacement outlook re-buckets."""
+    today = timezone.localdate()
+    before = fs.get_settings().fiscal_year_start_month
+    try:
+        s = fs.update_settings(by=request.user, fiscal_year_start_month=request.POST.get("fiscal_year_start_month", ""))
+    except ValidationError as e:
+        message = _first(error_dict(e))
+        return toast(render(request, "web/_settings_fiscal.html", _fiscal_ctx(request, fs.get_settings(), today, error=message)), message)
+    start = s.fiscal_year_start_month
+    month = fiscal.month_name(start)
+    if start == before:
+        message = f"The fiscal year already starts in {month}"
+    else:
+        message = f"The fiscal year now starts in {month}: {_fy_runs(fiscal.current_fy(today, start), start)}"
+    return toast(render(request, "web/_settings_fiscal.html", _fiscal_ctx(request, s, today)), message)
 
 
 # --- taking work (slice 24) -----------------------------------------------------------------------------
