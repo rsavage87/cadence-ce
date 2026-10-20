@@ -58,7 +58,7 @@ QUESTIONS = (
     ("sbom", Sbom, rules.QUESTIONS["sbom"]),
 )
 SOURCE_WORDS = {rules.THIS_RELEASE: "this release", rules.PROFILE: rules.PROFILE, rules.NOT_RECORDED: "not recorded"}
-FACILITY_SOURCE = "the model's, for every version"
+FACILITY_SOURCE = rules.FACILITY_SOURCE  # the facility group's source: one wording on every door (the panel, the API)
 
 
 def _label(choices, value) -> str:

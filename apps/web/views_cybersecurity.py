@@ -9,7 +9,9 @@ Tabs (page-level links, each its own address; a filter or a window re-fetches th
 - Fleet (`/security/`, the default): HICP 2023's recommendation in one small line, the head figures (rules.fleet's), and one row per
   model with devices on site: devices, connected here or able to connect, by release ("Release not recorded" last), past security
   updates, OS past its vendor's support, MDS2, patient data, who installs updates here, segment. Filters: whose, department, category,
-  connection, standing, release not recorded (the last three read each device's facts through rules.standings). Export carries them.
+  connection, standing, release not recorded (the last three read each device's facts through rules.standings), parsed by
+  apps.cybersecurity.filters (the API's device-security list reads the same query). Export carries them. A head figure counted under
+  the filters links to the devices it counts with every filter kept (FleetFilters.within), or not at all when the two cannot be one query.
 - Models (`/security/models/`): every model with devices on site or anything recorded (a search finds any of the facility's models, to
   start a profile), each with its profile's answers, its releases, and its MDS2.
 - Changes for IT (`/security/changes/`): rules.changes_for_it for 7, 30 (the default), or 90 days, and its CSV.
@@ -39,23 +41,21 @@ from django.http import Http404
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.text import capfirst, slugify
 from django_htmx.http import retarget, trigger_client_event
 
+from apps.cybersecurity import filters, rules
 from apps.cybersecurity import permissions as cyber_perms
-from apps.cybersecurity import rules
 from apps.cybersecurity import services as cyber
 from apps.cybersecurity.models import DISCLOSURE_GROUP, FACILITY_GROUP, Mds2Status, OsFamily, SoftwareRelease
 from apps.equipment.models import AssetStatus, Department, DeviceModel
-from apps.equipment.services import OWNED
 
 from .decorators import web_view
 from .exports import csv_response
-from .forms import WHOSE_OURS, WHOSE_TEMPORARY, parse_uuid
+from .forms import parse_uuid
 from .forms_cybersecurity import (
     CONNECTED_FILTERS,
-    EITHER,
     KEEP_NETWORK,
-    NORELEASE,
     QUESTIONS,
     STANDING_FILTERS,
     WHOSE_FILTERS,
@@ -85,6 +85,7 @@ DEVICES_WORDS = "The devices' facts need Device security View and Equipment View
 NOT_RECORDED = "Not recorded"
 SOURCE_WORDS = {rules.THIS_RELEASE: "From this release", rules.PROFILE: "From the model's disclosure, version not stated",
                 rules.NOT_RECORDED: "Not recorded"}
+FACILITY_SOURCE = capfirst(rules.FACILITY_SOURCE)  # the facility's arrangement: the model's, for every version (never a disclosure)
 GROUP_TITLES = {"support": "Operating system and security updates", "mds2": "The manufacturer's disclosure (MDS2)",
                 "disclosure": "What the manufacturer discloses", "facility": "This facility's arrangement"}
 SECURITY_TONES = {rules.UPDATES_ENDED: "warn", rules.MODEL_SUPPORT_ENDED: "warn", rules.UPDATES_END_ANNOUNCED: "info"}
@@ -158,16 +159,9 @@ def _fleet_options() -> dict:
 
 
 def _narrowed(f, today):
-    """The devices on site the filters keep: a queryset, or a list when a filter reads each device's facts (rules.standings)."""
-    qs = rules.on_site()
-    if f.whose == WHOSE_OURS:
-        qs = qs.filter(OWNED)
-    elif f.whose == WHOSE_TEMPORARY:
-        qs = qs.exclude(OWNED)
-    if f.dept:
-        qs = qs.filter(department_id=f.dept)
-    if f.category:
-        qs = qs.filter(device_model__category=f.category)
+    """The devices on site the filters keep (apps.cybersecurity.filters, as the API's device list): a queryset, or a list when a filter
+    reads each device's facts (rules.standings)."""
+    qs = filters.narrow(rules.on_site(), f)
     if not f.by_device:
         return qs
     return [s.asset for s in rules.standings(qs, today).values() if f.matches(s)]
@@ -178,18 +172,28 @@ def _releases_words(row) -> list:
     return [(release.version if release is not None else rules.RELEASE_NOT_RECORDED, n) for release, n in row.by_release]
 
 
+# What each linked head figure counts, as filters: connected here or able to connect, and past security updates or no release recorded
+FIGURE_FILTERS = {"updates_ended": {"connected": filters.EITHER, "standing": filters.UPDATES_ENDED},
+                  "no_release": {"connected": filters.EITHER, "norelease": True}}
+
+
+def _figure_url(f, key: str) -> str:
+    """A head figure's link: the filters on screen (the figure was counted under them), narrowed to what the figure counts
+    (FleetFilters.within), so the list it opens is the devices the figure counted; "" (no link) when the two cannot be one query (a
+    connection or standing on screen that the figure's excludes, or another standing beside it)."""
+    narrowed = f.within(**FIGURE_FILTERS[key]) if key in FIGURE_FILTERS else None
+    return reverse("web:cybersecurity") + _qs(narrowed.params()) if narrowed is not None else ""
+
+
 def _figures(fl, f) -> list:
-    """The head figures in rules.fleet's words, each a link to the devices it counts where a filter shows them (with the filters on
-    screen, which the figures were counted under)."""
-    links = {"updates_ended": {"connected": EITHER, "standing": "updates_ended"}, "no_release": {"connected": EITHER, "norelease": NORELEASE}}
-    base = reverse("web:cybersecurity")
+    """The head figures in rules.fleet's words, each a link to the devices it counts where a filter shows them (_figure_url)."""
     out = []
     for key in ("no_mds2", "updates_ended", "no_release", "not_segmented", "segment_not_recorded"):
         fig = fl.figures[key]
         extra = ""
         if key == "no_mds2" and fig.get("requested"):
             extra = f"{fig['requested']} of them requested from the manufacturer"
-        out.append({**fig, "extra": extra, "url": base + _qs({**f.params(), **links[key]}) if key in links else ""})
+        out.append({**fig, "extra": extra, "url": _figure_url(f, key)})
     return out
 
 
@@ -249,6 +253,14 @@ def _os_words(values) -> str:
     return f"{label} · {name}" if name and family != OsFamily.NONE else label
 
 
+def _source(group: str, source: str) -> str:
+    """A group's source in words. The facility's arrangement is this facility's, recorded on the model's profile for every version (the
+    drawer's and the API's words: rules.FACILITY_SOURCE), never the manufacturer's disclosure."""
+    if group == "facility" and source == rules.PROFILE:
+        return FACILITY_SOURCE
+    return SOURCE_WORDS[source]
+
+
 def _card(merged, dm, today, *, profile: bool) -> dict:
     """One card's groups in words (the profile's, or a release's merged with the profile by group), each with its source, and the two
     standing lines (rules.release_standing, rules.os_standing), never merged."""
@@ -271,7 +283,7 @@ def _card(merged, dm, today, *, profile: bool) -> dict:
         groups.append({"key": "facility", "rows": [(QUESTIONS[n], _label(n, v.get(n))) for n in FACILITY_GROUP]})
     for g in groups:
         g["title"] = GROUP_TITLES[g["key"]]
-        g["source"] = SOURCE_WORDS[merged.sources[g["key"]]]
+        g["source"] = _source(g["key"], merged.sources[g["key"]])
     return {"groups": groups, "security": security, "os": os_line, "security_tone": SECURITY_TONES.get(security.key, "neutral"),
             "os_tone": OS_TONES.get(os_line.key, "neutral")}
 
@@ -345,8 +357,14 @@ def devices_csv(request):
     rows = ((s.asset.tag, s.asset.department.name, s.asset.room, s.release.version if s.release is not None else rules.RELEASE_NOT_RECORDED,
              s.release_since, s.connection.words, s.security.words, s.os.words)
             for s in sorted((s for s in read.values() if f.keeps(s)), key=lambda s: s.asset.tag))
-    name = "".join(c if c.isalnum() or c in "-_." else "-" for c in f"{dm.manufacturer}-{dm.model}")[:60]
-    return csv_response(f"cadence-device-security-{name}-{today:%Y-%m-%d}.csv", DEVICE_COLUMNS, rows)
+    return csv_response(f"cadence-device-security-{_file_part(dm)}-{today:%Y-%m-%d}.csv", DEVICE_COLUMNS, rows)
+
+
+def _file_part(dm) -> str:
+    """The model in a download's file name: ASCII letters, digits, and dashes only (slugify: "Dräger Evita V500 Œ" reads
+    "drager-evita-v500"), else its id. A letter outside Latin-1 would have the whole Content-Disposition header MIME-encoded, which
+    browsers cannot read."""
+    return slugify(f"{dm.manufacturer} {dm.model}")[:60].strip("-") or str(dm.pk)
 
 
 # --- releases and the profile ------------------------------------------------------------------------------------------------------
@@ -367,10 +385,16 @@ def _release_modal(request, dm, form, release=None, action: str = ""):
                                           "action": action or request.get_full_path()})
 
 
+RESTORED_WORDS = "restored (it was entered in error), with the facts it had"
+RESTORED_OVER = " and what you entered over them"
+
+
 @web_view(MODULE, EDIT)
 def release_new(request, pk):
-    """Add release (or, with ?profile=1, Record the profile): GET the modal, POST services.add_release with every field as typed.
-    Re-adding a version entered in error restores it (the toast says so). Refusals come back under their fields, with what was typed."""
+    """Add release (or, with ?profile=1, Record the profile): GET the modal, POST services.add_release with every field as typed. Add
+    release needs a version (a blank one is never the profile: Record the profile is its own door). Re-adding a version entered in error
+    restores it with the facts it had: only the fields filled in are given, over what it had (the toast says so). Refusals come back
+    under their fields, with what was typed."""
     dm = _model(pk)
     profile = request.GET.get("profile") == "1"
     if profile:
@@ -383,19 +407,28 @@ def release_new(request, pk):
         return _release_modal(request, dm, ReleaseForm(profile=profile))
     form = ReleaseForm(request.POST, profile=profile)
     row = None
+    restoring = filled = False
     if form.is_valid():
         kwargs = form.service_kwargs()
         key = cyber.version_key(kwargs.get("version", ""))
         restoring = bool(key) and SoftwareRelease.objects.filter(device_model=dm, version_key=key, removed_on__isnull=False).exists()
-        try:
-            row = cyber.add_release(dm, by=request.user, today=timezone.localdate(), **kwargs)
-        except (ValidationError, PermissionDenied) as e:
-            form.add_service_errors(e)
+        if restoring:  # the facts it had come back: only what was filled in is given, over them
+            kwargs = {name: value for name, value in kwargs.items() if name == "version" or str(value).strip()}
+            filled = len(kwargs) > 1
+        if not profile and not key:
+            form.add_error("version", cyber.VERSION_NEEDED)
+        else:
+            try:
+                row = cyber.add_release(dm, by=request.user, today=timezone.localdate(), **kwargs)
+            except (ValidationError, PermissionDenied) as e:
+                form.add_service_errors(e)
     if row is None:
         return _release_modal(request, dm, form)
     if row.is_profile:
         return _saved(request, dm, f"{dm.manufacturer} {dm.model}: profile recorded")
-    return _saved(request, dm, f"Version {row.version} {'restored (it was entered in error)' if restoring else 'added'}")
+    if restoring:
+        return _saved(request, dm, f"Version {row.version} {RESTORED_WORDS}{RESTORED_OVER if filled else ''}")
+    return _saved(request, dm, f"Version {row.version} added")
 
 
 @web_view(MODULE, EDIT)

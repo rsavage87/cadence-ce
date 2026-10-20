@@ -605,7 +605,8 @@ def test_entered_in_error_and_restored(client, signed_in, world, vent_model):
     assert client.get(f"/security/releases/{r31.pk}/edit/", **HX).status_code == 404  # hidden, never named
     assert client.post(f"/security/releases/{r31.pk}/remove/", **HX).status_code == 404
     r = client.post(f"/security/models/{vent_model.pk}/releases/new/", {"version": "3.1", "mds2": "on_file", "mds2_edition": "2019"}, **HX)
-    assert toast_of(r) == "Version 3.1 restored (it was entered in error)"
+    # slice 37 review C21: the facts it had come back, what was filled in over them (tests/test_cyber_review_web.py)
+    assert toast_of(r) == "Version 3.1 restored (it was entered in error), with the facts it had and what you entered over them"
     assert SoftwareRelease.objects.get(pk=r31.pk).removed_on is None and SoftwareRelease.objects.filter(device_model=vent_model).count() == 3
 
 

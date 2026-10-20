@@ -21,8 +21,13 @@ GET device-security/                Device security View AND Equipment View (it 
                                     release_words, network (the device's own fact; "" as the model discloses) and its label, connection
                                     {key, words, here}, security and os, groups (the release over the profile, by group), checked_on,
                                     checked_by, and its Security tab on the web naming the facility (url). ?device_model= a model's id;
-                                    ?department= a department's id; ?connected= connected | can_connect | not_connected | not_recorded
-                                    (rules' connection keys); ?search= a tag or serial. Through rules.standings: a fixed number of queries.
+                                    ?search= a tag or serial; and the Fleet's filters, read by the screen's own parser
+                                    (apps.cybersecurity.filters), so a head figure's link asks the same: ?whose= ours | temporary;
+                                    ?department= (or the screen's ?dept=) a department's id; ?category= a model's category, as written;
+                                    ?connected= either (connected here or able to connect, what the head figures count) | connected |
+                                    can_connect | not_connected | not_recorded; ?standing= updates_ended | updates_end_announced |
+                                    security_not_recorded | os_ended | os_end_announced; ?norelease=1 (no release recorded). An unknown
+                                    value is a 400 naming the parameter. Through rules.standings: a fixed number of queries.
 GET device-security/<id or tag>/    One device on site, by id or by tag in any letter case.
 
 Another facility's row is a 404 (as an unknown one), a retired device too; a level missing a 403 in plain words; any write a 405 naming
@@ -40,8 +45,8 @@ from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.response import Response
 
 from apps.accounts.models import Level, Module
+from apps.cybersecurity import filters, rules
 from apps.cybersecurity import permissions as perms
-from apps.cybersecurity import rules
 from apps.cybersecurity.models import DeviceSecurity, SoftwareRelease
 from apps.equipment.models import Asset, AssetStatus
 
@@ -58,7 +63,6 @@ READ_ONLY = ("The API reads the device security register only: record a model's 
 RELEASE_NOT_FOUND = "No software release with that id in this facility."
 DEVICE_NOT_FOUND = "No device on site with that id or tag in this facility."
 SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
-CONNECTED_FILTERS = (rules.CONNECTED, rules.CAN_CONNECT, rules.NOT_CONNECTED, rules.CONNECTION_NOT_RECORDED)
 
 
 def _uuid(value):
@@ -189,30 +193,30 @@ class DeviceSecurityViewSet(_ReadOnly):
     lookup_value_regex = "[^/]+"  # a tag may hold a dot
     search_fields = ["tag", "serial"]
 
+    fleet_filters = filters.FleetFilters()
+
     def get_queryset(self):
         qs = rules.on_site()
         if self.action == "list":
             params, errors = self.request.query_params, {}
             model = _id_filter(params, "device_model", "A device model's id.", errors)
-            department = _id_filter(params, "department", "A department's id.", errors)
-            connected = params.get("connected") or ""
-            if connected and connected not in CONNECTED_FILTERS:
-                errors["connected"] = [f"One of {', '.join(CONNECTED_FILTERS)}."]
+            try:
+                self.fleet_filters = filters.parse_strict(params)
+            except filters.FilterError as e:
+                errors.update(e.errors)
             if errors:
                 raise DRFValidationError(errors)
             if model is not None:
                 qs = qs.filter(device_model_id=model)
-            if department is not None:
-                qs = qs.filter(department_id=department)
+            qs = filters.narrow(qs, self.fleet_filters)
         return qs.order_by("tag", "pk")
 
     def list(self, request, *args, **kwargs):
-        """The devices with their standings (rules.standings: two queries for any number), then ?connected= on the words' keys, then
-        the page."""
+        """The devices with their standings (rules.standings: two queries for any number), then the Fleet's filters on a device's
+        facts (connected, standing, norelease: FleetFilters.matches, as the screen), then the page."""
         found = list(rules.standings(self.filter_queryset(self.get_queryset()), self._today()).values())
-        wanted = request.query_params.get("connected") or ""
-        if wanted:
-            found = [s for s in found if s.connection.key == wanted]
+        if self.fleet_filters.by_device:
+            found = [s for s in found if self.fleet_filters.matches(s)]
         page = self.paginate_queryset(found)
         if page is not None:
             return self.get_paginated_response(scs.DeviceSecuritySerializer(page, many=True).data)
