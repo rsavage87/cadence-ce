@@ -400,9 +400,8 @@ def add_release(model, *, by, today: date | None = None, **fields):
 def update_release(release, *, by, today: date | None = None, **fields):
     """Change a release's (or the profile's) fields; the version only while no device on site names it (running: a retired or returned
     device's record follows the correction; a new spelling of the same version, by version_key, any time), never on the profile, never
-    to a version already on file. The same checks as add_release, on the row
-    as it is now (locked) with the change applied. History "Edited" (nothing saved when nothing changes). Returns the row; the caller's
-    copy follows it."""
+    to a version already on file. The same checks as add_release, on the row as it is now (locked) with the change applied. History
+    "Edited" (nothing saved when nothing changes). Returns the row; the caller's copy follows it."""
     _check(by, perms.can_edit, EDIT_PERMISSION)
     today = _today(today)
     _unknown(fields)
