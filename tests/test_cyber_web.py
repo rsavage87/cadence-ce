@@ -205,7 +205,8 @@ def test_the_fleets_filters(client, signed_in, world):
     assert fleet_models(client, "?norelease=1") == {bd: 1, ste: 1}
     assert fleet_models(client, "?connected=either&norelease=1&whose=ours") == {bd: 1}
     # the figures count the devices the filters keep
-    assert {f["key"]: f["count"] for f in client.get("/security/?whose=temporary").context["figures"]}["no_release"] == 0
+    figures = {f["key"]: f for f in client.get("/security/?whose=temporary").context["figures"]}
+    assert figures["no_release"]["count"] == 0 and figures["no_release"]["url"] == "/security/?whose=temporary&connected=either&norelease=1"
     # unknown values are dropped, never a 500 (another facility's or an unknown department too)
     assert fleet_models(client, f"?whose=zzz&dept=nope&category=Nope&connected=x&standing=y&norelease=2&page=abc&dept={uuid.uuid4()}") == {
         bd: 5, ham: 1, ste: 1}

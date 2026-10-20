@@ -178,8 +178,9 @@ def _releases_words(row) -> list:
     return [(release.version if release is not None else rules.RELEASE_NOT_RECORDED, n) for release, n in row.by_release]
 
 
-def _figures(fl) -> list:
-    """The head figures in rules.fleet's words, each a link to the devices it counts where a filter shows them."""
+def _figures(fl, f) -> list:
+    """The head figures in rules.fleet's words, each a link to the devices it counts where a filter shows them (with the filters on
+    screen, which the figures were counted under)."""
     links = {"updates_ended": {"connected": EITHER, "standing": "updates_ended"}, "no_release": {"connected": EITHER, "norelease": NORELEASE}}
     base = reverse("web:cybersecurity")
     out = []
@@ -188,7 +189,7 @@ def _figures(fl) -> list:
         extra = ""
         if key == "no_mds2" and fig.get("requested"):
             extra = f"{fig['requested']} of them requested from the manufacturer"
-        out.append({**fig, "extra": extra, "url": base + _qs(links[key]) if key in links else ""})
+        out.append({**fig, "extra": extra, "url": base + _qs({**f.params(), **links[key]}) if key in links else ""})
     return out
 
 
@@ -203,7 +204,7 @@ def _fleet_context(request) -> dict:
              "updates_by": _label("updates_by", r.facts.get("updates_by")), "segmented": _label("segmented", r.facts.get("segmented")),
              "url": reverse("web:cybersecurity_model", args=[r.device_model.pk]) + panel_q} for r in page.object_list]
     return {**_shell(request, "fleet"), "list_url": reverse("web:cybersecurity"), "f": f, "options": options, "fleet": fl,
-            "figures": _figures(fl), "page": page, "rows": rows, "hicp": rules.HICP_SENTENCE, "counts": rules.COUNTS_ON_SITE}
+            "figures": _figures(fl, f), "page": page, "rows": rows, "hicp": rules.HICP_SENTENCE, "counts": rules.COUNTS_ON_SITE}
 
 
 @web_view(MODULE, VIEW)
