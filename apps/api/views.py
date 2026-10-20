@@ -127,8 +127,9 @@ class DeviceModelViewSet(EquipmentWrites, TenantViewSet):
     def perform_destroy(self, instance):
         """Slice 37: a model with a software release or a profile in the device security register (SoftwareRelease.device_model,
         PROTECT) is never deleted, devices or not: the register keeps a model's releases and profile with their history (a release
-        entered in error is never a database delete, a profile is never removed; build37). The 400 says what holds it, in words that need
-        no Device security level (no version named): devices, the register's rows, or both (review C5/C9)."""
+        entered in error is never a database delete, a profile is never removed; build37). The 400 says what holds it (no version named):
+        devices, the register's rows, or both (review C5/C9); a reader without Device security View reads only that the register holds it
+        (round 2: whether a profile or releases are on file is the register's)."""
         try:
             instance.delete()
         except ProtectedError as e:
@@ -136,6 +137,12 @@ class DeviceModelViewSet(EquipmentWrites, TenantViewSet):
             register = [o for o in protected if isinstance(o, SoftwareRelease)]
             if not register:
                 raise DRFValidationError({"detail": self.in_use.format(instance)}) from None
+            from apps.cybersecurity import permissions as cyber_perms
+
+            if not cyber_perms.can_view(self.request.user):  # round 2: what the register holds is its readers' only
+                held = "devices, and records" if any(isinstance(o, Asset) for o in protected) else "records"
+                raise DRFValidationError({"detail": f"{instance} has {held} in the Device security register, so it cannot be "
+                                                    "deleted."}) from None
             versions = [r for r in register if not r.is_profile]
             parts = []
             if versions:

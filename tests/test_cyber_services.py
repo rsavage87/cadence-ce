@@ -194,7 +194,7 @@ def test_no_operating_system(pump_model, kim):
 @pytest.mark.parametrize("url,ok", [
     ("https://example.com/disclosures/mds2.pdf", True),
     ("https://example.com/mds2.pdf?id=77&lang=en", True),
-    ("https://example.com/mds2.pdf?keyword=pump", False),  # review fix C6: "key" anywhere in a key (was allowed as a whole-part match)
+    ("https://example.com/mds2.pdf?keyword=pump", True),  # review round 2: an ordinary word containing "key" is not a credential
     ("http://example.com/mds2.pdf", False),
     ("ftp://example.com/mds2.pdf", False),
     ("https://user:pass@example.com/mds2.pdf", False),

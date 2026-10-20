@@ -47,7 +47,7 @@ from django_htmx.http import retarget, trigger_client_event
 from apps.cybersecurity import filters, rules
 from apps.cybersecurity import permissions as cyber_perms
 from apps.cybersecurity import services as cyber
-from apps.cybersecurity.models import DISCLOSURE_GROUP, FACILITY_GROUP, Mds2Status, OsFamily, SoftwareRelease
+from apps.cybersecurity.models import DISCLOSURE_GROUP, FACILITY_GROUP, GROUPS, Mds2Status, OsFamily, SoftwareRelease
 from apps.equipment.models import AssetStatus, Department, DeviceModel
 
 from .decorators import web_view
@@ -149,11 +149,10 @@ def _mds2_words(dm, held: list) -> str:
 # --- Fleet -------------------------------------------------------------------------------------------------------------------------
 
 def _fleet_options() -> dict:
-    """The Fleet's filter choices: the departments and categories of the devices on site."""
-    on = rules.on_site()
-    departments = Department.objects.filter(pk__in=on.values("department_id")).order_by("name").values_list("pk", "name")
-    categories = (DeviceModel.objects.filter(pk__in=on.values("device_model_id")).order_by("category")
-                  .values_list("category", flat=True).distinct())
+    """The Fleet's filter choices: every department and every model's category in the facility (round 2: a department or category with
+    no device on site is kept and answers none, as the API does for the same address, never widened to the whole fleet)."""
+    departments = Department.objects.order_by("name").values_list("pk", "name")
+    categories = DeviceModel.objects.order_by("category").values_list("category", flat=True).distinct()
     return {"departments": [(str(pk), name) for pk, name in departments], "categories": list(categories), "whose": WHOSE_FILTERS,
             "connected": CONNECTED_FILTERS, "standings": STANDING_FILTERS}
 
@@ -392,8 +391,9 @@ RESTORED_OVER = " and what you entered over them"
 @web_view(MODULE, EDIT)
 def release_new(request, pk):
     """Add release (or, with ?profile=1, Record the profile): GET the modal, POST services.add_release with every field as typed. Add
-    release needs a version (a blank one is never the profile: Record the profile is its own door). Re-adding a version entered in error
-    restores it with the facts it had: only the fields filled in are given, over what it had (the toast says so). Refusals come back
+    release needs a version (a blank one is never the profile: Record the profile is its own door; the service refuses it with every other
+    problem). Re-adding a version entered in error restores it with the facts it had: a group the user filled in (any of its fields)
+    replaces that group whole, as typed, so a kept fact never contradicts a typed one (the toast says so). Refusals come back
     under their fields, with what was typed."""
     dm = _model(pk)
     profile = request.GET.get("profile") == "1"
@@ -412,16 +412,14 @@ def release_new(request, pk):
         kwargs = form.service_kwargs()
         key = cyber.version_key(kwargs.get("version", ""))
         restoring = bool(key) and SoftwareRelease.objects.filter(device_model=dm, version_key=key, removed_on__isnull=False).exists()
-        if restoring:  # the facts it had come back: only what was filled in is given, over them
-            kwargs = {name: value for name, value in kwargs.items() if name == "version" or str(value).strip()}
+        if restoring:  # the facts it had come back: a group filled in (any of its fields) replaces that group whole, as typed
+            kept = {"version"} | {name for group in GROUPS.values() if any(str(kwargs.get(f, "")).strip() for f in group) for name in group}
+            kwargs = {name: value for name, value in kwargs.items() if name in kept}
             filled = len(kwargs) > 1
-        if not profile and not key:
-            form.add_error("version", cyber.VERSION_NEEDED)
-        else:
-            try:
-                row = cyber.add_release(dm, by=request.user, today=timezone.localdate(), **kwargs)
-            except (ValidationError, PermissionDenied) as e:
-                form.add_service_errors(e)
+        try:
+            row = cyber.add_release(dm, by=request.user, today=timezone.localdate(), profile=profile, **kwargs)
+        except (ValidationError, PermissionDenied) as e:
+            form.add_service_errors(e)
     if row is None:
         return _release_modal(request, dm, form)
     if row.is_profile:

@@ -150,14 +150,15 @@ def test_devices_alone_keep_their_words_and_nothing_recorded_still_deletes(clien
 
 
 def test_the_words_name_no_version_for_a_reader_without_the_register(client, tenant, pump_model, kim):
-    """Equipment Full with no Device security level: the same words, no version named (the register is its own module)."""
+    """Equipment Full with no Device security level: only that the register holds it (round 2: whether a profile or releases are on
+    file is the register's readers' only), no version named."""
     release(pump_model, "SECRET-VERSION-9", connects=Connects.WIRED)
     client.force_login(equipment_only(tenant))
     assert client.get(RELEASES).status_code == 403  # cannot read the register
     r = _delete(client, pump_model)
     assert r.status_code == 400
     detail = r.json()["detail"]
-    assert detail == f"BD Alaris 8015 PCU has a software release in the Device security register, {KEEPS}"
+    assert detail == "BD Alaris 8015 PCU has records in the Device security register, so it cannot be deleted."
     assert "SECRET-VERSION-9" not in detail
 
 

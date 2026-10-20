@@ -490,12 +490,13 @@ _CHANGE_WORDS = {MISSING: "Marked missing {day}", RETIRED: "Retired {day}", RETU
 
 
 def _events(rows, start: date, today: date) -> list:
-    """[(device id, kind, day, moment, added_as)] from the devices' history rows in order (id, history_date, history_id): a device added
-    ("+"), its status becoming missing, or retired (returned to its owner when it was temporary then), on a facility day in [start,
-    today]. A return's day is the day it went back, the returned_on its row holds (return_to_owner dates the row when it is entered,
-    review fix C31), else its row's day. A device whose retirement (or return) is dated before the day it was added (a retirement from
-    the previous system, backdated) was never on site: its addition is left out. `rows` may leave out a device's rows before the window
-    but its last one (its status then) and its retired ones (changes_for_it): the events in the window are the same."""
+    """[(device id, kind, day, moment, added_as)] from the devices' history rows in order (id, history_date, history_id): a device added ("+"),
+    its status becoming missing, or retired (returned to its owner when it was temporary then), on a facility day in [start, today]. A
+    return's day is the day it went back, the returned_on its row holds (return_to_owner dates the row when it is entered, review fix
+    C31), else its row's day. A device of ours whose retirement is dated before the day it was added (a retirement from the previous
+    system, backdated) was never on site: its addition is left out (never a temporary device's return entered late). `rows` may leave
+    out a device's rows before the window but its last one (its status then) and its retired ones (changes_for_it): the events in the
+    window are the same."""
     out, previous, added, retired_days = [], {}, {}, {}
     for pk, kind, status, ownership, added_as, returned_on, moment in rows:
         day = local_day(moment)
@@ -512,7 +513,8 @@ def _events(rows, start: date, today: date) -> list:
             returned = ownership != Ownership.OWNED
             if returned and returned_on is not None:
                 day = returned_on
-            retired_days.setdefault(pk, []).append(day)
+            if not returned:  # a return entered late never hides the stay's arrival (round 2): only a backdated retirement of ours does
+                retired_days.setdefault(pk, []).append(day)
             out.append((pk, RETURNED if returned else RETIRED, day, moment, ""))
     for pk, (day, moment, added_as) in added.items():
         if not any(d < day for d in retired_days.get(pk, ())):

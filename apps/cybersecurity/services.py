@@ -4,17 +4,19 @@ ids through the tenant (Model.objects), writes history with a reason, and refuse
 given as `by` needs Device security Edit (and Equipment View for a device's facts: permissions.py), else PermissionDenied; None is the
 system (the seed, tests).
 
-Lock order (review fixes C2, C3, C13): a release's row first (select_for_update of its own row only: never its model's, which a join
-would lock too) when editing, removing, or naming it; then the devices' rows (FOR NO KEY UPDATE, in asset pk order), each device's model
-and status read again from its locked row; then the devices' security rows (FOR UPDATE, in asset pk order), a missing one inserted only
-once its device's row is held. So a writer never waits on a device's row while holding a security row (a new security row's foreign key
-check, PostgreSQL's FOR KEY SHARE on the device at commit, needs nothing it does not hold), and a model change in progress
+Lock order (review fixes C2, C3, C13, and round 2): a release's row first (select_for_update of its own row only: never its model's, which
+a join would lock too) when editing, removing, or naming it; then the devices' rows, each device's model and status read again once held
+(FOR KEY SHARE, in tag order: _locked_devices); then the devices' security rows (FOR UPDATE, in asset pk order), a missing one inserted
+only once its device's row is held. So a writer never waits on a device's row while holding a security row (a new security row's foreign
+key check, PostgreSQL's FOR KEY SHARE on the device at commit, needs nothing it does not hold), and a model change in progress
 (equipment.services.update_asset holds the device's row FOR UPDATE until its transaction, an import chunk's, ends) is waited for, then
 seen: the old model's release is refused, never saved. These writers never lock work orders. The one outside caller is
 equipment.services.update_asset -> model_changed, which runs with the device's work and row already locked (its work, its row, then its
 security row, never the reverse). Slice 38's update events, recorded at a work order's completion, take the security row last too. A
 transaction locking several devices in another order (an import chunk, in its file's order) can still meet the bulk set in a deadlock:
-PostgreSQL ends one side, and the bulk set then answers the RACE refusal in words, never a server error.
+PostgreSQL ends one side; the bulk set then answers the RACE refusal in words, and an import chunk reports the row it could not save.
+Writers that lock a model's devices in tag order (AEM's pull-in) wait for the bulk set, or it for them, and ordinary saves of a device
+never wait at all.
 
 Nothing here is deleted: a release entered in error is marked (removed_on, removed_by) and refused while a device on site names it
 (rules.on_site, of the release's model: the devices the Models panel counts, review fix C4); a retired or returned device's record keeps
@@ -27,7 +29,7 @@ EARLIEST_YEAR, at most HORIZON_YEARS ahead, and the days something happened (sup
 today; choices from their lists or blank (not recorded); the version and OS name product text, the MDS2 document a token; the MDS2's form,
 document, release day, and link only while it is on file (its form then needed), the day requested only while it is requested; no OS name
 or OS support day for a model with no operating system; the link https, with no user or password in it and no query, fragment, or path
-parameter key that looks like a credential (one of CREDENTIAL_QUERY_KEYS anywhere in it, in any letter case, or an x-amz- key). Text is
+parameter key that looks like a credential (_credential_key: a session, secret, token, signature, password, or key; never a page anchor). Text is
 stripped; an unset choice or text is "", an unset day None.
 """
 from __future__ import annotations
@@ -71,10 +73,14 @@ KEEP = object()  # an argument left as it is
 BULK_MAX = 500  # devices set to a release at once (one model's)
 EARLIEST_YEAR = 1950  # a date before it is refused (a mistyped year)
 HORIZON_YEARS = 50  # a date further ahead is refused (a "never" placeholder)
-# A link's key holding any of these anywhere in it (casefolded: sessionid, PHPSESSID, client_secret, authorization), or starting x-amz-,
-# looks like a credential (review fix C6; "keyword" and "monkey" are refused too: a manufacturer's document link rarely needs either)
-CREDENTIAL_QUERY_KEYS = ("token", "key", "sig", "signature", "auth", "session", "sess", "secret", "password", "passwd", "pass", "pwd", "jwt",
-                         "credential")
+# A link's key=value key looks like a credential (review fix C6, round 2: never a bare anchor, never "author" or "designId") when, decoded
+# and casefolded: any of CREDENTIAL_WORDS is in it (sessionid, jsessionid, client_secret, authtoken), or any of its parts split on
+# anything not a letter or digit is one of CREDENTIAL_PARTS (sig, key, auth, sid: "api_key", "sig"), or it is one of CREDENTIAL_KEYS
+# (apikey, phpsessid), or it starts x-amz-.
+CREDENTIAL_WORDS = ("token", "signature", "session", "secret", "password", "passwd", "passcode", "passphrase", "credential", "jwt",
+                    "authorization", "apikey")
+CREDENTIAL_PARTS = ("sig", "key", "auth", "pass", "pwd", "sid", "sess")
+CREDENTIAL_KEYS = ("apikey", "accesskey", "authkey", "secretkey", "phpsessid", "sessid", "passkey")
 LOCK_CONFLICTS = ("40P01", "40001", "55P03")  # PostgreSQL's deadlock detected, serialization failure, lock not available
 URL_MAX = SoftwareRelease._meta.get_field("mds2_url").max_length
 
@@ -114,7 +120,7 @@ REQUESTED_ONLY = "Record the day it was requested only while the MDS2 is request
 NO_OS_NAME = "No operating system: leave its name blank."
 NO_OS_DAY = "No operating system: leave its support day blank."
 NETWORK_WORDS = "Choose how it is connected here, or leave it as the model discloses."
-RACE = "Someone recorded facts for these devices meanwhile: try again."  # also the bulk set's answer to a deadlock
+RACE = "These devices were being changed or recorded meanwhile: try again."  # also the bulk set's answer to a deadlock
 NO_RELEASE_SINCE = "Choose the release it runs first."
 
 CHOICES = {"os_family": OsFamily, "mds2": Mds2Status, "mds2_edition": Mds2Edition, "patient_data": PatientData, "connects": Connects,
@@ -262,16 +268,19 @@ def _choice(value, name: str, errors: dict) -> str:
 
 
 def _credential_key(key: str) -> bool:
-    """A link's key that looks like a credential: one of CREDENTIAL_QUERY_KEYS anywhere in it, or starting x-amz- (decoded, casefolded)."""
+    """A link's key that looks like a credential (decoded, casefolded; see CREDENTIAL_WORDS)."""
     k = unquote_plus(key).strip().casefold()
-    return k.startswith("x-amz-") or any(word in k for word in CREDENTIAL_QUERY_KEYS)
+    parts = [p for p in re.split(r"[^0-9a-z]+", k) if p]
+    return (k.startswith("x-amz-") or k in CREDENTIAL_KEYS or any(word in k for word in CREDENTIAL_WORDS)
+            or any(p in CREDENTIAL_PARTS or p in CREDENTIAL_KEYS for p in parts))
 
 
 def _link_keys(parts) -> list:
     """Every key a link carries: its query's and its fragment's (split on & and ;), and its path parameters' (";jsessionid=...")."""
     keys = []
-    for text in (parts.query, parts.fragment):
-        keys += [p.split("=", 1)[0] for p in re.split(r"[&;]", text) if p]
+    fragment = parts.fragment.split("?", 1)[1] if "?" in parts.fragment else parts.fragment  # a hash route's query
+    for text in (parts.query, fragment):
+        keys += [p.split("=", 1)[0] for p in re.split(r"[&;]", text) if "=" in p]  # key=value only: a bare anchor carries no credential
     for segment in parts.path.split("/"):
         keys += [p.split("=", 1)[0] for p in segment.split(";")[1:] if p]
     return keys
@@ -279,8 +288,7 @@ def _link_keys(parts) -> list:
 
 def _url(value, errors: dict) -> str:
     """The MDS2's link: https only, no user or password in it, no query, fragment, or path parameter key that looks like a credential
-    (_credential_key: token, key, sig, auth, sess, secret, pass, pwd, jwt, or credential anywhere in it, or x-amz-...), at most URL_MAX
-    characters."""
+    (_credential_key), at most URL_MAX characters."""
     if value is None:
         return ""
     if not isinstance(value, str):
@@ -359,11 +367,12 @@ def _taken(other: SoftwareRelease, version: str) -> str:
 
 # --- a model's profile and releases ------------------------------------------------------------------------------------------------
 
-def add_release(model, *, by, today: date | None = None, **fields):
+def add_release(model, *, by, today: date | None = None, profile: bool | None = None, **fields):
     """A versioned release of `model` (or its profile, version blank: at most one). Re-adding a version entered in error restores it
     (removed_on cleared, the given fields applied over what it had, history "Restored"). Fields from RELEASE_FIELDS only; a versioned
     release refuses the facility group (the profile's). A version already on file (by version_key) is refused, also when another
-    request adds it at the same moment (the unique key, read back as already on file)."""
+    request adds it at the same moment (the unique key, read back as already on file). `profile=False` is a door that adds a version
+    (Add release): a blank one is refused (VERSION_NEEDED) with every other problem at once, never recorded as the profile."""
     _check(by, perms.can_edit, EDIT_PERMISSION)
     today = _today(today)
     _unknown(fields)
@@ -372,9 +381,13 @@ def add_release(model, *, by, today: date | None = None, **fields):
     given = _clean(fields, errors, today=today)
     version = given.get("version", "")
     key = version_key(version)
+    if profile is False and not key and "version" not in errors:
+        errors["version"] = VERSION_NEEDED
     with transaction.atomic():
         existing = (SoftwareRelease.objects.select_for_update(of=("self",)).filter(device_model=dm, version_key=key).order_by("pk")
                     .first())  # its own row only, as _locked_release (review fix C13)
+        if profile is False and not key:
+            existing = None  # Add release with no version: VERSION_NEEDED above, never the profile's "already has a profile"
         if existing is not None and existing.removed_on is None:
             errors["version"] = _taken(existing, version)
             existing = None  # refused: the other fields are checked as a new release's
@@ -519,12 +532,22 @@ def _named_release(release, model_id, message: str) -> SoftwareRelease:
 
 
 def _locked_devices(ids) -> list:
-    """The devices' rows as they are now, FOR NO KEY UPDATE (of their own rows) in asset pk order, until the transaction ends: after the
-    release's row, before any security row (the lock order, review fixes C2 and C3). A model change in progress (update_asset's FOR
-    UPDATE) is waited for; each device's model and status are then read from these rows, never from a copy read before the wait."""
+    """The devices' rows held FOR KEY SHARE in tag order until the transaction ends, then read: after the release's row, before any
+    security row (the lock order, review fixes C2 and C3, round 2). KEY SHARE waits only for a writer holding a device FOR UPDATE (a model
+    or status change: equipment.services.update_asset, set_status, _locked_row), whose result is then read here, never a copy from before
+    the wait; ordinary saves of a device (a contract's Add model, a PM's completion) never wait on it nor it on them. Tag order is the
+    other multi-device writers' (Asset's ordering: contracts, AEM's pull-in), so the two wait in turn rather than deadlock. Django has no
+    FOR KEY SHARE, so it is the same query's SQL with the clause; SQLite locks nothing."""
+    from django.db import connection
+
     from apps.equipment.models import Asset
 
-    return list(Asset.objects.select_for_update(no_key=True, of=("self",)).filter(pk__in=ids).order_by("pk"))
+    qs = Asset.objects.filter(pk__in=list(ids)).order_by("tag")
+    if connection.vendor == "postgresql":
+        sql, params = qs.values("pk").query.sql_with_params()
+        with connection.cursor() as cursor:
+            cursor.execute(f"{sql} FOR KEY SHARE OF {connection.ops.quote_name(Asset._meta.db_table)}", params)
+    return list(qs)
 
 
 def _lock_conflict(error: OperationalError) -> bool:
@@ -700,7 +723,7 @@ def record_facts_for(model, assets, *, by, today: date | None = None, release, r
             records = {s.asset_id: s for s in DeviceSecurity.objects.select_for_update().filter(asset_id__in=ids).order_by("asset_id")}
             reason = f"Set with {len(devices)} device{'s' if len(devices) != 1 else ''} of {dm.manufacturer} {dm.model}"
             changed = 0
-            for device in devices:  # asset pk order
+            for device in devices:  # tag order (_locked_devices)
                 sec = records.get(device.pk) or DeviceSecurity(asset=device)
                 new_release = sec.release_id != locked.pk
                 day = since if since is not None else (today if new_release else sec.release_since)
