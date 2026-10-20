@@ -454,13 +454,9 @@ def release_edit(request, pk):
 
 
 def _remove_blocker(release) -> str:
-    """Why Entered in error cannot be done now (the services' refusals, said before it is tried), or ""."""
-    if release.is_profile:
-        return cyber.PROFILE_KEPT
-    named = release.devices.count()
-    if named:
-        return "1 device runs this release: set it to another first." if named == 1 else f"{named} devices run this release: set them to another first."
-    return ""
+    """Why Entered in error cannot be done now: the service's own refusal (devices on site naming it, as the panel counts them), said
+    before it is tried, or ""."""
+    return cyber.removal_refusal(release)
 
 
 @web_view(MODULE, EDIT)
