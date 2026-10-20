@@ -1,0 +1,19 @@
+{% load web %}
+{% comment %}Slice 37: Entered in error (views_cybersecurity.release_remove; services.remove_release). Says what it does before it is done,
+   or why it cannot now (the profile is cleared field by field; a release devices run is set aside only once they run another).{% endcomment %}
+<div class="modal-h"><h2>{{ release.version|default:"The profile" }}: entered in error</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note" role="alert">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="cy-remove-form" hx-post="{{ action }}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]">
+  <div class="form">
+    {% if error %}<div class="full"><span class="err" role="alert">{{ error }}</span></div>{% endif %}
+    <div class="full cy-in-error">
+      <p>Version {{ release.version }} of {{ dm.manufacturer }} {{ dm.model }} stays on record, marked entered in error: its history keeps it, and it leaves the lists and the release pickers.</p>
+      <p>Adding version {{ release.version }} again restores it.</p>
+    </div>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn danger" type="submit">Mark entered in error</button></div>
+</form>
+{% endif %}

@@ -1652,6 +1652,78 @@ td.cap-score b{font-size:14px}
 .fy-what{margin-top:6px}
 /* Slice 36 B: end */
 
+/* Slice 37 A: the Device security screen (web/cybersecurity.html, _cyber_*.html): the Fleet's filters and head figures, the tables, a
+   model's panel in the drawer, and the release and Set devices modals. Wave 2A owns this block, up to the A end marker. */
+/* The figures are tiles that wrap (auto-fill), never a fixed count of columns; the words under each count wrap too. The tables keep the
+   page from scrolling sideways: they scroll inside .tbl-wrap, and their long cells (a model's releases, MDS2, answers) wrap. */
+.cy-filters .cy-check{gap:8px;cursor:pointer}
+.cy-filters .cy-check input{width:auto;margin:0}
+.cy-hicp{margin:0 0 10px}
+.cy-figs{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-bottom:8px}
+.cy-fig{display:flex;flex-direction:column;gap:3px;padding:12px 14px;background:var(--surface);color:inherit;text-decoration:none;min-width:0}
+a.cy-fig:hover{background:var(--surface-2)}
+.cy-fig .v{font-size:24px;font-weight:600;letter-spacing:-.02em;line-height:1.15}
+.cy-fig .l{font-size:12.5px;color:var(--ink-2);line-height:1.35}
+.cy-fig .d{font-size:11.5px;color:var(--ink-3);line-height:1.35}
+.cy-counted{margin:0 0 12px}
+.cy-tbl td.cy-wrap,.cy-tbl td.cy-rel{white-space:normal;min-width:120px;max-width:240px}
+.cy-tbl td.cy-model{min-width:170px;white-space:normal}
+.cy-tbl th{white-space:normal;vertical-align:bottom}
+.cy-tbl td{vertical-align:top}
+.cy-rels{list-style:none;margin:0;padding:0;font-size:12.5px;line-height:1.5}
+.cy-rels b{font-weight:600;margin-left:4px}
+.cy-foot{margin-top:10px}
+.cy-window{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:12px}
+.cy-window .hint{flex:1;min-width:220px}
+/* A model's panel: the profile and each release a card; a group's source at its heading's end; a release's two standing lines as chips
+   that wrap (the words are the record: never cut off); the devices a list, each line wrapping. */
+.cy-act{margin:-4px 0 8px}
+.cy-card{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--surface);min-width:0}
+.cy-releases{display:flex;flex-direction:column;gap:10px}
+.cy-release-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;margin-bottom:6px}
+.cy-release-h .t{font-weight:600;overflow-wrap:anywhere}
+.cy-release-h .muted{font-size:12.5px}
+.cy-lines{display:flex;flex-wrap:wrap;gap:6px}
+.cy-lines .chip,.dr-h .chips .chip{white-space:normal;line-height:1.35;padding-top:2px;padding-bottom:2px;max-width:100%}
+.cy-more{margin-top:8px}
+.cy-more>summary{cursor:pointer;color:var(--accent);font-size:12.5px;font-weight:500;padding:2px 0}
+.cy-more[open]>summary{margin-bottom:6px}
+.cy-release-f{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px}
+.cy-group+.cy-group{margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+.cy-group-h{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 10px;margin-bottom:6px}
+.cy-group-h .t{font-size:12.5px;font-weight:600;color:var(--ink-2)}
+.cy-src{font-size:11.5px;color:var(--ink-3)}
+.cy-line{font-size:13px;font-weight:500;margin:0 0 4px;overflow-wrap:anywhere}
+.cy-line+.dl{margin-top:8px}
+.cy-dl dd{overflow-wrap:anywhere;overflow:visible;white-space:normal}
+.cy-dl .cy-wide{grid-column:1/-1}
+.cy-dl.cy-q{grid-template-columns:1fr}
+.cy-sentence{margin-top:6px}
+.cy-narrowed{margin-bottom:8px}
+.cy-devs{list-style:none;margin:0 0 8px;padding:0}
+.cy-dev{padding:8px 0;border-top:1px solid var(--line);min-width:0}
+.cy-dev:first-child{border-top:0}
+.cy-dev-h{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:13px}
+.cy-dev-h a.tag{text-decoration:none}
+.cy-dev-h .muted{font-size:12.5px}
+.cy-dev-s{font-size:12.5px;color:var(--ink-2);overflow-wrap:anywhere;margin-top:2px}
+.cy-csv{margin-top:4px;font-size:12.5px}
+/* The modals: each group a fieldset with its fields two across (one on a phone) */
+.cy-fs{margin:0;padding:8px 12px 12px;border:1px solid var(--line);border-radius:8px;min-width:0}
+.cy-fs>legend{padding:0 4px;font-size:12.5px;font-weight:600;color:var(--ink-2)}
+.cy-fs-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.cy-fs .cy-sentence{margin:8px 0 0}
+.cy-in-error p{margin:0 0 8px;font-size:13px;line-height:1.45}
+@media (max-width:760px){
+  .cy-filters .field{flex:1 1 calc(50% - 8px);min-width:0}
+  .cy-filters .field select{flex:1;min-width:0;width:100%}
+  .cy-fs-grid{grid-template-columns:1fr}
+  .cy-release-f .link,.cy-act .link,.cy-dev-h a.tag{display:inline-block;padding:6px 0}
+  .cy-more>summary{display:flex;align-items:center;min-height:40px}
+  .cy-dl{grid-template-columns:1fr}
+}
+/* Slice 37 A: end */
+
 /* Slice 11: printing app pages */
 /* What the browser prints of an app page (the Overview's Export button calls window.print(); any other screen prints from the
    browser's menu): the page's content on white, in the light theme whatever the screen shows, with chart and chip colours kept.

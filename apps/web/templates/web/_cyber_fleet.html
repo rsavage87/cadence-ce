@@ -1,0 +1,43 @@
+{% load web %}
+{% comment %}Slice 37: the Fleet tab's body (views_cybersecurity._fleet_context). HICP 2023's recommendation once, small; the head figures
+   (rules.fleet's words, each saying which devices it counts; two of them link to the devices they count, a page load so the filters
+   above show them); one row per model with devices
+   on site, each opening the model's panel with the filters on screen. Re-fetches itself on cyber-changed (a modal saved).{% endcomment %}
+<div id="cy-fleet" class="cy-fleet" hx-get="{{ list_url }}{% query request.GET %}" hx-trigger="cyber-changed from:body" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap hx-target">
+  <p class="hint cy-hicp">{{ hicp }}</p>
+  <div class="cy-figs" aria-label="Head figures">
+    {% for fig in figures %}
+    {% if fig.url %}<a class="cy-fig" href="{{ fig.url }}">{% else %}<div class="cy-fig">{% endif %}
+      <span class="v">{{ fig.count }}</span>
+      <span class="l">{{ fig.words }}</span>
+      {% if fig.extra %}<span class="d">{{ fig.extra }}</span>{% endif %}
+      <span class="d">{{ fig.counts }}</span>
+    {% if fig.url %}</a>{% else %}</div>{% endif %}
+    {% endfor %}
+  </div>
+  <p class="hint cy-counted">{{ fleet.devices }} device{{ fleet.devices|pluralize }} counted: {{ counts|lower }}{% if f.any %}, those the filters keep{% endif %}.{% if f.any %} <a class="link" href="{{ list_url }}">Clear the filters</a>{% endif %}</p>
+  <div class="tbl-wrap">
+    <table class="cy-tbl">
+      <thead><tr><th>Model</th><th class="num">Devices</th><th class="num" title="Connected here (recorded), or able to connect as the manufacturer discloses">Connected here or able to connect</th><th>By release</th><th class="num">Past security updates or the model's support</th><th class="num">OS past its vendor's published support</th><th>MDS2</th><th>Patient data, as disclosed</th><th>Who installs updates here</th><th>Network segment here</th></tr></thead>
+      <tbody>
+        {% for row in rows %}{% with r=row.r %}
+        <tr class="row" hx-get="{{ row.url }}" hx-target="#drawer">
+          <td class="two cy-model"><a class="tag" href="{{ row.url }}">{{ r.device_model.manufacturer }} {{ r.device_model.model }}</a><small>{{ r.device_model.description }} · {{ r.device_model.category }}</small></td>
+          <td class="num">{{ r.devices }}</td>
+          <td class="num">{{ r.connected }}</td>
+          <td class="cy-rel"><ul class="cy-rels">{% for words, n in row.releases %}<li{% if forloop.last and r.not_recorded %} class="muted"{% endif %}>{{ words }} <b>{{ n }}</b></li>{% endfor %}</ul></td>
+          <td class="num">{% if r.updates_ended %}<span class="chip warn">{{ r.updates_ended }}</span>{% else %}0{% endif %}</td>
+          <td class="num">{% if r.os_ended %}<span class="chip warn">{{ r.os_ended }}</span>{% else %}0{% endif %}</td>
+          <td class="cy-wrap">{{ r.mds2_words }}</td>
+          <td class="cy-wrap">{{ row.patient }}</td>
+          <td class="cy-wrap">{{ row.updates_by }}</td>
+          <td class="cy-wrap">{{ row.segmented }}</td>
+        </tr>
+        {% endwith %}{% empty %}
+        <tr><td colspan="10"><div class="empty">{% if f.any %}No devices on site match these filters. Clear a filter to see more.{% else %}No devices on site yet. Each model with devices on site shows here, one row each.{% endif %}</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% include "web/_pager.html" with noun="models" target="#cy-fleet" %}
+  </div>
+</div>

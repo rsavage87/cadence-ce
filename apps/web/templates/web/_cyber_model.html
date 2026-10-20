@@ -1,0 +1,61 @@
+{% load web %}
+{% comment %}Slice 37: a model's panel (views_cybersecurity._panel_context), in the drawer. The profile's card; the releases, each with its
+   two standing lines (never merged) and, behind Details, its groups merged with the profile by group; and (Device security View and
+   Equipment View) the devices on site, narrowed by the Fleet's filters it was opened with, each tag opening the device's Security tab.
+   Edit (Device security Edit) records the profile and the releases; Set devices to a release needs Equipment View too. The actions'
+   addresses carry the filters, so the panel comes back as it was.{% endcomment %}
+<div class="dr-h">
+  <div>
+    <h2>{{ dm.manufacturer }} {{ dm.model }}</h2>
+    <div class="sub">{{ dm.description }} · {{ dm.category }}{% if can_devices %} · {{ on_site }} device{{ on_site|pluralize }} on site{% endif %}</div>
+    <div class="chips"><span class="chip neutral">MDS2: {{ mds2_words }}</span>{% if can_devices and not_recorded %}<span class="chip neutral">{{ not_recorded }} with no release recorded</span>{% endif %}</div>
+  </div>
+  <button class="iconbtn" type="button" data-act="close-drawer" aria-label="Close">{% icon "x" %}</button>
+</div>
+<div class="dr-b cy-panel">
+  <div class="sec"><h3>Profile <span>all versions, or version not stated</span></h3>
+    {% if can_edit %}<div class="cy-act"><button class="link" type="button" hx-get="{{ profile_url }}" hx-target="#modal-card">{% if profile %}Edit the profile{% else %}Record the profile{% endif %}</button></div>{% endif %}
+    <div class="cy-card">{% include "web/_cyber_card.html" with card=profile_card %}</div>
+  </div>
+
+  <div class="sec"><h3>Releases <span>{{ releases|length }} recorded</span></h3>
+    {% if can_edit %}<div class="cy-act"><button class="link" type="button" hx-get="{{ new_url }}" hx-target="#modal-card">Add release</button></div>{% endif %}
+    <div class="cy-releases">
+      {% for x in releases %}
+      <article class="cy-card cy-release" aria-label="Release {{ x.r.version }}">
+        <div class="cy-release-h"><span class="t">{{ x.r.version }}</span>{% if can_devices %}<span class="muted">{{ x.running }} device{{ x.running|pluralize }} on site run{{ x.running|pluralize:"s," }} it</span>{% endif %}</div>
+        <div class="cy-lines"><span class="chip {{ x.card.security_tone }}">{{ x.card.security.words }}</span><span class="chip {{ x.card.os_tone }}">{{ x.card.os.words }}</span></div>
+        <details class="cy-more"><summary>Details</summary>{% include "web/_cyber_card.html" with card=x.card %}</details>
+        {% if can_edit or can_edit_devices %}<div class="cy-release-f">
+          {% if can_edit %}<button class="link" type="button" hx-get="{{ x.edit_url }}" hx-target="#modal-card">Edit</button>
+          <button class="link" type="button" hx-get="{{ x.remove_url }}" hx-target="#modal-card">Entered in error</button>{% endif %}
+          {% if can_edit_devices and on_site %}<button class="link" type="button" hx-get="{{ x.set_url }}" hx-target="#modal-card">Set devices to this release</button>{% endif %}
+        </div>{% endif %}
+      </article>
+      {% empty %}<div class="empty">No release recorded. Add each version the devices run, as the manufacturer writes it.</div>{% endfor %}
+    </div>
+  </div>
+
+  {% if can_devices %}
+  <div class="sec"><h3>Devices on site <span>{{ devices_count }}{% if narrowed %} of {{ on_site }}{% endif %}</span></h3>
+    {% if narrowed %}<p class="note cy-narrowed">Showing the devices the Fleet's filters keep. <button class="link" type="button" hx-get="{{ all_url }}" hx-target="#drawer">Show every device of this model</button></p>{% endif %}
+    {% if devices %}
+    <ul class="cy-devs">
+      {% for s in devices %}{% with a=s.asset %}
+      <li class="cy-dev">
+        <div class="cy-dev-h">{% if can_view_asset %}<a class="tag" href="{% url 'web:asset' a.tag %}?tab=security" hx-get="{% url 'web:asset' a.tag %}?tab=security" hx-target="#drawer">{{ a.tag }}</a>{% else %}<span class="tag">{{ a.tag }}</span>{% endif %} {% whose_chip a %}<span class="muted">{{ a.department.name }}{% if a.room %} · Room {{ a.room }}{% endif %}</span></div>
+        <div class="cy-dev-s"><span{% if not s.release %} class="muted"{% endif %}>{{ s.release_words }}</span> · {{ s.connection.words }}</div>
+        <div class="cy-dev-s">{{ s.security.words }}</div>
+        <div class="cy-dev-s">{{ s.os.words }}</div>
+      </li>
+      {% endwith %}{% endfor %}
+    </ul>
+    {% if devices_count > devices|length %}<p class="hint">The first {{ devices|length }} by tag: the CSV has all {{ devices_count }}.</p>{% endif %}
+    {% else %}<div class="empty">{% if narrowed %}No device of this model on site matches the Fleet's filters.{% else %}No device of this model on site.{% endif %}</div>{% endif %}
+    {% if devices %}<p class="cy-csv"><a class="link" href="{{ csv_url }}" download>These devices as CSV</a></p>{% endif %}
+  </div>
+  {% endif %}
+</div>
+{% if can_edit_devices and releases and on_site %}<div class="dr-f">
+  <button class="btn primary" type="button" hx-get="{{ set_url }}" hx-target="#modal-card">Set devices to a release</button>
+</div>{% endif %}

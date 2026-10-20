@@ -1,0 +1,39 @@
+{% extends "web/base.html" %}
+{% load web %}
+{% block title %}Device security{% endblock %}
+{% block content %}
+{% comment %}Slice 37 (views_cybersecurity): the Device security screen, the register. Tabs Fleet (the default), Models, and Changes for IT,
+   each its own address; a filter, a search, or a window re-fetches the tab's body (#cy-fleet, #cy-models, #cy-changes, each re-fetching
+   itself on cyber-changed) and pushes the address. A model's row opens its panel in the drawer; the page renders with it open when its
+   address is opened directly. Exports carry the list's filters (data-act="with-filters"). Every word about a device or a release is
+   apps.cybersecurity.rules'.{% endcomment %}
+<div class="page-head">
+  <div><h1>Device security</h1><p class="sub">What each model's software can do and what its manufacturer discloses, and what this facility knows about each device's software and connection</p></div>
+  <div class="actions">
+    {% if cyber_tab == "fleet" %}{% query request.GET page=None as cy_q %}<a class="btn" href="{% url 'web:cybersecurity_csv' %}{{ cy_q }}" data-act="with-filters" data-base="{% url 'web:cybersecurity_csv' %}" download title="Download the models in this list as CSV, one row each">{% icon "dl" %} Export</a>
+    {% elif cyber_tab == "changes" %}{% query request.GET page=None as cy_q %}<a class="btn" href="{% url 'web:cybersecurity_changes_csv' %}{{ cy_q }}" data-act="with-filters" data-base="{% url 'web:cybersecurity_changes_csv' %}" download title="Download these changes as CSV">{% icon "dl" %} Export</a>{% endif %}
+  </div>
+</div>
+{% include "web/_cyber_tabs.html" %}
+{% if cyber_tab == "fleet" %}
+<form class="toolbar cy-filters" id="cy-filters" method="get" action="{{ list_url }}"
+      hx-get="{{ list_url }}" hx-trigger="change, submit" hx-target="#cy-fleet" hx-swap="outerHTML" hx-push-url="true">
+  <label class="field"><span>Whose</span><select name="whose" aria-label="Whose">{% for v, l in options.whose %}<option value="{{ v }}"{% if f.whose == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+  <label class="field"><span>Department</span><select name="dept" aria-label="Department"><option value="">All</option>{% for v, l in options.departments %}<option value="{{ v }}"{% if f.dept == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+  <label class="field"><span>Category</span><select name="category" aria-label="Category"><option value="">All</option>{% for c in options.categories %}<option value="{{ c }}"{% if f.category == c %} selected{% endif %}>{{ c }}</option>{% endfor %}</select></label>
+  <label class="field"><span>Connection</span><select name="connected" aria-label="Connection">{% for v, l in options.connected %}<option value="{{ v }}"{% if f.connected == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+  <label class="field"><span>Standing</span><select name="standing" aria-label="Standing">{% for v, l in options.standings %}<option value="{{ v }}"{% if f.standing == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+  <label class="field cy-check"><input type="checkbox" name="norelease" value="1"{% if f.norelease %} checked{% endif %}><span>Release not recorded</span></label>
+  <noscript><button class="btn sm" type="submit">Apply</button></noscript>
+</form>
+{% include "web/_cyber_fleet.html" %}
+{% elif cyber_tab == "models" %}
+<form class="toolbar" id="cy-search" method="get" action="{{ list_url }}" role="search"
+      hx-get="{{ list_url }}" hx-trigger="submit, input changed delay:300ms from:#cy-q" hx-target="#cy-models" hx-swap="outerHTML" hx-push-url="true">
+  <label class="field grow">{% icon "search" %}<input id="cy-q" type="search" name="q" value="{{ q }}" placeholder="Search a manufacturer or a model" aria-label="Search models by manufacturer or model" autocomplete="off"></label>
+</form>
+{% include "web/_cyber_models.html" %}
+{% else %}
+{% include "web/_cyber_changes.html" %}
+{% endif %}
+{% endblock %}

@@ -1,0 +1,19 @@
+{% load web %}
+{% comment %}Slice 37: Add release, Record the profile, and Edit (views_cybersecurity.release_new / release_edit; services.add_release /
+   update_release). Every field is posted as typed; the service checks them all at once and its refusals come back under their fields
+   with what was typed kept (a refusal about the row itself at the top). A versioned release has no facility section (the profile's
+   only); the profile has no version. Answers are choices, "Not recorded" first; nothing here is free text.{% endcomment %}
+<div class="modal-h"><h2>{% if profile %}{% if release %}Edit the profile{% else %}Record the profile{% endif %}{% elif release %}Edit {{ release.version }}{% else %}Add release{% endif %} · {{ dm.manufacturer }} {{ dm.model }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+<form id="cy-release-form" class="cy-form" hx-post="{{ action }}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    {% if profile %}<p class="full hint">The profile holds what the manufacturer discloses for all of this model's versions, or with no version stated, and this facility's arrangement for the model. A release's own answers override it group by group.</p>
+    {% else %}<p class="full hint">Record what the manufacturer discloses for this version. A group left empty here reads from the model's profile.</p>{% endif %}
+    {% for legend, fields, hint in form.sections %}
+    {% if legend %}<fieldset class="full cy-fs"><legend>{{ legend }}</legend><div class="cy-fs-grid">{% endif %}
+      {% for field in fields %}{% include "web/_asset_field.html" with field=field %}{% endfor %}
+    {% if legend %}</div>{% if hint %}<p class="hint cy-sentence">{{ hint }}</p>{% endif %}</fieldset>{% endif %}
+    {% endfor %}
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">{% if release %}Save{% elif profile %}Record the profile{% else %}Add release{% endif %}</button></div>
+</form>

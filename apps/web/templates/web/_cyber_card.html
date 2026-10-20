@@ -1,0 +1,12 @@
+{# Slice 37: one card's groups (views_cybersecurity._card): each group's title, where its facts come from (this release, the model's disclosure, or not recorded), its standing lines (the support group's two, never merged), its answers in words (the MDS2's named by their questions), the MDS2's link when on file, and the fixed MDS2 sentence. Context: card. #}
+{% for g in card.groups %}
+<div class="cy-group">
+  <div class="cy-group-h"><span class="t">{{ g.title }}</span><span class="cy-src">{{ g.source }}</span></div>
+  {% for line in g.lines %}<p class="cy-line">{{ line }}</p>{% endfor %}
+  <dl class="dl cy-dl{% if g.key == 'disclosure' or g.key == 'facility' %} cy-q{% endif %}">
+    {% for label, words in g.rows %}<div><dt>{{ label }}</dt><dd>{{ words }}</dd></div>{% endfor %}
+    {% if g.url %}<div class="cy-wide"><dt>Link</dt><dd><a class="link" href="{{ g.url }}" target="_blank" rel="noopener noreferrer">The manufacturer's page for it</a></dd></div>{% endif %}
+  </dl>
+  {% if g.sentence %}<p class="hint cy-sentence">{{ g.sentence }}</p>{% endif %}
+</div>
+{% endfor %}

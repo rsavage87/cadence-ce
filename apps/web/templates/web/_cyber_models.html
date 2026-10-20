@@ -1,0 +1,30 @@
+{% load web %}
+{% comment %}Slice 37: the Models tab's body (views_cybersecurity._models_context): each model with devices on site or anything recorded,
+   or (a search) any of the facility's models, with its profile's answers, its releases, and its MDS2; a row opens the model's panel.
+   Devices on site only for Equipment View too (can_devices). Re-fetches itself on cyber-changed (a modal saved).{% endcomment %}
+<div id="cy-models" class="cy-models" hx-get="{{ list_url }}{% query request.GET %}" hx-trigger="cyber-changed from:body" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap hx-target">
+  <div class="tbl-wrap">
+    <table class="cy-tbl">
+      <thead><tr><th>Model</th>{% if can_devices %}<th class="num">Devices on site</th>{% endif %}<th>Profile</th><th>Releases</th><th>MDS2</th><th>Connects, as disclosed</th><th>Patient data, as disclosed</th><th>Who installs updates here</th><th>Network segment here</th></tr></thead>
+      <tbody>
+        {% for row in rows %}{% with dm=row.dm %}
+        <tr class="row" hx-get="{{ row.url }}" hx-target="#drawer">
+          <td class="two cy-model"><a class="tag" href="{{ row.url }}">{{ dm.manufacturer }} {{ dm.model }}</a><small>{{ dm.description }} · {{ dm.category }}</small></td>
+          {% if can_devices %}<td class="num">{{ dm.on_site }}</td>{% endif %}
+          <td>{% if row.profile %}Recorded{% else %}<span class="muted">Not recorded</span>{% endif %}</td>
+          <td class="cy-wrap">{% if row.versions %}{{ row.versions|join:", " }}{% else %}<span class="muted">None recorded</span>{% endif %}</td>
+          <td class="cy-wrap">{{ row.mds2 }}</td>
+          <td class="cy-wrap">{{ row.connects }}</td>
+          <td class="cy-wrap">{{ row.patient }}</td>
+          <td class="cy-wrap">{{ row.updates_by }}</td>
+          <td class="cy-wrap">{{ row.segmented }}</td>
+        </tr>
+        {% endwith %}{% empty %}
+        <tr><td colspan="9"><div class="empty">{% if q %}No model matches “{{ q }}”. Search a manufacturer or a model as the device list names it.{% else %}No model has devices on site or anything recorded yet. Search a model to record its profile.{% endif %}</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% include "web/_pager.html" with noun="models" target="#cy-models" %}
+  </div>
+  <p class="hint cy-foot">A model's profile holds what the manufacturer discloses for all its versions (or with no version stated); a release holds what it discloses for one version, and overrides the profile group by group. Cadence keeps references and answers, never the MDS2 file, a device's credentials, or its network addresses.</p>
+</div>

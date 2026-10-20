@@ -1,0 +1,21 @@
+{% load web %}
+{% comment %}Slice 37: Set devices to this release (views_cybersecurity.set_release; services.record_facts_for): every device of the model
+   on site (ours and temporary), or one department's, to one of its versioned releases, since a day, and how they are connected here.
+   Refusals come back under their fields (the devices' under Devices), with what was chosen kept.{% endcomment %}
+<div class="modal-h"><h2>Set devices to a release · {{ dm.manufacturer }} {{ dm.model }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if not releases %}
+<div class="form"><div class="full note">No release of this model is recorded yet. Add the version the devices run first.</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="cy-set-form" class="cy-form" hx-post="{{ action }}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    <p class="full hint">{{ on_site }} device{{ on_site|pluralize }} of this model on site, ours and temporary. Each one set is checked today, by you, with its history.</p>
+    {% include "web/_asset_field.html" with field=form.release %}
+    {% include "web/_asset_field.html" with field=form.department %}
+    {% include "web/_asset_field.html" with field=form.release_since %}
+    {% include "web/_asset_field.html" with field=form.network %}
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Set the devices</button></div>
+</form>
+{% endif %}

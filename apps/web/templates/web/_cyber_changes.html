@@ -1,0 +1,31 @@
+{% load web %}
+{% comment %}Slice 37: Changes for IT's body (views_cybersecurity._changes_context; rules.changes_for_it): the devices whose model can
+   connect, or can store or handle patient data (as the manufacturer discloses), or recorded as connected here, added, marked missing,
+   retired, or returned to their owner in the window, newest first, each tag opening the device's Security tab. The window (7, 30, 90
+   days) re-fetches this body and pushes the address, which the Export link follows. Re-fetches itself on cyber-changed.{% endcomment %}
+<div id="cy-changes" class="cy-changes" hx-get="{{ list_url }}{% query request.GET %}" hx-trigger="cyber-changed from:body" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap hx-target">
+  <div class="cy-window">
+    <div class="seg-ctl" role="group" aria-label="Window">{% for n in windows %}<a class="{% if n == days %}active{% endif %}" href="{{ list_url }}?days={{ n }}" hx-get="{{ list_url }}?days={{ n }}" hx-target="#cy-changes" hx-swap="outerHTML" hx-push-url="true"{% if n == days %} aria-current="true"{% endif %}>{{ n }} days</a>{% endfor %}</div>
+    <p class="hint">{{ start|date:"M j, Y" }} to {{ today|date:"M j, Y" }}: devices whose model can connect, or can store or handle patient data, as the manufacturer discloses, or recorded as connected here, that were added, marked missing, retired, or returned to their owner. Ours and temporary.</p>
+  </div>
+  <div class="tbl-wrap">
+    <table class="cy-tbl">
+      <thead><tr><th>Day</th><th>Tag</th><th>Model</th><th>Location</th><th>What changed</th><th>Connection</th></tr></thead>
+      <tbody>
+        {% for c in page %}{% with a=c.asset %}
+        <tr>
+          <td>{{ c.day|date:"M j, Y" }}</td>
+          <td class="tag"><a class="tag" href="{% url 'web:asset' a.tag %}?tab=security" hx-get="{% url 'web:asset' a.tag %}?tab=security" hx-target="#drawer">{{ a.tag }}</a> {% whose_chip a %}</td>
+          <td class="two">{{ a.device_model.manufacturer }} {{ a.device_model.model }}<small>{{ a.device_model.description }}</small></td>
+          <td class="two">{{ a.department.name }}<small>{% if a.room %}Room {{ a.room }}{% else %}&nbsp;{% endif %}</small></td>
+          <td class="cy-wrap">{{ c.words }}</td>
+          <td class="cy-wrap">{% if c.connection %}{{ c.connection.words }}{% endif %}</td>
+        </tr>
+        {% endwith %}{% empty %}
+        <tr><td colspan="6"><div class="empty">Nothing changed in the last {{ days }} days among the devices that can connect or handle patient data.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% include "web/_pager.html" with noun="changes" target="#cy-changes" %}
+  </div>
+</div>
