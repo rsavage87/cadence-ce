@@ -54,6 +54,7 @@ from .models import (
 
 THIS_RELEASE = "this release"
 PROFILE = "the model's disclosure, version not stated"
+FACILITY_SOURCE = "the model's, for every version"  # the facility group's source (this facility's arrangement, never a disclosure)
 NOT_RECORDED = "not recorded"
 
 # Release standing keys (the manufacturer's security updates)
