@@ -28,7 +28,6 @@ from apps.facility import services as fac
 from apps.imports import base, kinds
 from apps.imports import services as imports
 from apps.imports.models import ImportRun
-from apps.pm.dates import add_months
 from apps.reports.fleet import REPLACE_COLUMNS
 from apps.web import asset_tabs
 from apps.web.reports_fleet import GAP_LIMIT, UNRANKED_LIMIT
@@ -246,10 +245,8 @@ def test_the_costs_tab_outlook_shows_the_score_flags_drivers_and_how_it_is_score
     assert [label for label in re.findall(r"<tr><td>([^<]+)</td>", how)] == [priority.LABELS[k] for k in priority.COMPONENTS]
     assert f"{sum(c.points for c in p.components if c.points is not None):.1f} points known ({p.points_unknown} unknown, never scored as 0" in how
     assert "times 1.0 for its risk class (life support)" in how and "Recorded condition 3 of 5 (undated): shown, never scored." in how
-    # no work order in Cadence yet: the window starts today
-    a_year = add_months(today, 12)
-    assert (f"Failures and service cost have too little history: the records start {today:%b} {today.day}, {today.year}, and 12 months are "
-            f"needed (from {a_year:%b} {a_year.day}, {a_year.year}).") in how
+    # no work order in Cadence yet: never a "from <day>" that moves every day (review fix, round 3)
+    assert "Failures and service cost have too little history: no work orders in Cadence yet." in how and "records start" not in how
 
 
 def test_the_costs_tab_has_no_outlook_for_a_rental_and_the_note_for_a_retired_device(client, signed_in, ctx, dept, pump_model, vent):
@@ -308,7 +305,7 @@ def test_the_csv_ends_with_the_score_version_and_reads_back_through_the_devices_
     freeze_today(TODAY)
     director = signed_in("director")
     rows = csv_rows(client.get("/reports/replace.csv"))
-    assert rows[0] == REPLACE_COLUMNS and rows[0][-1] == "Score version" and {r[-1] for r in rows[1:]} == {priority.version_words()}
+    assert rows[0] == REPLACE_COLUMNS and rows[0][-1] == "Score version" and {r[-1] for r in rows[1:]} == {f"v{priority.SCORE_VERSION}"}
     # The devices import takes the tag, maker, model, install date, and acquisition cost, and leaves the rest unused, Score version too
     assert set(base.auto_map(kinds.get("devices").columns, rows[0])) == {"tag", "manufacturer", "model", "installed", "cost"}
     at = rows[0].index("Installed on")
@@ -329,4 +326,4 @@ def test_the_csv_ends_with_the_score_version_and_reads_back_through_the_devices_
     assert Asset.objects.get(tag="CE-20005").installed_on == date(2019, 5, 1)
     assert Asset.objects.get(tag="CE-20001").installed_on == fleet["vent"].installed_on and Asset.objects.get(tag="CE-20006").installed_on is None
     assert Asset.objects.get(tag="CE-20007").acquisition_cost == Decimal("0")
-    assert priority.version_words() in csv_text(client.get("/reports/replace.csv")).splitlines()[1]
+    assert csv_text(client.get("/reports/replace.csv")).splitlines()[1].endswith(",v2")  # review fix, round 3: the cell is "v2" again

@@ -8,19 +8,48 @@ C2  a live contract with a cost whose share cannot be worked out (no acquisition
     as unknown (never a silent $0), as the Costs tab says; a $0 contract is a known share of 0.
 C3  an imported repair still open is "still open", never also "imported: not recorded then".
 C4  "supported" when checked within 12 calendar months, Feb 29 or not.
-C5, C10, C11, C13  a support day before 2000 or more than 50 years ahead is refused (the service, the Record support modal, the API),
-    and fiscal.describe never raises on a fiscal year beyond the calendar, so stored data never makes the Costs tab a 500.
-C7  the rows' last cell (the CSV, the API, the email's attachment) is the rule's version with its weights.
+C5, C10, C11, C13  a support day with a year that looks wrong or more than 50 years ahead is refused (the service, the Record support
+    modal, the API), and fiscal.describe never raises on a fiscal year beyond the calendar, so stored data never makes the Costs tab a 500.
+C7  the screen, the print, and the drawer print the rule's version with its weights; the rows' last cell (the CSV, the API, the email's
+    attachment) is "v2" (round 3: the weights on every row would take a full-size fleet's CSV past the devices import's 5 MB).
 C8  "kept out of use after a repair" reads the device's last repair by the binder's rule (repair_checks.last_completed_first).
 C9  (a) the gap reads "not checked in the last 12 months"; (b) a confirmed recall done on this device says so.
 C12 too little history names the day the records start and the day there will be enough, never "12 months ... and 12 are needed".
 C14 the drawer's drivers round points as the table, the CSV, and the API do (half up).
 C15 support's end and parts' end are their last days (passed the day after); a sale's end is its first day.
+
+Rounds 2 and 3 (after the skeptics, each on the skeptic's own scenario; round 3's rule of whose a line is replaced round 2's):
+R1  whose a line is: the vendor's only on a work order that is vendor service now (labor with no technician, and every part line);
+    labor a technician logged on a vendor repair is ours, and every line of work that is in-house now is ours, whoever billed it before
+    it came back (the contract's vendor, or a third party).
+R2  what a line is: an imported outside cost, total, or in-house time written as a part line on an imported work order is never a part
+    (parts only never leaves it out); the same words typed as a part on live work are a part.
+R3  coverage is monotonic: a wider coverage never pays for less on the same records; a part fitted in-house is never the contract's.
+R4  a contract that costs $0 pays for nothing recorded: its vendor's work counts, its share is a known $0, and the Costs tab agrees.
+R5  a vendor job with no vendor name on a device under a live contract is the contract's vendor's.
+R6  a share that cannot be worked out, with the lines counted alone at the top of the scale: known 1.0, "at least N%" (the report's
+    cell too); below the top: unknown.
+R7  a sale's, support's, or parts' end from 1950 is accepted (a 1990s milestone is real); the check day from 2000; 0028 refused.
+R8  an announced sale's end reads "No longer sold from <day>" (its first day).
+R9  the Costs tab never prints "suggested fiscal year, " with nothing after it.
+R10 the admin shows the expected life and the six support fields read only (update_device_model is their only writer).
+R11 enough_history_on(start) is the first day window_of counts enough (a Feb 29 start: Mar 1), and the drawer's words name it; with no
+    work order in Cadence yet, the words name no day ("no work orders in Cadence yet").
+R12 recalls done on this device are counted ("2 confirmed recalls done on this device").
+R13 (round 2's compact version cell on every row) was undone by round 3: see C7.
+R14the documented limitations, pinned: a contract whose vendor was renamed since counts the earlier vendor work on top; work moved
+    from one vendor to another is judged by the vendor named now; a part fitted in-house before the repair went to the vendor is the
+    vendor's.
+R15 a contract pays only for work completed on or after its start: a part bought before a parts only contract started, and the same
+    vendor's billed work before a full-service contract was signed, are counted; work completed on its first day is the contract's.
+R16 a life past the calendar, saved outside update_device_model, never raises: the rule's life end is unknown.
 The day is pinned (the services and the views read the facility's clock).
 """
+import inspect
 import json
 from datetime import date, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 from capital_fixtures import TODAY, device, recall_match, work, years_before
@@ -29,6 +58,7 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 from repair_fixtures import CHECKED, FINDING
 
+from apps.accounts.models import User
 from apps.capital import priority as P
 from apps.contracts import services as ct_services
 from apps.contracts.models import Coverage
@@ -39,10 +69,10 @@ from apps.facility import services as fac
 from apps.pm.dates import add_months
 from apps.recalls.models import AlertMatch
 from apps.reports.fleet import REPLACE_COLUMNS, report_replace
-from apps.web import asset_tabs
-from apps.workorders import legacy, repair_checks
+from apps.web import asset_tabs, reports_fleet
+from apps.workorders import costs, legacy, repair_checks
 from apps.workorders.completion import complete_work_order
-from apps.workorders.models import Priority, RepairCheck, RepairFinding, WorkOrder, WoStatus, WoType
+from apps.workorders.models import LaborLine, PartLine, Priority, RepairCheck, RepairFinding, WorkOrder, WoStatus, WoType
 from apps.workorders.services import assign, change_status, create_work_order
 
 START = 7  # the fiscal year starts in July: TODAY is in FY2027
@@ -91,8 +121,10 @@ def score(asset, today=TODAY) -> P.Priority:
     return found[0]
 
 
-def contract(coverage, *devices, annual="0", vendor="Acme"):
-    c = ct_services.create_contract(reference="SC-1", vendor=vendor, coverage=coverage, start_on=TODAY - timedelta(days=100),
+def contract(coverage, *devices, annual="0", vendor="Acme", reference="SC-1", start=None):
+    """A live contract on the devices, started a year ago (before every scenario's work: round 3 counts work completed before a contract
+    started) unless `start` is given."""
+    c = ct_services.create_contract(reference=reference, vendor=vendor, coverage=coverage, start_on=start or TODAY - timedelta(days=365),
                                     end_on=TODAY + timedelta(days=100), annual_cost=Decimal(annual))
     for d in devices:
         ct_services.add_asset(c, d)
@@ -143,20 +175,20 @@ def test_c1_with_no_contract_the_vendors_work_counts(history, dept, model):
 ])
 def test_c1_a_vendors_work_is_left_out_only_when_the_live_contract_pays_for_it(history, dept, model, coverage, vendor_name, spent):
     a = device(model, dept, "CE-1", years=6, acquisition_cost=Decimal("1000"))
-    contract(coverage, a, annual="0")  # a rate agreement: no annual fee
+    contract(coverage, a, annual="100")  # the only device: its share is the $100 (a $0 contract pays for nothing: round 2, below)
     four_vendor_repairs(a, vendor_name)
     p = score(a)
-    assert p.extras["contract_share"] == Decimal("0") and p.extras["spent"] == Decimal(spent)
-    assert p.service_cost_year == (Decimal(spent) / YEARS).quantize(Decimal("0.01"))
-    if spent == "4600":  # as if there were no contract: the scenario's $1,533 a year, never $0
-        assert p.component(P.COST).input == "77% a year of replacement ($1,533 a year)" and p.score == 31
+    assert p.extras["contract_share"] == Decimal("100") and p.extras["spent"] == Decimal(spent)
+    assert p.service_cost_year == (Decimal(spent) / YEARS + 100).quantize(Decimal("0.01"))
+    if spent == "4600":  # the scenario's $1,533 a year on top of the share, never $0
+        assert p.component(P.COST).input == "82% a year of replacement ($1,633 a year)" and p.score == 31
     elif spent == "0":
-        assert p.component(P.COST).input == "0% a year of replacement ($0 a year)" and p.component(P.COST).value == 0.0
+        assert p.component(P.COST).input == "5% a year of replacement ($100 a year)" and p.component(P.COST).value == 0.0
 
 
 def test_c1_pm_only_pays_for_its_vendors_pms_and_time_and_materials_for_none(history, dept, model):
     a = device(model, dept, "CE-1", years=6, acquisition_cost=Decimal("1000"))
-    c = contract(Coverage.PM_ONLY, a, annual="0")
+    c = contract(Coverage.PM_ONLY, a, annual="100")
     work(a, WoType.PM, TODAY - timedelta(days=30), completed=TODAY - timedelta(days=30), labor=[(2, 150)], vendor=True, vendor_name="Acme")
     work(a, WoType.REPAIR, TODAY - timedelta(days=20), completed=TODAY - timedelta(days=19), labor=[(1, 150)], vendor=True, vendor_name="Acme",
          finding=RepairFinding.WEAR)
@@ -269,7 +301,7 @@ def test_c4_the_rule_scores_the_leap_anniversary_as_supported(history, dept, mod
 @pytest.mark.parametrize("field", ["sale_ended_on", "support_ends_on", "parts_end_on"])
 @pytest.mark.parametrize("typed, words", [
     ("0028-03-31", YEAR_WRONG),  # Chrome's date box, the year typed "28"
-    ("1999-12-31", YEAR_WRONG),
+    ("1949-12-31", YEAR_WRONG),  # before SUPPORT_EARLIEST_YEAR (round 2: a 1990s milestone is real history)
     (date(28, 3, 31), YEAR_WRONG),  # as the API's date field passes it
     ("9999-12-31", TOO_FAR),  # the "never" placeholder
     (date(9999, 12, 31), TOO_FAR),
@@ -335,19 +367,32 @@ def test_c11_the_costs_tab_answers_for_a_far_support_day_and_a_stored_placeholde
     assert ">FY10000</div>" in costs_tab(client, a)
 
 
-# --- C7: the rows carry the version with its weights --------------------------------------------------------------------------------
+# --- C7: the rows end with "v2"; the screen, the print, and the drawer print the weights ------------------------------------------------
 
 
-def test_c7_the_csv_and_api_rows_end_with_the_version_and_its_weights(client, signed_in, history, dept, model):
-    device(model, dept, "CE-1", years=6)
-    words = P.version_words()
-    assert words.startswith("Score v2: age 30, support 25, failures 20, service cost 15, recall 10; times 1.0 life support")
-    assert {row[-1] for row in report_replace(TODAY)["rows"]} == {words}  # the email's attachment is these rows
+def test_c7_the_rows_end_with_v2_and_the_screen_print_and_drawer_print_the_weights(client, signed_in, history, dept, model):
+    """Skeptics (rest #5, edges2): the weights on every row cost about 90 bytes, and a 20,000-row fleet's CSV, read back through the
+    devices import, would pass its 5 MB limit; round 3 puts "v2" back (f"v{SCORE_VERSION}") and drops version_cell."""
+    a = device(model, dept, "CE-1", years=6)
+    assert not hasattr(P, "version_cell")
+    assert {row[-1] for row in report_replace(TODAY)["rows"]} == {"v2"}  # the email's attachment is these rows
     signed_in("director")
     rows = csv_rows(client.get("/reports/replace.csv"))
-    assert rows[0] == REPLACE_COLUMNS and rows[0][-1] == "Score version" and {r[-1] for r in rows[1:]} == {words}
+    assert rows[0] == REPLACE_COLUMNS and rows[0][-1] == "Score version" and {r[-1] for r in rows[1:]} == {"v2"}
+    line = next(x for x in csv_text_of(client.get("/reports/replace.csv")).splitlines() if x.startswith("CE-1,"))
+    assert line.endswith(",yes,v2")
     data = client.get("/api/v1/reports/replace/").json()
-    assert data["columns"][-1] == "Score version" and {r[-1] for r in data["rows"]} == {words}
+    assert data["columns"][-1] == "Score version" and {r[-1] for r in data["rows"]} == {"v2"}
+    words = P.version_words()
+    assert words == ("Score v2: age 30, support 25, failures 20, service cost 15, recall 10; times 1.0 life support, 0.95 high, 0.9 medium, "
+                     "0.85 low risk")
+    assert words in client.get("/reports/replace/").content.decode()
+    assert words in client.get("/print/reports/replace/").content.decode()
+    assert asset_tabs.replacement_outlook(a, TODAY)["version"] == words
+
+
+def csv_text_of(response) -> str:
+    return b"".join(response.streaming_content).decode("utf-8-sig")
 
 
 # --- C8: the device's last repair by the binder's rule ------------------------------------------------------------------------------
@@ -417,7 +462,7 @@ def test_c9b_a_confirmed_recall_done_on_this_device_says_so(history, dept, model
     m = recall_match(model, classification="Class I")  # confirmed: in progress
     work(a, WoType.RECALL, TODAY - timedelta(days=5), completed=TODAY - timedelta(days=4), alert=m.alert)  # done on A, not on B
     p = score(a)
-    assert (p.component(P.SAFETY).value, p.component(P.SAFETY).input, p.flags) == (0.0, "confirmed recall done on this device", ())
+    assert (p.component(P.SAFETY).value, p.component(P.SAFETY).input, p.flags) == (0.0, "1 confirmed recall done on this device", ())
     assert score(b).component(P.SAFETY).input == "1 confirmed recall not done on this device, Class I"
 
 
@@ -485,4 +530,535 @@ def test_c15_a_sale_ending_today_has_passed(history, dept, model):
     s = eq.support_status(model, TODAY)
     assert (s.key, s.value, s.words) == ("sale_ended", 0.4, "No longer sold since Oct 19, 2026")
     s = eq.support_status(model, TODAY - timedelta(days=1))
-    assert (s.key, s.words) == ("announced", "Sale ends Oct 19, 2026")
+    assert (s.key, s.words) == ("announced", "No longer sold from Oct 19, 2026")  # round 2: a sale's end is its first day
+
+
+# === Rounds 2 and 3: the skeptics' scenarios ===================================================================================================
+
+
+def cost_words(p) -> tuple:
+    c = p.component(P.COST)
+    return c.value, c.input, c.note
+
+
+def complete(wo, opened, completed):
+    change_status(wo, WoStatus.IN_PROGRESS, as_of=opened)
+    change_status(wo, WoStatus.COMPLETED, as_of=completed)
+    wo.refresh_from_db()
+    return wo
+
+
+# --- R1: whose a line is: the vendor's only on work that is vendor service now ----------------------------------------------------------
+
+
+def test_r1_in_house_hours_before_a_repair_went_to_the_contracts_vendor_are_counted(history, dept, model, techs):
+    """Skeptic (cost #1a): a device on a live full-service Acme contract at $100 a year; an in-house technician logs 6 h x $90 of
+    troubleshooting, the repair is escalated to Acme (the drawer's Assign names the contract's vendor), and Acme logs 2 h x $200. The
+    work is vendor service now: Acme's time (no technician) is the contract's, the technician's hours on it are ours."""
+    a = device(model, dept, "CE-1", years=6, acquisition_cost=Decimal("1000"))
+    contract(Coverage.FULL, a, annual="100")
+    opened = TODAY - timedelta(days=40)
+    wo = create_work_order(asset=a, type=WoType.REPAIR, priority=Priority.NORMAL, problem="Occlusion alarm", opened_on=opened)
+    assign(wo, technician=techs["dana"])
+    costs.add_labor(wo, hours="6", rate="90", worked_on=opened, by=None)  # the assigned technician's time
+    assign(wo, vendor_name=eq.service_vendor(a))
+    costs.add_labor(wo, hours="2", rate="200", worked_on=opened + timedelta(days=1), by=None)  # vendor service: no technician
+    wo = complete(wo, opened, TODAY - timedelta(days=38))
+    assert (wo.vendor_service, wo.vendor_name) == (True, "Acme")
+    assert sorted((line.technician_id is None, line.hours) for line in LaborLine.objects.filter(work_order=wo)) == [
+        (False, Decimal("6.00")), (True, Decimal("2.00"))]
+    p = score(a)
+    assert p.extras["spent"] == Decimal("540") and p.extras["contract_share"] == Decimal("100")  # never 0: the $540 was never the contract's
+    assert p.service_cost_year == (Decimal("540") / YEARS + 100).quantize(Decimal("0.01"))
+    assert cost_words(p) == (pytest.approx(0.36, abs=0.001), "14% a year of replacement ($280 a year)", "with its contract share, $100 a year")
+
+
+@pytest.mark.parametrize("vendor_name", ["Acme", "OtherCo Imaging"])
+def test_r1_a_vendors_hours_on_work_that_came_back_in_house_are_counted(history, dept, model, techs, vendor_name):
+    """Skeptics (cost2 #1, #3, #8): CE-1 on a live full-service Acme contract at $100 a year; a repair goes to a vendor (the contract's
+    own, or a third party), which logs 4 h x $200; the work comes back in-house (assign clears the vendor's name) and Dana logs 1 h x
+    $90. Work that is in-house now is ours, whoever billed it before: spent $890, never $90 (round 2 left the $800 out as Acme's)."""
+    a = device(model, dept, "CE-1", years=6, acquisition_cost=Decimal("1000"))
+    contract(Coverage.FULL, a, annual="100")
+    opened = TODAY - timedelta(days=40)
+    wo = create_work_order(asset=a, type=WoType.REPAIR, priority=Priority.NORMAL, problem="Occlusion alarm", opened_on=opened)
+    assign(wo, vendor_name=vendor_name)
+    costs.add_labor(wo, hours="4", rate="200", worked_on=opened, by=None)  # vendor service: no technician
+    assign(wo, technician=techs["dana"])
+    costs.add_labor(wo, hours="1", rate="90", worked_on=opened + timedelta(days=1), by=None)
+    wo = complete(wo, opened, TODAY - timedelta(days=38))
+    assert (wo.vendor_service, wo.vendor_name) == (False, "")
+    assert sorted((line.technician_id is None, line.hours) for line in LaborLine.objects.filter(work_order=wo)) == [
+        (False, Decimal("1.00")), (True, Decimal("4.00"))]
+    p = score(a)
+    assert p.extras["spent"] == Decimal("890")
+    assert p.service_cost_year == (Decimal("890") / YEARS + 100).quantize(Decimal("0.01"))
+    assert cost_words(p) == (pytest.approx(0.593, abs=0.001), "20% a year of replacement ($397 a year)", "with its contract share, $100 a year")
+
+
+# --- R2: what a line is (an imported outside cost, total, or in-house time is never a part) ---------------------------------------------
+
+
+@pytest.mark.parametrize("vendor, cost, description, spent", [
+    ("Acme", legacy.Costs(outside=Decimal("1200")), legacy.OUTSIDE, "1200"),  # an outside cost
+    ("ACME", legacy.Costs(labor=Decimal("1200")), legacy.OUTSIDE, "1200"),  # a labor cost without hours: outside service
+    ("Acme", legacy.Costs(total=Decimal("1200")), legacy.TOTAL_ONLY, "1200"),  # a total alone
+    ("", legacy.Costs(hours=Decimal("10"), labor=Decimal("900")), costs.UNNAMED_LABOR, "900"),  # in-house hours naming nobody here
+    ("Acme", legacy.Costs(parts=Decimal("1200")), legacy.PARTS, "0"),  # the vendor's parts: the contract's
+])
+def test_r2_an_imported_outside_cost_under_parts_only_is_never_a_part(history, dept, model, vendor, cost, description, spent):
+    """Skeptic (cost #2): a device on a live Parts-only contract with Acme at $100 a year; one imported closed repair, its cost the
+    previous system's outside cost, labor cost without hours, or total."""
+    a = device(model, dept, "CE-1", years=6, acquisition_cost=Decimal("1000"))
+    contract(Coverage.PARTS, a, annual="100")
+    wo = legacy.import_work_order(asset=a, legacy_number="L-1", type=WoType.REPAIR, status=WoStatus.CLOSED, opened_on=TODAY - timedelta(days=61),
+                                  completed_on=TODAY - timedelta(days=60), vendor_name=vendor, costs=cost, today=TODAY).work_order
+    assert list(PartLine.objects.filter(work_order=wo).values_list("description", flat=True)) == [description]
+    p = score(a)
+    assert p.extras["spent"] == Decimal(spent)
+    assert p.service_cost_year == (Decimal(spent) / YEARS + 100).quantize(Decimal("0.01"))
+    if spent == "1200":  # about 25%, never the share's 5%
+        assert cost_words(p)[1] == "25% a year of replacement ($500 a year)"
+
+
+@pytest.mark.parametrize("description", [legacy.TOTAL_ONLY, legacy.OUTSIDE, costs.UNNAMED_LABOR])
+def test_r2_the_same_words_typed_as_a_part_on_live_vendor_work_are_a_part(history, dept, model, description):
+    """Skeptic (cost2 #6): CE-1 on a live parts-only Acme contract at $100 a year; on a live Acme repair, a user adds a part through the
+    drawer typed "Imported cost" (or another of the import's words), 1 x $500. Only the import writes those as costs that are not parts:
+    this one is Acme's part, the contract's (spent 0, never $500)."""
+    a = device(model, dept, "CE-1", years=6, acquisition_cost=Decimal("1000"))
+    contract(Coverage.PARTS, a, annual="100")
+    opened = TODAY - timedelta(days=40)
+    wo = work(a, WoType.REPAIR, opened, vendor=True, vendor_name="Acme", finding=RepairFinding.WEAR)
+    costs.add_part(wo, description=description, quantity="1", unit_cost="500", by=None)
+    complete(wo, opened, TODAY - timedelta(days=38))
+    p = score(a)
+    assert p.extras["spent"] == Decimal("0")
+    assert cost_words(p) == (0.0, "5% a year of replacement ($100 a year)", "with its contract share, $100 a year")
+
+
+# --- R3: coverage is monotonic, and a part fitted in-house is never the contract's --------------------------------------------------
+
+
+def test_r3_an_in_house_repairs_part_is_counted_under_every_coverage(history, dept, model):
+    """Skeptics (cost2 #3, #7): CE-1 on a $200-a-year Acme contract; Dana Kim's in-house repair, 2 h x $90 and a $700 main board. Round 2
+    left the board out under parts only (spent 180, score 16) and counted it under full service (880, 22): the same records costing
+    more under the wider coverage."""
+    a = device(model, dept, "CE-1", years=6, acquisition_cost=Decimal("1000"))
+    c = contract(Coverage.PARTS, a, annual="200")
+    work(a, WoType.REPAIR, TODAY - timedelta(days=40), completed=TODAY - timedelta(days=38), labor=[(2, 90)], parts=[(1, 700)],
+         finding=RepairFinding.WEAR)
+    for coverage in Coverage.values:
+        ct_services.update_contract(c, coverage=coverage)
+        p = score(a)
+        assert p.extras["spent"] == Decimal("880") and p.extras["contract_share"] == Decimal("200"), coverage
+        assert cost_words(p) == (pytest.approx(0.787, abs=0.001), "25% a year of replacement ($493 a year)", "with its contract share, $200 a year")
+        assert p.score == 22, coverage
+
+
+# Each coverage's spent on the same records (below): a wider coverage pays for at least what a narrower one does
+COVERAGE_SPENT = {Coverage.TM: "1830", Coverage.PM_ONLY: "1530", Coverage.PARTS: "1330", Coverage.PARTS_LABOR: "880", Coverage.FULL: "880"}
+WIDER = ((Coverage.TM, Coverage.PM_ONLY), (Coverage.TM, Coverage.PARTS), (Coverage.PARTS, Coverage.PARTS_LABOR), (Coverage.PARTS_LABOR, Coverage.FULL),
+         (Coverage.PM_ONLY, Coverage.FULL), (Coverage.PARTS, Coverage.FULL))
+
+
+def test_r3_a_wider_coverage_never_pays_for_less_on_the_same_records(history, dept, model):
+    """Skeptic (cost2 #3): parts only against parts and labor on the same records: Dana's in-house repair (2 h x $90, a $700 board),
+    Acme's repair (1 h x $150, a $500 part), and Acme's PM (2 h x $150), each under every coverage of a $200-a-year Acme contract."""
+    a = device(model, dept, "CE-1", years=6, acquisition_cost=Decimal("1000"))
+    c = contract(Coverage.TM, a, annual="200")
+    work(a, WoType.REPAIR, TODAY - timedelta(days=60), completed=TODAY - timedelta(days=58), labor=[(2, 90)], parts=[(1, 700)],
+         finding=RepairFinding.WEAR)  # in-house: ours under every coverage
+    work(a, WoType.REPAIR, TODAY - timedelta(days=40), completed=TODAY - timedelta(days=38), labor=[(1, 150)], parts=[(1, 500)], vendor=True,
+         vendor_name="Acme", finding=RepairFinding.WEAR)
+    work(a, WoType.PM, TODAY - timedelta(days=20), completed=TODAY - timedelta(days=20), labor=[(2, 150)], vendor=True, vendor_name="Acme")
+    spent = {}
+    for coverage in Coverage.values:
+        ct_services.update_contract(c, coverage=coverage)
+        spent[coverage] = score(a).extras["spent"]
+    assert spent == {k: Decimal(v) for k, v in COVERAGE_SPENT.items()}
+    for narrow, wide in WIDER:
+        assert spent[wide] <= spent[narrow], (narrow, wide)
+
+
+def test_r3_contract_covers_is_monotonic_and_judges_the_vendors_lines_only():
+    for wo_type in WoType.values:
+        for part in (False, True):
+            for narrow, wide in WIDER:
+                assert not P.contract_covers(narrow, wo_type, part) or P.contract_covers(wide, wo_type, part), (narrow, wide, wo_type, part)
+    assert list(inspect.signature(P.contract_covers).parameters) == ["coverage", "wo_type", "part"]  # no by_vendor: in-house is never asked
+
+
+# --- R4: a $0 contract pays for nothing recorded -------------------------------------------------------------------------------------
+
+
+def test_r4_a_zero_cost_contract_counts_its_vendors_work_with_a_known_zero_share(client, signed_in, history, dept, model):
+    """Skeptics (cost #6, #12, #18): no acquisition cost, a live full-service Acme contract left at the form's default $0, and
+    $3,000 of Acme repairs (10 h x $150 and a $1,500 part) 60 days ago."""
+    a = device(model, dept, "CE-1", years=6, acquisition_cost=Decimal("0"))
+    contract(Coverage.FULL, a, annual="0")
+    work(a, WoType.REPAIR, TODAY - timedelta(days=60), completed=TODAY - timedelta(days=58), labor=[(10, 150)], parts=[(1, 1500)], vendor=True,
+         vendor_name="Acme", finding=RepairFinding.WEAR)
+    p = score(a)
+    assert p.extras["contract_share"] == Decimal("0") and p.extras["spent"] == Decimal("3000") and p.points_unknown == 0
+    assert cost_words(p) == (1.0, "50% a year of replacement ($1,000 a year)", "")
+    assert asset_tabs.contract_share(a) == 0.0  # the Costs tab reads it the same way, acquisition cost or not
+    signed_in("technician")
+    body = costs_tab(client, a)
+    assert "cannot be worked out" not in body and "SC-1 · Acme" in body and "shared across its devices by acquisition cost." in body
+    assert '<div class="v">$0</div><div class="l">annual contract share</div>' in body
+    assert "50% a year of replacement ($1,000 a year)" in cost_row(body) and "points unknown" not in body
+
+
+# --- R5: a vendor job with no vendor name is the contract's vendor's -----------------------------------------------------------------
+
+
+def test_r5_a_vendor_job_the_api_names_no_vendor_for_is_the_contracts_vendors(client, make_user, history, dept, model):
+    """Skeptic (cost #3): a director POSTs a vendor-service repair with no vendor name; the device is on a live full-service Acme contract
+    at $1,000 a year; the vendor logs 5 h x $150."""
+    a = device(model, dept, "CE-1", years=6, acquisition_cost=Decimal("1000"))
+    contract(Coverage.FULL, a, annual="1000")
+    client.force_login(make_user("director"))
+    r = client.post("/api/v1/work-orders/", {"asset": str(a.id), "type": "repair", "problem": "No power", "vendor_service": True,
+                                             "due_on": (TODAY + timedelta(days=5)).isoformat()}, content_type="application/json")
+    assert r.status_code == 201, r.json()
+    wo = WorkOrder.objects.get(pk=r.json()["id"])
+    assert (wo.vendor_service, wo.vendor_name) == (True, "")
+    costs.add_labor(wo, hours="5", rate="150", worked_on=TODAY, by=None)
+    complete(wo, TODAY, TODAY)
+    p = score(a)
+    assert p.extras["spent"] == Decimal("0")  # never $750 on top of the share
+    assert cost_words(p) == (1.0, "50% a year of replacement ($1,000 a year)", "with its contract share, $1,000 a year")
+
+
+# --- R6: an unknown share with the counted lines already at the top -----------------------------------------------------------------
+
+
+def test_r6_the_lines_alone_at_the_top_are_known_whatever_the_share(client, signed_in, history, dept, model):
+    """Skeptic (cost #5): CE-1 and CE-2 alike, each the only device on its own live T&M Acme contract at $1,800 a year, four Acme repairs
+    ($4,600 billed); CE-1 has no acquisition cost, CE-2 one of $1,000."""
+    one = device(model, dept, "CE-1", years=6, acquisition_cost=Decimal("0"))
+    two = device(model, dept, "CE-2", years=6, acquisition_cost=Decimal("1000"))
+    contract(Coverage.TM, one, annual="1800", reference="SC-1")
+    contract(Coverage.TM, two, annual="1800", reference="SC-2")
+    four_vendor_repairs(one, "Acme")
+    four_vendor_repairs(two, "Acme")
+    p1, p2 = score(one), score(two)
+    assert cost_words(p1) == (1.0, "at least 77% a year of replacement ($1,533 a year before its contract share)", P.CONTRACT_SHARE_UNKNOWN)
+    assert p1.extras["cost_at_least"] is True and p1.extras["contract_share"] is None and p1.service_cost_year is None
+    assert p1.points_unknown == 0 and p1.component(P.COST).points == 15
+    assert cost_words(p2)[:2] == (1.0, "167% a year of replacement ($3,333 a year)") and p2.extras["cost_at_least"] is False
+    assert p1.score == p2.score == 31  # never 13 points lower for a field that only splits the contract
+    assert reports_fleet.cost_pct(p1) == "at least 77%" and reports_fleet.cost_pct(p2) == "167%"
+    signed_in("director")
+    body = client.get("/reports/replace/").content.decode()
+    assert '<td class="num" title="at least 77% a year of replacement ($1,533 a year before its contract share)">at least 77%</td>' in body
+    assert "at least 77% a year of replacement ($1,533 a year before its contract share)" in cost_row(costs_tab(client, one))
+
+
+def test_r6_below_the_top_the_unknown_share_could_still_move_the_value(history, dept, model):
+    """A year's window (the rate divides by one year): $599.99 counted is under 30% of $2,000, unknown; one more cent reaches the top."""
+    a = device(model, dept, "CE-1", installed_on=add_months(TODAY, -12), acquisition_cost=Decimal("0"))
+    contract(Coverage.TM, a, annual="1800")
+    wo = work(a, WoType.REPAIR, TODAY - timedelta(days=10), completed=TODAY - timedelta(days=9), parts=[(1, "599.99")], vendor=True,
+              vendor_name="Acme", finding=RepairFinding.WEAR)
+    p = score(a)
+    assert p.window_years < 1 and p.extras["spent"] == Decimal("599.99")
+    assert cost_words(p) == (None, P.CONTRACT_SHARE_UNKNOWN, "") and p.points_unknown == 15
+    assert p.extras["cost_at_least"] is False and p.extras["cost_ratio"] is None and reports_fleet.cost_pct(p) == ""
+    PartLine.objects.create(work_order=wo, description="Fuse", quantity=Decimal("1"), unit_cost=Decimal("0.01"))
+    p = score(a)
+    assert cost_words(p) == (1.0, "at least 30% a year of replacement ($600 a year before its contract share)", P.CONTRACT_SHARE_UNKNOWN)
+    assert p.points_unknown == 0 and reports_fleet.cost_pct(p) == "at least 30%"
+
+
+# --- R7: milestone days from 1950, the check day from 2000 -----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("field", ["sale_ended_on", "support_ends_on", "parts_end_on"])
+def test_r7_a_1990s_milestone_is_accepted_and_a_two_digit_year_refused(ctx, vent_model, field):
+    for day in (date(1999, 12, 31), "1998-06-30", date(1950, 1, 1)):
+        eq.update_device_model(vent_model, **{field: day})
+        assert getattr(DeviceModel.objects.get(pk=vent_model.pk), field) == (date.fromisoformat(day) if isinstance(day, str) else day)
+    for typed in ("0028-03-31", date(28, 3, 31), date(1949, 12, 31)):
+        with pytest.raises(ValidationError) as e:
+            eq.update_device_model(vent_model, **{field: typed})
+        assert e.value.message_dict == {field: [YEAR_WRONG]}
+    assert getattr(DeviceModel.objects.get(pk=vent_model.pk), field) == date(1950, 1, 1)
+    assert eq.SUPPORT_EARLIEST_YEAR == 1950
+
+
+def test_r7_the_day_support_was_checked_is_still_from_2000(ctx, vent_model):
+    with pytest.raises(ValidationError) as e:
+        eq.update_device_model(vent_model, support_checked_on=date(1999, 12, 31))
+    assert e.value.message_dict == {"support_checked_on": [YEAR_WRONG]}
+    eq.update_device_model(vent_model, support_checked_on=date(2000, 1, 1))
+    assert DeviceModel.objects.get(pk=vent_model.pk).support_checked_on == date(2000, 1, 1)
+
+
+def test_r7_a_1990s_sale_and_support_end_save_through_the_modal_and_the_api_and_score(client, signed_in, history, dept, vent_model):
+    """Skeptic (support #2, #6, #10): a sterilizer still in use whose sale ended Jun 30, 1998 and support Jun 30, 1999."""
+    a = device(vent_model, dept, "CE-1", years=8)
+    signed_in("director")
+    r = client.post(f"/pm/models/{vent_model.pk}/support/", {"life_source": "", "sale_ended_on": "1998-06-30", "support_ends_on": "",
+                                                              "parts_end_on": "", "support_notice": "",
+                                                              "support_checked_on": TODAY.isoformat()}, **HX)
+    assert r.status_code == 200 and YEAR_WRONG not in r.content.decode()
+    assert DeviceModel.objects.get(pk=vent_model.pk).sale_ended_on == date(1998, 6, 30)
+    assert score(a).support.words == "No longer sold since Jun 30, 1998" and score(a).component(P.SUPPORT).value == 0.4
+    r = client.patch(f"/api/v1/device-models/{vent_model.pk}/", json.dumps({"support_ends_on": "1999-06-30"}), content_type="application/json")
+    assert r.status_code == 200, r.json()
+    p = score(a)
+    assert (p.support.key, p.support.words) == ("support_ended", "Manufacturer support ended Jun 30, 1999") and P.SUPPORT_ENDED in p.flags
+
+
+# --- R8: an announced sale's end is its first day -----------------------------------------------------------------------------------
+
+
+def test_r8_an_announced_sale_end_reads_no_longer_sold_from(history, dept, model):
+    """Skeptic (support #3): No longer sold from Oct 20, 2026, read on Oct 19, and tied with support's last day."""
+    tomorrow = TODAY + timedelta(days=1)
+    eq.update_device_model(model, sale_ended_on=tomorrow)
+    s = eq.support_status(model, TODAY)
+    assert (s.key, s.value, s.words) == ("announced", 0.2, "No longer sold from Oct 20, 2026")
+    eq.update_device_model(model, support_ends_on=tomorrow)
+    assert eq.support_status(model, TODAY).words == "No longer sold from Oct 20, 2026"
+    device(model, dept, "CE-1", years=3)
+    row = next(r for r in report_replace(TODAY)["rows"] if r[0] == "CE-1")
+    assert row[REPLACE_COLUMNS.index("Support")] == "No longer sold from Oct 20, 2026"
+    s = eq.support_status(model, tomorrow)
+    assert (s.key, s.words) == ("sale_ended", "No longer sold since Oct 20, 2026")
+
+
+# --- R9: no dangling comma on the Costs tab ------------------------------------------------------------------------------------------
+
+
+def test_r9_the_costs_tab_never_prints_a_dangling_comma_for_a_stored_fy10000(client, signed_in, history, dept, vent_model):
+    """Skeptic (support #4): support_ends_on 9999-12-31 stored before the bound, a July fiscal year, a device with no install date."""
+    fac.update_settings(fiscal_year_start_month="7")
+    a = device(vent_model, dept, "CE-77")
+    DeviceModel.objects.filter(pk=vent_model.pk).update(support_ends_on=date(9999, 12, 31))
+    signed_in("technician")
+    body = costs_tab(client, a)
+    assert '<div class="v">FY10000</div><div class="l">suggested fiscal year</div>' in body and "suggested fiscal year, " not in body
+    eq.update_device_model(vent_model, support_ends_on=date(2030, 3, 31))
+    body = costs_tab(client, a)
+    assert ('<div class="v" title="FY2030: Jul 1, 2029 to Jun 30, 2030">FY2030</div><div class="l">suggested fiscal year, Jul 1, 2029 to '
+            'Jun 30, 2030</div>') in body
+
+
+# --- R10: the admin never writes the expected life or the support fields --------------------------------------------------------------
+
+
+def test_r10_the_admin_shows_expected_life_and_the_six_support_fields_read_only(client, ctx, vent_model):
+    """Skeptics (support #9, edges2 #1): a staff user's /admin/ change page would save a 9999-12-31 without _support_fields' bounds, and
+    an expected life of 32767 years without update_device_model's 1 to 50 (the rule's date arithmetic then went past the calendar)."""
+    client.force_login(User.objects.create_superuser("root", "root@example.com", "Root-Pass-2026", tenant=ctx))
+    url = f"/admin/equipment/devicemodel/{vent_model.pk}/change/"
+    r = client.get(url)
+    body = r.content.decode()
+    assert r.status_code == 200 and 'name="manufacturer"' in body  # the change form itself
+    for name in ("expected_life_years", *eq.SUPPORT_FIELDS):
+        assert f'name="{name}"' not in body, name
+    form = r.context["adminform"].form
+    data = {name: form[name].value() for name in form.fields if form[name].value() is not None}
+    r = client.post(url, {**data, "expected_life_years": "32767", "sale_ended_on": "9999-12-31", "description": "ICU ventilator, adult"})
+    assert r.status_code == 302
+    saved = DeviceModel.objects.get(pk=vent_model.pk)
+    assert saved.description == "ICU ventilator, adult"  # the admin still saves what it may
+    assert (saved.expected_life_years, saved.sale_ended_on) == (10, None)
+
+
+# --- R11: the first day with enough history, by the window's own test ------------------------------------------------------------------
+
+
+def test_r11_enough_history_on_is_the_first_day_window_of_counts_enough():
+    assert P.enough_history_on(date(2028, 2, 29)) == date(2029, 3, 1)  # never Feb 28: window_of still reads too little then
+    assert P.enough_history_on(date(2025, 10, 20)) == date(2026, 10, 20)
+    assert P.enough_history_on(date(2027, 2, 28)) == date(2028, 2, 28)
+    assert P.enough_history_on(date(2024, 1, 31)) == date(2025, 1, 31)
+    day = date(2023, 1, 1)
+    while day < date(2025, 1, 1):  # every start across a leap year
+        on = P.enough_history_on(day)
+        started = SimpleNamespace(installed_on=day)
+        assert P.window_of(started, on, date(2000, 1, 1))[2] and not P.window_of(started, on - timedelta(days=1), date(2000, 1, 1))[2], day
+        day += timedelta(days=1)
+
+
+def test_r11_the_drawer_names_the_day_the_rule_counts_enough_for_a_feb_29_start(history, dept, model):
+    """Skeptic (rest #1): a device installed Feb 29, 2028, read on Feb 28, 2029, and on Mar 1."""
+    a = device(model, dept, "CE-29", installed_on=date(2028, 2, 29))
+    feb_28, mar_1 = date(2029, 2, 28), date(2029, 3, 1)
+    assert score(a, today=feb_28).failures is None
+    assert asset_tabs.replacement_outlook(a, feb_28)["window_words"] == (
+        "Failures and service cost have too little history: the records start Feb 29, 2028, and 12 months are needed (from Mar 1, 2029).")
+    assert score(a, today=mar_1).failures == 0
+    assert asset_tabs.replacement_outlook(a, mar_1)["window_words"] == "Failures and service cost count the 12 months since Feb 29, 2028."
+
+
+def test_r11_with_no_work_orders_in_cadence_yet_the_drawer_names_no_day(client, signed_in, ctx, dept, model):
+    """Skeptic (edges2 #4): a new facility, its devices imported, no work order yet: window_of's start is today every day, so the drawer
+    once promised enough history "from" a day a year off that moved every day. It names no day until the first work order."""
+    a = device(model, dept, "CE-1", years=6)
+    words = "Failures and service cost have too little history: no work orders in Cadence yet."
+    for today in (TODAY, TODAY + timedelta(days=365)):
+        p = score(a, today=today)
+        assert p.failures is None and p.extras["first_day"] is None
+        assert asset_tabs.replacement_outlook(a, today)["window_words"] == words
+    signed_in("technician")
+    body = costs_tab(client, a)
+    assert words in body and "records start" not in body
+    work(a, WoType.PM, TODAY - timedelta(days=10), completed=TODAY - timedelta(days=10))  # the facility's first work order
+    assert score(a).extras["first_day"] == TODAY - timedelta(days=10)
+    assert asset_tabs.replacement_outlook(a, TODAY)["window_words"] == (
+        "Failures and service cost have too little history: the records start Oct 9, 2026, and 12 months are needed (from Oct 9, 2027).")
+
+
+# --- R12: recalls done on this device, counted ---------------------------------------------------------------------------------------
+
+
+def test_r12_two_confirmed_recalls_done_on_this_device_read_plural(history, dept, model):
+    """Skeptic (rest #2): two in-progress confirmed recalls on the model (Class I and Class II), both done on this device."""
+    a = device(model, dept, "CE-1", years=4)
+    b = device(model, dept, "CE-2", years=4)
+    one = recall_match(model, classification="Class I")
+    two = recall_match(model)
+    work(a, WoType.RECALL, TODAY - timedelta(days=5), completed=TODAY - timedelta(days=4), alert=one.alert)
+    assert score(a).component(P.SAFETY).input == "1 confirmed recall not done on this device"
+    work(a, WoType.RECALL, TODAY - timedelta(days=3), completed=TODAY - timedelta(days=2), alert=two.alert)
+    p = score(a)
+    assert (p.component(P.SAFETY).value, p.component(P.SAFETY).input, p.flags) == (0.0, "2 confirmed recalls done on this device", ())
+    assert score(b).component(P.SAFETY).input == "2 confirmed recalls not done on this device, Class I"
+
+
+# --- R14: the documented limitations, pinned ---------------------------------------------------------------------------------------
+
+
+def test_r14_a_contract_vendor_renamed_since_counts_the_earlier_vendor_work_on_top(history, dept, model):
+    """Skeptic (cost #4): pinned as documented. The work order keeps the vendor's name as it was assigned ("Phillips"); the contract's
+    current name is compared, so renaming the contract ("Philips Healthcare") counts that work on top of the share."""
+    a = device(model, dept, "CE-1", years=6, acquisition_cost=Decimal("1000"))
+    c = contract(Coverage.FULL, a, annual="1000", vendor="Phillips")
+    opened = TODAY - timedelta(days=40)
+    wo = create_work_order(asset=a, type=WoType.REPAIR, priority=Priority.NORMAL, problem="No display", opened_on=opened)
+    assign(wo, vendor_name=eq.service_vendor(a))
+    costs.add_labor(wo, hours="5", rate="150", worked_on=opened, by=None)
+    complete(wo, opened, TODAY - timedelta(days=38))
+    assert score(a).extras["spent"] == Decimal("0")
+    ct_services.update_contract(c, vendor="Philips Healthcare")
+    p = score(a)
+    assert p.extras["spent"] == Decimal("750")
+    assert cost_words(p) == (1.0, "62% a year of replacement ($1,250 a year)", "with its contract share, $1,000 a year")
+
+
+def test_r14_work_moved_between_vendors_is_judged_by_the_vendor_named_now(history, dept, model):
+    """Pinned as documented in paid_by_contract: a live full-service Acme contract at $1,000 a year; Acme logs 3 h x $150 on a repair,
+    which then moves to OtherCo, which logs 2 h x $150. The work order names OtherCo now, so Acme's covered hours count on top too."""
+    a = device(model, dept, "CE-1", years=6, acquisition_cost=Decimal("1000"))
+    contract(Coverage.FULL, a, annual="1000")
+    opened = TODAY - timedelta(days=40)
+    wo = create_work_order(asset=a, type=WoType.REPAIR, priority=Priority.NORMAL, problem="No display", opened_on=opened)
+    assign(wo, vendor_name="Acme")
+    costs.add_labor(wo, hours="3", rate="150", worked_on=opened, by=None)
+    assign(wo, vendor_name="OtherCo Imaging")
+    costs.add_labor(wo, hours="2", rate="150", worked_on=opened + timedelta(days=1), by=None)
+    complete(wo, opened, TODAY - timedelta(days=38))
+    assert score(a).extras["spent"] == Decimal("750")
+
+
+def test_r14_a_part_fitted_in_house_before_the_repair_went_to_the_vendor_is_the_vendors(history, dept, model, techs):
+    """Pinned as documented in paid_by_contract (skeptic cost2 #9's scenario): a live full-service Acme contract at $1,000 a year; Dana
+    logs 4 h x $85 and fits a $200 fuse, the repair is escalated to Acme, which logs 3 h x $150. Dana's hours count; the fuse is on
+    the vendor's work order, so the vendor's, left out with Acme's time."""
+    a = device(model, dept, "CE-1", years=6, acquisition_cost=Decimal("1000"))
+    contract(Coverage.FULL, a, annual="1000")
+    opened = TODAY - timedelta(days=40)
+    wo = create_work_order(asset=a, type=WoType.REPAIR, priority=Priority.NORMAL, problem="No power", opened_on=opened)
+    assign(wo, technician=techs["dana"])
+    costs.add_labor(wo, hours="4", rate="85", worked_on=opened, by=None)
+    costs.add_part(wo, description="Fuse", quantity="1", unit_cost="200", by=None)
+    assign(wo, vendor_name=eq.service_vendor(a))
+    costs.add_labor(wo, hours="3", rate="150", worked_on=opened + timedelta(days=1), by=None)
+    complete(wo, opened, TODAY - timedelta(days=38))
+    assert score(a).extras["spent"] == Decimal("340")
+
+
+# --- R15: a contract pays only for work completed since it started -------------------------------------------------------------------
+
+
+def test_r15_a_part_bought_before_a_parts_only_contract_started_is_counted(history, dept, model):
+    """Skeptics (cost2 #2, #4): CE-1 (list $2,000); 400 days ago Acme's billed repair fitted a $3,000 main board; 700 days ago an imported
+    closed in-house repair (2 h, $180, $4,000 of parts). Thirty days ago the facility signed a parts-only contract with Acme at $100 a
+    year and put CE-1 on it; since then Acme's repair (1 h x $150, a $500 part). The contract never pays for what was bought before it."""
+    a = device(model, dept, "CE-1", years=6, acquisition_cost=Decimal("1000"))
+    work(a, WoType.REPAIR, TODAY - timedelta(days=402), completed=TODAY - timedelta(days=400), parts=[(1, 3000)], vendor=True, vendor_name="Acme",
+         finding=RepairFinding.WEAR)
+    legacy.import_work_order(asset=a, legacy_number="L-1", type=WoType.REPAIR, status=WoStatus.CLOSED, opened_on=TODAY - timedelta(days=701),
+                             completed_on=TODAY - timedelta(days=700), costs=legacy.Costs(hours=Decimal("2"), labor=Decimal("180"), parts=Decimal("4000")),
+                             today=TODAY)
+    assert score(a).extras["spent"] == Decimal("7180")  # no contract yet
+    contract(Coverage.PARTS, a, annual="100", start=TODAY - timedelta(days=30))
+    work(a, WoType.REPAIR, TODAY - timedelta(days=12), completed=TODAY - timedelta(days=10), labor=[(1, 150)], parts=[(1, 500)], vendor=True,
+         vendor_name="Acme", finding=RepairFinding.WEAR)
+    p = score(a)
+    assert p.extras["spent"] == Decimal("7330")  # everything but the $500 part since it started (round 2: $330)
+    assert p.service_cost_year == (Decimal("7330") / YEARS + 100).quantize(Decimal("0.01"))
+    assert cost_words(p) == (1.0, "127% a year of replacement ($2,543 a year)", "with its contract share, $100 a year")
+
+
+def test_r15_a_full_service_contract_signed_after_the_vendors_billed_work_never_erases_it(history, dept, model):
+    """Skeptic (cost2 #5): four Acme repairs completed 200 to 650 days ago, each 6 h x $150 and a $600 part ($6,000), named as
+    service_vendor names them before any contract ("Acme field service"); then a full-service Acme contract from 100 days ago at $300 a
+    year. Round 2 read spent 0 and 15% (score 23): signing a cheap contract erased two years of billed history."""
+    a = device(model, dept, "CE-1", years=6, acquisition_cost=Decimal("1000"))
+    for k in range(4):
+        done = TODAY - timedelta(days=200 + 150 * k)
+        work(a, WoType.REPAIR, done - timedelta(days=2), completed=done, labor=[(6, 150)], parts=[(1, 600)], vendor=True,
+             vendor_name="Acme field service", finding=RepairFinding.WEAR)
+    before = score(a)
+    assert before.extras["spent"] == Decimal("6000") and cost_words(before) == (1.0, "100% a year of replacement ($2,000 a year)", "")
+    contract(Coverage.FULL, a, annual="300", start=TODAY - timedelta(days=100))
+    p = score(a)
+    assert p.extras["spent"] == Decimal("6000") and p.extras["contract_share"] == Decimal("300")
+    assert cost_words(p) == (1.0, "115% a year of replacement ($2,300 a year)", "with its contract share, $300 a year")
+    assert p.score == before.score == 31
+
+
+def test_r15_work_completed_on_the_contracts_first_day_is_its_and_the_day_before_is_not(history, dept, model):
+    a = device(model, dept, "CE-1", years=6, acquisition_cost=Decimal("1000"))
+    start = TODAY - timedelta(days=100)
+    contract(Coverage.FULL, a, annual="100", start=start)
+    work(a, WoType.REPAIR, start - timedelta(days=3), completed=start - timedelta(days=1), labor=[(2, 150)], vendor=True, vendor_name="Acme",
+         finding=RepairFinding.WEAR)  # the day before: billed, counted
+    work(a, WoType.REPAIR, start - timedelta(days=2), completed=start, labor=[(5, 150)], vendor=True, vendor_name="Acme",
+         finding=RepairFinding.WEAR)  # its first day: the contract's
+    assert score(a).extras["spent"] == Decimal("300")
+
+
+# --- R16: a life past the calendar never raises ----------------------------------------------------------------------------------------
+
+
+def test_r16_a_life_of_10000_years_saved_outside_the_service_never_raises(client, signed_in, history, dept, model):
+    """Skeptic (edges2 #1): an expected life saved outside update_device_model's 1 to 50 years (as the admin once could): the install day
+    plus the life is past the calendar. The rule reads its life end as unknown; the report, its CSV, print, and API, and the device's
+    Costs tab answer."""
+    a = device(model, dept, "CE-1", installed_on=date(2021, 3, 1))
+    DeviceModel.objects.filter(pk=model.pk).update(expected_life_years=10000)
+    p = score(a)
+    assert (p.life_years, p.life_end) == (10000, None) and p.component(P.AGE).input == "5.6 of 10000 yr" and p.component(P.AGE).value < 0.001
+    assert next(r for r in report_replace(TODAY)["rows"] if r[0] == "CE-1")[REPLACE_COLUMNS.index("Expected life years")] == 10000
+    signed_in("director")
+    for url in ("/reports/replace/", "/reports/replace.csv", "/print/reports/replace/", "/api/v1/reports/replace/"):
+        assert client.get(url).status_code == 200, url
+    assert "5.6 of 10000 yr" in costs_tab(client, a)
+
+
+@pytest.mark.xfail(strict=True, raises=ValueError, reason="OPEN after round 3: asset_tabs.expected_life (the drawer's Overview line, through "
+                   "capital_tags.expected_life) still adds the life with add_months unguarded: 'year 12021 is out of range'")
+def test_r16_the_device_drawer_answers_for_a_life_of_10000_years(client, signed_in, history, dept, model):
+    """The same stored life on the device drawer's Overview (its Expected life line, the rule's arithmetic): a 200, never a 500."""
+    a = device(model, dept, "CE-1", installed_on=date(2021, 3, 1))
+    DeviceModel.objects.filter(pk=model.pk).update(expected_life_years=10000)
+    signed_in("director")
+    r = client.get(f"/equipment/{a.tag}/", **HX)
+    assert r.status_code == 200 and "10000 yr" in r.content.decode()

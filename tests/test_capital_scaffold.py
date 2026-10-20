@@ -84,7 +84,7 @@ def model(**kw):
     ({"support_checked_on": date(2025, 10, 19)}, "supported", 0.0, "Supported, checked Oct 19, 2025"),  # 365 days: still checked
     ({"support_checked_on": date(2025, 10, 18)}, "unknown", None, "Support last checked Oct 18, 2025"),
     ({"support_ends_on": date(2028, 3, 31)}, "announced", 0.2, "Support ends Mar 31, 2028"),
-    ({"sale_ended_on": date(2027, 1, 1), "parts_end_on": date(2030, 1, 1)}, "announced", 0.2, "Sale ends Jan 1, 2027"),
+    ({"sale_ended_on": date(2027, 1, 1), "parts_end_on": date(2030, 1, 1)}, "announced", 0.2, "No longer sold from Jan 1, 2027"),
     ({"sale_ended_on": date(2025, 1, 1), "support_ends_on": date(2028, 3, 31)}, "sale_ended", 0.4, "No longer sold since Jan 1, 2025"),
     ({"sale_ended_on": date(2024, 1, 1), "support_ends_on": TODAY}, "sale_ended", 0.4,  # support's last day: still supported
      "No longer sold since Jan 1, 2024"),
