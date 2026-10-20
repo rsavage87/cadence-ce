@@ -202,7 +202,7 @@ class ReleaseForm(ServiceForm):
     os_support_ends_on = _day("The OS vendor's published support ends", "Its last day, as the OS vendor states it.")
     security_updates_end_on = _day("The manufacturer's security updates end",
                                    "Their last day, as the manufacturer states it. Blank when none is announced.")
-    support_checked_on = _day("Days checked on", "The day someone read these days from the vendors.")
+    support_checked_on = _day("Support checked", "The day someone checked these dates with the vendors.")
     mds2 = _choice("MDS2", Mds2Status.choices, "The Manufacturer Disclosure Statement for Medical Device Security, a voluntary form.")
     mds2_edition = _choice("MDS2 form", Mds2Edition.choices, "The year on the form, while it is on file.")
     mds2_document = _text("MDS2 document number", DOCUMENT_MAX, "As the form shows it, without spaces.")

@@ -254,7 +254,7 @@ def _card(merged, dm, today, *, profile: bool) -> dict:
     standing lines (rules.release_standing, rules.os_standing), never merged."""
     v = merged.values
     security, os_line = rules.release_standing(merged, dm, today), rules.os_standing(merged, today)
-    support = [("Operating system", _os_words(v)), ("Days checked on", _day(v.get("support_checked_on")))]
+    support = [("Operating system", _os_words(v)), ("Support checked", _day(v.get("support_checked_on")))]
     status = v.get("mds2")
     mds2 = [("MDS2", _label("mds2", status))]
     if status == Mds2Status.ON_FILE:
