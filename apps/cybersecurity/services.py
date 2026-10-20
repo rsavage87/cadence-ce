@@ -4,19 +4,19 @@ ids through the tenant (Model.objects), writes history with a reason, and refuse
 given as `by` needs Device security Edit (and Equipment View for a device's facts: permissions.py), else PermissionDenied; None is the
 system (the seed, tests).
 
-Lock order (review fixes C2, C3, C13, and round 2): a release's row first (select_for_update of its own row only: never its model's, which
-a join would lock too) when editing, removing, or naming it; then the devices' rows, each device's model and status read again once held
-(FOR KEY SHARE, in tag order: _locked_devices); then the devices' security rows (FOR UPDATE, in asset pk order), a missing one inserted
-only once its device's row is held. So a writer never waits on a device's row while holding a security row (a new security row's foreign
-key check, PostgreSQL's FOR KEY SHARE on the device at commit, needs nothing it does not hold), and a model change in progress
-(equipment.services.update_asset holds the device's row FOR UPDATE until its transaction, an import chunk's, ends) is waited for, then
-seen: the old model's release is refused, never saved. These writers never lock work orders. The one outside caller is
-equipment.services.update_asset -> model_changed, which runs with the device's work and row already locked (its work, its row, then its
-security row, never the reverse). Slice 38's update events, recorded at a work order's completion, take the security row last too. A
-transaction locking several devices in another order (an import chunk, in its file's order) can still meet the bulk set in a deadlock:
-PostgreSQL ends one side; the bulk set then answers the RACE refusal in words, and an import chunk reports the row it could not save.
-Writers that lock a model's devices in tag order (AEM's pull-in) wait for the bulk set, or it for them, and ordinary saves of a device
-never wait at all.
+Lock order (review fixes C2, C3, C13, rounds 2 and 3): the facility's register lock first (lock_register: every writer here, so two
+of them never race, whatever devices or releases they touch); then a release's row (select_for_update of its own row only: never its
+model's, which a join would lock too) when editing, removing, or naming it; then the devices' rows FOR KEY SHARE in tag order
+(_locked_devices), each device's model and status read once held: KEY SHARE waits only for a writer holding a device FOR UPDATE (a model or
+status change: equipment.services.update_asset, set_status, _locked_row), whose result is then read, so the old model's release is refused,
+never saved, while ordinary saves of a device (a contract's Add model, a PM's completion) never wait on it; then the devices' security rows
+(FOR UPDATE, in asset pk order), a missing one inserted after. These writers never lock work orders. The one outside caller is
+equipment.services.update_asset -> model_changed, which runs with the device's work and row already held and takes the security row last
+(never the register lock: a writer of devices waits on its devices, never on the register). Writers that lock a model's devices FOR UPDATE
+in tag order (AEM's pull-in) wait for the bulk set, or it for them, in turn. A transaction locking several devices FOR UPDATE in another
+order (an import chunk, in its file's order) can still meet the bulk set in a deadlock: PostgreSQL ends one side; the bulk set then answers
+the RACE refusal in words, and an import chunk reports the row it could not save. Slice 38's update events, recorded at a work order's
+completion, take the security row last too.
 
 Nothing here is deleted: a release entered in error is marked (removed_on, removed_by) and refused while a device on site names it
 (rules.on_site, of the release's model: the devices the Models panel counts, review fix C4); a retired or returned device's record keeps
@@ -278,9 +278,9 @@ def _credential_key(key: str) -> bool:
 def _link_keys(parts) -> list:
     """Every key a link carries: its query's and its fragment's (split on & and ;), and its path parameters' (";jsessionid=...")."""
     keys = []
-    fragment = parts.fragment.split("?", 1)[1] if "?" in parts.fragment else parts.fragment  # a hash route's query
-    for text in (parts.query, fragment):
-        keys += [p.split("=", 1)[0] for p in re.split(r"[&;]", text) if "=" in p]  # key=value only: a bare anchor carries no credential
+    keys += [p.split("=", 1)[0] for p in re.split(r"[&;]", parts.query) if "=" in p]
+    # every key=value part of a fragment, a hash route's query included (split on ? too); a bare anchor carries no credential
+    keys += [p.split("=", 1)[0].rsplit("/", 1)[-1] for p in re.split(r"[&;?]", parts.fragment) if "=" in p]
     for segment in parts.path.split("/"):
         keys += [p.split("=", 1)[0] for p in segment.split(";")[1:] if p]
     return keys
@@ -384,6 +384,7 @@ def add_release(model, *, by, today: date | None = None, profile: bool | None = 
     if profile is False and not key and "version" not in errors:
         errors["version"] = VERSION_NEEDED
     with transaction.atomic():
+        lock_register()  # first: the register's writers one at a time (review round 3)
         existing = (SoftwareRelease.objects.select_for_update(of=("self",)).filter(device_model=dm, version_key=key).order_by("pk")
                     .first())  # its own row only, as _locked_release (review fix C13)
         if profile is False and not key:
@@ -421,6 +422,7 @@ def update_release(release, *, by, today: date | None = None, **fields):
     errors: dict = {}
     given = _clean(fields, errors, today=today)
     with transaction.atomic():
+        lock_register()  # first: the register's writers one at a time (review round 3)
         locked = _locked_release(release)
         if locked.removed_on is not None:
             raise ValidationError({"release": REMOVED_RELEASE})
@@ -489,6 +491,7 @@ def remove_release(release, *, by, today: date | None = None):
     _check(by, perms.can_edit, EDIT_PERMISSION)
     today = _today(today)
     with transaction.atomic():
+        lock_register()  # first: the register's writers one at a time (review round 3)
         locked = _locked_release(release)
         refusal = removal_refusal(locked)
         if refusal:
@@ -537,17 +540,38 @@ def _locked_devices(ids) -> list:
     or status change: equipment.services.update_asset, set_status, _locked_row), whose result is then read here, never a copy from before
     the wait; ordinary saves of a device (a contract's Add model, a PM's completion) never wait on it nor it on them. Tag order is the
     other multi-device writers' (Asset's ordering: contracts, AEM's pull-in), so the two wait in turn rather than deadlock. Django has no
-    FOR KEY SHARE, so it is the same query's SQL with the clause; SQLite locks nothing."""
+    FOR KEY SHARE, so it is the same query's SQL with the clause, read as devices in one query; SQLite locks nothing."""
     from django.db import connection
 
     from apps.equipment.models import Asset
 
-    qs = Asset.objects.filter(pk__in=list(ids)).order_by("tag")
-    if connection.vendor == "postgresql":
-        sql, params = qs.values("pk").query.sql_with_params()
-        with connection.cursor() as cursor:
-            cursor.execute(f"{sql} FOR KEY SHARE OF {connection.ops.quote_name(Asset._meta.db_table)}", params)
-    return list(qs)
+    qs = Asset.objects.filter(pk__in=list(ids)).order_by("tag")  # the tenant's devices (the manager's filter is in the SQL)
+    if connection.vendor != "postgresql":
+        return list(qs)
+    sql, params = qs.query.sql_with_params()
+    return list(Asset.objects.raw(f"{sql} FOR KEY SHARE OF {connection.ops.quote_name(Asset._meta.db_table)}", params))  # one query
+
+
+REGISTER_LOCK = "cyber_register"  # the facility's register lock (a Sequence row that never counts)
+
+
+def lock_register() -> None:
+    """Hold the facility's register lock until the transaction ends (review round 3): every register writer here takes it first, so two
+    of them (a bulk set and a single record on the same new device, two edits of one release) run one after the other, never as a race.
+    model_changed never takes it: it runs inside update_asset with the device's row already held (a writer of devices waits on its
+    devices, never on this). A row of its own that nothing else locks, as equipment.services.lock_tags; SQLite runs one writer at a time."""
+    from apps.core.models import Sequence
+    from apps.tenants.context import get_current_tenant
+
+    tenant = get_current_tenant()
+    if tenant is None:
+        raise RuntimeError("lock_register() needs a tenant context")
+    try:
+        with transaction.atomic():  # a savepoint: two first-ever requests may both try to create the row
+            Sequence.unscoped.get_or_create(tenant=tenant, key=REGISTER_LOCK)  # unscoped + explicit tenant, as Sequence.next
+    except IntegrityError:
+        pass
+    Sequence.unscoped.select_for_update().get(tenant=tenant, key=REGISTER_LOCK)
 
 
 def _lock_conflict(error: OperationalError) -> bool:
@@ -610,6 +634,7 @@ def record_facts(asset, *, by, today: date | None = None, release=KEEP, release_
     if errors:
         raise ValidationError(errors)
     with transaction.atomic():
+        lock_register()  # first: the register's writers one at a time (review round 3)
         locked = None
         if release is not KEEP and release is not None:
             locked = _named_release(release, device.device_model_id, CHOOSE_VERSION)
@@ -700,6 +725,7 @@ def record_facts_for(model, assets, *, by, today: date | None = None, release, r
         raise ValidationError(errors)
     try:
         with transaction.atomic():
+            lock_register()  # first: the register's writers one at a time (review round 3)
             locked = _named_release(release, dm.pk, CHOOSE_MODEL_VERSION)
             devices = _locked_devices(ids)  # after the release, before any security row: their model and status as they are now
             if len(devices) != len(ids):

@@ -499,8 +499,8 @@ def test_the_bulk_set_is_one_transaction(ctx, pump_model, pumps, dept, kim, monk
 
 
 def test_the_bulk_set_costs_two_queries_a_device(ctx, pump_model, pumps, dept, kim):
-    """Four fixed queries (the model, the release locked, the devices, their rows locked), two more for a user's level checks, and two a
-    changed device (its row, its history row), new or not."""
+    """Six fixed queries (the model, the register lock's two, the release locked, the devices, their rows locked), two more for a user's
+    level checks, and two a changed device (its row, its history row), new or not."""
     devices = [device(pump_model, dept, f"P-{i:02d}") for i in range(11)]
     record_facts(devices[0], by=None, release=pumps["old"])  # one with a row already
 
@@ -509,10 +509,10 @@ def test_the_bulk_set_costs_two_queries_a_device(ctx, pump_model, pumps, dept, k
             changed = record_facts_for(pump_model, assets, by=by, release=release_)
         return changed, len([s for s in q.captured_queries if not s["sql"].startswith(("SAVEPOINT", "RELEASE SAVEPOINT"))])
 
-    assert counted(devices[:1], pumps["new"], None) == (1, 4 + 2)
-    assert counted(devices, pumps["old"], None) == (11, 4 + 2 * 11)
-    assert counted(devices, pumps["new"], kim) == (11, 6 + 2 * 11)
-    assert counted(devices, pumps["new"], kim) == (0, 6)  # nothing to change: nothing written
+    assert counted(devices[:1], pumps["new"], None) == (1, 6 + 2)
+    assert counted(devices, pumps["old"], None) == (11, 6 + 2 * 11)
+    assert counted(devices, pumps["new"], kim) == (11, 8 + 2 * 11)  # a user's level checks: two more
+    assert counted(devices, pumps["new"], kim) == (0, 8)  # nothing to change: nothing written
 
 
 # --- PostgreSQL: the races and the lock order --------------------------------------------------------------------------------------

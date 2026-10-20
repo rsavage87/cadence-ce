@@ -8,7 +8,7 @@
   <div class="form">
     {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
     {% if profile %}<p class="full hint">The profile holds what the manufacturer discloses for all of this model's versions, or with no version stated, and this facility's arrangement for the model. A release's own answers override it group by group.</p>
-    {% else %}<p class="full hint">Record what the manufacturer discloses for this version. A group left empty here reads from the model's profile.</p>{% endif %}
+    {% else %}<p class="full hint">Record what the manufacturer discloses for this version. A group left empty here reads from the model's profile (adding a version entered in error again keeps the facts it had in each group left empty).</p>{% endif %}
     {% for legend, fields, hint in form.sections %}
     {% if legend %}<fieldset class="full cy-fs"><legend>{{ legend }}</legend><div class="cy-fs-grid">{% endif %}
       {% for field in fields %}{% include "web/_asset_field.html" with field=field %}{% endfor %}

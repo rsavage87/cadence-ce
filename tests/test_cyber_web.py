@@ -207,9 +207,11 @@ def test_the_fleets_filters(client, signed_in, world):
     # the figures count the devices the filters keep
     figures = {f["key"]: f for f in client.get("/security/?whose=temporary").context["figures"]}
     assert figures["no_release"]["count"] == 0 and figures["no_release"]["url"] == "/security/?whose=temporary&connected=either&norelease=1"
-    # unknown values are dropped, never a 500 (another facility's or an unknown department too)
-    assert fleet_models(client, f"?whose=zzz&dept=nope&category=Nope&connected=x&standing=y&norelease=2&page=abc&dept={uuid.uuid4()}") == {
-        bd: 5, ham: 1, ste: 1}
+    # unknown choices are dropped, never a 500; a department id or a category is kept as asked (review round 2: one matching nothing
+    # answers none, as the API does for the same address), in any letter case
+    assert fleet_models(client, "?whose=zzz&dept=nope&connected=x&standing=y&norelease=2&page=abc") == {bd: 5, ham: 1, ste: 1}
+    assert fleet_models(client, f"?dept={uuid.uuid4()}") == {} and fleet_models(client, "?category=Nope") == {}
+    assert fleet_models(client, "?category=ventilators") == {ham: 1}
     assert client.get("/security/?category=%00").status_code < 500
     # the body alone for the filters' re-fetch, the filters' choices on the page
     r = client.get(f"/security/?dept={west}", **part("cy-fleet"))

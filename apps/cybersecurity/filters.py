@@ -98,7 +98,7 @@ class FleetFilters:
         ours = a.ownership == Ownership.OWNED
         if (self.whose == WHOSE_OURS and not ours) or (self.whose == WHOSE_TEMPORARY and ours):
             return False
-        if (self.dept and str(a.department_id) != self.dept) or (self.category and a.device_model.category != self.category):
+        if (self.dept and str(a.department_id) != self.dept) or (self.category and a.device_model.category.casefold() != self.category.casefold()):
             return False
         return self.matches(s)
 
@@ -139,7 +139,7 @@ def narrow(qs, f: FleetFilters):
     if f.dept:
         qs = qs.filter(department_id=f.dept)
     if f.category:
-        qs = qs.filter(device_model__category=f.category)
+        qs = qs.filter(device_model__category__iexact=f.category)
     return qs
 
 
@@ -152,15 +152,18 @@ def _is_uuid(value: str) -> bool:
 
 
 def parse(params, *, departments=(), categories=()) -> FleetFilters:
-    """The screen's filters from the address: an unknown value is dropped, never a 500. `departments`: the ids (text) the screen offers,
-    `categories` the categories (the devices on site's)."""
+    """The screen's filters from the address: an unknown choice is dropped, never a 500; a department id or a category is kept as asked
+    (in any letter case; one matching nothing answers none, as the API's parse_strict). `categories`: the facility's, for their case."""
     def one_of(name, allowed):
         value = params.get(name, "")
         return value if value in allowed else ""
 
     dept = params.get("dept", "")
-    dept = dept if _is_uuid(dept) and dept in set(departments) else ""
-    return FleetFilters(whose=one_of("whose", WHOSE), dept=dept, category=one_of("category", set(categories)),
+    dept = str(uuid.UUID(dept)) if _is_uuid(dept) else ""  # any department id: one with no device here answers none, as the API does
+    typed = str(params.get("category", "")).strip()
+    known = {c.casefold(): c for c in categories}
+    category = known.get(typed.casefold(), typed) if typed and "\x00" not in typed and len(typed) <= 120 else ""
+    return FleetFilters(whose=one_of("whose", WHOSE), dept=dept, category=category,
                         connected=one_of("connected", CONNECTED_KEYS), standing=one_of("standing", STANDINGS),
                         norelease=params.get("norelease") == NORELEASE)
 
