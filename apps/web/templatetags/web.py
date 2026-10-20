@@ -33,6 +33,7 @@ ICONS = {
     "contract": ("1.7", '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 12.5h6M10 16.5h6"/>'),
     "recall": ("1.7", '<path d="M12 3 2.5 20h19zM12 10v4M12 17.5v.5"/>'),
     "incident": ("1.7", '<path d="M5 21V4M5 4h12l-2.5 4.5L17 13H5"/>'),  # slice 28: a flag, the incident reported
+    "shield": ("1.7", '<path d="M12 3 5 6v5c0 4.5 3 8.3 7 10 4-1.7 7-5.5 7-10V6z"/><path d="M9 12l2 2 4-4"/>'),  # slice 37: device security
     "sync": ("1.8", '<path d="M20 12a8 8 0 0 1-14.5 4.6M4 12a8 8 0 0 1 14.5-4.6M18 3v5h-5M6 21v-5h5"/>'),
     "rep": ("1.7", '<path d="M4 20h16M6 16V9M11 16V5M16 16v-6"/>'),
     "dl": ("1.8", '<path d="M12 4v11M7 10l5 5 5-5M4 20h16"/>'),

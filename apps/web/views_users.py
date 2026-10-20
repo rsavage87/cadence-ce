@@ -221,8 +221,9 @@ def user_invite(request):
 
 # Column order from the mock's MODULES list (Recalls before Contracts), not the enum's declaration order.
 # Slice 28: Incidents beside Recalls.
-ROLE_MATRIX_MODULES = [Module.EQUIPMENT, Module.WORKORDERS, Module.PM, Module.RECALLS, Module.INCIDENTS, Module.CONTRACTS, Module.REPORTS,
-                       Module.EVALUATIONS, Module.USERS, Module.SETTINGS]
+# Slice 37: Device security beside Equipment.
+ROLE_MATRIX_MODULES = [Module.EQUIPMENT, Module.CYBERSECURITY, Module.WORKORDERS, Module.PM, Module.RECALLS, Module.INCIDENTS, Module.CONTRACTS,
+                       Module.REPORTS, Module.EVALUATIONS, Module.USERS, Module.SETTINGS]
 
 def _roles_context(request) -> dict:
     counts = services.role_user_counts(request.tenant)

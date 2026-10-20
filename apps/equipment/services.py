@@ -950,7 +950,15 @@ def update_asset(asset: Asset, *, by=None, today: date | None = None, imported_l
         asset.save()
     if "next_pm_on" in changed and asset.next_pm_on:
         _move_open_pm(asset, by=by)
+    cleared = False
+    if "device_model" in changed:
+        # Slice 37: a release names its model, so a device of another model no longer runs it (the lock order: its work, its row, then
+        # its security row). cybersecurity imports equipment, so it is imported here.
+        from apps.cybersecurity.services import model_changed
+
+        cleared = model_changed(asset, by=by)
     caller.refresh_from_db()
+    caller.security_release_cleared = cleared  # the screen's toast says so
     return caller
 
 

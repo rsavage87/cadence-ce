@@ -1,0 +1,40 @@
+"""
+Access levels for the device security register (slice 37), shared by the web UI and the API so neither is the weaker door. A module of
+its own (Module.CYBERSECURITY, "Device security"): IT security staff record facts here without Equipment Edit (which adds, edits, and
+retires devices), and every existing custom role reads None for it until a director grants it.
+
+- View sees the register: models' profiles and releases (View alone), and devices' facts (View AND Equipment View: those lists name
+  devices by tag and location).
+- Edit records a model's profile and releases (and marks one entered in error), and a device's facts (one device, or one model's devices
+  at once).
+- Approve decides nothing yet: slice 38's decisions (an advisory not affected, a risk accepted) will be Approve.
+
+Scoped users (a vendor's company, a requester's unit) are refused everywhere, whatever their levels: the register is never theirs.
+The suggested IT security role (README) is a custom role with Device security Edit and Equipment View.
+"""
+from apps.accounts.models import Level, Module
+from apps.workorders import scoping
+
+MODULE = Module.CYBERSECURITY
+VIEW_LEVEL = Level.VIEW
+EDIT_LEVEL = Level.EDIT
+
+
+def can_view(user) -> bool:
+    """Models' profiles and releases."""
+    return user.has_level(MODULE, VIEW_LEVEL) and not scoping.is_scoped(user)
+
+
+def can_view_devices(user) -> bool:
+    """Devices' facts and every list naming devices: Device security View and Equipment View."""
+    return can_view(user) and user.has_level(Module.EQUIPMENT, Level.VIEW)
+
+
+def can_edit(user) -> bool:
+    """A model's profile and releases."""
+    return user.has_level(MODULE, EDIT_LEVEL) and not scoping.is_scoped(user)
+
+
+def can_edit_devices(user) -> bool:
+    """A device's facts (one, or one model's devices at once)."""
+    return can_edit(user) and user.has_level(Module.EQUIPMENT, Level.VIEW)

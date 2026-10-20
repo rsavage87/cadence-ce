@@ -40,7 +40,8 @@ NARRATIVE = (
     ("went_well", "What went well", ""),
     ("improvements", "What needs improvement", ""),
     ("capital_staffing", "Capital, replacement, staffing, and training", "Replacement planning, capital requests, staffing, and CE staff training."),
-    ("cybersecurity", "Cybersecurity", "Cadence keeps no data on it: how medical device security was managed."),
+    # Slice 37: the Device security screen keeps the register (help text only: no approved snapshot stores it)
+    ("cybersecurity", "Cybersecurity", "The Device security screen keeps the register: how medical device security was managed this period."),
 )
 NARRATIVE_FIELDS = tuple(f for f, _label, _help in NARRATIVE)
 PRIVACY_WARNING = "About the program as a whole: no patient, requester, or incident details (incidents by number only)."

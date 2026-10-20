@@ -102,6 +102,11 @@ class Area:
         return apps.get_model(self.model_path)
 
 
+def _release_name(r) -> str:
+    """A software release in the change log: "Philips IntelliVue MX750 M.00.03", or the model's profile "(all versions)"."""
+    return f"{r.device_model.manufacturer} {r.device_model.model} {r.version or '(all versions)'}"
+
+
 def _safe(fn):
     """A name or link that reads a related row the history no longer finds (deleted since) gives "" rather than failing the page."""
     def wrapped(rec):
@@ -218,6 +223,12 @@ AREAS = {a.key: a for a in (
     Area("test_equipment_uses", "Test equipment used", "testequipment.TestEquipmentUse", "workorders",
          _safe(lambda r: f"{_wo_number(r)} · {r.test_equipment.tag}"), _safe(_wo_url), select=("work_order", "test_equipment"),
          also=("equipment",)),
+    # Slice 37: the device security register (Device security View; a device's facts, Equipment View too). Links open the Device
+    # security screen's model panel and the device drawer's Security tab, never the PM model drawer.
+    Area("software_releases", "Software releases", "cybersecurity.SoftwareRelease", "cybersecurity", _safe(_release_name),
+         _safe(lambda r: reverse("web:cybersecurity_model", args=[r.device_model_id])), select=("device_model",)),
+    Area("device_security", "Device security", "cybersecurity.DeviceSecurity", "cybersecurity", _safe(lambda r: f"{r.asset.tag} · security"),
+         _safe(lambda r: reverse("web:asset", args=[r.asset.tag]) + "?tab=security"), select=("asset",), also=("equipment",)),
 )}
 ACCESS = Area("access", "Access", "accounts.AccessEvent", "users", _safe(lambda e: str(e.user) if e.user_id else ""))
 ALL_AREAS = {**AREAS, ACCESS.key: ACCESS}
@@ -299,6 +310,9 @@ HIDE = {
     "testequipment.calibration": {"test_equipment"},
     "testequipment.tolerancereview": {"calibration", "work_orders"},
     "testequipment.testequipmentuse": {"work_order", "test_equipment"},
+    # Slice 37 (the model and the device are in each record's name; the stored key is the version's)
+    "cybersecurity.softwarerelease": {"device_model", "version_key"},
+    "cybersecurity.devicesecurity": {"asset"},
 }
 
 # Labels that read better than the verbose names, per model; `_label` falls back to the verbose name.
@@ -366,6 +380,17 @@ LABELS = {
                                  "approver_name": "Approved by", "approver_title": "Approver's title", "signed_by": "Sign-off recorded by"},
     "evaluations.vendorreviewreport": {"body": "Committee", "meeting_on": "Meeting", "minutes_reference": "Minutes", "recorded_by": "Recorded by"},
     # Slice 35
+    # Slice 37: the register's words (the MDS2's answers named by their question, never a 2019 question ID)
+    "cybersecurity.softwarerelease": {"version": "Version", "os_family": "Operating system family", "os_name": "Operating system",
+                                      "os_support_ends_on": "OS vendor's support ends", "security_updates_end_on": "Security updates end",
+                                      "support_checked_on": "Support checked", "mds2": "MDS2", "mds2_edition": "MDS2 form",
+                                      "mds2_document": "MDS2 document", "mds2_released_on": "MDS2 released", "mds2_requested_on": "MDS2 requested",
+                                      "mds2_url": "MDS2 link", "patient_data": "Patient data, as disclosed", "connects": "Connects, as disclosed",
+                                      "remote_service": "Remote service, as disclosed", "patching": "Who may install updates, as disclosed",
+                                      "sbom": "Software bill of materials", "updates_by": "Who installs updates here",
+                                      "segmented": "Network segment here", "removed_on": "Entered in error", "removed_by": "Marked by"},
+    "cybersecurity.devicesecurity": {"release": "Software release", "release_since": "Running it since", "network": "Connected here",
+                                     "checked_on": "Checked", "checked_by": "Checked by"},
     "testequipment.testequipment": {"tag": "Tag", "kind": "Kind", "serial": "Serial number", "program": "Certificates",
                                     "interval_months": "Interval", "status_reason": "Why", "status_since": "Since", "held_by": "Held by",
                                     "held_since": "Needs a pass dated on or after"},  # out of service: the one release rule's day

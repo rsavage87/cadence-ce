@@ -64,7 +64,8 @@ INSTALLED_APPS = [
     "apps.vendors",  # slice 31: contracted service and vendor staff
     "apps.evaluations",  # slice 32: the program's annual evaluation
     "apps.testequipment",  # slice 35: the CE department's test equipment and its calibration
-    "apps.capital",  # slice 36: replacement priority (slice 37: capital requests and the plan)
+    "apps.capital",  # slice 36: replacement priority
+    "apps.cybersecurity",  # slice 37: the device security register
     "apps.api",
     "apps.demo",
     "apps.web",

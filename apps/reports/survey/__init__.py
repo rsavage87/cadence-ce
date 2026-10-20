@@ -217,6 +217,8 @@ class Binder:
 # Not covered: what a surveyor may ask for that Cadence keeps no record of, printed on the cover so the binder is never read as the
 # whole program.
 NOT_COVERED = [
+    # Slice 37 keeps the device security register on its own screen; the binder reports nothing about it.
+    "Medical device cybersecurity (the Device security screen keeps the register)",
     # Slice 32 keeps the program's annual evaluation (Reports, Program evaluation; the Program and policies section lists those approved).
     "The facility's written medical equipment management plan itself (an evaluation records the version reviewed)",
     # Slice 30 keeps the checks after a repair work order (the Checks after repair section); these it does not.
