@@ -4,7 +4,8 @@ write goes through apps.cybersecurity.services from the Device security screen a
 
 Every fact is read through apps.cybersecurity.rules, as the screen and the drawer read it: a release over its model's profile by group
 (support, MDS2, disclosure; the facility's arrangement always the profile's), each group with its source in words ("this release", "the
-model's disclosure, version not stated", "not recorded"); a device's connection ("Connected (wireless)", "Can connect (wireless), as
+model's disclosure, version not stated", "not recorded"; the facility's arrangement, never a disclosure, "the model's, for every version":
+rules.FACILITY_SOURCE, the drawer's and the screen's words); a device's connection ("Connected (wireless)", "Can connect (wireless), as
 disclosed", ...); and the two standing lines, never merged: the manufacturer's security updates (or the model's support, slice 36) and the
 OS vendor's published support, each {key, words, day}, judged on the facility's today (read once by the view: context["today"]). Choices go
 out as their stored slugs with a "_label" beside each; days as YYYY-MM-DD.
@@ -45,6 +46,12 @@ def standing_data(st: rules.Standing | None):
     return {"key": st.key, "words": st.words, "day": _day(st.day)} if st is not None else None
 
 
+def _source(group: str, source: str) -> str:
+    """A group's source in words. The facility's arrangement (who installs updates here, the segment) is this facility's own, recorded on
+    the model's profile for every version: rules.FACILITY_SOURCE, never "the model's disclosure" (slice 37 review C17/C30)."""
+    return rules.FACILITY_SOURCE if group == "facility" and source in (rules.PROFILE, rules.THIS_RELEASE) else source
+
+
 def _group(source: str, names, values) -> dict:
     out = {"source": source}
     for name in names:
@@ -57,7 +64,8 @@ def _group(source: str, names, values) -> dict:
 
 def groups_data(facts: rules.Facts) -> dict:
     """The facts a release or device reads, by group, each with its source: {"support", "mds2", "disclosure", "facility"}."""
-    return {group: _group(facts.sources[group], names, facts.get) for group, names in (*GROUPS.items(), ("facility", FACILITY_GROUP))}
+    return {group: _group(_source(group, facts.sources[group]), names, facts.get)
+            for group, names in (*GROUPS.items(), ("facility", FACILITY_GROUP))}
 
 
 def own_groups(release) -> dict:
@@ -65,7 +73,7 @@ def own_groups(release) -> dict:
     def source(names):
         return rules.THIS_RELEASE if any(getattr(release, n) not in (None, "") for n in names) else rules.NOT_RECORDED
 
-    return {group: _group(source(names), names, lambda n: getattr(release, n))
+    return {group: _group(_source(group, source(names)), names, lambda n: getattr(release, n))
             for group, names in (*GROUPS.items(), ("facility", FACILITY_GROUP))}
 
 

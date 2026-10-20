@@ -28,6 +28,7 @@ from rest_framework.views import APIView
 from apps.accounts.models import DataScope, Level
 from apps.credentials.models import Technician
 from apps.credentials.services import qualified_technicians
+from apps.cybersecurity.models import SoftwareRelease
 from apps.equipment import permissions as eq_perms
 from apps.equipment import services as eq_services
 from apps.equipment.models import AddedAs, Asset, AssetStatus, Department, DeviceModel
@@ -122,6 +123,32 @@ class DeviceModelViewSet(EquipmentWrites, TenantViewSet):
         if sent:
             where = "/api/v1/device-models/<id>/risk-score/"
             raise DRFValidationError({f: [f"A model's risk score is set at {where} (Equipment Approve)."] for f in sent})
+
+    def perform_destroy(self, instance):
+        """Slice 37: a model with a software release or a profile in the device security register (SoftwareRelease.device_model,
+        PROTECT) is never deleted, devices or not: the register keeps a model's releases and profile with their history (a release
+        entered in error is never a database delete, a profile is never removed; build37). The 400 says what holds it, in words that need
+        no Device security level (no version named): devices, the register's rows, or both (review C5/C9)."""
+        try:
+            instance.delete()
+        except ProtectedError as e:
+            protected = list(e.protected_objects)
+            register = [o for o in protected if isinstance(o, SoftwareRelease)]
+            if not register:
+                raise DRFValidationError({"detail": self.in_use.format(instance)}) from None
+            versions = [r for r in register if not r.is_profile]
+            parts = []
+            if versions:
+                parts.append("a software release" if len(versions) == 1 else "software releases")
+                if all(r.removed_on is not None for r in versions):
+                    parts[-1] += " entered in error"
+            if any(r.is_profile for r in register):
+                parts.append("a profile")
+            what = f"{' and '.join(parts)} in the Device security register"
+            if any(isinstance(o, Asset) for o in protected):
+                what = f"devices, and {what}"
+            raise DRFValidationError({"detail": f"{instance} has {what}, so it cannot be deleted: the register keeps a model's releases and "
+                                                "profile, with their history, even a release entered in error."}) from None
 
     def perform_create(self, serializer):
         # Through create_device_model, which needs a risk class and never takes an AEM interval: that is set only by approving an
