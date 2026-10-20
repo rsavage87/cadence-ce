@@ -47,6 +47,7 @@ with its calibration certificates, named on the work done with it, and reviewed 
 | 33 | Repair findings | (none: Mark completed on a repair; the work order drawer; Reliability by model; the AEM tab; the binder; the evaluation) | `workorders` + `pm` + `reports` + `evaluations` + `incidents` + `web` + `api` | done (codes on a failed PM, an AEM-strategy determination, the replacement score, the import column, and the work order list CSV column deferred) |
 | 34 | Contracted service review | (none: Contracts, Reviews; the review and the contracted services summary prints; the binder) | `evaluations` + `vendors` + `contracts` + `reports` + `accounts` + `web` + `api` | done (criteria rows, amendments, a previous-figures column, expectation fields on Contract, vendor aliases, reminder emails, a vendor copy deferred) |
 | 35 | Test equipment calibration | (none: Equipment, Test equipment; Mark completed's test equipment; the work order drawer and print; the binder) | new `testequipment` + `equipment` + `workorders` + `reports` + `core` + `web` + `api` | done (the import, labels and Scan, reminders and the Overview line, evaluation indicators, the write API, in-house verification against a reference standard, modules, checkout, and calibration cost deferred) |
+| 36 | Replacement priority | Reports (Replacement planning: the score and its components, flags, fleets, the fiscal year outlook, what the scores do not know); the device drawer's Costs and Overview; a model's Life and support; Settings, Fiscal year | new `capital` + `equipment` + `facility` + `reports` + `core` + `web` + `api` | done (capital requests, committee decisions, budgets, and the plan (slice 37); the replaced-by link, retire reasons, and fulfillment (slice 38); per-facility weights, a dated condition assessment, cybersecurity status, import columns for model fields, evaluation indicators, a binder section deferred) |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.
@@ -541,3 +542,20 @@ The mock's export and print buttons work since slice 11, Add device since slice 
   must be dated on or after to release it (held_since) are separate; Reinstate and Found never bring an item back in use that must
   stay out, nor a second record of one unit; an item counts as usable on today's work only when it was in use at some moment of today;
   a cancel takes off a work order's uses (never a kept one).
+
+- Replacement priority (slice 36, beyond the mock; the mock's Replacement planning scored age 50%, repairs in six months 30%, and condition
+  20% with a list price plus 5%, and slice 33 deferred the score). No US rule requires replacement planning; AAMI EQ56:2013 recommends
+  planning when parts become hard to get, and published methods (Fennigkoh, Taylor and Jackson, Ridgway, Capuano, ECRI) weigh support,
+  failures, cost of service against value, safety, and age, never age alone. The critics split the draft in three: this slice is the
+  rule, the manufacturer support register, and the fiscal year; capital requests, committee decisions, budgets, and the plan are slice 37;
+  the replaced-by link and retire reasons slice 38. One rule (`apps/capital/priority.py`, SCORE_VERSION 2) read by the report's screen,
+  CSV, print, email, API rows, and the drawer: five weighted components with their inputs in words, a criticality multiplier, unknown
+  points shown (never 0, never reweighted), condition beside the score, flags apart from it, a suggested fiscal year, and the gaps as a
+  worklist; a fixed number of queries. The report's key, title, and first seven CSV columns kept. The review (then four rounds of fixes,
+  each pinned by a test agent's undo check and re-checked by skeptics): the spec's "leave out the vendor work a contract covers" could
+  not be judged from the records (three rounds of rules each dropped real bills: T&M and PM-only contracts, work that came back
+  in-house, parts bought before a contract, lapses and renewals, a device joining late), so service cost counts every line recorded but
+  recall work's, plus the contract share, as the Overview's cost of service does (it counts recall work too), and a covered visit is recorded at $0; a share that cannot be allocated
+  is unknown, unless the lines alone reach the top; support's
+  and parts' ends are their last days, a sale's its first; a support day with a mistyped year or a "never" placeholder is refused, and
+  no stored day can break the drawer; "supported" means checked in the last 12 calendar months; the last repair by the binder's rule.

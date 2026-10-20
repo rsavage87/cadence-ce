@@ -32,7 +32,7 @@ security tests, `tests/test_postgres_rls.py`).
    `apps/accounts/services.py`, `apps/credentials/services.py`, `apps/recalls/services.py`, `apps/facility/services.py`, `apps/equipment/services.py`,
    `apps/pm/aem.py`, `apps/pm/procedures.py`, `apps/workorders/costs.py`, `apps/workorders/completion.py`, `apps/workorders/legacy.py`, `apps/reports/custom.py`,
    `apps/imports/services.py`, `apps/incidents/services.py`, `apps/vendors/services.py`, `apps/evaluations/services.py`,
-   `apps/testequipment/services.py`), never by setting fields in a
+   `apps/testequipment/services.py`; slice 36's model support through `apps/equipment/services.py`), never by setting fields in a
    view or calling model helpers like
    `Contract.add_assets` directly. Services validate, write status history, and keep the asset in sync.
 6. **No PHI by design.** The portal never asks for patient identifiers. Don't add free-text fields that invite them, and never offer
@@ -143,7 +143,12 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `DeviceModel.aem_excluded` covers it and life support); slice 35: `lock_tags` (the facility's tag lock: devices and test equipment
   share one sticker space, unique in any letter case across both tables; create_asset, add_test_equipment, update_test_equipment's tag
   and unit changes, and set_status's moves to in use take it first) and
-  `is_test_equipment_tag`, `RESERVED_TAGS` with export.csv; `scan.py` which device a scanned or typed code names (a label's request link
+  `is_test_equipment_tag`, `RESERVED_TAGS` with export.csv; slice 36: a model's `life_source` (`LifeSource`) and the manufacturer's
+  support (`sale_ended_on` its first day, `support_ends_on` and `parts_end_on` their last days, `support_notice` a token,
+  `support_checked_on`), written only by `update_device_model` (`SUPPORT_FIELDS`, `UPDATE_MODEL_FIELDS`, `_support_fields`: milestones
+  from 1950 and within 50 years, the check from 2000 and not after today; never create_device_model, Add model, or Edit details; read
+  only in the admin) and worded by `support_status(dm, today)` (`SupportStatus`: parts ended, support ended, sale ended, announced,
+  supported (checked in the last 12 calendar months), unknown); `scan.py` which device a scanned or typed code names (a label's request link
   with any host, a device link, or a plain tag in any letter case, among the devices the user may see)
 - `apps/contracts` Contract with add/remove device operations and cost allocation; `services.py` for create/update/renew/delete, status, filters, KPI summary
 - `apps/workorders` WorkOrder and lines, ServiceRequest, lifecycle services; `scoping.py` who sees which devices and work orders inside a
@@ -285,6 +290,19 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   the handoff, PMs assigned to it, repeat repairs that were real failures, documentation by who completed, staff evidence, cost; never
   uptime or response from Cadence's dates; imported work orders only in jobs_imported and cost_imported), `can_see` / `cut` all or nothing (Evaluations, Contracts, Reports, Work orders View); the module's
   label is "Evaluations"; seeing a review also needs Contracts View; never a scoped user
+- `apps/capital` replacement priority (slice 36, beyond the mock; no US rule requires replacement planning, AAMI EQ56 recommends it):
+  `priority.py` the one rule the Replacement planning report (its screen, CSV, print, email, API rows) and the device drawer read
+  (`score_assets(qs, today, start)` in a fixed number of queries, `QUERIES`; `for_asset`; `rank`): our devices in use (OWNED,
+  ACTIVE_STATUSES), five components (`WEIGHTS`: age against life 30, support 25, failures 20 (findings.failure_q over the window),
+  service cost a year against the estimate 15 (every labor and parts line recorded, never recall work, plus the share of the device's
+  contract not ended, as cost_of_service reads them but recall work (which it counts): which past lines a contract paid for cannot be told from the records; a share that
+  cannot be allocated is unknown unless the lines alone reach the top), a confirmed recall not done here 10),
+  times `MULTIPLIERS` by risk class; an unknown component is never 0 nor reweighted (`points_unknown`); the window 36 months clipped to
+  the install date and the facility's first work order, under 12 months "too little history" (`window_of`, `enough_history_on`);
+  `Estimate` (list price and the day it was set from history, else acquisition cost; no markup); flags (`MUST_ACT`, `REVIEW`) apart
+  from the score; `GAPS`; `suggested_fy` ("suggested", never "due"); `version_words` printed wherever a score is shown (the CSV's last column "v2").
+  No models yet (slice 37: requests, decisions, budgets, the plan; slice 38: replaced_by, retire reasons). Never incidents, status
+  words, or requester text
 - `apps/recalls` Alert (global), AlertMatch (per tenant), matching, openFDA importer; `services.py` dispositions and recall work-order batches,
   `permissions.py` (review at Edit, close/reopen at Approve); `feeds.py` the openFDA fetch shared by `import_openfda` and the Recalls
   screen's Check FDA feed (one fetch per 15 minutes for everyone, kept in apps.jobs' `JobRun`; a check matches only its own facility).
@@ -301,12 +319,15 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `my_work.scan_target` (their one open work order on it, or the device: the iPhone Camera app's way into My work), and nothing else changes
 - `apps/facility` Settings: `FacilitySettings` (one row per tenant: portal callback and hotline, the eight maintenance-policy texts,
   KPI targets and the monthly repair budget, whether technicians may take unassigned work, and slice 27's PM on-time window: a kind and
-  days per group, checked on the saved row with the change applied, the default PM policy lines following it); `services.py` reads (`get_settings`, defaults until first saved), `update_settings`,
+  days per group, checked on the saved row with the change applied, the default PM policy lines following it; slice 36's `fiscal_year_start_month`);
+  `fiscal.py` (a fiscal year named by the calendar year it ends: `start_month`, `fiscal_year_of`, `current_fy`, `fiscal_bounds`,
+  `fy_label`, `describe`; read the start once and pass it down; nothing stored holds a fiscal year); `services.py` reads (`get_settings`, defaults until first saved), `update_settings`,
   `reset_policy`, `kpi_targets`, `compliance_targets`, `portal_url`, the integration list, risk bands, `set_time_zone` (the facility's
   Tenant.timezone: its today, its clock, its jobs' hour; audited in Tenant history, the change log's "facility" area); `permissions.py`
   (View to see, Edit to change). Named `facility` so it never reads like `django.conf.settings`.
 - `apps/reports` report emails (`ReportSubscription`, `subscriptions.py`, the daily `send_report_emails`; self-service only), overview KPIs, the Overview bundle (`overview_page`), attention list, nav counts, `cost_of_service`; the eight Reports
-  (`REPORTS` catalog and `run_report` in `services.py`; the numbers in `cost.py`, `fleet.py`, `operations.py`, read-only, `today` passed in;
+  (`REPORTS` catalog and `run_report` in `services.py`; the numbers in `cost.py`, `fleet.py` (slice 36: `report_replace` on
+  apps.capital.priority, `REPLACE_COLUMNS`, `replace_row`: the first seven columns as before, the rest appended), `operations.py`, read-only, `today` passed in;
   the API serves only these); custom reports (`CustomReport`, key `custom-<id>`): `custom.py` declares each source's columns and filters
   (nothing else can be asked for), checks a definition (`clean_definition`), runs it in the database, and creates, changes, and deletes
   one; `permissions.py` (Reports View runs, Reports Edit builds; a source also needs Work orders or Equipment View). `services.find_report`,
@@ -347,6 +368,10 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `test_equipment.html` and `_te_*.html`: the list and its CSV, Add, the item's drawer with its status moves, Record calibration, entered
   in error, the review box and Decide, Work done with it and its CSV, History), `views_wo_test_equipment.py` the work order's test
   equipment (the completion modal's picker, the drawer's section and its Change, the print's line; Equipment View),
+  slice 36: `views_models.model_support` the model drawer's Life and support and Record support (with `forms_support.py`,
+  `_model_support.html`), `views_settings.settings_fiscal` the Fiscal year panel, `reports_fleet.present_replace` and
+  `templatetags/capital_tags.py` the report's panel, `asset_tabs.replacement_outlook` / `expected_life` the device drawer's Costs and
+  Overview tabs;
   `views_temporary.py` loaners and rentals (slice 29, with `forms_temporary.py`: Add rental or
   loaner, the drawer's temporary section (`asset_tabs.temporary_box`), Change details, Return to owner, Keep it, Vendor loaner arrived,
   Return the loaner; the Equipment "Whose" filter through `forms.equipment_assets`), `views_incidents.py` Incidents (slice 28, with
@@ -386,7 +411,8 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `serializers_evaluations.py` program evaluations, read only (the list without figures or text; by id or number, the figures cut to the
   reader); slice 34: `views_vendor_reviews.py` / `serializers_vendor_reviews.py` vendor reviews, read only; slice 35:
   `views_testequipment.py` / `serializers_testequipment.py` test equipment, read only, and a work order's `test_equipment` (Equipment View),
-  the transition's `test_equipment` (omitted keeps), the `test-equipment` action, destroy refused with uses; serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
+  the transition's `test_equipment` (omitted keeps), the `test-equipment` action, destroy refused with uses; slice 36: a device model's
+  support fields by PATCH through update_device_model (refused on POST) and its read-only `support_status`; serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
   same thing and calls the same service; the API never imports apps.web. `tenancy.py` (`TenantAPIMixin`: the tenant from the session or
   token user, set after authentication and restored once the response is rendered), `authentication.py` (DRF's token check plus the
   deactivated-facility refusal sign-in has)
@@ -417,4 +443,6 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   draft program evaluation of the 12 months ending last month, made last, with no random draws; slice 34: a signed-off Philips review
   for the 12 months ending yesterday with a corrective plan, made just before the program evaluation; slice 35: an ESA per technician
   named on their in-house work, a ProSim due soon, a defibrillator analyzer past due, an infusion analyzer found out of tolerance with no
-  review)
+  review; slice 36: a July fiscal year, the beds' life lowered so a few are past it, the dialysis machines' support ended, the
+  sterilizers' parts no longer available (the must-act flag), the vital signs monitors' parts end announced, the patient monitors
+  supported; no random draws; the beyond-repair bed stays retired)

@@ -334,6 +334,32 @@ body). An approved evaluation is never edited: an amendment is its next version.
 lines. Program evaluation is a module of its own in Roles: the CE manager drafts and records approvals by default, the director too,
 Finance and quality reads it.
 
+## Replacement planning
+Reports' "Replacement planning" ranks our devices in use for the capital committee, as a recommendation, never a decision (no US rule
+requires a replacement plan; AAMI EQ56 recommends planning replacements when parts become hard to get, and published methods warn against
+age alone). Each device scores 0 to 100 on five things, each shown with what it was read from: age against the model's expected life
+(30), the manufacturer's support (25: parts no longer available, support ended, sale ended, an end announced, or supported and checked in
+the last 12 months), failures a year (20: repairs whose finding is a failure, or none recorded, over up to 36 months), service cost a
+year against the replacement estimate (15: every labor and parts line recorded, never recall work, and the device's share of its service
+contract, as the Overview's cost of service reads them, which counts recall work too; record a visit the contract covers at $0 to keep it
+out of both), and a confirmed recall not yet done on the device (10), times a multiplier for the model's risk class (1.0 life support to
+0.85 low). What Cadence does not know is never scored as 0 nor spread over the rest: its weight shows beside the score as points unknown
+("+35 unknown"), and the first year (or since the device was installed) reads "too little history" for failures and cost. Condition is
+shown in the drawer, never scored. The estimate is the model's list price (the day it was set), else the device's acquisition cost (a
+historical price), with no markup. Flags stand apart from the score: must act (parts no longer available; kept out of use after its last
+repair) and for review (support ended; a confirmed recall). Each device is suggested for a fiscal year (the current one when it must act,
+else when its life, support, or parts end; "suggested", never "due"), and the report adds fleets by model, the outlook for this fiscal
+year and the four after it, what the scores do not know (no install date, no estimate, where a model's expected life comes from, support
+not checked) with links, and the devices not ranked. Its CSV keeps the first seven columns, "Repairs, 6 mo" became "Failures, 36 mo", and
+the rest are appended (each component's points, flags, support, suggested fiscal year, the install date and acquisition cost the devices
+import reads back, and the rule's version, "v2": age 30, support 25, failures 20, service cost 15, recall 10, times 1.0 / 0.95 / 0.9 /
+0.85 by risk class); the API's `/api/v1/reports/replace/` rows follow the CSV by position. A device model's PM program tab records where
+its expected life comes from and the manufacturer's notice (no longer sold from, support ends, parts available until, the notice's
+reference, the day CE checked) through Record support (Equipment Edit); the device drawer's Costs tab shows the device's score and how it
+was scored, and its Overview the expected life's fiscal year. Settings' "Fiscal year" sets the month it starts (a fiscal year is named by
+the year it ends; a change re-buckets the outlook and moves nothing stored). Capital requests, committee decisions, budgets, and the link
+from a retired device to its replacement come next.
+
 ## Custom reports
 Reports' "+ Custom report" (Reports Edit: the director and Finance and quality by default) builds a report from work orders, devices,
 labor, or parts: pick the columns, filter by type, status, department, category, technician, or a date range (a rolling period such
@@ -392,6 +418,9 @@ its module's docstring under `apps/api/`, and the browsable API (open `/api/v1/`
   access allows);
 - vendor reviews, read only (`views_vendor_reviews.py`: the list, and each with its ratings, decision, plan, committee reports, and the
   figures when you hold Evaluations, Contracts, Reports, and Work orders View);
+- a device model's life source and manufacturer support (slice 36): `life_source`, `sale_ended_on`, `support_ends_on`, `parts_end_on`,
+  `support_notice`, `support_checked_on` with PATCH (Equipment Edit; refused on POST: set them once the model is added), and a
+  read-only `support_status` ({"key", "words"} for the facility's today); Settings' `fiscal_year_start_month` (1 to 12);
 - test equipment, read only (`views_testequipment.py`: Equipment View, never a vendor's or a requester's account): the list with each
   item's standing in words, filtered by `?standing=past_due|due_soon|no_record|failed`, `?status=`, `?kind=`, `?held_by=`; one item by id
   or tag with its calibrations and tolerance reviews. A work order reads the test equipment it recorded (`test_equipment`, each item's
