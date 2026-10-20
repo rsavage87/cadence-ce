@@ -98,7 +98,7 @@ def test_the_releases_read_their_groups_standing_and_devices(client, make_user, 
                                      "mds2_edition_label": "2019 form (HN 1-2019)", "mds2_document": "DEMO-MDS2-0001",
                                      "mds2_released_on": None, "mds2_requested_on": None, "mds2_url": ""}
     assert old["groups"]["disclosure"]["source"] == rules.PROFILE and old["groups"]["disclosure"]["patient_data_label"] == "Can store patient data"
-    assert old["groups"]["facility"] == {"source": rules.PROFILE, "updates_by": "ce", "updates_by_label": "Clinical engineering",
+    assert old["groups"]["facility"] == {"source": rules.FACILITY_SOURCE, "updates_by": "ce", "updates_by_label": "Clinical engineering",
                                          "segmented": "none", "segmented_label": "Not on a separate segment"}
     assert old["security"] == {"key": rules.UPDATES_ENDED, "words": f"Security updates ended after {rules.day_words(today - 10 * DAY)}",
                                "day": (today - 10 * DAY).isoformat()}

@@ -777,6 +777,14 @@ EMPTY_WORDS = {
     "accounts.role": {"scope": "The role's default"},
     "tenants.tenant": {"timezone": "The server's"},  # slice 21: a facility that has chosen none works in the server's zone
     "reports.customreport": {"filters": "None", "group_by": "Not grouped", "sort": "The source's order"},
+    # Slice 37: a device's blank network fact reads its model's disclosure (the Record facts form's "As the model discloses"); a blank
+    # release, day, or answer is one the register does not hold (the drawer's "not recorded")
+    "cybersecurity.devicesecurity": {"network": "As the model discloses", "release": "Not recorded", "release_since": "Not recorded",
+                                     "checked_on": "Not recorded"},
+    "cybersecurity.softwarerelease": {name: "Not recorded" for name in (
+        "os_family", "os_name", "os_support_ends_on", "security_updates_end_on", "support_checked_on", "mds2", "mds2_edition",
+        "mds2_document", "mds2_released_on", "mds2_requested_on", "mds2_url", "patient_data", "connects", "remote_service", "patching",
+        "sbom", "updates_by", "segmented")},
 }
 
 
