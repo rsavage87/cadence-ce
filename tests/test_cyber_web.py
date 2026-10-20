@@ -340,6 +340,9 @@ def test_the_models_tab(client, signed_in, world, pump_model):
     assert r.status_code == 200 and r.context["cyber_tab"] == "models" and names == ["BD", "Hamilton Medical", "Mindray", "Steris"]
     pumps = r.context["rows"][0]
     assert pumps["profile"] and pumps["versions"] == ["9.19.2", "9.33.1"] and pumps["mds2"] == "Requested from the manufacturer"
+    assert [x["dm"].on_site for x in r.context["rows"]] == [5, 1, 0, 1]  # ours and temporary, never a retired one
+    eq.set_status(world["p"][3], AssetStatus.RETIRED)
+    assert client.get("/security/models/").context["rows"][0]["dm"].on_site == 4
     assert (pumps["connects"], pumps["patient"], pumps["updates_by"], pumps["segmented"]) == (
         "Wireless", "Can store patient data", "Information technology", "Not on a separate segment")
     assert "<th class=\"num\">Devices on site</th>" in body and f'hx-get="{panel(pump_model.pk)}"' in body
