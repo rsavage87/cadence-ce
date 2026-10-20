@@ -51,11 +51,11 @@ GROUP_TITLES = {"support": "Support and security updates", "mds2": "The manufact
                 "disclosure": "What the manufacturer discloses", "facility": "This facility's arrangement"}
 # The MDS2-style answers, each named by its question in words (never a form's question ID: a 2013 or 2008 form numbers them otherwise)
 QUESTIONS = (
-    ("patient_data", PatientData, "Can it store or send patient data, as the manufacturer discloses?"),
-    ("connects", Connects, "Can it connect to a network, as the manufacturer discloses?"),
-    ("remote_service", Disclosed, "Can the manufacturer service it remotely, as the manufacturer discloses?"),
-    ("patching", Patching, "Who may install its software updates, as the manufacturer discloses?"),
-    ("sbom", Sbom, "Is a software bill of materials available, as the manufacturer discloses?"),
+    ("patient_data", PatientData, rules.QUESTIONS["patient_data"]),  # rules.QUESTIONS: the screen's words too
+    ("connects", Connects, rules.QUESTIONS["connects"]),
+    ("remote_service", Disclosed, rules.QUESTIONS["remote_service"]),
+    ("patching", Patching, rules.QUESTIONS["patching"]),
+    ("sbom", Sbom, rules.QUESTIONS["sbom"]),
 )
 SOURCE_WORDS = {rules.THIS_RELEASE: "this release", rules.PROFILE: rules.PROFILE, rules.NOT_RECORDED: "not recorded"}
 FACILITY_SOURCE = "the model's, for every version"
@@ -108,8 +108,8 @@ def release_card(f: rules.Facts, others: tuple = ()) -> list[dict]:
                     _row("Support checked", _day(f.get("support_checked_on")))],
         "mds2": _mds2_rows(f, others),
         "disclosure": [_row(question, _label(choices, f.get(name)), wide=True) for name, choices, question in QUESTIONS],
-        "facility": [_row("Who installs updates here", _label(UpdatesBy, f.get("updates_by"))),
-                     _row("Network segment here", _label(Segmented, f.get("segmented")))],
+        "facility": [_row(rules.QUESTIONS["updates_by"], _label(UpdatesBy, f.get("updates_by"))),
+                     _row(rules.QUESTIONS["segmented"], _label(Segmented, f.get("segmented")))],
     }
     return [{"key": key, "title": GROUP_TITLES[key], "source": _source(key, f.sources.get(key)), "rows": rows} for key, rows in groups.items()]
 

@@ -11,7 +11,7 @@ reads the device_security area (Device security View and Equipment View): the dr
   error; "Not recorded" clears it), running it since (blank: today when the release changes, else as recorded), connected here (blank:
   as the model discloses), checked on (today by default). Opened directly (no HTMX), it shows the device's drawer on its Security tab.
 - POST: every field as typed to the service. A refusal comes back under its field with what was typed kept (one about the device, such
-  as a retired one, at the top); saved, the drawer re-renders on the Security tab, a toast says what changed, "security-changed" fires
+  as a retired one, at the top); saved, the drawer re-renders on the Security tab, a toast says what changed, "cyber-changed" fires
   for any list showing the register, and the modal closes after settle.
 
 Another facility's device is a 404 (get_asset); another facility's release, or any release not of this device's model, is refused by
@@ -36,7 +36,7 @@ from .views import asset_drawer_context, get_asset
 
 MODAL = "web/_asset_cyber_facts.html"
 DRAWER = "web/_asset_drawer.html"
-CHANGED = "security-changed"  # the register changed: a list showing it may refetch itself
+CHANGED = "cyber-changed"  # the register changed: the Device security screen's lists refetch themselves (views_cybersecurity.CHANGED)
 DATE = {"type": "date"}
 
 

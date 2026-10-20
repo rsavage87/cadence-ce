@@ -188,16 +188,8 @@ RELEASE_SECTIONS = (
     ("What the manufacturer discloses", DISCLOSURE_GROUP, rules.MDS2_SENTENCE),
     ("This facility's arrangement", FACILITY_GROUP, "For every device of this model here."),
 )
-# The questions the cards and the modal name the answers by (never a form's question number)
-QUESTIONS = {
-    "patient_data": "What can it do with patient data, as the manufacturer discloses?",
-    "connects": "Can it connect to a network, as the manufacturer discloses?",
-    "remote_service": "Can the manufacturer service it remotely, as it discloses?",
-    "patching": "Who may install its software updates, as the manufacturer discloses?",
-    "sbom": "Is a software bill of materials (SBOM) available from the manufacturer?",
-    "updates_by": "Who installs updates here?",
-    "segmented": "Are its connected devices on a medical device network segment here?",
-}
+# The questions the cards and the modal name the answers by (never a form's question number): rules.QUESTIONS, one wording everywhere
+QUESTIONS = rules.QUESTIONS
 
 
 class ReleaseForm(ServiceForm):

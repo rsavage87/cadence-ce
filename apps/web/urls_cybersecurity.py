@@ -2,6 +2,7 @@
 device drawer's Security tab link to them. Device models are named by their UUID; a device by its tag (any letter case)."""
 from django.urls import path
 
+from . import views_cyber_facts
 from . import views_cybersecurity as v
 
 urlpatterns = [
@@ -16,5 +17,5 @@ urlpatterns = [
     path("releases/<uuid:pk>/remove/", v.release_remove, name="cybersecurity_release_remove"),
     path("changes/", v.changes, name="cybersecurity_changes"),  # Changes for IT
     path("changes.csv", v.changes_csv, name="cybersecurity_changes_csv"),
-    path("devices/<str:tag>/facts/", __import__("apps.web.views_cyber_facts", fromlist=["record_facts"]).record_facts, name="cybersecurity_facts"),
+    path("devices/<str:tag>/facts/", views_cyber_facts.record_facts, name="cybersecurity_facts"),  # the device drawer's Record facts
 ]

@@ -65,6 +65,16 @@ OS_ENDED, OS_END_ANNOUNCED, OS_NOT_RECORDED, NO_OS = "os_ended", "os_end_announc
 CONNECTED, NOT_CONNECTED, CAN_CONNECT, CONNECTION_NOT_RECORDED = "connected", "not_connected", "can_connect", "not_recorded"
 
 RELEASE_NOT_RECORDED = "Release not recorded"
+# The questions every door names the answers by (never an MDS2 form's question number: a 2013 or 2008 form numbers them otherwise)
+QUESTIONS = {
+    "patient_data": "What can it do with patient data, as the manufacturer discloses?",
+    "connects": "Can it connect to a network, as the manufacturer discloses?",
+    "remote_service": "Can the manufacturer service it remotely, as it discloses?",
+    "patching": "Who may install its software updates, as the manufacturer discloses?",
+    "sbom": "Is a software bill of materials (SBOM) available from the manufacturer?",
+    "updates_by": "Who installs updates here?",
+    "segmented": "Are its connected devices on a medical device network segment here?",
+}
 MDS2_SENTENCE = ("The MDS2 describes what the device can do; whether you may change it is the manufacturer's documentation and your "
                  "contract.")
 HICP_SENTENCE = ("HHS 405(d) HICP 2023 recommends keeping the medical device inventory, with at least major version information, in the "
@@ -373,7 +383,7 @@ class Fleet:
     devices: int = 0  # devices counted (on site, or among the filtered devices)
 
 
-def _mds2_of(rows) -> tuple[str, tuple]:
+def mds2_of(rows) -> tuple[str, tuple]:
     """The model's MDS2 status from its profile and releases (not removed): on file anywhere first, then requested, then none."""
     statuses = {r.mds2 for r in rows}
     status = next((s for s in _MDS2_ORDER if s in statuses), "")
@@ -430,7 +440,7 @@ def fleet(today: date, assets=None) -> Fleet:
         if None in counted:
             by_release.append((None, counted[None]))
         profile_facts = facts(None, profile_row)
-        mds2, versions = _mds2_of(held)
+        mds2, versions = mds2_of(held)
         rows.append(FleetRow(device_model=dm, devices=len(members), connected=connected_n, by_release=by_release, updates_ended=ended,
                              os_ended=os_n, facts=profile_facts, not_recorded=not_recorded,
                              can_connect=connected_n > 0 or profile_facts.can_connect, mds2=mds2, mds2_versions=versions))

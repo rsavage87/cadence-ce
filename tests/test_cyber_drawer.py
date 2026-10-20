@@ -137,7 +137,7 @@ def test_the_tab_shows_the_device_facts_and_standing_in_the_rules_words(client, 
     assert "What the manufacturer discloses <span>the model&#x27;s disclosure, version not stated</span>" in body
     assert "This facility&#x27;s arrangement <span>the model&#x27;s, for every version</span>" in body
     assert "Requested from the manufacturer" in body and "The model&#x27;s MDS2 on file for" in body and ">9.19.2<" in body
-    assert "Can it store or send patient data, as the manufacturer discloses?" in body and "Can store patient data" in body
+    assert "What can it do with patient data, as the manufacturer discloses?" in body and "Can store patient data" in body  # rules.QUESTIONS
     assert "Who may install its software updates, as the manufacturer discloses?" in body and "The manufacturer or its service only" in body
     assert "Clinical engineering" in body and "Not on a separate segment" in body
     assert "Embedded or real-time: Demo embedded OS 7" in body
@@ -269,7 +269,7 @@ def test_saving_shows_the_tab_again_with_a_toast(client, signed_in, world, today
                                      "network": "wired", "checked_on": (today - DAY).isoformat()})
     assert r.status_code == 200 and r["HX-Retarget"] == "#drawer"
     t = triggers(r)
-    assert t["toast"]["value"] == "Facts recorded for CE-10002; release set to 9.19.2" and "security-changed" in t and "modal-close" in t
+    assert t["toast"]["value"] == "Facts recorded for CE-10002; release set to 9.19.2" and "cyber-changed" in t and "modal-close" in t
     body = html(r)
     assert r.context["tab"] == "security" and f"9.19.2, since {rules.day_words(today - 3 * DAY)}" in body and "Connected (wired)" in body
     assert f"<dt>Checked</dt><dd>{rules.day_words(today - DAY)} by Technician User</dd>" in body

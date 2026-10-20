@@ -140,7 +140,7 @@ def _shell(request, tab: str) -> dict:
 def _mds2_words(dm, held: list) -> str:
     """A model's MDS2 in the Fleet's words ("On file for 9.19.2", "Requested from the manufacturer"): the fleet's own rule over the
     model's profile and releases (not entered in error), so the Models tab reads as the Fleet does."""
-    status, versions = rules._mds2_of(held)
+    status, versions = rules.mds2_of(held)
     return rules.FleetRow(device_model=dm, devices=0, connected=0, by_release=[], updates_ended=0, os_ended=0, facts=rules.facts(None, None),
                           mds2=status, mds2_versions=versions).mds2_words
 
@@ -571,10 +571,3 @@ def changes_csv(request):
              c.connection.words if c.connection is not None else "") for c in rules.changes_for_it(today, days))
     return csv_response(f"cadence-changes-for-it-{days}-days-{today:%Y-%m-%d}.csv", CHANGE_COLUMNS, rows)
 
-
-# The device drawer's Record facts is the drawer's Security tab's (views_cyber_facts.record_facts once urls_cybersecurity points there).
-def _todo(*_args, **_kwargs):
-    raise PermissionDenied
-
-
-record_facts = web_view(MODULE, EDIT)(_todo)
