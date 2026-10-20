@@ -85,12 +85,13 @@ def _row(label: str, words: str, *, wide: bool = False, url: str = "") -> dict:
 def _mds2_rows(f: rules.Facts, others: tuple) -> list[dict]:
     """The MDS2 group's rows; `others`: the versions of this model with an MDS2 on file, when the device reads none of its own."""
     status = f.get("mds2")
-    rows = [_row("MDS2", _label(Mds2Status, status) if status else NOT_RECORDED)]
+    rows = [_row("MDS2", _label(Mds2Status, status))]
     if status == Mds2Status.ON_FILE:
         rows += [_row("Form", _label(Mds2Edition, f.get("mds2_edition"))), _row("Document", f.get("mds2_document") or NOT_RECORDED),
                  _row("Released", _day(f.get("mds2_released_on")))]
-        if f.get("mds2_url"):
-            rows.append(_row("Link", "The manufacturer's page", url=f.get("mds2_url")))
+        url = (f.get("mds2_url") or "").strip()
+        if url.lower().startswith("https://"):  # the service takes https links only; anything else never becomes a link
+            rows.append(_row("Link", "The manufacturer's page", url=url))
     elif status == Mds2Status.REQUESTED:
         rows.append(_row("Requested", _day(f.get("mds2_requested_on"))))
     if others:

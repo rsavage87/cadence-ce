@@ -64,7 +64,6 @@ class FactsForm(forms.Form):
                                             "screen's Models tab.")
         disclosed = rules.connected(None, standing.facts).words
         self.fields["network"].widget.choices = [("", f"As the model discloses ({disclosed})"), *Network.choices]
-        self.has_versions = bool(versions)
 
     def facts(self) -> dict:
         """The service's arguments: the release id or None (Release not recorded clears it), the days and the network as typed."""
@@ -149,5 +148,4 @@ def record_facts(request, tag):
             form.add_service_errors(e)
     if sec is None:
         return _modal(request, asset, form)
-    before = standing.record.release_id if standing.record is not None else None
-    return _saved(request, asset, _message(asset, before, sec))
+    return _saved(request, asset, _message(asset, standing.release.pk if standing.release is not None else None, sec))
