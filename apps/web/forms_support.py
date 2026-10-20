@@ -38,7 +38,7 @@ class SupportForm(ServiceErrorsMixin, forms.Form):
     sale_ended_on = forms.CharField(label="No longer sold from", required=False, widget=_day_box(),
                                     help_text="End of sale, past or announced.")
     support_ends_on = forms.CharField(label="Manufacturer support ends", required=False, widget=_day_box(),
-                                      help_text="End of service support, past or announced.")
+                                      help_text="The last day of service support, past or announced.")
     parts_end_on = forms.CharField(label="Parts available until", required=False, widget=_day_box(),
                                    help_text="The last day parts can be had, past or announced.")
     support_notice = forms.CharField(label="Manufacturer's notice", required=False,

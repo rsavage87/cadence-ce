@@ -442,7 +442,7 @@ def replacement_outlook(asset, today: date) -> dict:
     else:
         parts.append(f"Not ranked: {', '.join(priority.UNRANKED_WORDS[k] for k in p.unranked_reasons)}.")
     if drivers:
-        parts.append("Driven most by " + " and ".join(f"{c.label.lower()} ({c.points:.1f} points)" for c in drivers) + ".")
+        parts.append("Driven most by " + " and ".join(f"{c.label.lower()} ({priority.points_rounded(c.points)} points)" for c in drivers) + ".")
     estimate_words = f"{p.estimate.words[:1].lower()}{p.estimate.words[1:]}"  # "list price, set Oct 19, 2026": never the month lowered
     if p.estimate.amount is not None:
         parts.append(f"Estimated replacement {money(p.estimate.amount)} ({estimate_words}).")
@@ -463,8 +463,10 @@ def _window_words(p) -> str:
     months = p.extras.get("window_months", 0)
     since = f"{p.window_start:%b} {p.window_start.day}, {p.window_start.year}"
     if p.failures is None:
-        return (f"Failures and service cost have {priority.TOO_LITTLE_HISTORY}: {months} month{'' if months == 1 else 's'} since {since}, "
-                f"and {priority.MIN_HISTORY_MONTHS} are needed.")
+        # review fix: when it has enough, never a rounded month count that reads as the minimum already reached
+        enough_on = add_months(p.window_start, priority.MIN_HISTORY_MONTHS)
+        return (f"Failures and service cost have {priority.TOO_LITTLE_HISTORY}: the records start {since}, and "
+                f"{priority.MIN_HISTORY_MONTHS} months are needed (from {enough_on:%b} {enough_on.day}, {enough_on.year}).")
     return f"Failures and service cost count the {months} month{'' if months == 1 else 's'} since {since}."
 
 

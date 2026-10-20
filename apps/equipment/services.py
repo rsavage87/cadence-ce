@@ -485,8 +485,12 @@ def _model_fields(raw: dict) -> dict:
 
 
 def _support_fields(raw: dict, out: dict, errors: dict) -> None:
-    """Slice 36: the life source (a choice, or blank: not recorded), the three support dates (a day or none, in any order: notices vary),
-    the notice's reference (a token), and the day support was checked (not after today)."""
+    """Slice 36: the life source (a choice, or blank: not recorded), the three support dates (a day or none, in any order: notices vary;
+    from 2000 and within SUPPORT_HORIZON_YEARS: a mistyped year or a "never" placeholder such as 9999-12-31 is refused, never stored),
+    the notice's reference (a token), and the day support was checked (from 2000, not after today)."""
+    from apps.pm.dates import add_months
+
+    today = timezone.localdate()
     if "life_source" in raw:
         value = raw["life_source"] or ""
         if value not in ("", *LifeSource.values):
@@ -508,8 +512,12 @@ def _support_fields(raw: dict, out: dict, errors: dict) -> None:
         if not isinstance(value, date) or isinstance(value, datetime):
             errors[name] = "Enter a day."
             continue
-        if name == "support_checked_on" and value > timezone.localdate():
+        if value.year < 2000:
+            errors[name] = "Enter the day in full (the year looks wrong)."
+        elif name == "support_checked_on" and value > today:
             errors[name] = "The day support was checked cannot be after today."
+        elif name != "support_checked_on" and value > add_months(today, SUPPORT_HORIZON_YEARS * 12):
+            errors[name] = f"Leave it blank when no day is announced (a day more than {SUPPORT_HORIZON_YEARS} years ahead looks wrong)."
         out[name] = value
     if "support_notice" in raw:
         text = (raw["support_notice"] or "").strip() if isinstance(raw["support_notice"], str) or raw["support_notice"] is None else None
@@ -535,20 +543,25 @@ class SupportStatus:
 
 
 SUPPORT_VALUES = {"parts_ended": 1.0, "support_ended": 0.8, "sale_ended": 0.4, "announced": 0.2, "supported": 0.0}
-SUPPORT_CHECK_DAYS = 365  # "supported" only when support was checked within this many days and no end is announced
+SUPPORT_CHECK_MONTHS = 12  # "supported" only when support was checked within this many months and no end is announced
+SUPPORT_HORIZON_YEARS = 50  # a support day further ahead is refused (a "never" placeholder, or a mistyped year)
 
 
 def support_status(dm, today: date) -> SupportStatus:
     """The model's manufacturer support on `today` (slice 36; apps.capital.priority's supportability, the model drawer's words): the
     latest milestone passed decides (parts no longer available, support ended, sale ended); an end announced for a later day reads it; none
-    announced and checked within SUPPORT_CHECK_DAYS reads supported; else not checked (unknown)."""
+    announced and checked within SUPPORT_CHECK_MONTHS (calendar months) reads supported; else not checked (unknown). Support's end and
+    parts' end are the last day of each (support ends, parts available until): passed the day after; a sale's end is its first day
+    (no longer sold from)."""
+    from apps.pm.dates import add_months
+
     fmt = _day
     passed = [(d, key) for d, key in ((dm.parts_end_on, "parts_ended"), (dm.support_ends_on, "support_ended"), (dm.sale_ended_on, "sale_ended"))
-              if d is not None and d <= today]
+              if d is not None and (d <= today if key == "sale_ended" else d < today)]
     if passed:
         order = {"parts_ended": 0, "support_ended": 1, "sale_ended": 2}
         day, key = sorted(passed, key=lambda p: order[p[1]])[0]  # the gravest milestone passed decides
-        words = {"parts_ended": f"Parts no longer available since {fmt(day)}", "support_ended": f"Manufacturer support ended {fmt(day)}",
+        words = {"parts_ended": f"Parts no longer available after {fmt(day)}", "support_ended": f"Manufacturer support ended {fmt(day)}",
                  "sale_ended": f"No longer sold since {fmt(day)}"}[key]
         return SupportStatus(key, SUPPORT_VALUES[key], words)
     future = [(d, label) for d, label in ((dm.support_ends_on, "Support ends"), (dm.parts_end_on, "Parts available until"),
@@ -556,7 +569,7 @@ def support_status(dm, today: date) -> SupportStatus:
     if future:
         day, label = min(future)
         return SupportStatus("announced", SUPPORT_VALUES["announced"], f"{label} {fmt(day)}")
-    if dm.support_checked_on is not None and (today - dm.support_checked_on).days <= SUPPORT_CHECK_DAYS:
+    if dm.support_checked_on is not None and dm.support_checked_on >= add_months(today, -SUPPORT_CHECK_MONTHS):
         return SupportStatus("supported", SUPPORT_VALUES["supported"], f"Supported, checked {fmt(dm.support_checked_on)}")
     return SupportStatus("unknown", None, "Support not checked" if dm.support_checked_on is None
                          else f"Support last checked {fmt(dm.support_checked_on)}")

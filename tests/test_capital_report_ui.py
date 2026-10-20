@@ -116,7 +116,7 @@ def test_the_panel_says_what_the_score_is_and_ranks_with_chips(client, signed_in
     assert [m for m in re.findall(r'href="/equipment/(CE-\d+)/"', rows)] == ["CE-20001", "CE-20002", "CE-20003", "CE-20004"]
     vent = rows.split('href="/equipment/CE-20001/"', 1)[1].split("</tr>", 1)[0]
     assert "Suggested for FY2026" in vent and '<td class="num down">12.0 of 10 yr</td>' in vent
-    assert f"Parts no longer available since {TODAY - timedelta(days=30):%b} {(TODAY - timedelta(days=30)).day}, 2026" in vent
+    assert f"Parts no longer available after {TODAY - timedelta(days=30):%b} {(TODAY - timedelta(days=30)).day}, 2026" in vent
     assert '<small>list price</small>' in vent and 'title="List price, set ' in vent  # its full words in the title
     new = rows.split('href="/equipment/CE-20004/"', 1)[1].split("</tr>", 1)[0]
     assert '<span class="muted">too little history</span>' in new and '<span class="muted">unknown</span>' in new

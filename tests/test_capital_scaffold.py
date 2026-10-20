@@ -88,9 +88,9 @@ def model(**kw):
     ({"sale_ended_on": date(2025, 1, 1), "support_ends_on": date(2028, 3, 31)}, "sale_ended", 0.4, "No longer sold since Jan 1, 2025"),
     ({"sale_ended_on": date(2024, 1, 1), "support_ends_on": TODAY}, "support_ended", 0.8, "Manufacturer support ended Oct 19, 2026"),
     ({"support_ends_on": date(2025, 1, 1), "parts_end_on": date(2026, 6, 1)}, "parts_ended", 1.0,
-     "Parts no longer available since Jun 1, 2026"),
+     "Parts no longer available after Jun 1, 2026"),
     ({"parts_end_on": date(2020, 1, 1), "support_ends_on": date(2025, 1, 1)}, "parts_ended", 1.0,  # any order: the gravest passed
-     "Parts no longer available since Jan 1, 2020"),
+     "Parts no longer available after Jan 1, 2020"),
 ])
 def test_support_status(kw, key, value, words):
     s = eq.support_status(model(**kw), TODAY)

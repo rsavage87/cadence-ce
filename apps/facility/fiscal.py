@@ -50,5 +50,8 @@ def _day(d: date) -> str:
 
 def describe(fy: int, start: int) -> str:
     """ "FY2027: Jul 1, 2026 to Jun 30, 2027" (the Settings panel's example, the outlook's headings' titles)."""
-    first, last = fiscal_bounds(fy, start)
+    try:
+        first, last = fiscal_bounds(fy, start)
+    except ValueError:  # beyond the calendar (year 10000): the name alone, never an error
+        return fy_label(fy)
     return f"{fy_label(fy)}: {_day(first)} to {_day(last)}"

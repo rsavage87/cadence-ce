@@ -13,7 +13,7 @@ Slice 36: replacement planning reads the replacement priority rule (apps.capital
 replacement estimate, age, a confirmed recall, times criticality; points unknown shown, never scored as 0), as the device drawer does.
 """
 from datetime import date, timedelta
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 from statistics import median
 
 from django.db.models import Count, DecimalField, Q, Sum
@@ -197,8 +197,9 @@ def report_mtbf(today: date) -> dict:
 
 # The first seven columns as before; "Failures, 36 mo" was "Repairs, 6 mo"; the rest appended (each component's points, the flags,
 # support, the suggested fiscal year, the estimate's source, and the install date and acquisition cost the devices import reads back),
-# and last the rule's version ("v2", priority.SCORE_VERSION). A CSV has no header note here (its first row is the columns, and it reads
-# back through the devices import, which leaves a column it has no name for unused), so the version rides on every row.
+# and last the rule's version with its weights (priority.version_words: "Score v2: age 30, ..."). A CSV has no header note here (its first
+# row is the columns, and it reads back through the devices import, which leaves a column it has no name for unused), so the version
+# rides on every row, the same words for every reader.
 REPLACE_COLUMNS = ["Asset tag", "Device", "Manufacturer", "Model", "Location", "Age years", "Expected life years", "Failures, 36 mo", "Condition",
                    "Score", "Est. replacement", "Points unknown", "Age points", "Support points", "Failure points", "Service cost points",
                    "Recall points", "Multiplier", "Flags", "Support", "Suggested fiscal year", "Estimate source", "Installed on",
@@ -209,7 +210,7 @@ OUTLOOK_YEARS = 5  # the current fiscal year and the four after it
 
 def _points(c) -> Decimal | None:
     """A component's points to one decimal (half up), None when unknown: a blank cell, never 0."""
-    return None if c.points is None else Decimal(repr(c.points)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+    return priority.points_rounded(c.points)
 
 
 def replace_row(p) -> list:
@@ -220,7 +221,7 @@ def replace_row(p) -> list:
             "; ".join(priority.FLAG_WORDS[f] for f in p.flags), p.support.words,
             fy_label(p.suggested_fy) if p.suggested_fy is not None else None, ESTIMATE_SOURCE_WORDS.get(p.estimate.source),
             a.installed_on, a.acquisition_cost,
-            "yes" if p.ranked else "no: " + ", ".join(priority.UNRANKED_WORDS[r] for r in p.unranked_reasons), f"v{priority.SCORE_VERSION}"]
+            "yes" if p.ranked else "no: " + ", ".join(priority.UNRANKED_WORDS[r] for r in p.unranked_reasons), priority.version_words()]
 
 
 def _fleets(every: list) -> list[dict]:

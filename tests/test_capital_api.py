@@ -68,7 +68,7 @@ def test_a_device_carries_its_models_support(client, ctx, make_user, vent, vent_
     client.force_login(make_user("analyst"))
     detail = client.get(f"/api/v1/assets/{vent.pk}/").json()["device_model_detail"]
     assert detail["parts_end_on"] == "2026-06-01"
-    assert detail["support_status"] == {"key": "parts_ended", "words": "Parts no longer available since Jun 1, 2026"}
+    assert detail["support_status"] == {"key": "parts_ended", "words": "Parts no longer available after Jun 1, 2026"}
 
 
 # --- changing it ------------------------------------------------------------------------------------------------------------------------

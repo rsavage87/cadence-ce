@@ -94,7 +94,7 @@ def test_a_model_with_nothing_recorded_reads_not_checked(client, signed_in, vent
     ({"support_ends_on": date(2028, 3, 31)}, "neutral", "Support ends Mar 31, 2028"),
     ({"sale_ended_on": date(2025, 1, 1)}, "neutral", "No longer sold since Jan 1, 2025"),
     ({"sale_ended_on": date(2024, 1, 1), "support_ends_on": date(2026, 10, 1)}, "warn", "Manufacturer support ended Oct 1, 2026"),
-    ({"support_ends_on": date(2025, 1, 1), "parts_end_on": date(2026, 6, 1)}, "crit", "Parts no longer available since Jun 1, 2026"),
+    ({"support_ends_on": date(2025, 1, 1), "parts_end_on": date(2026, 6, 1)}, "crit", "Parts no longer available after Jun 1, 2026"),
 ])
 def test_the_section_reads_support_status_for_today(client, signed_in, vent_model, fields, tone, words):
     eq.update_device_model(vent_model, **fields)

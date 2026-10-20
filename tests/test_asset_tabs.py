@@ -461,7 +461,7 @@ def test_the_outlook_names_its_drivers_flags_and_the_current_fiscal_year_when_it
     body = tab(client, vent, "costs").content.decode()
     assert '<span class="chip crit">Parts no longer available</span>' in body and "How it is scored" in body
     assert priority.version_words() in body and f"Replacement score {p.score} of 100" in body
-    assert "Parts no longer available since" in body and "life source not recorded" in body
+    assert "Parts no longer available after" in body and "life source not recorded" in body
 
 
 def test_the_outlook_says_why_a_device_is_not_ranked(ctx, dept):

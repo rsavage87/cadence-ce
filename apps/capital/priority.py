@@ -57,11 +57,13 @@ FLAG_WORDS = {PARTS_ENDED: "Parts no longer available", NOT_RETURNED: "Kept out 
 NO_INSTALL_DATE, NO_ESTIMATE, LIFE_SOURCE, SUPPORT_UNCHECKED = "no_install_date", "no_estimate", "life_source", "support_unchecked"
 GAPS = (NO_INSTALL_DATE, NO_ESTIMATE, LIFE_SOURCE, SUPPORT_UNCHECKED)
 GAP_WORDS = {NO_INSTALL_DATE: "No install date", NO_ESTIMATE: "No list price or acquisition cost",
-             LIFE_SOURCE: "Where the expected life comes from is not recorded", SUPPORT_UNCHECKED: "Manufacturer support not checked"}
+             LIFE_SOURCE: "Where the expected life comes from is not recorded",
+             SUPPORT_UNCHECKED: "Manufacturer support not checked in the last 12 months"}
 # A device is ranked only when its age and its replacement estimate are known; else it is listed apart, "Not ranked: <why>"
 UNRANKED_WORDS = {NO_INSTALL_DATE: "no install date", NO_ESTIMATE: "no replacement estimate"}
 
 TOO_LITTLE_HISTORY = "too little history"
+CONTRACT_SHARE_UNKNOWN = "its contract share cannot be worked out: no acquisition cost on file"  # review fix: never a silent $0
 NOT_RECORDED_THEN = "not recorded then"  # an imported repair's finding
 ESTIMATE_LIST, ESTIMATE_ACQUISITION = "list", "acquisition"
 
@@ -168,6 +170,27 @@ def cost_value(ratio: Decimal) -> float:
     return float((ratio - COST_FLOOR) / (COST_FULL - COST_FLOOR))
 
 
+def contract_covers(coverage: str, wo_type: str, part: bool) -> bool:
+    """Whether a live contract's annual cost already pays for a line of its vendor's work (review fix: by what the contract covers):
+    full service and parts and labor cover the vendor's work; preventive maintenance only covers its PMs; parts only covers parts;
+    time and materials covers nothing (each job is billed). A line it does not cover is counted on top of the device's share."""
+    from apps.contracts.models import Coverage
+    from apps.workorders.models import WoType
+
+    if coverage in (Coverage.FULL, Coverage.PARTS_LABOR):
+        return True
+    if coverage == Coverage.PM_ONLY:
+        return wo_type == WoType.PM
+    if coverage == Coverage.PARTS:
+        return part
+    return False
+
+
+def points_rounded(points: float | None) -> Decimal | None:
+    """A component's points to one decimal, half up (the CSV's, the API's, the drawer's words and its table): None when unknown."""
+    return None if points is None else Decimal(repr(points)).quantize(Decimal("0.1"), rounding="ROUND_HALF_UP")
+
+
 def multiplier_for(risk_class: str) -> float:
     return MULTIPLIERS.get(risk_class, MULTIPLIERS[RiskClass.LOW])
 
@@ -247,8 +270,9 @@ QUERIES = 9  # score_assets' queries with `start` given; one more (Settings) wit
 class _Inputs:
     first_day: date | None  # the facility's first work order (imported ones included), None before any
     failures: dict  # asset id: [(opened_on, recorded, imported, still open)], failures opened in the earliest window
-    spent: dict  # asset id: [(completed_on, vendor_service, amount)], labor and parts of work completed in the earliest window
-    contracts: dict  # live contract id: (annual cost, the acquisition cost of the devices it covers)
+    spent: dict  # asset id: [(completed_on, vendor_service, vendor_name, type, a part line, amount)], labor and parts of work completed
+    # in the earliest window
+    contracts: dict  # live contract id: (annual cost, the acquisition cost of the devices it covers, coverage, the vendor's key)
     matches: dict  # device model id: [(alert id, status, Class I)], confirmed or under review
     recalls_done: set  # (asset id, alert id): the device's own recall work order completed
     list_set_on: dict  # device model id: (the day its list price was last set, that price), from its history
@@ -265,9 +289,11 @@ def _devices(devices) -> list:
     from django.db.models import OuterRef, Subquery
 
     from apps.workorders.models import WorkOrder, WoType
+    from apps.workorders.repair_checks import last_completed_first
 
-    latest = (WorkOrder.objects.filter(asset=OuterRef("pk"), type=WoType.REPAIR, status__in=_done(), completed_on__isnull=False)
-              .order_by("-completed_on", "-created_at").values("repair_check")[:1])
+    # "The device's last repair" as the binder and loaner_device_back read it (review fix: never by created_at)
+    latest = last_completed_first(WorkOrder.objects.filter(asset=OuterRef("pk"), type=WoType.REPAIR, status__in=_done(),
+                                                           completed_on__isnull=False)).values("repair_check")[:1]
     return list(devices.select_related("device_model", "department").annotate(latest_repair_check=Subquery(latest)))
 
 
@@ -282,6 +308,7 @@ def _read(devices, today: date) -> _Inputs:
     from apps.pm.dates import add_months
     from apps.recalls.models import AlertMatch
     from apps.reports.survey.recalls import is_class_one
+    from apps.vendors.rules import vendor_key
     from apps.workorders import findings
     from apps.workorders.models import LABOR_AMOUNT, OPEN_STATUSES, PART_AMOUNT, LaborLine, PartLine, Source, WorkOrder, WoType
 
@@ -308,19 +335,21 @@ def _read(devices, today: date) -> _Inputs:
     lines = {"work_order__asset__in": ids, "work_order__completed_on__gte": earliest, "work_order__completed_on__lte": today,
              "work_order__status__in": done, "work_order__type__in": cost_types}
     spent: dict = {}
-    for model, amount in ((LaborLine, LABOR_AMOUNT), (PartLine, PART_AMOUNT)):
+    for model, amount, part in ((LaborLine, LABOR_AMOUNT, False), (PartLine, PART_AMOUNT, True)):
         for row in (model.objects.filter(**lines).order_by()
-                    .values("work_order__asset", "work_order__completed_on", "work_order__vendor_service").annotate(v=Sum(amount, output_field=money))):
+                    .values("work_order__asset", "work_order__completed_on", "work_order__vendor_service", "work_order__vendor_name",
+                            "work_order__type").annotate(v=Sum(amount, output_field=money))):
             spent.setdefault(row["work_order__asset"], []).append(
-                (row["work_order__completed_on"], row["work_order__vendor_service"], Decimal(row["v"] or 0)))
+                (row["work_order__completed_on"], row["work_order__vendor_service"], row["work_order__vendor_name"], row["work_order__type"],
+                 part, Decimal(row["v"] or 0)))
 
     # 6. Live contracts today with the acquisition cost of the devices each covers (Contract.covered_assets: not retired), for each
     # device's share (Contract.cost_share_for's rule, grouped)
     covered = [s for s in AssetStatus.values if s != AssetStatus.RETIRED]
-    contracts = {row["pk"]: (Decimal(row["annual_cost"] or 0), Decimal(row["total"] or 0)) for row in
-                 Contract.objects.filter(pk__in=devices.values("contract"), start_on__lte=today, end_on__gte=today)
+    contracts = {row["pk"]: (Decimal(row["annual_cost"] or 0), Decimal(row["total"] or 0), row["coverage"], vendor_key(row["vendor"]))
+                 for row in Contract.objects.filter(pk__in=devices.values("contract"), start_on__lte=today, end_on__gte=today)
                  .annotate(total=Sum("assets__acquisition_cost", filter=Q(assets__status__in=covered))).order_by()
-                 .values("pk", "annual_cost", "total")}
+                 .values("pk", "annual_cost", "total", "coverage", "vendor")}
 
     # 7. Recall matches on the devices' models a reviewer confirmed (in progress: counted) or is reviewing (shown beside, no points)
     matches: dict = {}
@@ -389,6 +418,7 @@ def _score(a, today: date, start: int, inp: _Inputs) -> Priority:
     from apps.equipment.services import support_status
     from apps.pm.dates import add_months
     from apps.recalls.models import AlertMatch
+    from apps.vendors.rules import vendor_key
     from apps.workorders.models import RepairCheck
 
     dm = a.device_model
@@ -414,7 +444,7 @@ def _score(a, today: date, start: int, inp: _Inputs) -> Priority:
         gaps.add(SUPPORT_UNCHECKED)
     if support.key == "parts_ended":
         flags.add(PARTS_ENDED)
-    if support.key == "support_ended" or (dm.support_ends_on is not None and dm.support_ends_on <= today):
+    if support.key == "support_ended" or (dm.support_ends_on is not None and dm.support_ends_on < today):  # its last day still supported
         flags.add(SUPPORT_ENDED)
     support_c = Component(SUPPORT, support.value, support.words)
 
@@ -429,7 +459,7 @@ def _score(a, today: date, start: int, inp: _Inputs) -> Priority:
     failures = len(mine) if enough else None
     unrecorded = sum(1 for f in mine if not f[1]) if enough else 0
     still_open = sum(1 for f in mine if f[3]) if enough else 0
-    imported = sum(1 for f in mine if f[2] and not f[1]) if enough else 0
+    imported = sum(1 for f in mine if f[2] and not f[1] and not f[3]) if enough else 0  # an open one gets its finding when completed
     per_year = None
     if not enough:
         rel_c = Component(RELIABILITY, None, TOO_LITTLE_HISTORY)
@@ -448,15 +478,30 @@ def _score(a, today: date, start: int, inp: _Inputs) -> Priority:
     if estimate.amount is None:
         gaps.add(NO_ESTIMATE)
     contract = inp.contracts.get(a.contract_id) if a.contract_id else None
-    share = None
+    share = coverage = contract_vendor = None
+    unallocated = False  # a live contract with a cost whose share of it cannot be worked out (no acquisition cost to allocate by)
     if contract is not None:
-        annual, covered = contract
-        share = annual * Decimal(a.acquisition_cost or 0) / covered if covered else Decimal("0")
-    spent = sum((amount for day, vendor, amount in inp.spent.get(a.pk, ()) if w_start <= day <= today and not (vendor and contract is not None)),
-                Decimal("0"))
+        annual, covered, coverage, contract_vendor = contract
+        acquisition = Decimal(a.acquisition_cost or 0)
+        if annual <= 0:
+            share = Decimal("0")
+        elif acquisition > 0 and covered > 0:
+            share = annual * acquisition / covered
+        else:
+            unallocated = True  # as the Costs tab says (asset_tabs.contract_share): never a silent $0
+
+    def paid_by_contract(vendor, vendor_name, wo_type, part) -> bool:
+        """A vendor line the live contract's annual cost already pays for (contract_covers, by that contract's vendor)."""
+        return (vendor and contract is not None and vendor_key(vendor_name) == contract_vendor
+                and contract_covers(coverage, wo_type, part))
+
+    spent = sum((amount for day, vendor, vendor_name, wo_type, part, amount in inp.spent.get(a.pk, ())
+                 if w_start <= day <= today and not paid_by_contract(vendor, vendor_name, wo_type, part)), Decimal("0"))
     cost_year = ratio = None
     if not enough:
         cost_c = Component(COST, None, TOO_LITTLE_HISTORY)
+    elif unallocated:
+        cost_c = Component(COST, None, CONTRACT_SHARE_UNKNOWN)
     else:
         cost_year = (spent / years + (share or 0)).quantize(Decimal("0.01"), rounding="ROUND_HALF_UP")
         if estimate.amount is None:
@@ -479,7 +524,9 @@ def _score(a, today: date, start: int, inp: _Inputs) -> Priority:
                              _plural(len(confirmed), "confirmed recall", "confirmed recalls") + " not done on this device"
                              + (", Class I" if class_one else ""), "recall under review" if reviewing else "")
     else:
-        safety_c = Component(SAFETY, 0.0, "no confirmed recall", "recall under review" if reviewing else "")
+        done_here = any(status == AlertMatch.Status.IN_PROGRESS for _alert, status, _one in model_matches)
+        safety_c = Component(SAFETY, 0.0, "confirmed recall done on this device" if done_here else "no confirmed recall",
+                             "recall under review" if reviewing else "")
 
     # Kept out of use after its latest repair
     if a.latest_repair_check == RepairCheck.NOT_RETURNED and a.status != AssetStatus.IN_SERVICE:

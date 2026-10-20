@@ -58,7 +58,7 @@ def test_riverside_plans_by_july_and_ce_recorded_support_and_life_sources_on_a_f
         # the sterilizers: parts no longer available (after support ended): the must-act flag
         st = models[STERILIZER]
         assert st.sale_ended_on < st.support_ends_on < st.parts_end_on < today and re.fullmatch(r"FSN-\d{4}-031", st.support_notice)
-        assert support_status(st, today).words.startswith("Parts no longer available since ")
+        assert support_status(st, today).words.startswith("Parts no longer available after ")
         recorded = {DIALYSIS, STERILIZER, VITALS, MONITOR}
         assert {m for m, dm in models.items() if dm.support_checked_on} == recorded
         assert all(support_status(dm, today).key == "unknown" for m, dm in models.items() if m not in recorded)
