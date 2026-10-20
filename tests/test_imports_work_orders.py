@@ -319,7 +319,8 @@ def test_rows_that_are_not_work_or_not_history_are_skipped_in_words(ctx, kim, pu
     assert notes["c7"] == ["The completed date is in the future"]
     assert notes["c8"] == ["An open work order on a retired device: not imported"]
     assert notes["c9"] == ["No device with this tag here: import devices first"]
-    assert notes["c10"] == ["Type not read: use repair (corrective), PM (preventive), inspection (incoming, install), recall, or safety check"]
+    assert notes["c10"] == ["Type not read: use repair (corrective), PM (preventive), inspection (incoming, install), recall, safety check, "
+                            "or software update (firmware, patch; completed ones only)"]  # slice 38
     assert notes["c11"] == ["A PM needs its due date (PM on-time is counted by it)"]
     assert notes["c12"] == ["Due date not read: a PM needs it (PM on-time is counted by it)"]
     assert notes["c13"] == ["Opened date not read"]
