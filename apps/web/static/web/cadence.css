@@ -1573,6 +1573,20 @@ td small.tmp-late{color:var(--crit)}
 
 /* Slice 36 B: the model drawer's Life and support section and its Record support modal, Settings' Fiscal year panel. Wave 2B owns
    this block, up to the B end marker. */
+/* The PM program tab's Life and support (web/_model_tab_program.html): Record support at the heading's end, as a temporary device's
+   Change details; support today across the grid, its chip free to wrap in a phone-width drawer. */
+.sp-sec h3{justify-content:flex-start}
+.sp-sec h3 .sp-record{margin-left:auto;font-size:12.5px;font-weight:500}
+.sp-sec .dl .sp-now{grid-column:1/-1}
+.sp-sec .dl .sp-now dd{overflow:visible}
+.sp-sec .sp-now .chip{white-space:normal;max-width:100%}
+.sp-sec .sp-what{margin-top:8px}
+/* Record support (web/_model_support.html): the notice's fieldset uses Add device's .dv-sub and .dv-grid */
+.form .sp-blank{margin-top:8px}
+/* Settings' Fiscal year (web/_settings_fiscal.html): the two fiscal years in real dates under the form, then what a change does */
+.fy-rows{margin-bottom:4px}
+.fy-dates{font-weight:500;color:var(--ink);text-align:right}
+.fy-what{margin-top:6px}
 /* Slice 36 B: end */
 
 /* Slice 11: printing app pages */

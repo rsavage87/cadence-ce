@@ -7,8 +7,13 @@ are equipment data (apps.equipment.permissions), checked here on every request, 
 On both forms, marking a model as equipment CMS keeps on the manufacturer's schedule (imaging, radiologic, medical laser; slice
 18) needs Equipment Approve as well: others see the mark read-only, and a form that changes it anyway is refused.
 
+Slice 36: the PM program tab's Life and support section (support_section: where the expected life comes from, the manufacturer's
+support dates and notice, the day CE checked, and support_status's words today) and its Record support modal (model_support,
+apps.web.forms_support; Equipment Edit, as Edit details), the one screen that writes them (update_device_model; never Add model or
+Edit details).
+
 Every change fires `models-changed` (the PM library re-fetches on it) and toasts. Actions inside a tab answer with the whole drawer
-on that tab (render_model_drawer), which #drawer swaps in. The three forms are modals (#modal-card): a save swaps the model's
+on that tab (render_model_drawer), which #drawer swaps in. The four forms are modals (#modal-card): a save swaps the model's
 drawer into #drawer instead (HX-Retarget; the shell opens the drawer on that swap) and closes the modal after settle.
 """
 from datetime import date
@@ -32,6 +37,7 @@ from apps.pm import permissions as pm_perms
 from . import history_tabs, views_aem, views_procedures
 from .decorators import web_view
 from .forms_models import RISK_MEANINGS, DeviceModelForm, RiskScoreForm
+from .forms_support import SupportForm
 from .htmx import is_partial, toast
 
 DRAWER = "web/_model_drawer.html"
@@ -55,6 +61,25 @@ def risk_parts(dm) -> list[dict]:
         return []
     return [{"label": label, "value": getattr(dm, field), "high": high, "meaning": RISK_MEANINGS[key].get(getattr(dm, field), "")}
             for key, field, label, _low, high in eq.RISK_PARTS]
+
+
+# Slice 36: the support dates as the section and the modal name them (the history's labels), in the order a notice gives them
+SUPPORT_ROWS = (("sale_ended_on", "No longer sold from"), ("support_ends_on", "Manufacturer support ends"),
+                ("parts_end_on", "Parts available until"))
+# How the support status today reads beside its words: what the replacement priority flags (parts gone: must act; support ended:
+# review) stands out; not checked is a gap to fill, never a fault
+SUPPORT_TONES = {"parts_ended": "crit", "support_ended": "warn", "sale_ended": "neutral", "announced": "neutral", "supported": "ok",
+                 "unknown": "neutral"}
+
+
+def support_section(dm, today: date) -> dict:
+    """The PM program tab's Life and support section (slice 36): where the expected life comes from, the manufacturer's support dates
+    and notice as recorded, the day CE checked, and equipment.services.support_status's words for `today` (the replacement priority's
+    supportability: the one rule)."""
+    status = eq.support_status(dm, today)
+    return {"life_source": dm.get_life_source_display() if dm.life_source else "", "status": status, "tone": SUPPORT_TONES[status.key],
+            "dates": [{"label": label, "day": getattr(dm, name)} for name, label in SUPPORT_ROWS],
+            "notice": dm.support_notice, "checked_on": dm.support_checked_on}
 
 
 def program_tab(request, dm, today: date | None = None) -> dict:
@@ -82,6 +107,7 @@ def program_tab(request, dm, today: date | None = None) -> dict:
                      "oem_required": dm.oem_schedule_required},
         "devices": {"shown": shown, "active": active_count, "more": max(active_count - len(shown), 0),
                     "retired": Asset.objects.filter(eq.OWNED, device_model=dm, status=AssetStatus.RETIRED).count()},
+        "support": support_section(dm, today),  # slice 36
         "can_view_asset": user.has_level(Module.EQUIPMENT, Level.VIEW),
         "can_edit_model": eq_perms.can_edit_model(user), "can_set_risk": eq_perms.can_set_risk(user),
     }}
@@ -228,14 +254,41 @@ def model_edit(request, pk):
     return _saved(request, dm, f"{dm} updated" + mark_toast(dm, was_marked))
 
 
+def _support_modal(request, dm, form, today: date):
+    if form.is_bound:
+        form.focus_first_error()
+    return render(request, "web/_model_support.html", {"dm": dm, "form": form, "status": eq.support_status(dm, today)})
+
+
+def support_toast(dm, before: dict, today: date) -> str:
+    """What Record support saved: the support status it now reads, or that nothing changed."""
+    if all(getattr(dm, name) == value for name, value in before.items()):
+        return f"Life and support for {dm} unchanged"
+    return f"Life and support saved for {dm}: {eq.support_status(dm, today).words}"
+
+
 @web_view(pm_perms.MODULE, pm_perms.VIEW_LEVEL)
 def model_support(request, pk):
-    """Slice 36, Record support: the model's expected life source and the manufacturer's support (sale ended, support ends, parts
-    available until, the notice's reference, the day CE checked) through update_device_model. Equipment Edit; checked on defaults to
-    today. (Wave 2: the modal, web/_model_support.html.)"""
+    """Slice 36, Record support: the model's expected life source and the manufacturer's support (no longer sold from, support ends,
+    parts available until, the notice's reference, the day CE checked) through update_device_model, which checks every value. Equipment
+    Edit (as Edit details), on GET and POST; checked on is today when the modal opens. A refusal answers with the modal, what was typed
+    kept and the service's words under its field; a save, with the drawer on PM program and a toast (_saved)."""
     _require(eq_perms.can_edit_model(request.user))
-    get_model(pk)
-    raise PermissionDenied  # scaffold: wave 2 builds the modal
+    dm = get_model(pk)
+    today = timezone.localdate()
+    if request.method != "POST":
+        return _support_modal(request, dm, SupportForm(device_model=dm, today=today), today)
+    before = {name: getattr(dm, name) for name in eq.SUPPORT_FIELDS}
+    form = SupportForm(request.POST, device_model=dm, today=today)
+    if form.is_valid():
+        try:
+            eq.update_device_model(dm, by=request.user, **form.service_fields())
+        except ValidationError as e:
+            form.add_service_errors(e)
+    if not form.is_valid():
+        dm.refresh_from_db()  # as stored: a refused change saved nothing
+        return _support_modal(request, dm, form, today)
+    return _saved(request, dm, support_toast(dm, before, today))
 
 
 def _risk_modal(request, dm, form):

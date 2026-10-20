@@ -1,0 +1,24 @@
+{% load web %}
+{% comment %}Record support (slice 36): where a model's expected life comes from and the manufacturer's support, as its notice states it.
+   Context from apps.web.views_models._support_modal: dm, form (apps.web.forms_support.SupportForm), status (support_status today, as
+   stored). novalidate: update_device_model checks every value and its words go under the field, what was typed kept.{% endcomment %}
+<div class="modal-h"><h2>Life and support · {{ dm.manufacturer }} {{ dm.model }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+<form id="sp-form" hx-post="{% url 'web:pm_model_support' dm.pk %}" hx-target="#modal-card" novalidate>
+  <div class="form">
+    <div class="full note">The Replacement planning report reads these for every device of this model: the support status counts toward each device's score, and an end the manufacturer announces can bring its suggested fiscal year forward. As recorded: {{ status.words }}.</div>
+    {% if form.non_field_errors %}<div class="full"><span class="err">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    {% include "web/_asset_field.html" with field=form.life_source cls="full" %}
+    <fieldset class="full dv-sub">
+      <legend>The manufacturer's notice</legend>
+      <div class="dv-grid">
+        {% include "web/_asset_field.html" with field=form.sale_ended_on %}
+        {% include "web/_asset_field.html" with field=form.support_ends_on %}
+        {% include "web/_asset_field.html" with field=form.parts_end_on %}
+        {% include "web/_asset_field.html" with field=form.support_notice %}
+      </div>
+      <div class="hint sp-blank">Leave blank what the notice does not announce. The days may come in any order: notices vary.</div>
+    </fieldset>
+    {% include "web/_asset_field.html" with field=form.support_checked_on cls="full" %}
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Save support</button></div>
+</form>

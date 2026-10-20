@@ -34,14 +34,28 @@ class DeviceModelSerializer(serializers.ModelSerializer):
 
     oem_schedule_required (slice 18: CMS keeps imaging, radiologic, and medical laser equipment on the manufacturer's schedule) is
     set when adding a model or with PATCH or PUT, through create_device_model or update_device_model, which refuse a user without
-    Equipment Approve (a 403, as the risk class)."""
+    Equipment Approve (a 403, as the risk class).
+
+    Slice 36, the expected life's source and the manufacturer's support (equipment.services.SUPPORT_FIELDS: life_source, blank for not
+    recorded; sale_ended_on, support_ends_on, parts_end_on; support_notice, a token; support_checked_on, never after today): changed with
+    PATCH or PUT through update_device_model at Equipment Edit, as the model drawer's Record support; refused when adding a model
+    (DeviceModelViewSet.perform_create). support_status is read only: {"key", "words"} for the facility's today
+    (equipment.services.support_status, the replacement priority's supportability)."""
 
     pm_interval_months = serializers.IntegerField(read_only=True)
+    support_status = serializers.SerializerMethodField()
 
     class Meta:
         model = DeviceModel
         fields = ["id", "manufacturer", "model", "description", "category", "risk_class", "oem_pm_interval_months", "aem_interval_months",
-                  "pm_interval_months", "oem_schedule_required", "expected_life_years", "list_cost", "pm_procedure"]
+                  "pm_interval_months", "oem_schedule_required", "expected_life_years", "list_cost", "pm_procedure",
+                  "life_source", "sale_ended_on", "support_ends_on", "parts_end_on", "support_notice", "support_checked_on", "support_status"]
+
+    def get_support_status(self, obj) -> dict:
+        # The facility's today, read once per response (a page of models or devices shares the serializer's context)
+        today = self.context.setdefault("_support_today", timezone.localdate())
+        status = eq_services.support_status(obj, today)
+        return {"key": status.key, "words": status.words}
 
 
 def open_inspections(assets, user=None) -> dict:
