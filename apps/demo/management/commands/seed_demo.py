@@ -99,6 +99,19 @@ repair", but the survey binder's repairs section would then ask for it to be ret
 have), so the sterilizers carry the demo's must-act flag instead. The demo's work begins 180 days back, so failures and service cost read "too little history"
 on every device (35 points unknown beside each score), as for any facility in its first year on Cadence. Calls that draw nothing, after
 the draws: no device's install date moves, and every later draw is as before. The North Campus keeps a calendar fiscal year.
+
+Slice 37: Riverside's device security register (the Device security screen, the device drawer's Security tab), recorded by the CE
+manager through apps.cybersecurity.services as the screens record it (_device_security): the profiles of the models that connect (the
+pumps wireless, the patient monitors wired and wireless, the ventilators and the C-arms wired, the beds wireless) and of the sterilizers,
+which do not, with who installs updates here and the network segment on a few; the pumps' two fictional firmware releases (the older
+one's security updates ended, the newer one's end announced), most pumps set by Set devices to this release and the last few left not
+recorded; the patient monitors' MDS2 on file for an older release than most of them run (the screen shows it is for that version);
+the C-arms' operating system, its vendor's published support ended; the ventilators' MDS2 requested and the beds' not recorded; the
+vendor loaner pump recorded the day it came, and a C-arm kept off the network (SECURITY_*). The fleet the demo began with came into
+Cadence the day before its work begins (_fleet_in_cadence dates each device's "Added" history row so), so Changes for IT lists the new
+devices, the rentals and the loaner, and the bed retired after its repair, never the whole fleet as added on the seed's day. Fictional
+throughout (every version "(demo)", every MDS2 document DEMO-, no link): nothing describes a real product's software or disclosure.
+Constants only: nothing is drawn, no device moves. The North Campus has none.
 """
 import random
 from datetime import date, datetime, time, timedelta
@@ -115,6 +128,20 @@ from apps.contracts.models import Contract, ContractType, Coverage
 from apps.core.workdays import is_work_day
 from apps.credentials.models import Credential, Scope, Technician
 from apps.credentials.services import qualified_technicians, renew_credential
+from apps.cybersecurity import services as cyber
+from apps.cybersecurity.models import (
+    Connects,
+    Disclosed,
+    Mds2Edition,
+    Mds2Status,
+    Network,
+    OsFamily,
+    Patching,
+    PatientData,
+    Sbom,
+    Segmented,
+    UpdatesBy,
+)
 from apps.equipment import services as equipment
 from apps.equipment.models import (
     AddedAs,
@@ -461,6 +488,58 @@ SUPPORT_RECORDS = [
     ("IntelliVue MX750", None, None, None, None, 35),
 ]
 
+# Slice 37, the device security register (_device_security), recorded by SECURITY_RECORDED_BY (the CE manager) through
+# apps.cybersecurity.services after every draw. Fictional: no version, day, document number, or answer here describes a real product's
+# software, its operating system, or its manufacturer's disclosure (every version reads "(demo)", every MDS2 document number starts
+# DEMO-, the operating system's name is made up, and no link is recorded).
+SECURITY_RECORDED_BY = "rfeldman"
+# The fleet the demo began with came into Cadence the day before its work begins (180 days back): its "Added" history rows are dated so
+# (_fleet_in_cadence), as a facility six months on Cadence reads, so Changes for IT lists what changed lately, never the whole fleet.
+FLEET_ADDED_DAYS_AGO = 181
+# The last days a vendor states (security updates, an OS's support) are the last day of the month this many months from today's; the
+# days something happened (support checked, an MDS2 released or requested) are this many days from today. Negative: past.
+SECURITY_LAST_DAYS = ("security_updates_end_on", "os_support_ends_on")
+# Each model's profile (all versions, or version not stated): what the model can do as its manufacturer discloses, and the facility's
+# arrangement for it (who installs updates here, whether its devices are on a medical device segment) on a few. The beds connect too
+# (Changes for IT lists the bed retired after its repair); the sterilizers do not; the other models are not recorded.
+SECURITY_PROFILES = [
+    ("Alaris 8015 PCU", {"connects": Connects.WIRELESS, "patient_data": PatientData.HANDLES, "patching": Patching.FACILITY,
+                         "updates_by": UpdatesBy.CE, "segmented": Segmented.ALL}),
+    ("IntelliVue MX750", {"connects": Connects.BOTH, "patient_data": PatientData.STORES, "remote_service": Disclosed.YES,
+                          "patching": Patching.MANUFACTURER, "sbom": Sbom.ON_REQUEST, "updates_by": UpdatesBy.MANUFACTURER,
+                          "segmented": Segmented.SOME}),
+    ("Hamilton-G5", {"connects": Connects.WIRED, "mds2": Mds2Status.REQUESTED, "mds2_requested_on": -40}),  # requested, not yet in
+    ("Centrella", {"connects": Connects.WIRELESS}),  # no MDS2 recorded
+    ("Cios Spin", {"connects": Connects.WIRED, "patient_data": PatientData.STORES, "os_family": OsFamily.WINDOWS, "os_name": "Demo embedded OS 7",
+                   "os_support_ends_on": -10, "support_checked_on": -20, "mds2": Mds2Status.ON_FILE, "mds2_edition": Mds2Edition.E2013,
+                   "mds2_document": "DEMO-MDS2-0003", "mds2_released_on": -1500, "updates_by": UpdatesBy.MANUFACTURER,
+                   "segmented": Segmented.NONE}),
+    ("Amsco 400", {"connects": Connects.NONE}),
+]
+# Software releases: model, version, fields. The pumps' two firmware releases: the older one's security updates ended, the newer one's
+# end is announced (its MDS2 on file). The patient monitors' MDS2 is on file for their older release only, while most run the newer one.
+PUMP_OLDER, PUMP_NEWER, MONITOR_OLDER, MONITOR_NEWER = "5.2 (demo)", "5.6 (demo)", "3.1 (demo)", "3.4 (demo)"
+SECURITY_RELEASES = [
+    ("Alaris 8015 PCU", PUMP_OLDER, {"os_family": OsFamily.EMBEDDED, "security_updates_end_on": -5, "support_checked_on": -20}),
+    ("Alaris 8015 PCU", PUMP_NEWER, {"os_family": OsFamily.EMBEDDED, "security_updates_end_on": 29, "support_checked_on": -20,
+                                     "mds2": Mds2Status.ON_FILE, "mds2_edition": Mds2Edition.E2019, "mds2_document": "DEMO-MDS2-0002",
+                                     "mds2_released_on": -420}),
+    ("IntelliVue MX750", MONITOR_OLDER, {"mds2": Mds2Status.ON_FILE, "mds2_edition": Mds2Edition.E2019, "mds2_document": "DEMO-MDS2-0001",
+                                         "mds2_released_on": -1100}),
+    ("IntelliVue MX750", MONITOR_NEWER, {}),  # the version on file; everything else the model's
+]
+# Set devices to this release (one model's devices of ours on site at once, in tag order): model, version, which of them (a slice of
+# the tag order), running it since (days ago; every one of them was installed before), and how they are connected here (None: as the
+# model discloses). The last few pumps are left not recorded.
+SECURITY_BULK = [
+    ("Alaris 8015 PCU", PUMP_OLDER, (0, 12), 20, None),  # found on the older release at the last round of checks
+    ("Alaris 8015 PCU", PUMP_NEWER, (12, -4), 150, None),  # the update campaign; the last 4 not checked yet
+    ("IntelliVue MX750", MONITOR_OLDER, (0, 5), 20, Network.WIRED),
+    ("IntelliVue MX750", MONITOR_NEWER, (5, None), 90, Network.WIRED),
+]
+SECURITY_LOANER = ("T-0102", PUMP_NEWER, Network.WIRELESS)  # the vendor loaner pump, recorded the day it came (its incoming inspection)
+SECURITY_OFF_NETWORK = ("Cios Spin", 20)  # the first C-arm by tag is kept off the network: recorded so, checked days ago, no release
+
 
 def _noon(day: date) -> datetime:
     """Noon of `day` in the current time zone (the facility's, inside tenant_context): a backdated timestamp's moment."""
@@ -630,6 +709,8 @@ class Command(BaseCommand):
             self._incidents(today, domain)
             self._not_returned(today)
             self._replacement_planning(today, domain)  # slice 36: draws nothing, after every draw (no install date moves)
+            self._fleet_in_cadence(today, assets)  # slice 37: the fleet's "Added" rows dated the day before the demo's work begins
+            self._device_security(today, domain)  # slice 37: draws nothing, after every draw
             self._vendor_review(today, domain)  # slice 34: before the program evaluation, which stays made last
             self._program_evaluation(today, domain)  # slice 32: last, so its figures count everything above
         devices = len(assets) + len(NEW_DEVICES) + len(TEMPORARY_DEVICES)
@@ -832,7 +913,7 @@ class Command(BaseCommand):
     def _not_returned(today: date) -> None:
         """Slice 30: a smart bed found beyond repair. Its repair, by a technician credentialed for it, completed as not returned to use
         (the bed out of service), closed, and the bed retired. The bed's history is the seed's day like the rest of the fleet's (its
-        "Added" row too, so the rows read in order)."""
+        "Added" row the day the fleet came into Cadence, slice 37's _fleet_in_cadence: the rows read in order)."""
         opened = today - timedelta(days=NOT_RETURNED_OPENED_DAYS_AGO)
         done = today - timedelta(days=NOT_RETURNED_DONE_DAYS_AGO)
         busy = WorkOrder.objects.filter(Q(status__in=OPEN_STATUSES) | Q(opened_on__gte=opened - timedelta(days=1))
@@ -870,6 +951,59 @@ class Command(BaseCommand):
             equipment.update_device_model(
                 DeviceModel.objects.get(model=model), by=manager, sale_ended_on=month_end(sale_ended), support_ends_on=month_end(support_ends),
                 parts_end_on=month_end(parts_end), support_notice=reference, support_checked_on=today - timedelta(days=checked_days_ago))
+
+    @staticmethod
+    def _fleet_in_cadence(today: date, fleet: list) -> None:
+        """Slice 37: the fleet the demo began with came into Cadence the day before its work begins (FLEET_ADDED_DAYS_AGO): each
+        device's "Added" history row is dated so, before every later row of its own (every one was installed before that day). Only a
+        device's history, the change log, and Changes for IT (apps.cybersecurity.rules) read that row's day: Changes for IT then lists
+        the devices added, retired, or returned lately (the new devices, the rentals and the loaner, the bed beyond repair), never the
+        whole fleet as added on the seed's day. Draws nothing."""
+        Asset.history.filter(id__in=[a.pk for a in fleet], history_type="+").update(
+            history_date=_noon(today - timedelta(days=FLEET_ADDED_DAYS_AGO)))
+
+    @staticmethod
+    def _device_security(today: date, domain: str) -> None:
+        """Slice 37: what the CE manager recorded in the device security register through apps.cybersecurity.services, as the Device
+        security screen and the device drawer's Record facts record it (each row's history says who): the profiles of the models that
+        connect and of the sterilizers, which do not (SECURITY_PROFILES); the pumps' two firmware releases and the patient monitors'
+        two (SECURITY_RELEASES); most pumps and every patient monitor of ours set by Set devices to this release (SECURITY_BULK), the last
+        few pumps left not recorded; the vendor loaner pump recorded the day it came; and a C-arm kept off the network. So the Fleet tab's
+        head figures each count something: models that can connect with no MDS2 on file (the beds; the ventilators' requested),
+        devices on a release past its security updates (the pumps on the older release), devices that can connect with no release
+        recorded, a model not on a separate segment (the C-arms), and one whose segmentation is not recorded; and the patient
+        monitors' MDS2 is on file for an older release than most of them run. Constants only: nothing is drawn, no device moves."""
+        manager = User.objects.get(username=f"{SECURITY_RECORDED_BY}@{domain}")  # the CE manager: Device security Approve
+
+        def fields(spec: dict) -> dict:
+            out = {}
+            for name, value in spec.items():
+                if name in SECURITY_LAST_DAYS:  # the last day of the month `value` months from today's
+                    value = add_months(today.replace(day=1), value + 1) - timedelta(days=1)
+                elif name.endswith("_on"):
+                    value = today + timedelta(days=value)
+                out[name] = value
+            return out
+
+        def ours(device_model) -> list:
+            return list(Asset.objects.filter(device_model=device_model, ownership=Ownership.OWNED).exclude(status=AssetStatus.RETIRED)
+                        .order_by("tag"))
+
+        models = {dm.model: dm for dm in DeviceModel.objects.all()}
+        for model, spec in SECURITY_PROFILES:
+            cyber.add_release(models[model], by=manager, today=today, **fields(spec))
+        releases = {version: cyber.add_release(models[model], by=manager, today=today, version=version, **fields(spec))
+                    for model, version, spec in SECURITY_RELEASES}
+        for model, version, (start, stop), since, network in SECURITY_BULK:
+            cyber.record_facts_for(models[model], ours(models[model])[start:stop], by=manager, today=today, release=releases[version],
+                                   release_since=today - timedelta(days=since), network=network or cyber.KEEP)
+        tag, version, network = SECURITY_LOANER
+        loaner = Asset.objects.get(tag=tag)
+        cyber.record_facts(loaner, by=manager, today=today, release=releases[version], release_since=loaner.arrived_on, network=network,
+                           checked_on=loaner.arrived_on)
+        model, checked = SECURITY_OFF_NETWORK
+        cyber.record_facts(ours(models[model])[0], by=manager, today=today, network=Network.NOT_CONNECTED,
+                           checked_on=today - timedelta(days=checked))
 
     @staticmethod
     def _credential_lapse(today: date) -> None:
