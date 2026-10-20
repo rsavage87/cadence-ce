@@ -1,6 +1,8 @@
 """
 Every write to the device security register (slice 37): a model's profile and releases, and a device's facts. Each validates, resolves
-ids through the tenant (Model.objects), writes history with a reason, and refuses in words keyed by field (a ValidationError).
+ids through the tenant (Model.objects), writes history with a reason, and refuses in words keyed by field (a ValidationError). A user
+given as `by` needs Device security Edit (and Equipment View for a device's facts: permissions.py), else PermissionDenied; None is the
+system (the seed, tests).
 
 Lock order (one writer, no deadlock): a release row first (select_for_update) when editing, removing, or naming it, then device security
 rows in asset pk order. These writers never lock work orders or devices. The one outside caller is equipment.services.update_asset ->
@@ -10,23 +12,104 @@ Slice 38's update events, recorded at a work order's completion, take the securi
 Nothing here is deleted: a release entered in error is marked (removed_on, removed_by) and refused while a device names it; adding the
 same version again restores it. A device's facts stay with its history when it is retired; a retired device (or a returned temporary one)
 is refused, in words.
+
+Field checks (one helper for add and update, every problem keyed by field, all at once): dates are days (date objects or ISO text), from
+EARLIEST_YEAR, at most HORIZON_YEARS ahead, and the days something happened (support checked, MDS2 released, MDS2 requested) not after
+today; choices from their lists or blank (not recorded); the version and OS name product text, the MDS2 document a token; the MDS2's form,
+document, release day, and link only while it is on file (its form then needed), the day requested only while it is requested; no OS name
+or OS support day for a model with no operating system; the link https, with no password, token, or signature in it. Text is stripped;
+an unset choice or text is "", an unset day None.
 """
 from __future__ import annotations
 
 import re
-from datetime import date
+import uuid
+from datetime import date, datetime
+from urllib.parse import parse_qsl, urlsplit
 
-from django.db import transaction
+from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.validators import URLValidator
+from django.db import IntegrityError, transaction
+from django.utils import timezone
 
-from .models import DeviceSecurity
+from . import permissions as perms
+from .models import (
+    DOCUMENT_MAX,
+    FACILITY_GROUP,
+    MDS2_DOCUMENT_VALIDATOR,
+    OS_NAME_MAX,
+    OS_NAME_VALIDATOR,
+    RELEASE_FIELDS,
+    VERSION_MAX,
+    VERSION_VALIDATOR,
+    Connects,
+    DeviceSecurity,
+    Disclosed,
+    Mds2Edition,
+    Mds2Status,
+    Network,
+    OsFamily,
+    Patching,
+    PatientData,
+    Sbom,
+    Segmented,
+    SoftwareRelease,
+    UpdatesBy,
+)
 
 KEEP = object()  # an argument left as it is
 BULK_MAX = 500  # devices set to a release at once (one model's)
 EARLIEST_YEAR = 1950  # a date before it is refused (a mistyped year)
 HORIZON_YEARS = 50  # a date further ahead is refused (a "never" placeholder)
 CREDENTIAL_QUERY_KEYS = ("token", "key", "sig", "signature", "auth", "session", "password", "passwd", "pwd", "x-amz-")
+URL_MAX = SoftwareRelease._meta.get_field("mds2_url").max_length
 
 DEVICE_MODEL_CHANGED = "Device model changed"
+# History reasons
+ADDED, EDITED, RESTORED, ENTERED_IN_ERROR, FACTS_RECORDED = "Added", "Edited", "Restored", "Entered in error", "Facts recorded"
+
+# Refusals (keyed by field)
+EDIT_PERMISSION = "Recording a model's software releases needs Device security Edit."
+FACTS_PERMISSION = "Recording a device's security facts needs Device security Edit and Equipment View."
+CHOOSE_MODEL = "Choose a device model of this facility."
+CHOOSE_RELEASE = "Choose a software release of this facility's models."
+CHOOSE_DEVICE = "Choose a device of this facility."
+CHOOSE_DEVICES = "Choose devices of this facility."
+CHOOSE_VERSION = "Choose a version of this device's model."
+CHOOSE_MODEL_VERSION = "Choose a version of this model."
+NO_DEVICES = "Choose the devices to set."
+TOO_MANY = f"Set at most {BULK_MAX} devices at once: choose a department to narrow them."
+PROFILE_EXISTS = "This model already has a profile; edit it."
+VERSION_ON_FILE = "Version {version} is already on file for this model."
+VERSION_REMOVED = "Version {version} was entered in error for this model: add it again to restore it."
+FACILITY_ON_PROFILE = "Who installs updates here and segmentation are the model's: record them on its profile."
+PROFILE_VERSIONLESS = "A profile stays versionless: add the version as a release of its own."
+VERSION_NEEDED = "Enter the version as the manufacturer writes it."
+VERSION_NAMED = "Devices run this version; add the new version instead."
+PROFILE_KEPT = "A profile is cleared field by field, never removed."
+ALREADY_REMOVED = "This release is already marked entered in error."
+REMOVED_RELEASE = "This release was entered in error: add its version again to restore it."
+URL_WORDS = "Enter the manufacturer's https link, without a password, token, or signature in it."
+CHOICE_WORDS = "Choose from the list, or leave it not recorded."
+ON_FILE_ONLY = "Record this only while the MDS2 is on file."
+EDITION_NEEDED = "Choose the MDS2's form (the year on it)."
+REQUESTED_ONLY = "Record the day it was requested only while the MDS2 is requested."
+NO_OS_NAME = "No operating system: leave its name blank."
+NO_OS_DAY = "No operating system: leave its support day blank."
+NETWORK_WORDS = "Choose how it is connected here, or leave it as the model discloses."
+RACE = "Someone recorded facts for these devices meanwhile: try again."
+NO_RELEASE_SINCE = "Choose the release it runs first."
+
+CHOICES = {"os_family": OsFamily, "mds2": Mds2Status, "mds2_edition": Mds2Edition, "patient_data": PatientData, "connects": Connects,
+           "remote_service": Disclosed, "patching": Patching, "sbom": Sbom, "updates_by": UpdatesBy, "segmented": Segmented}
+TEXT = {"version": (VERSION_VALIDATOR, VERSION_MAX), "os_name": (OS_NAME_VALIDATOR, OS_NAME_MAX),
+        "mds2_document": (MDS2_DOCUMENT_VALIDATOR, DOCUMENT_MAX)}
+DATES = {"os_support_ends_on": "The OS vendor's last day of support", "security_updates_end_on": "The last day of security updates",
+         "support_checked_on": "The day support was checked", "mds2_released_on": "The MDS2's release day",
+         "mds2_requested_on": "The day the MDS2 was requested"}
+HAPPENED = ("support_checked_on", "mds2_released_on", "mds2_requested_on")  # days something happened: never after today
+MDS2_ON_FILE_FIELDS = ("mds2_edition", "mds2_document", "mds2_released_on", "mds2_url")
+assert set(RELEASE_FIELDS) == {"version", *CHOICES, *TEXT, *DATES, "mds2_url"}  # every field has its check
 
 
 def version_key(version: str) -> str:
@@ -36,42 +119,56 @@ def version_key(version: str) -> str:
     return re.sub(r"^(?:rev\.?|v)\s*(?=\d)", "", text)
 
 
-def add_release(model, *, by, today: date | None = None, **fields):
-    """A versioned release of `model` (or its profile, version blank: at most one). Re-adding a version entered in error restores it."""
-    raise NotImplementedError
+# --- small parts -----------------------------------------------------------------------------------------------------------------
+
+def _today(today: date | None) -> date:
+    return today or timezone.localdate()
 
 
-def update_release(release, *, by, today: date | None = None, **fields):
-    """Change a release's (or the profile's) fields; the version only while no device names it."""
-    raise NotImplementedError
+def _check(by, allowed, message: str) -> None:
+    """The level check every write starts with, for a user given as `by` (None is the system: the seed, tests)."""
+    if by is not None and not allowed(by):
+        raise PermissionDenied(message)
 
 
-def remove_release(release, *, by, today: date | None = None):
-    """Entered in error: refused while a device names it (or for the profile)."""
-    raise NotImplementedError
+def _pk(value, model):
+    """An id from an instance of `model` or its id (a UUID or its text); None for anything else."""
+    if isinstance(value, model):
+        return value.pk
+    if isinstance(value, uuid.UUID):
+        return value
+    if isinstance(value, str):
+        try:
+            return uuid.UUID(value.strip())
+        except ValueError:
+            return None
+    return None
 
 
-def record_facts(asset, *, by, today: date | None = None, release=KEEP, release_since=KEEP, network=KEEP, checked_on=None):
-    """One device's facts: the versioned release of its model it runs (None clears it), since when (today by default when the release
-    changes), its network fact (blank: as the model discloses), and the day checked (today by default; never after today)."""
-    raise NotImplementedError
+def _model(model):
+    """The device model, resolved through this facility (another facility's id or object is refused, keyed device_model)."""
+    from apps.equipment.models import DeviceModel
+
+    pk = _pk(model, DeviceModel)
+    found = DeviceModel.objects.filter(pk=pk).first() if pk is not None else None
+    if found is None:
+        raise ValidationError({"device_model": CHOOSE_MODEL})
+    return found
 
 
-def record_facts_for(model, assets, *, by, today: date | None = None, release, release_since=None, network=KEEP):
-    """Set one model's devices (at most BULK_MAX, all of `model`, on site) to `release`, each saved with history, in one transaction."""
-    raise NotImplementedError
+def _locked_release(release, field: str = "release", message: str = CHOOSE_RELEASE) -> SoftwareRelease:
+    """The release's row as it is now, locked until the transaction ends (this facility's only)."""
+    pk = _pk(release, SoftwareRelease)
+    found = SoftwareRelease.objects.select_for_update().filter(pk=pk).first() if pk is not None else None
+    if found is None:
+        raise ValidationError({field: message})
+    return found
 
 
-@transaction.atomic
-def model_changed(asset, *, by=None) -> bool:
-    """A device's model changed (equipment.services.update_asset, with its work and row locked): a release of its old model no longer
-    describes it, so the release and its day are cleared, with history. Returns whether one was cleared."""
-    sec = DeviceSecurity.objects.select_for_update().filter(asset=asset).first()
-    if sec is None or sec.release_id is None or sec.release.device_model_id == asset.device_model_id:
-        return False
-    sec.release, sec.release_since = None, None
-    _save(sec, by, DEVICE_MODEL_CHANGED)
-    return True
+def _sync(given, saved) -> None:
+    """The caller's copy follows the row as saved."""
+    if isinstance(given, type(saved)) and given is not saved:
+        given.__dict__.update({f.attname: getattr(saved, f.attname) for f in type(saved)._meta.concrete_fields})
 
 
 def _save(obj, by, reason: str) -> None:
@@ -84,3 +181,475 @@ def _save(obj, by, reason: str) -> None:
     finally:
         obj.__dict__.pop("_change_reason", None)
         obj.__dict__.pop("_history_user", None)
+
+
+def _years_ahead(today: date, years: int) -> date:
+    try:
+        return today.replace(year=today.year + years)
+    except ValueError:  # Feb 29
+        return today.replace(year=today.year + years, day=28)
+
+
+def _day(value, name: str, what: str, errors: dict, *, today: date, happened: bool) -> date | None:
+    """A day from a date or its ISO text (None or "" for none): from EARLIEST_YEAR, at most HORIZON_YEARS ahead, a day something
+    happened not after today."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if isinstance(value, str):
+        try:
+            value = date.fromisoformat(value.strip())
+        except ValueError:
+            errors[name] = f"{what}: enter a day."
+            return None
+    if isinstance(value, datetime) or not isinstance(value, date):
+        errors[name] = f"{what}: enter a day."
+        return None
+    if value.year < EARLIEST_YEAR:
+        errors[name] = f"{what}: enter the day in full (the year looks wrong)."
+    elif happened and value > today:
+        errors[name] = f"{what} cannot be after today."
+    elif value > _years_ahead(today, HORIZON_YEARS):
+        errors[name] = f"{what}: leave it blank when no day is announced (a day more than {HORIZON_YEARS} years ahead looks wrong)."
+    return value
+
+
+def _text(value, name: str, errors: dict) -> str:
+    validator, limit = TEXT[name]
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        errors[name] = "Enter it as text."
+        return ""
+    text = value.strip()
+    if not text:
+        return ""
+    if len(text) > limit:
+        errors[name] = f"Keep it to {limit} characters."
+        return text
+    try:
+        validator(text)
+    except ValidationError as e:
+        errors[name] = " ".join(e.messages)
+    return text
+
+
+def _choice(value, name: str, errors: dict) -> str:
+    if value is None:
+        return ""
+    text = value.strip() if isinstance(value, str) else None
+    if text is None or text not in ("", *CHOICES[name].values):
+        errors[name] = CHOICE_WORDS
+        return ""
+    return text
+
+
+def _credential_key(key: str) -> bool:
+    k = key.strip().casefold()
+    parts = [p for p in re.split(r"[^a-z0-9]+", k) if p]
+    return (k in CREDENTIAL_QUERY_KEYS or k.startswith("x-amz-") or any(p in CREDENTIAL_QUERY_KEYS for p in parts)
+            or k.endswith(("token", "key", "signature", "password", "passwd")))
+
+
+def _url(value, errors: dict) -> str:
+    """The MDS2's link: https only, no user or password in it, no query (or fragment) key that looks like a credential (token, key,
+    sig, signature, auth, session, password, x-amz-...), at most URL_MAX characters."""
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        errors["mds2_url"] = URL_WORDS
+        return ""
+    text = value.strip()
+    if not text:
+        return ""
+    try:
+        parts = urlsplit(text)
+        URLValidator(schemes=["https"])(text)
+        ok = (len(text) <= URL_MAX and parts.scheme == "https" and parts.hostname and parts.username is None and parts.password is None
+              and "@" not in parts.netloc)
+        keys = [k for k, _v in parse_qsl(parts.query, keep_blank_values=True)] + [k for k, _v in parse_qsl(parts.fragment, keep_blank_values=True)]
+        ok = ok and not any(_credential_key(k) for k in keys)
+    except (ValidationError, ValueError):
+        ok = False
+    if not ok:
+        errors["mds2_url"] = URL_WORDS
+    return text
+
+
+def _clean(raw: dict, errors: dict, *, today: date) -> dict:
+    """Each given field cleaned on its own (keyed problems in `errors`)."""
+    out = {}
+    for name, value in raw.items():
+        if name in TEXT:
+            out[name] = _text(value, name, errors)
+        elif name in CHOICES:
+            out[name] = _choice(value, name, errors)
+        elif name in DATES:
+            out[name] = _day(value, name, DATES[name], errors, today=today, happened=name in HAPPENED)
+        elif name == "mds2_url":
+            out[name] = _url(value, errors)
+    return out
+
+
+def _check_row(values: dict, *, versioned: bool, errors: dict) -> None:
+    """The rules between fields, on the row with the change applied (`values`: every field). A problem is keyed by the field to change,
+    never by one that already has its own problem."""
+    def refuse(name, words):
+        if name not in errors:
+            errors[name] = words
+
+    if versioned:
+        for name in FACILITY_GROUP:
+            if values.get(name):
+                refuse(name, FACILITY_ON_PROFILE)
+    status = values.get("mds2")
+    if "mds2" not in errors:
+        if status != Mds2Status.ON_FILE:
+            for name in MDS2_ON_FILE_FIELDS:
+                if values.get(name) not in (None, ""):
+                    refuse(name, ON_FILE_ONLY)
+        elif not values.get("mds2_edition"):
+            refuse("mds2_edition", EDITION_NEEDED)
+        if status != Mds2Status.REQUESTED and values.get("mds2_requested_on") is not None:
+            refuse("mds2_requested_on", REQUESTED_ONLY)
+    if values.get("os_family") == OsFamily.NONE and "os_family" not in errors:
+        if values.get("os_name"):
+            refuse("os_name", NO_OS_NAME)
+        if values.get("os_support_ends_on") is not None:
+            refuse("os_support_ends_on", NO_OS_DAY)
+
+
+def _unknown(fields: dict) -> None:
+    unknown = set(fields) - set(RELEASE_FIELDS)
+    if unknown:
+        raise ValidationError({name: "This is not recorded on a software release." for name in sorted(unknown)})
+
+
+def _taken(other: SoftwareRelease, version: str) -> str:
+    if not other.version_key:
+        return PROFILE_EXISTS
+    return (VERSION_REMOVED if other.removed_on is not None else VERSION_ON_FILE).format(version=other.version or version)
+
+
+# --- a model's profile and releases ------------------------------------------------------------------------------------------------
+
+def add_release(model, *, by, today: date | None = None, **fields):
+    """A versioned release of `model` (or its profile, version blank: at most one). Re-adding a version entered in error restores it
+    (removed_on cleared, the given fields applied over what it had, history "Restored"). Fields from RELEASE_FIELDS only; a versioned
+    release refuses the facility group (the profile's). A version already on file (by version_key) is refused, also when another
+    request adds it at the same moment (the unique key, read back as already on file)."""
+    _check(by, perms.can_edit, EDIT_PERMISSION)
+    today = _today(today)
+    _unknown(fields)
+    dm = _model(model)
+    errors: dict = {}
+    given = _clean(fields, errors, today=today)
+    version = given.get("version", "")
+    key = version_key(version)
+    with transaction.atomic():
+        existing = SoftwareRelease.objects.select_for_update().filter(device_model=dm, version_key=key).first()
+        if existing is not None and existing.removed_on is None:
+            errors["version"] = _taken(existing, version)
+            existing = None  # refused: the other fields are checked as a new release's
+        row = existing if existing is not None else SoftwareRelease(device_model=dm, version_key=key)
+        _check_row({**{f: getattr(row, f) for f in RELEASE_FIELDS}, **given}, versioned=bool(key), errors=errors)
+        if errors:
+            raise ValidationError(errors)
+        for name, value in given.items():
+            setattr(row, name, value)
+        if existing is not None:  # entered in error before: restored, never a second row (the key stays unique)
+            row.removed_on, row.removed_by = None, None
+            _save(row, by, RESTORED)
+            return row
+        try:
+            with transaction.atomic():
+                _save(row, by, ADDED)
+        except IntegrityError:
+            other = SoftwareRelease.objects.filter(device_model=dm, version_key=key).first()
+            raise ValidationError({"version": _taken(other, version) if other is not None else VERSION_ON_FILE.format(version=version)})
+    return row
+
+
+def update_release(release, *, by, today: date | None = None, **fields):
+    """Change a release's (or the profile's) fields; the version only while no device names it (a new spelling of the same version,
+    by version_key, any time), never on the profile, never to a version already on file. The same checks as add_release, on the row
+    as it is now (locked) with the change applied. History "Edited" (nothing saved when nothing changes). Returns the row; the caller's
+    copy follows it."""
+    _check(by, perms.can_edit, EDIT_PERMISSION)
+    today = _today(today)
+    _unknown(fields)
+    errors: dict = {}
+    given = _clean(fields, errors, today=today)
+    with transaction.atomic():
+        locked = _locked_release(release)
+        if locked.removed_on is not None:
+            raise ValidationError({"release": REMOVED_RELEASE})
+        new_key = locked.version_key
+        if "version" in given and "version" not in errors:
+            new_key = version_key(given["version"])
+            if locked.is_profile and new_key:
+                errors["version"] = PROFILE_VERSIONLESS
+            elif not locked.is_profile and not new_key:
+                errors["version"] = VERSION_NEEDED
+            elif new_key != locked.version_key:
+                other = (SoftwareRelease.objects.filter(device_model_id=locked.device_model_id, version_key=new_key)
+                         .exclude(pk=locked.pk).first())
+                if DeviceSecurity.objects.filter(release=locked).exists():
+                    errors["version"] = VERSION_NAMED
+                elif other is not None:
+                    errors["version"] = _taken(other, given["version"])
+        _check_row({**{f: getattr(locked, f) for f in RELEASE_FIELDS}, **given}, versioned=not locked.is_profile, errors=errors)
+        if errors:
+            raise ValidationError(errors)
+        changed = [name for name, value in given.items() if getattr(locked, name) != value]
+        if changed:
+            for name in changed:
+                setattr(locked, name, given[name])
+            if "version" in changed:
+                locked.version_key = new_key
+            try:
+                with transaction.atomic():
+                    _save(locked, by, EDITED)
+            except IntegrityError:
+                raise ValidationError({"version": VERSION_ON_FILE.format(version=given.get("version", locked.version))}) from None
+    _sync(release, locked)
+    return locked
+
+
+def remove_release(release, *, by, today: date | None = None):
+    """Entered in error: refused while a device names it (or for the profile, which is cleared field by field). Sets removed_on (today)
+    and removed_by, history "Entered in error"; the row stays (history keeps it), hidden from lists and pickers."""
+    _check(by, perms.can_edit, EDIT_PERMISSION)
+    today = _today(today)
+    with transaction.atomic():
+        locked = _locked_release(release)
+        if locked.removed_on is not None:
+            raise ValidationError({"release": ALREADY_REMOVED})
+        if locked.is_profile:
+            raise ValidationError({"release": PROFILE_KEPT})
+        named = DeviceSecurity.objects.filter(release=locked).count()
+        if named:
+            raise ValidationError({"release": "1 device runs this release: set it to another first." if named == 1 else
+                                   f"{named} devices run this release: set them to another first."})
+        locked.removed_on, locked.removed_by = today, by
+        _save(locked, by, ENTERED_IN_ERROR)
+    _sync(release, locked)
+    return locked
+
+
+# --- a device's facts -----------------------------------------------------------------------------------------------------------------
+
+def _asset(asset):
+    from apps.equipment.models import Asset
+
+    pk = _pk(asset, Asset)
+    found = Asset.objects.filter(pk=pk).select_related("device_model").first() if pk is not None else None
+    if found is None:
+        raise ValidationError({"asset": CHOOSE_DEVICE})
+    return found
+
+
+def _gone(asset) -> str:
+    """A retired device's refusal (a temporary one returned to its owner in its own words), or ""."""
+    from apps.equipment.models import AssetStatus
+    from apps.equipment.services import owner_maintains
+
+    if asset.status != AssetStatus.RETIRED:
+        return ""
+    if owner_maintains(asset):
+        return f"{asset.tag} was returned to its owner: its facts stay as they were."
+    return f"{asset.tag} is retired: its facts stay as they were."
+
+
+def _named_release(release, model_id, message: str) -> SoftwareRelease:
+    """A versioned, not removed release of the model, locked (the lock order's first row)."""
+    locked = _locked_release(release, message=message)
+    if not locked.version_key or locked.removed_on is not None or locked.device_model_id != model_id:
+        raise ValidationError({"release": message})
+    return locked
+
+
+def _network(value, errors: dict):
+    if value is KEEP:
+        return KEEP
+    text = value.strip() if isinstance(value, str) else ("" if value is None else None)
+    if text is None or text not in ("", *Network.values):
+        errors["network"] = NETWORK_WORDS
+        return KEEP
+    return text
+
+
+def _since_check(day, installed_on, errors: dict, *, today: date) -> None:
+    if day is None or "release_since" in errors:
+        return
+    if day > today:
+        errors["release_since"] = "Running it since cannot be after today."
+    elif installed_on is not None and day < installed_on:
+        from apps.cybersecurity.rules import day_words
+
+        errors["release_since"] = f"Running it since cannot be before the device was installed ({day_words(installed_on)})."
+
+
+def _reason(release_changed: bool, release) -> str:
+    if not release_changed:
+        return FACTS_RECORDED
+    return f"{FACTS_RECORDED}: release set to {release.version}" if release is not None else f"{FACTS_RECORDED}: release cleared"
+
+
+def record_facts(asset, *, by, today: date | None = None, release=KEEP, release_since=KEEP, network=KEEP, checked_on=None):
+    """One device's facts: the versioned release of its model it runs (None clears it, and its day), since when (today by default when
+    the release changes; never after today, never before the device was installed; with no release, none), its network fact (blank: as
+    the model discloses), and the day checked (today by default; never after today), checked by `by`. Refused for a retired device (or
+    one returned to its owner) and a device or release of another facility. The release is locked first, then the device's row, got or
+    created (a create that loses a race reads the row back, locked). History "Facts recorded" (": release set to <version>" or
+    ": release cleared" when it changes). Returns the device's DeviceSecurity row."""
+    _check(by, perms.can_edit_devices, FACTS_PERMISSION)
+    today = _today(today)
+    device = _asset(asset)
+    gone = _gone(device)
+    if gone:
+        raise ValidationError({"asset": gone})
+    errors: dict = {}
+    since = KEEP
+    if release_since is not KEEP:
+        since = _day(release_since, "release_since", "Running it since", errors, today=today, happened=True)
+    network = _network(network, errors)
+    checked = _day(checked_on, "checked_on", "The day checked", errors, today=today, happened=True) if checked_on is not None else today
+    if checked is None and "checked_on" not in errors:
+        checked = today
+    if release is None and since not in (KEEP, None):
+        errors["release_since"] = NO_RELEASE_SINCE
+    if errors:
+        raise ValidationError(errors)
+    with transaction.atomic():
+        locked = None
+        if release is not KEEP and release is not None:
+            locked = _named_release(release, device.device_model_id, CHOOSE_VERSION)
+            # The device's model as committed now (a model change since it was read clears its release: never name the old model's)
+            if type(device).objects.filter(pk=device.pk).values_list("device_model_id", flat=True).first() != locked.device_model_id:
+                raise ValidationError({"release": CHOOSE_VERSION})
+
+        def apply(sec: DeviceSecurity) -> str:
+            current = sec.release_id
+            if release is not KEEP:
+                sec.release = locked
+            changed = sec.release_id != current
+            if sec.release_id is None:
+                sec.release_since = None
+            elif since not in (KEEP, None):
+                sec.release_since = since
+            elif changed:
+                sec.release_since = today
+            problems: dict = {}
+            if sec.release_id is None and since not in (KEEP, None):
+                problems["release_since"] = NO_RELEASE_SINCE
+            elif sec.release_id is not None:
+                _since_check(sec.release_since if (changed or since not in (KEEP, None)) else None, device.installed_on, problems, today=today)
+            if problems:
+                raise ValidationError(problems)
+            if network is not KEEP:
+                sec.network = network
+            sec.checked_on, sec.checked_by = checked, by
+            return _reason(changed, locked)
+
+        sec = DeviceSecurity.objects.select_for_update().filter(asset_id=device.pk).first()
+        if sec is not None:
+            _save(sec, by, apply(sec))
+            return sec
+        sec = DeviceSecurity(asset=device)
+        reason = apply(sec)
+        try:
+            with transaction.atomic():
+                _save(sec, by, reason)
+        except IntegrityError:  # another record created it meanwhile: read it back, locked, and record on it
+            sec = DeviceSecurity.objects.select_for_update().get(asset_id=device.pk)
+            _save(sec, by, apply(sec))
+    return sec
+
+
+def record_facts_for(model, assets, *, by, today: date | None = None, release, release_since=None, network=KEEP):
+    """Set one model's devices (at most BULK_MAX, all of `model`, on site) to `release` (a versioned, not removed release of `model`),
+    since `release_since` (today by default for a device whose release changes; never after today, never before a device was
+    installed), with `network` when given, checked today by `by`: each changed device saved with history ("Set with N devices of
+    <model>"), in one transaction; a device already so is left as it is. The release is locked first, then the devices' rows in asset pk
+    order. Returns how many changed. Two queries a changed device (its row, its history)."""
+    _check(by, perms.can_edit_devices, FACTS_PERMISSION)
+    today = _today(today)
+    dm = _model(model)
+    errors: dict = {}
+    since = _day(release_since, "release_since", "Running it since", errors, today=today, happened=True)
+    network = _network(network, errors)
+    ids, seen = [], set()
+    from apps.equipment.models import Asset, AssetStatus
+
+    for a in assets:
+        pk = _pk(a, Asset)
+        if pk is None:
+            errors["assets"] = CHOOSE_DEVICES
+            break
+        if pk not in seen:
+            seen.add(pk)
+            ids.append(pk)
+    if "assets" not in errors and not ids:
+        errors["assets"] = NO_DEVICES
+    elif "assets" not in errors and len(ids) > BULK_MAX:
+        errors["assets"] = TOO_MANY
+    if release is None:
+        errors["release"] = CHOOSE_MODEL_VERSION
+    if errors:
+        raise ValidationError(errors)
+    try:
+        with transaction.atomic():
+            locked = _named_release(release, dm.pk, CHOOSE_MODEL_VERSION)
+            devices = list(Asset.objects.filter(pk__in=ids).order_by("pk"))
+            if len(devices) != len(ids):
+                raise ValidationError({"assets": CHOOSE_DEVICES})
+            other = sorted(a.tag for a in devices if a.device_model_id != dm.pk)
+            gone = sorted(a.tag for a in devices if a.status == AssetStatus.RETIRED)
+            if other:
+                errors["assets"] = f"{_tags(other)} {'is' if len(other) == 1 else 'are'} not {dm.manufacturer} {dm.model}: set one model's devices at a time."
+            elif gone:
+                errors["assets"] = f"{_tags(gone)} {'is' if len(gone) == 1 else 'are'} no longer on site: their facts stay as they were."
+            if since is not None and "release_since" not in errors:
+                if since > today:
+                    errors["release_since"] = "Running it since cannot be after today."
+                else:
+                    later = sorted(a.tag for a in devices if a.installed_on is not None and a.installed_on > since)
+                    if later:
+                        errors["release_since"] = (f"{_tags(later)} {'was' if len(later) == 1 else 'were'} installed after this day: set "
+                                                   f"{'it' if len(later) == 1 else 'them'} apart, or choose a later day.")
+            if errors:
+                raise ValidationError(errors)
+            records = {s.asset_id: s for s in DeviceSecurity.objects.select_for_update().filter(asset_id__in=ids).order_by("asset_id")}
+            reason = f"Set with {len(devices)} device{'s' if len(devices) != 1 else ''} of {dm.manufacturer} {dm.model}"
+            changed = 0
+            for device in devices:  # asset pk order
+                sec = records.get(device.pk) or DeviceSecurity(asset=device)
+                new_release = sec.release_id != locked.pk
+                day = since if since is not None else (today if new_release else sec.release_since)
+                net = sec.network if network is KEEP else network
+                if not sec._state.adding and not new_release and day == sec.release_since and net == sec.network:
+                    continue
+                sec.release, sec.release_since, sec.network = locked, day, net
+                sec.checked_on, sec.checked_by = today, by
+                _save(sec, by, reason)
+                changed += 1
+    except IntegrityError:  # a device's row created by another record meanwhile: nothing here was saved
+        raise ValidationError({"assets": RACE}) from None
+    return changed
+
+
+def _tags(tags: list, shown: int = 5) -> str:
+    more = len(tags) - shown
+    return ", ".join(tags[:shown]) + (f" and {more} more" if more > 0 else "")
+
+
+@transaction.atomic
+def model_changed(asset, *, by=None) -> bool:
+    """A device's model changed (equipment.services.update_asset, with its work and row locked): a release of its old model no longer
+    describes it, so the release and its day are cleared, with history. Returns whether one was cleared."""
+    sec = DeviceSecurity.objects.select_for_update().filter(asset=asset).first()
+    if sec is None or sec.release_id is None or sec.release.device_model_id == asset.device_model_id:
+        return False
+    sec.release, sec.release_since = None, None
+    _save(sec, by, DEVICE_MODEL_CHANGED)
+    return True
