@@ -194,7 +194,7 @@ def test_no_operating_system(pump_model, kim):
 @pytest.mark.parametrize("url,ok", [
     ("https://example.com/disclosures/mds2.pdf", True),
     ("https://example.com/mds2.pdf?id=77&lang=en", True),
-    ("https://example.com/mds2.pdf?keyword=pump", True),
+    ("https://example.com/mds2.pdf?keyword=pump", False),  # review fix C6: "key" anywhere in a key (was allowed as a whole-part match)
     ("http://example.com/mds2.pdf", False),
     ("ftp://example.com/mds2.pdf", False),
     ("https://user:pass@example.com/mds2.pdf", False),
@@ -304,9 +304,11 @@ def test_remove_a_release(pump, pump_model, vent, kim, tech, today, dept):
     second = device(pump_model, dept, "CE-20002")
     record_facts(second, by=kim, release=r)
     assert refused(remove_release, r, by=kim) == {"release": "2 devices run this release: set them to another first."}
-    eq.set_status(second, AssetStatus.RETIRED)  # a retired device still names it: its facts stay
-    record_facts(pump, by=kim, release=None)
+    eq.set_status(second, AssetStatus.RETIRED)  # review fix C4: a retired device no longer counts (devices on site, as the panel)
     assert refused(remove_release, r, by=kim) == {"release": "1 device runs this release: set it to another first."}
+    record_facts(pump, by=kim, release=None)
+    assert remove_release(r, by=kim).removed_on == today  # its record still names it (its facts stay), read as not recorded
+    assert DeviceSecurity.objects.get(asset=second).release_id == r.pk
     third = add_release(pump_model, by=kim, version="9.2")
     out = remove_release(third, by=tech, today=today - DAY)
     assert (out.removed_on, out.removed_by, third.removed_on) == (today - DAY, tech, today - DAY)
@@ -566,24 +568,75 @@ def test_two_adds_of_one_version_at_once(tenant, monkeypatch):
         assert SoftwareRelease.objects.count() == 1
 
 
+def _hold_device_lock(monkeypatch, who: str, held: threading.Event):
+    """The thread named `who` sleeps while it holds the devices' rows (services._locked_devices: after the release, before any security
+    row)."""
+    real = services._locked_devices
+
+    def slow(ids):
+        found = real(ids)
+        if threading.current_thread().name == who:
+            held.set()
+            time.sleep(1.0)
+        return found
+
+    monkeypatch.setattr(services, "_locked_devices", slow)
+
+
 @needs_postgres
 @pytest.mark.django_db(transaction=True)
 def test_two_records_on_a_new_device_at_once(tenant, monkeypatch):
-    """Both find no row (a barrier after the look): the second insert fails on the one-to-one key, reads the row back locked, and
-    records on it. One row, two history rows, no IntegrityError."""
+    """Review fixes C2 and C3 changed this test: the device's row is locked before its security row, so two records on a new device
+    no longer both find no row: the second waits for the first's commit, then records on the row it created. One row, two history
+    rows, no IntegrityError. (Was: both found no row behind a barrier, and the loser's insert read the row back.)"""
     with tenant_context(tenant):
         dept = Department.objects.create(name="ICU")
         model = DeviceModel.objects.create(manufacturer="BD", model="Alaris", description="Pump", category="Infusion pumps")
         rel = release(model, "9.33.1")
         asset = Asset.objects.create(tag="CE-1", device_model=model, department=dept)
-    barrier = threading.Barrier(2, timeout=20)
-    real, met, calls = services._reason, set(), []
+    held = threading.Event()
+    _hold_device_lock(monkeypatch, "first", held)
+    real, calls = services._reason, []
+
+    def counted(*args, **kwargs):
+        calls.append(threading.current_thread().name)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(services, "_reason", counted)
+    errors, results = {}, {}
+
+    def first():
+        with tenant_context(tenant):
+            return record_facts(asset, by=None, release=rel).release_id
+
+    def second():
+        assert held.wait(20)
+        with tenant_context(tenant):
+            return record_facts(asset, by=None, network=Network.WIRELESS).network
+
+    _both(first, second, errors, results)
+    assert not errors and results == {"first": rel.pk, "second": Network.WIRELESS}, (results, errors)
+    assert calls == ["first", "second"]  # one record each: the second found the first's row
+    with tenant_context(tenant):
+        sec = DeviceSecurity.objects.get()
+        assert (sec.release_id, sec.network) == (rel.pk, Network.WIRELESS) and sec.history.count() == 2
+
+
+@needs_postgres
+@pytest.mark.django_db(transaction=True)
+def test_a_record_that_loses_a_create_race_reads_the_row_back(tenant, monkeypatch):
+    """A security row inserted meanwhile by a writer that does not lock the device (none in the app since review fixes C2 and C3; the
+    fixtures here): the record's insert fails on the one-to-one key, reads the row back locked, and records on it, never an
+    IntegrityError."""
+    _model, rel, asset = _setup_release(tenant)
+    barrier, inserted = threading.Barrier(2, timeout=20), threading.Event()
+    real, calls = services._reason, []
 
     def meet(*args, **kwargs):
         calls.append(threading.current_thread().name)
-        if threading.current_thread().name not in met:
-            met.add(threading.current_thread().name)
-            barrier.wait()
+        if len(calls) == 1:
+            barrier.wait()  # the record has looked: no row
+            assert inserted.wait(20)
         return real(*args, **kwargs)
 
     monkeypatch.setattr(services, "_reason", meet)
@@ -594,15 +647,18 @@ def test_two_records_on_a_new_device_at_once(tenant, monkeypatch):
             return record_facts(asset, by=None, release=rel).release_id
 
     def second():
+        barrier.wait()
         with tenant_context(tenant):
-            return record_facts(asset, by=None, network=Network.WIRELESS).network
+            DeviceSecurity.objects.create(asset=asset, network=Network.WIRED)
+        inserted.set()
+        return "inserted"
 
     _both(first, second, errors, results)
-    assert not errors and results == {"first": rel.pk, "second": Network.WIRELESS}, (results, errors)
-    assert len(calls) == 3  # the loser's insert failed, and it recorded again on the row read back
+    assert not errors and results == {"first": rel.pk, "second": "inserted"}, (results, errors)
+    assert len(calls) == 2  # the insert failed, and it recorded again on the row read back
     with tenant_context(tenant):
         sec = DeviceSecurity.objects.get()
-        assert (sec.release_id, sec.network) == (rel.pk, Network.WIRELESS) and sec.history.count() == 2
+        assert (sec.release_id, sec.network) == (rel.pk, Network.WIRED) and sec.history.count() == 2
 
 
 def _hold_release_lock(monkeypatch, who: str, held: threading.Event):
@@ -701,35 +757,64 @@ def test_a_bulk_set_while_the_release_is_removed(tenant, monkeypatch):
 
 @needs_postgres
 @pytest.mark.django_db(transaction=True)
-def test_a_bulk_set_that_loses_a_create_race_saves_nothing(tenant, monkeypatch):
-    """A bulk set and a record on the same new device both find no row; the record inserts first, the bulk's insert then fails on the
-    one-to-one key: the bulk refuses in words and saves none of its devices (one transaction), never an IntegrityError."""
+def test_a_bulk_set_waits_for_a_record_on_a_new_device(tenant, monkeypatch):
+    """Review fixes C2 and C3 changed this test: the bulk set locks the devices' rows before their security rows, so a record on a new
+    device that holds the device's row makes the bulk wait; it then sets the row the record created (never a second insert): both
+    devices set, the record's network kept. (Was: both found no row, and the bulk's insert lost the create race: RACE.)"""
     model, rel, asset = _setup_release(tenant)
     with tenant_context(tenant):
         dept = Department.objects.get()
-        other = Asset.objects.create(tag="CE-0", device_model=model, department=dept)  # set before the race: rolled back with it
-    barrier = threading.Barrier(2, timeout=20)
-    real_save, real_reason = services._save, services._reason
-
-    def bulk_save(obj, by, reason):
-        if threading.current_thread().name == "second" and not getattr(bulk_save, "met", False):
-            bulk_save.met = True
-            barrier.wait()  # the record has looked too
-            time.sleep(0.5)  # the record inserts first
-        return real_save(obj, by, reason)
-
-    def record_reason(*args, **kwargs):
-        if threading.current_thread().name == "first":
-            barrier.wait()  # the bulk has looked too
-        return real_reason(*args, **kwargs)
-
-    monkeypatch.setattr(services, "_save", bulk_save)
-    monkeypatch.setattr(services, "_reason", record_reason)
+        other = Asset.objects.create(tag="CE-0", device_model=model, department=dept)
+    held = threading.Event()
+    _hold_device_lock(monkeypatch, "first", held)
     errors, results = {}, {}
 
     def single():
         with tenant_context(tenant):
             return record_facts(asset, by=None, network=Network.WIRED).network
+
+    def bulk():
+        assert held.wait(20)
+        with tenant_context(tenant):
+            return record_facts_for(model, [other, asset], by=None, release=rel)
+
+    _both(single, bulk, errors, results)
+    assert not errors and results == {"first": Network.WIRED, "second": 2}, (results, errors)
+    with tenant_context(tenant):
+        assert sorted(DeviceSecurity.objects.values_list("asset__tag", "release_id", "network")) == [
+            ("CE-0", rel.pk, ""), ("CE-1", rel.pk, Network.WIRED)]
+        assert DeviceSecurity.objects.get(asset=asset).history.count() == 2
+
+
+@needs_postgres
+@pytest.mark.django_db(transaction=True)
+def test_a_bulk_set_that_loses_a_create_race_saves_nothing(tenant, monkeypatch):
+    """A security row inserted meanwhile by a writer that does not lock the device (none in the app since review fixes C2 and C3; the
+    fixtures here) after the bulk found none: the bulk's insert fails on the one-to-one key, and it refuses in words and saves none of
+    its devices (one transaction), never an IntegrityError."""
+    model, rel, asset = _setup_release(tenant)
+    with tenant_context(tenant):
+        dept = Department.objects.get()
+        other = Asset.objects.create(tag="CE-0", device_model=model, department=dept)  # set before the race or not: rolled back with it
+    barrier, inserted = threading.Barrier(2, timeout=20), threading.Event()
+    real_save = services._save
+
+    def bulk_save(obj, by, reason):
+        if threading.current_thread().name == "second" and not getattr(bulk_save, "met", False):
+            bulk_save.met = True
+            barrier.wait()  # the bulk has looked: no rows
+            assert inserted.wait(20)
+        return real_save(obj, by, reason)
+
+    monkeypatch.setattr(services, "_save", bulk_save)
+    errors, results = {}, {}
+
+    def single():
+        barrier.wait()
+        with tenant_context(tenant):
+            DeviceSecurity.objects.create(asset=asset, network=Network.WIRED)
+        inserted.set()
+        return Network.WIRED
 
     def bulk():
         with tenant_context(tenant):

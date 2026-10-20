@@ -4,32 +4,42 @@ ids through the tenant (Model.objects), writes history with a reason, and refuse
 given as `by` needs Device security Edit (and Equipment View for a device's facts: permissions.py), else PermissionDenied; None is the
 system (the seed, tests).
 
-Lock order (one writer, no deadlock): a release row first (select_for_update) when editing, removing, or naming it, then device security
-rows in asset pk order. These writers never lock work orders or devices. The one outside caller is equipment.services.update_asset ->
-model_changed, which runs with the device's work and row already locked (its work, its row, then its security row, never the reverse).
-Slice 38's update events, recorded at a work order's completion, take the security row last too.
+Lock order (review fixes C2, C3, C13): a release's row first (select_for_update of its own row only: never its model's, which a join
+would lock too) when editing, removing, or naming it; then the devices' rows (FOR NO KEY UPDATE, in asset pk order), each device's model
+and status read again from its locked row; then the devices' security rows (FOR UPDATE, in asset pk order), a missing one inserted only
+once its device's row is held. So a writer never waits on a device's row while holding a security row (a new security row's foreign key
+check, PostgreSQL's FOR KEY SHARE on the device at commit, needs nothing it does not hold), and a model change in progress
+(equipment.services.update_asset holds the device's row FOR UPDATE until its transaction, an import chunk's, ends) is waited for, then
+seen: the old model's release is refused, never saved. These writers never lock work orders. The one outside caller is
+equipment.services.update_asset -> model_changed, which runs with the device's work and row already locked (its work, its row, then its
+security row, never the reverse). Slice 38's update events, recorded at a work order's completion, take the security row last too. A
+transaction locking several devices in another order (an import chunk, in its file's order) can still meet the bulk set in a deadlock:
+PostgreSQL ends one side, and the bulk set then answers the RACE refusal in words, never a server error.
 
-Nothing here is deleted: a release entered in error is marked (removed_on, removed_by) and refused while a device names it; adding the
-same version again restores it. A device's facts stay with its history when it is retired; a retired device (or a returned temporary one)
-is refused, in words.
+Nothing here is deleted: a release entered in error is marked (removed_on, removed_by) and refused while a device on site names it
+(rules.on_site, of the release's model: the devices the Models panel counts, review fix C4); a retired or returned device's record keeps
+naming it (its history reads it as it was; the rules read a release entered in error as not recorded); adding the same version again
+restores it. A device's facts stay with its history when it is retired; a retired device (or a returned temporary one) is refused, in
+words.
 
 Field checks (one helper for add and update, every problem keyed by field, all at once): dates are days (date objects or ISO text), from
 EARLIEST_YEAR, at most HORIZON_YEARS ahead, and the days something happened (support checked, MDS2 released, MDS2 requested) not after
 today; choices from their lists or blank (not recorded); the version and OS name product text, the MDS2 document a token; the MDS2's form,
 document, release day, and link only while it is on file (its form then needed), the day requested only while it is requested; no OS name
-or OS support day for a model with no operating system; the link https, with no password, token, or signature in it. Text is stripped;
-an unset choice or text is "", an unset day None.
+or OS support day for a model with no operating system; the link https, with no user or password in it and no query, fragment, or path
+parameter key that looks like a credential (one of CREDENTIAL_QUERY_KEYS anywhere in it, in any letter case, or an x-amz- key). Text is
+stripped; an unset choice or text is "", an unset day None.
 """
 from __future__ import annotations
 
 import re
 import uuid
 from datetime import date, datetime
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import unquote_plus, urlsplit
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.validators import URLValidator
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, OperationalError, transaction
 from django.utils import timezone
 
 from . import permissions as perms
@@ -61,7 +71,11 @@ KEEP = object()  # an argument left as it is
 BULK_MAX = 500  # devices set to a release at once (one model's)
 EARLIEST_YEAR = 1950  # a date before it is refused (a mistyped year)
 HORIZON_YEARS = 50  # a date further ahead is refused (a "never" placeholder)
-CREDENTIAL_QUERY_KEYS = ("token", "key", "sig", "signature", "auth", "session", "password", "passwd", "pwd", "x-amz-")
+# A link's key holding any of these anywhere in it (casefolded: sessionid, PHPSESSID, client_secret, authorization), or starting x-amz-,
+# looks like a credential (review fix C6; "keyword" and "monkey" are refused too: a manufacturer's document link rarely needs either)
+CREDENTIAL_QUERY_KEYS = ("token", "key", "sig", "signature", "auth", "session", "sess", "secret", "password", "passwd", "pass", "pwd", "jwt",
+                         "credential")
+LOCK_CONFLICTS = ("40P01", "40001", "55P03")  # PostgreSQL's deadlock detected, serialization failure, lock not available
 URL_MAX = SoftwareRelease._meta.get_field("mds2_url").max_length
 
 DEVICE_MODEL_CHANGED = "Device model changed"
@@ -79,6 +93,9 @@ CHOOSE_VERSION = "Choose a version of this device's model."
 CHOOSE_MODEL_VERSION = "Choose a version of this model."
 NO_DEVICES = "Choose the devices to set."
 TOO_MANY = f"Set at most {BULK_MAX} devices at once: choose a department to narrow them."
+# Review fix C7: the devices are one department's (one chosen, or the model's only one), which narrows them no further
+TOO_MANY_IN_ONE = (f"Set at most {BULK_MAX} devices at once: these {{count}} are all in one department, so record their facts on each "
+                   "device's Security tab.")
 PROFILE_EXISTS = "This model already has a profile; edit it."
 VERSION_ON_FILE = "Version {version} is already on file for this model."
 VERSION_REMOVED = "Version {version} was entered in error for this model: add it again to restore it."
@@ -97,7 +114,7 @@ REQUESTED_ONLY = "Record the day it was requested only while the MDS2 is request
 NO_OS_NAME = "No operating system: leave its name blank."
 NO_OS_DAY = "No operating system: leave its support day blank."
 NETWORK_WORDS = "Choose how it is connected here, or leave it as the model discloses."
-RACE = "Someone recorded facts for these devices meanwhile: try again."
+RACE = "Someone recorded facts for these devices meanwhile: try again."  # also the bulk set's answer to a deadlock
 NO_RELEASE_SINCE = "Choose the release it runs first."
 
 CHOICES = {"os_family": OsFamily, "mds2": Mds2Status, "mds2_edition": Mds2Edition, "patient_data": PatientData, "connects": Connects,
@@ -157,9 +174,10 @@ def _model(model):
 
 
 def _locked_release(release, field: str = "release", message: str = CHOOSE_RELEASE) -> SoftwareRelease:
-    """The release's row as it is now, locked until the transaction ends (this facility's only)."""
+    """The release's row as it is now, locked until the transaction ends (this facility's only). Its own row only (review fix C13): no
+    join (the Meta ordering's model columns would add one) and FOR UPDATE OF itself, so its model's row stays free."""
     pk = _pk(release, SoftwareRelease)
-    found = SoftwareRelease.objects.select_for_update().filter(pk=pk).first() if pk is not None else None
+    found = SoftwareRelease.objects.select_for_update(of=("self",)).filter(pk=pk).order_by("pk").first() if pk is not None else None
     if found is None:
         raise ValidationError({field: message})
     return found
@@ -244,15 +262,25 @@ def _choice(value, name: str, errors: dict) -> str:
 
 
 def _credential_key(key: str) -> bool:
-    k = key.strip().casefold()
-    parts = [p for p in re.split(r"[^a-z0-9]+", k) if p]
-    return (k in CREDENTIAL_QUERY_KEYS or k.startswith("x-amz-") or any(p in CREDENTIAL_QUERY_KEYS for p in parts)
-            or k.endswith(("token", "key", "signature", "password", "passwd")))
+    """A link's key that looks like a credential: one of CREDENTIAL_QUERY_KEYS anywhere in it, or starting x-amz- (decoded, casefolded)."""
+    k = unquote_plus(key).strip().casefold()
+    return k.startswith("x-amz-") or any(word in k for word in CREDENTIAL_QUERY_KEYS)
+
+
+def _link_keys(parts) -> list:
+    """Every key a link carries: its query's and its fragment's (split on & and ;), and its path parameters' (";jsessionid=...")."""
+    keys = []
+    for text in (parts.query, parts.fragment):
+        keys += [p.split("=", 1)[0] for p in re.split(r"[&;]", text) if p]
+    for segment in parts.path.split("/"):
+        keys += [p.split("=", 1)[0] for p in segment.split(";")[1:] if p]
+    return keys
 
 
 def _url(value, errors: dict) -> str:
-    """The MDS2's link: https only, no user or password in it, no query (or fragment) key that looks like a credential (token, key,
-    sig, signature, auth, session, password, x-amz-...), at most URL_MAX characters."""
+    """The MDS2's link: https only, no user or password in it, no query, fragment, or path parameter key that looks like a credential
+    (_credential_key: token, key, sig, auth, sess, secret, pass, pwd, jwt, or credential anywhere in it, or x-amz-...), at most URL_MAX
+    characters."""
     if value is None:
         return ""
     if not isinstance(value, str):
@@ -266,8 +294,7 @@ def _url(value, errors: dict) -> str:
         URLValidator(schemes=["https"])(text)
         ok = (len(text) <= URL_MAX and parts.scheme == "https" and parts.hostname and parts.username is None and parts.password is None
               and "@" not in parts.netloc)
-        keys = [k for k, _v in parse_qsl(parts.query, keep_blank_values=True)] + [k for k, _v in parse_qsl(parts.fragment, keep_blank_values=True)]
-        ok = ok and not any(_credential_key(k) for k in keys)
+        ok = ok and not any(_credential_key(k) for k in _link_keys(parts))
     except (ValidationError, ValueError):
         ok = False
     if not ok:
@@ -346,7 +373,8 @@ def add_release(model, *, by, today: date | None = None, **fields):
     version = given.get("version", "")
     key = version_key(version)
     with transaction.atomic():
-        existing = SoftwareRelease.objects.select_for_update().filter(device_model=dm, version_key=key).first()
+        existing = (SoftwareRelease.objects.select_for_update(of=("self",)).filter(device_model=dm, version_key=key).order_by("pk")
+                    .first())  # its own row only, as _locked_release (review fix C13)
         if existing is not None and existing.removed_on is None:
             errors["version"] = _taken(existing, version)
             existing = None  # refused: the other fields are checked as a new release's
@@ -370,8 +398,9 @@ def add_release(model, *, by, today: date | None = None, **fields):
 
 
 def update_release(release, *, by, today: date | None = None, **fields):
-    """Change a release's (or the profile's) fields; the version only while no device names it (a new spelling of the same version,
-    by version_key, any time), never on the profile, never to a version already on file. The same checks as add_release, on the row
+    """Change a release's (or the profile's) fields; the version only while no device on site names it (running: a retired or returned
+    device's record follows the correction; a new spelling of the same version, by version_key, any time), never on the profile, never
+    to a version already on file. The same checks as add_release, on the row
     as it is now (locked) with the change applied. History "Edited" (nothing saved when nothing changes). Returns the row; the caller's
     copy follows it."""
     _check(by, perms.can_edit, EDIT_PERMISSION)
@@ -393,7 +422,7 @@ def update_release(release, *, by, today: date | None = None, **fields):
             elif new_key != locked.version_key:
                 other = (SoftwareRelease.objects.filter(device_model_id=locked.device_model_id, version_key=new_key)
                          .exclude(pk=locked.pk).first())
-                if DeviceSecurity.objects.filter(release=locked).exists():
+                if running(locked):  # devices on site, as the panel counts (a retired device's record follows the correction)
                     errors["version"] = VERSION_NAMED
                 elif other is not None:
                     errors["version"] = _taken(other, given["version"])
@@ -415,21 +444,43 @@ def update_release(release, *, by, today: date | None = None, **fields):
     return locked
 
 
+def running(release) -> int:
+    """How many devices on site (rules.on_site: not retired, ours and temporary) of the release's model name it: the count the Models
+    panel shows beside it, and the one Entered in error and a version change are refused by (review fix C4). A retired or returned
+    device's record that names it never counts: its facts stay as they were, so nobody could set it to another; it keeps naming the
+    release, which the rules then read as not recorded."""
+    from .rules import on_site
+
+    return DeviceSecurity.objects.filter(
+        release=release, asset_id__in=on_site().filter(device_model_id=release.device_model_id).values("pk")).count()
+
+
+def _running_words(named: int) -> str:
+    return ("1 device runs this release: set it to another first." if named == 1 else
+            f"{named} devices run this release: set them to another first.")
+
+
+def removal_refusal(release) -> str:
+    """Why Entered in error is refused for `release` now, in remove_release's words (a screen says it before it is tried), or ""."""
+    if release.removed_on is not None:
+        return ALREADY_REMOVED
+    if release.is_profile:
+        return PROFILE_KEPT
+    named = running(release)
+    return _running_words(named) if named else ""
+
+
 def remove_release(release, *, by, today: date | None = None):
-    """Entered in error: refused while a device names it (or for the profile, which is cleared field by field). Sets removed_on (today)
-    and removed_by, history "Entered in error"; the row stays (history keeps it), hidden from lists and pickers."""
+    """Entered in error: refused while a device on site names it (running: as the Models panel counts; a retired or returned device's
+    record keeps naming it) or for the profile, which is cleared field by field (removal_refusal's words). Sets removed_on (today) and
+    removed_by, history "Entered in error"; the row stays (history keeps it), hidden from lists and pickers."""
     _check(by, perms.can_edit, EDIT_PERMISSION)
     today = _today(today)
     with transaction.atomic():
         locked = _locked_release(release)
-        if locked.removed_on is not None:
-            raise ValidationError({"release": ALREADY_REMOVED})
-        if locked.is_profile:
-            raise ValidationError({"release": PROFILE_KEPT})
-        named = DeviceSecurity.objects.filter(release=locked).count()
-        if named:
-            raise ValidationError({"release": "1 device runs this release: set it to another first." if named == 1 else
-                                   f"{named} devices run this release: set them to another first."})
+        refusal = removal_refusal(locked)
+        if refusal:
+            raise ValidationError({"release": refusal})
         locked.removed_on, locked.removed_by = today, by
         _save(locked, by, ENTERED_IN_ERROR)
     _sync(release, locked)
@@ -468,6 +519,21 @@ def _named_release(release, model_id, message: str) -> SoftwareRelease:
     return locked
 
 
+def _locked_devices(ids) -> list:
+    """The devices' rows as they are now, FOR NO KEY UPDATE (of their own rows) in asset pk order, until the transaction ends: after the
+    release's row, before any security row (the lock order, review fixes C2 and C3). A model change in progress (update_asset's FOR
+    UPDATE) is waited for; each device's model and status are then read from these rows, never from a copy read before the wait."""
+    from apps.equipment.models import Asset
+
+    return list(Asset.objects.select_for_update(no_key=True, of=("self",)).filter(pk__in=ids).order_by("pk"))
+
+
+def _lock_conflict(error: OperationalError) -> bool:
+    """PostgreSQL ended this transaction for another holding its rows (a deadlock, a serialization failure, a lock not available)."""
+    cause = error.__cause__
+    return (getattr(cause, "sqlstate", None) or getattr(cause, "pgcode", None)) in LOCK_CONFLICTS
+
+
 def _network(value, errors: dict):
     if value is KEEP:
         return KEEP
@@ -499,9 +565,10 @@ def record_facts(asset, *, by, today: date | None = None, release=KEEP, release_
     """One device's facts: the versioned release of its model it runs (None clears it, and its day), since when (today by default when
     the release changes; never after today, never before the device was installed; with no release, none), its network fact (blank: as
     the model discloses), and the day checked (today by default; never after today), checked by `by`. Refused for a retired device (or
-    one returned to its owner) and a device or release of another facility. The release is locked first, then the device's row, got or
-    created (a create that loses a race reads the row back, locked). History "Facts recorded" (": release set to <version>" or
-    ": release cleared" when it changes). Returns the device's DeviceSecurity row."""
+    one returned to its owner) and a device or release of another facility. The release is locked first, then the device's row (its
+    model and status read again there: a model change that commits meanwhile refuses the old model's release, CHOOSE_VERSION), then its
+    security row, got or created (a create that loses a race reads the row back, locked). History "Facts recorded" (": release set to
+    <version>" or ": release cleared" when it changes). Returns the device's DeviceSecurity row."""
     _check(by, perms.can_edit_devices, FACTS_PERMISSION)
     today = _today(today)
     device = _asset(asset)
@@ -524,9 +591,16 @@ def record_facts(asset, *, by, today: date | None = None, release=KEEP, release_
         locked = None
         if release is not KEEP and release is not None:
             locked = _named_release(release, device.device_model_id, CHOOSE_VERSION)
-            # The device's model as committed now (a model change since it was read clears its release: never name the old model's)
-            if type(device).objects.filter(pk=device.pk).values_list("device_model_id", flat=True).first() != locked.device_model_id:
-                raise ValidationError({"release": CHOOSE_VERSION})
+        # The device's row, locked: a model change in progress is waited for, then seen (never name the old model's release)
+        fresh = _locked_devices([device.pk])
+        if not fresh:
+            raise ValidationError({"asset": CHOOSE_DEVICE})
+        device = fresh[0]
+        gone = _gone(device)
+        if gone:
+            raise ValidationError({"asset": gone})
+        if locked is not None and device.device_model_id != locked.device_model_id:
+            raise ValidationError({"release": CHOOSE_VERSION})
 
         def apply(sec: DeviceSecurity) -> str:
             current = sec.release_id
@@ -571,7 +645,11 @@ def record_facts_for(model, assets, *, by, today: date | None = None, release, r
     since `release_since` (today by default for a device whose release changes; never after today, never before a device was
     installed), with `network` when given, checked today by `by`: each changed device saved with history ("Set with N devices of
     <model>"), in one transaction; a device already so is left as it is. The release is locked first, then the devices' rows in asset pk
-    order. Returns how many changed. Two queries a changed device (its row, its history)."""
+    order (their models and statuses read there: a model change committed meanwhile is refused in words), then their security rows in
+    asset pk order (a missing one inserted after its device's row is held). More than BULK_MAX devices are refused, worded by whether a
+    department would narrow them (TOO_MANY, or TOO_MANY_IN_ONE when they are all one department's). A security row created by another
+    record meanwhile, or PostgreSQL ending the transaction in a deadlock with another writer of these devices, answers RACE, saving
+    nothing. Returns how many changed. Two queries a changed device (its row, its history)."""
     _check(by, perms.can_edit_devices, FACTS_PERMISSION)
     today = _today(today)
     dm = _model(model)
@@ -592,7 +670,8 @@ def record_facts_for(model, assets, *, by, today: date | None = None, release, r
     if "assets" not in errors and not ids:
         errors["assets"] = NO_DEVICES
     elif "assets" not in errors and len(ids) > BULK_MAX:
-        errors["assets"] = TOO_MANY
+        departments = set(Asset.objects.filter(pk__in=ids).order_by().values_list("department_id", flat=True).distinct()[:2])
+        errors["assets"] = TOO_MANY_IN_ONE.format(count=len(ids)) if len(departments) == 1 else TOO_MANY
     if release is None:
         errors["release"] = CHOOSE_MODEL_VERSION
     if errors:
@@ -600,7 +679,7 @@ def record_facts_for(model, assets, *, by, today: date | None = None, release, r
     try:
         with transaction.atomic():
             locked = _named_release(release, dm.pk, CHOOSE_MODEL_VERSION)
-            devices = list(Asset.objects.filter(pk__in=ids).order_by("pk"))
+            devices = _locked_devices(ids)  # after the release, before any security row: their model and status as they are now
             if len(devices) != len(ids):
                 raise ValidationError({"assets": CHOOSE_DEVICES})
             other = sorted(a.tag for a in devices if a.device_model_id != dm.pk)
@@ -634,6 +713,10 @@ def record_facts_for(model, assets, *, by, today: date | None = None, release, r
                 _save(sec, by, reason)
                 changed += 1
     except IntegrityError:  # a device's row created by another record meanwhile: nothing here was saved
+        raise ValidationError({"assets": RACE}) from None
+    except OperationalError as e:  # a deadlock with another writer of these devices (an import chunk, in its own order): nothing saved
+        if not _lock_conflict(e):
+            raise
         raise ValidationError({"assets": RACE}) from None
     return changed
 

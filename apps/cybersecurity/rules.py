@@ -28,7 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 
-from django.db.models import QuerySet, Subquery
+from django.db.models import OuterRef, Q, QuerySet, Subquery
 from django.utils import timezone
 
 from apps.core.days import local_day
@@ -492,10 +492,12 @@ _CHANGE_WORDS = {MISSING: "Marked missing {day}", RETIRED: "Retired {day}", RETU
 def _events(rows, start: date, today: date) -> list:
     """[(device id, kind, day, moment, added_as)] from the devices' history rows in order (id, history_date, history_id): a device added
     ("+"), its status becoming missing, or retired (returned to its owner when it was temporary then), on a facility day in [start,
-    today]. A device whose retirement is dated before the day it was added (a retirement from the previous system, backdated) was never
-    on site: its addition is left out."""
+    today]. A return's day is the day it went back, the returned_on its row holds (return_to_owner dates the row when it is entered,
+    review fix C31), else its row's day. A device whose retirement (or return) is dated before the day it was added (a retirement from
+    the previous system, backdated) was never on site: its addition is left out. `rows` may leave out a device's rows before the window
+    but its last one (its status then) and its retired ones (changes_for_it): the events in the window are the same."""
     out, previous, added, retired_days = [], {}, {}, {}
-    for pk, kind, status, ownership, added_as, moment in rows:
+    for pk, kind, status, ownership, added_as, returned_on, moment in rows:
         day = local_day(moment)
         before = previous.get(pk)
         previous[pk] = status
@@ -507,8 +509,11 @@ def _events(rows, start: date, today: date) -> list:
         if status == AssetStatus.MISSING:
             out.append((pk, MISSING, day, moment, ""))
         elif status == AssetStatus.RETIRED:
+            returned = ownership != Ownership.OWNED
+            if returned and returned_on is not None:
+                day = returned_on
             retired_days.setdefault(pk, []).append(day)
-            out.append((pk, RETIRED if ownership == Ownership.OWNED else RETURNED, day, moment, ""))
+            out.append((pk, RETURNED if returned else RETIRED, day, moment, ""))
     for pk, (day, moment, added_as) in added.items():
         if not any(d < day for d in retired_days.get(pk, ())):
             out.append((pk, ADDED, day, moment, added_as))
@@ -518,15 +523,26 @@ def _events(rows, start: date, today: date) -> list:
 def changes_for_it(today: date, days: int = 30) -> list:
     """Devices whose model can connect, or can store or handle patient data (as the manufacturer discloses: the device's facts, its
     release over its model's profile by group), or whose own fact says connected, added, marked missing, retired, or returned to their
-    owner on a facility day in [today - days + 1, today] (equipment's history through core.history._rows), newest first. Every device,
-    ours and temporary. Three queries (one when nothing changed): the history rows of the devices with a row in the window, the devices
-    with their rows, their models' profiles."""
+    owner on a facility day in [today - days + 1, today] (equipment's history through core.history._rows; a return on the day it went
+    back), newest first. Every device, ours and temporary. Three queries (one when nothing changed): the history rows, the devices with
+    their rows, their models' profiles.
+
+    The history rows read stay near the window's (review fix C1: never each device's whole history, which grows with the years while the
+    window stays fixed): the rows from the window's start, each device's last row before it (its status then: a change is a status that
+    differs), and the retired rows of the devices added in the window (a retirement backdated before the day it was added, from the
+    previous system: never on site)."""
     start = today - timedelta(days=days - 1)
     since = timezone.make_aware(datetime.combine(start - timedelta(days=1), time.min))  # a day early: the facility's day decides below
     history = Asset.history.model
-    recent = _rows(history).filter(history_date__gte=since).values("id")
-    rows = (_rows(history).filter(id__in=Subquery(recent)).order_by("id", "history_date", "history_id")
-            .values_list("id", "history_type", "status", "ownership", "added_as", "history_date"))
+    in_window = _rows(history).filter(history_date__gte=since)
+    last_before = (_rows(history).filter(id=OuterRef("id"), history_date__lt=since).order_by("-history_date", "-history_id")
+                   .values("history_id")[:1])
+    rows = (_rows(history)
+            .filter(Q(history_date__gte=since)
+                    | Q(history_id__in=in_window.annotate(last=Subquery(last_before)).values("last"))
+                    | Q(status=AssetStatus.RETIRED, id__in=in_window.filter(history_type="+").values("id")))
+            .order_by("id", "history_date", "history_id")
+            .values_list("id", "history_type", "status", "ownership", "added_as", "returned_on", "history_date"))
     events = _events(rows, start, today)
     if not events:
         return []
