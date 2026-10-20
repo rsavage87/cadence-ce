@@ -195,7 +195,7 @@ def test_service_cost_a_year_against_the_list_price(history, dept, model):
     assert cost.input == "10% a year of replacement ($200 a year)" and cost.note == ""
 
 
-def test_a_live_contracts_share_replaces_its_vendors_work(history, dept, model):
+def test_a_contracts_share_is_added_to_every_line_recorded(history, dept, model):
     a = device(model, dept, "CE-1", years=6, acquisition_cost=Decimal("1000"))
     b = device(model, dept, "CE-2", years=6, acquisition_cost=Decimal("3000"))
     gone = device(model, dept, "CE-3", years=6, acquisition_cost=Decimal("5000"))
@@ -205,19 +205,19 @@ def test_a_live_contracts_share_replaces_its_vendors_work(history, dept, model):
         ct_services.add_asset(contract, x)
     eq.set_status(gone, AssetStatus.RETIRED)  # not covered: no part of the share
     work(a, WoType.REPAIR, TODAY - timedelta(days=40), completed=TODAY - timedelta(days=38), labor=[(5, 100)], vendor=True,
-         vendor_name="Acme")  # the contract's vendor, under full service: the share pays for it
+         vendor_name="Acme")  # the contract's vendor: counted (a visit the contract paid for is recorded at $0)
     work(a, WoType.REPAIR, TODAY - timedelta(days=30), completed=TODAY - timedelta(days=28), labor=[(1, 100)])  # in-house: counted
     p = score(a)
     years = Decimal(1096) / Decimal("365.25")
-    assert p.extras["contract_share"] == Decimal("250") and p.extras["spent"] == Decimal("100.00")
-    assert p.service_cost_year == (Decimal("100") / years + Decimal("250")).quantize(Decimal("0.01"))
+    assert p.extras["contract_share"] == Decimal("250") and p.extras["spent"] == Decimal("600.00")
+    assert p.service_cost_year == (Decimal("600") / years + Decimal("250")).quantize(Decimal("0.01"))
     assert p.component(P.COST).note == "with its contract share, $250 a year"
 
     Contract.objects.filter(pk=contract.pk).update(end_on=TODAY - timedelta(days=1))  # ended: its vendor's work counts, no share
     p = score(a)
     assert p.extras["contract_share"] is None and p.service_cost_year == (Decimal("600") / years).quantize(Decimal("0.01"))
-    Contract.objects.filter(pk=contract.pk).update(start_on=TODAY + timedelta(days=1), end_on=TODAY + timedelta(days=300))  # not begun
-    assert score(a).extras["contract_share"] is None
+    Contract.objects.filter(pk=contract.pk).update(start_on=TODAY + timedelta(days=1), end_on=TODAY + timedelta(days=300))  # not begun:
+    assert score(a).extras["contract_share"] == Decimal("250")  # not ended, as Contract.is_expired and the Costs tab read it
 
 
 def test_a_device_with_no_acquisition_cost_on_a_contract_none_covered_can_share_has_an_unknown_service_cost(history, dept, model):

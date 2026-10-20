@@ -435,7 +435,7 @@ def replacement_outlook(asset, today: date) -> dict:
     p = priority.for_asset(asset, today, start)
     if p is None:  # the copy in hand was in use; the row no longer is
         return {"note": "Replacement planning scores our devices in use only.", "score_pct": None, "priority": None}
-    drivers = sorted((c for c in p.components if c.points), key=lambda c: -c.points)[:DRIVERS]
+    drivers = sorted((c for c in p.components if (priority.points_rounded(c.points) or 0) > 0), key=lambda c: -c.points)[:DRIVERS]
     suggested = suggested_words(p)
     unknown = f", {p.points_unknown} points unknown" if p.points_unknown else ""
     parts = [f"Replacement score {p.score} of 100{unknown}."]
@@ -461,7 +461,8 @@ def replacement_outlook(asset, today: date) -> dict:
 
 def _window_words(p) -> str:
     """Failures' and service cost's window in words: "Failures and service cost count the 36 months since Oct 19, 2023.", or why they
-    are unknown ("... have too little history: 4 months since Jun 19, 2026, and 12 are needed.")."""
+    are unknown ("... have too little history: the records start Jun 19, 2026, and 12 months are needed (from Jun 19, 2027).", or "...:
+    no work orders in Cadence yet.")."""
     months = p.extras.get("window_months", 0)
     since = f"{p.window_start:%b} {p.window_start.day}, {p.window_start.year}"
     if p.failures is None and p.extras.get("first_day") is None:
@@ -469,8 +470,9 @@ def _window_words(p) -> str:
     if p.failures is None:
         # review fix: when it has enough, never a rounded month count that reads as the minimum already reached
         enough_on = priority.enough_history_on(p.window_start)
+        when = f" (from {enough_on:%b} {enough_on.day}, {enough_on.year})" if enough_on is not None else ""
         return (f"Failures and service cost have {priority.TOO_LITTLE_HISTORY}: the records start {since}, and "
-                f"{priority.MIN_HISTORY_MONTHS} months are needed (from {enough_on:%b} {enough_on.day}, {enough_on.year}).")
+                f"{priority.MIN_HISTORY_MONTHS} months are needed{when}.")
     return f"Failures and service cost count the {months} month{'' if months == 1 else 's'} since {since}."
 
 
@@ -488,8 +490,11 @@ def expected_life(asset, start: int | None = None) -> dict:
     out = {"words": f"{life} yr", "source": LIFE_SOURCE_WORDS.get(dm.life_source, ""), "title": "", "fy": None}
     if asset.installed_on is None:
         return out
+    try:
+        ends = add_months(asset.installed_on, 12 * life)
+    except (OverflowError, ValueError):  # a life past the calendar (saved outside update_device_model's 1 to 50 years): the years alone
+        return out
     start = start or fiscal.start_month()
-    ends = add_months(asset.installed_on, 12 * life)
     fy = fiscal.fiscal_year_of(ends, start)
     return {**out, "words": f"{life} yr, through {fiscal.fy_label(fy)}", "fy": fy, "ends_on": ends,
             "title": f"Its expected life ends {ends:%b} {ends.day}, {ends.year} ({fiscal.describe(fy, start)})"}

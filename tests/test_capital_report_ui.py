@@ -201,7 +201,7 @@ def test_an_empty_fleet_reads_no_active_devices(client, signed_in, ctx, freeze_t
     freeze_today(TODAY)
     signed_in("director")
     body = panel(client)
-    assert '<div class="empty">No active devices.</div>' in body and "Outlook by fiscal year" not in body
+    assert '<div class="empty">No devices of ours in use.' in body and "Outlook by fiscal year" not in body
 
 
 # --- the print --------------------------------------------------------------------------------------------------------------------------

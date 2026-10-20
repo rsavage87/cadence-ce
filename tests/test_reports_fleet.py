@@ -460,5 +460,5 @@ def test_fleet_reports_render_for_an_empty_tenant(client, signed_in, ctx, key):
     elif key == "mtbf":
         assert "No repairs opened in the last 6 months." in body
     else:
-        assert "No active devices." in body
+        assert "No devices of ours in use." in body
     assert client.get(f"/reports/{key}.csv").status_code == 200

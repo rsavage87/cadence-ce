@@ -486,8 +486,8 @@ def _model_fields(raw: dict) -> dict:
 
 def _support_fields(raw: dict, out: dict, errors: dict) -> None:
     """Slice 36: the life source (a choice, or blank: not recorded), the three support dates (a day or none, in any order: notices vary;
-    from 2000 and within SUPPORT_HORIZON_YEARS: a mistyped year or a "never" placeholder such as 9999-12-31 is refused, never stored),
-    the notice's reference (a token), and the day support was checked (from 2000, not after today)."""
+    from SUPPORT_EARLIEST_YEAR and within SUPPORT_HORIZON_YEARS: a mistyped year or a "never" placeholder such as 9999-12-31 is refused,
+    never stored), the notice's reference (a token), and the day support was checked (from 2000, not after today)."""
     from apps.pm.dates import add_months
 
     today = timezone.localdate()

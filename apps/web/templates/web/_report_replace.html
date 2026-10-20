@@ -26,7 +26,7 @@
     </tr>
   {% endwith %}{% endfor %}</tbody>
 </table></div>
-<div class="hint cap-after">Estimated replacement total for these {{ p.shown }}: <b style="color:var(--ink)">{{ r.total|money }}</b>, at the model's list price, else the device's acquisition cost (a historical price); no markup.</div>
+<div class="hint cap-after">Estimated replacement total for {% if p.shown == 1 %}this one{% else %}these {{ p.shown }}{% endif %}: <b style="color:var(--ink)">{{ r.total|money }}</b>, at the model's list price, else the device's acquisition cost (a historical price); no markup.</div>
 <div class="hint cap-after">{{ p.failure_rule }} Failures and service cost count up to 36 months (from the install date or the facility's first work order when later); under 12 months is too little history. Service cost a year is labor, parts, and the device's share of a live service contract, against its replacement estimate.</div>
 {% endif %}
 
@@ -74,5 +74,5 @@
 {% if p.unranked_more %}<div class="hint cap-after">Showing {{ p.unranked|length }} of {{ p.not_ranked }}; the CSV lists every one, and its Ranked column says why.</div>{% endif %}
 {% endif %}
 {% endwith %}{% else %}
-<div class="empty">No active devices.</div>
+<div class="empty">No devices of ours in use. Rentals, vendor loaners, and demo units are never scored.</div>
 {% endif %}
