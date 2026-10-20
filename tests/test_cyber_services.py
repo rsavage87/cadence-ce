@@ -783,7 +783,7 @@ def test_a_bulk_set_waits_for_a_record_on_a_new_device(tenant, monkeypatch):
     with tenant_context(tenant):
         assert sorted(DeviceSecurity.objects.values_list("asset__tag", "release_id", "network")) == [
             ("CE-0", rel.pk, ""), ("CE-1", rel.pk, Network.WIRED)]
-        assert DeviceSecurity.objects.get(asset=asset).history.count() == 2
+        assert reasons(DeviceSecurity.objects.get(asset=asset)) == ["Facts recorded", "Set with 2 devices of BD Alaris"]  # in that order
 
 
 @needs_postgres

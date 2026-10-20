@@ -483,7 +483,8 @@ def test_a_bulk_set_and_an_import_chunk_in_pk_order_never_deadlock(tenant):
 
     _both(_chunk(tenant, [low, high], b, changing), bulk, errors, results)
     assert results.get("first") == ["ok", "ok"], (results, errors)
-    assert isinstance(errors.get("second"), ValidationError) and set(errors["second"].message_dict) == {"assets"}, (results, errors)
+    assert isinstance(errors.get("second"), ValidationError), (results, errors)  # it saw both moved: no deadlock (RACE), no 500
+    assert errors["second"].message_dict == {"assets": ["CE-1, CE-2 are not BD Alaris A: set one model's devices at a time."]}
     assert _crossed(tenant) == []
     with tenant_context(tenant):
         assert set(Asset.objects.values_list("device_model_id", flat=True)) == {b.pk}
