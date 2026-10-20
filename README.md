@@ -360,6 +360,56 @@ was scored, and its Overview the expected life's fiscal year. Settings' "Fiscal 
 the year it ends; a change re-buckets the outlook and moves nothing stored). Capital requests, committee decisions, budgets, and the link
 from a retired device to its replacement come next.
 
+## Device security
+The "Device security" screen keeps the medical device security register: what each device model can do and what its manufacturer
+discloses, release by release, and what the facility knows about each device's software and connection. HHS 405(d)'s Health Industry
+Cybersecurity Practices (HICP 2023) recommends keeping the medical device inventory, with at least major version information, in the
+CMMS; no US law, CMS rule, or accreditor asks for a per-device record, and Cadence never says one does. Each model has a profile (all
+versions, or version not stated) and its software releases as the manufacturer writes them, each with the operating system (family, name
+with edition, the OS vendor's last day of support), the last day of the manufacturer's security updates for it, the day support was
+checked, the manufacturer's disclosure (MDS2: on file with its form, document number, release day, and https link; requested; or none
+from the manufacturer), and a few of its answers in words (can store or display patient data, how it connects, remote service, who may
+install updates, SBOM). A release overrides its model's profile by group (support, MDS2, disclosure), never field by field, and a device
+whose release is not recorded reads the profile as "the model's disclosure, version not stated". The profile also keeps the facility's
+own arrangement: who installs updates here (Clinical engineering, IT, the manufacturer, the department that uses it) and whether the
+model's connected devices are on a medical device network segment. Each device has the release it runs and since when, how it is
+connected here when that differs from what its model discloses, and the day it was checked and by whom: one at a time from the device
+drawer's Security tab (Record facts), or one model's devices at once from its row ("Set devices to this release", up to 500, optionally
+one department's). A device whose model changes loses its release (its history says why); a release entered in error stays in the
+history, cannot be named while a device runs it, and comes back if the version is added again.
+
+Every device reads two standing lines, never merged, about the dates on file and never about the unit: the manufacturer's ("Security
+updates end Mar 31, 2028 (announced)", "Security updates ended after Mar 31, 2028", or, when the release has no date of its own, the
+model's manufacturer support from Replacement planning) and the OS vendor's ("The OS vendor's published support for <the operating system
+as recorded> ends Jan 31, 2030", or "ended after ..."; extended support bought for one unit is not recorded yet). Fleet lists one row per
+model with devices on site, ours and temporary alike (devices, connected here, by release with "not recorded", past security updates, OS
+past its vendor's support, the MDS2 and which version it is for, patient data, who installs updates, segment), with the facility's counts
+above it: models that can connect with no MDS2 on file (requested ones apart), devices that can connect on a release past its security
+updates, devices that can connect with no release recorded, and models with connected devices not on a separate segment or whose segment
+is not recorded; a model's row opens its devices (tag, location, release, since, connected, the two lines). Models keeps each model's
+profile and releases. Changes for IT lists the devices whose model can connect or handle patient data (or that are connected here) added,
+marked missing, retired, or returned to their owner in the last 7, 30, or 90 days, so the IT department can follow the network's medical
+devices. Each list downloads as CSV with the columns on screen.
+
+Never kept: device credentials (no field can hold one), network identifiers (IP, MAC, hostname, VLAN, ports), SBOM contents, the MDS2
+file itself, advisory text, and free text of any kind: references are tokens and https links (never with a password, token, or signature
+in them), answers are choices. None of it reaches an email, a report email, a custom report, the device's own CSV or API record, the
+portal, labels, or Scan. The register never calls a device or a release "secure", "compliant", "certified", "patched" or "unpatched",
+"vulnerable", "unsupported", "mitigated", "protected", "safe", "at risk", "exposed", "exploitable", or "remediated", never "end of life"
+for an end of support, nor "high risk" or "critical" in its own voice; an MDS2 answer is named by its question in words, never by a
+form's question number.
+
+Device security is a module of its own in Roles: the director Full, the CE manager Approve, technicians Edit, Finance and quality,
+requesters, and vendors None. View sees the register; Edit records models' profiles and releases and devices' facts; Approve decides
+nothing more yet. Every list naming devices by tag or location (Fleet's devices, Changes for IT, the drawer's tab, their CSVs) also needs
+Equipment View; the Models tab needs Device security View alone. A vendor's or a requester's account never sees it, whatever its levels
+(on a custom role that sees only its company's or unit's share, Device security has no effect). For the IT department, make a custom role
+"IT security" with Device security Edit and Equipment View: it records the facts without adding, editing, or retiring devices. Upgrading:
+every custom role made before this release reads None for Device security, so a custom role that administers users cannot invite anyone
+into a role holding it (a technician's, for one: nobody gives more access than their own) until a director raises its Device security
+level. Advisories and the decisions on them, compensating controls, software update work orders, the version recorded at a PM, the
+import, the survey binder's section, and the evaluation's figures come next.
+
 ## Custom reports
 Reports' "+ Custom report" (Reports Edit: the director and Finance and quality by default) builds a report from work orders, devices,
 labor, or parts: pick the columns, filter by type, status, department, category, technician, or a date range (a rolling period such
@@ -428,6 +478,13 @@ its module's docstring under `apps/api/`, and the browsable API (open `/api/v1/`
   none; left out, what is recorded stays, except that a completion with `repair_check` `vendor_report` takes ours off but the items a
   calibration since has judged); afterwards POST `/api/v1/work-orders/{id}/test-equipment/` (facility staff only; Approve once
   closed). A work order with test equipment recorded is never deleted;
+- the device security register, read only (`views_cybersecurity.py`; never a vendor's or a requester's account): `/api/v1/software-releases/`
+  (Device security View: each model's profile and releases with their groups and words, the two standing lines, and how many devices on
+  site run each; `?device_model=`, `?search=`, and those entered in error too with `?removed=1`) and `/api/v1/device-security/` (Device
+  security View and Equipment View: every device on site, ours and temporary, one by id or tag, with its facts, its connection, and its
+  standing words; the Fleet's filters `?whose=`, `?department=`, `?category=`, `?connected=`, `?standing=`, `?norelease=1`, plus
+  `?device_model=` and `?search=` a tag or serial); a write answers 405 naming the Device security screen. The device and device model
+  records never carry the register;
 - the signed-in person's facilities and All facilities (`views_facilities.py`, `views_all_facilities.py`; session only).
 
 Vendor technicians and clinical requesters reach only their own devices and work orders (and Scan), as on the screens. Nobody gives

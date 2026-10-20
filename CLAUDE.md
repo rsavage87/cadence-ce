@@ -32,7 +32,7 @@ security tests, `tests/test_postgres_rls.py`).
    `apps/accounts/services.py`, `apps/credentials/services.py`, `apps/recalls/services.py`, `apps/facility/services.py`, `apps/equipment/services.py`,
    `apps/pm/aem.py`, `apps/pm/procedures.py`, `apps/workorders/costs.py`, `apps/workorders/completion.py`, `apps/workorders/legacy.py`, `apps/reports/custom.py`,
    `apps/imports/services.py`, `apps/incidents/services.py`, `apps/vendors/services.py`, `apps/evaluations/services.py`,
-   `apps/testequipment/services.py`; slice 36's model support through `apps/equipment/services.py`), never by setting fields in a
+   `apps/testequipment/services.py`, `apps/cybersecurity/services.py`; slice 36's model support through `apps/equipment/services.py`), never by setting fields in a
    view or calling model helpers like
    `Contract.add_assets` directly. Services validate, write status history, and keep the asset in sync.
 6. **No PHI by design.** The portal never asks for patient identifiers. Don't add free-text fields that invite them, and never offer
@@ -301,8 +301,24 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   the install date and the facility's first work order, under 12 months "too little history" (`window_of`, `enough_history_on`);
   `Estimate` (list price and the day it was set from history, else acquisition cost; no markup); flags (`MUST_ACT`, `REVIEW`) apart
   from the score; `GAPS`; `suggested_fy` ("suggested", never "due"); `version_words` printed wherever a score is shown (the CSV's last column "v2").
-  No models yet (slice 37: requests, decisions, budgets, the plan; slice 38: replaced_by, retire reasons). Never incidents, status
+  No models yet (later slices: requests, decisions, budgets, the plan; replaced_by, retire reasons). Never incidents, status
   words, or requester text
+- `apps/cybersecurity` the device security register (slice 37, beyond the mock; HHS 405(d) HICP 2023 recommends keeping the medical
+  device inventory, with major version information, in the CMMS; no rule requires a per-device record, and Cadence never says one does):
+  `Module.CYBERSECURITY` "Device security" (never "security": that word means row-level security here; analyst, requester, vendor None;
+  scoped users never); `SoftwareRelease` (a model's release as the manufacturer writes it, `version_key`, or its versionless PROFILE; the
+  support, MDS2, and disclosure groups (a release overrides the profile by group, never field by field) and the profile-only facility
+  group (who installs updates here, segment); entered in error marked, never deleted, restored by adding the version again) and
+  `DeviceSecurity` (one device's versioned release, since, network fact when it differs from the disclosure, checked); `rules.py` every
+  door's words and readers (`facts`, `connected`, `release_standing` (slice 36's model support when the release has no date) and
+  `os_standing` (two lines, never merged; last days), `standings`, `fleet`, `changes_for_it` (devices added, missing, retired, returned,
+  from equipment's history), `QUESTIONS`, `NEVER_WORDS`; every device on site, ours and temporary; fixed queries); `services.py` every
+  write (level checks inside; locks: the facility's register lock (`lock_register`), a release, the devices FOR KEY SHARE in tag order
+  (every multi-device writer's order), then security rows; `model_changed` from equipment.update_asset, never taking the register lock,
+  clears a release of the old model); `filters.py` the Fleet's filters (`FleetFilters`, `parse`, `parse_strict` for the API's 400s, `within` for a head figure's link) shared by the screen and the API; `services.running` / `removal_refusal` count devices on site only (a retired device keeps naming a release entered in error). Never kept: credentials, network
+  identifiers, SBOM contents, the MDS2 file, advisory text, free text; never in an email, a custom report, the device's own CSV or API
+  record, the portal, labels, or Scan. Slice 38: advisories, decisions and controls, software update events and a work order type,
+  hardening facts, the import, PM capture, the binder section, evaluation indicators; slice 39: the CISA CSAF feed
 - `apps/recalls` Alert (global), AlertMatch (per tenant), matching, openFDA importer; `services.py` dispositions and recall work-order batches,
   `permissions.py` (review at Edit, close/reopen at Approve); `feeds.py` the openFDA fetch shared by `import_openfda` and the Recalls
   screen's Check FDA feed (one fetch per 15 minutes for everyone, kept in apps.jobs' `JobRun`; a check matches only its own facility).
@@ -372,6 +388,9 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `_model_support.html`), `views_settings.settings_fiscal` the Fiscal year panel, `reports_fleet.present_replace` and
   `templatetags/capital_tags.py` the report's panel, `asset_tabs.replacement_outlook` / `expected_life` the device drawer's Costs and
   Overview tabs;
+  `views_cybersecurity.py` the Device security screen (slice 37, with `forms_cybersecurity.py` and `_cyber_*.html`: Fleet with its head
+  figures and filters, a model's panel, Set devices to this release, Models with profiles and releases, Changes for IT, the CSVs),
+  `asset_cyber.py` and `views_cyber_facts.py` the device drawer's Security tab and Record facts;
   `views_temporary.py` loaners and rentals (slice 29, with `forms_temporary.py`: Add rental or
   loaner, the drawer's temporary section (`asset_tabs.temporary_box`), Change details, Return to owner, Keep it, Vendor loaner arrived,
   Return the loaner; the Equipment "Whose" filter through `forms.equipment_assets`), `views_incidents.py` Incidents (slice 28, with
@@ -412,7 +431,9 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   reader); slice 34: `views_vendor_reviews.py` / `serializers_vendor_reviews.py` vendor reviews, read only; slice 35:
   `views_testequipment.py` / `serializers_testequipment.py` test equipment, read only, and a work order's `test_equipment` (Equipment View),
   the transition's `test_equipment` (omitted keeps), the `test-equipment` action, destroy refused with uses; slice 36: a device model's
-  support fields by PATCH through update_device_model (refused on POST) and its read-only `support_status`; serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
+  support fields by PATCH through update_device_model (refused on POST) and its read-only `support_status`; slice 37:
+  `views_cybersecurity.py` / `serializers_cybersecurity.py` software releases and device security, read only (Device security View, and
+  Equipment View for devices; never nested in the asset or model records); serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
   same thing and calls the same service; the API never imports apps.web. `tenancy.py` (`TenantAPIMixin`: the tenant from the session or
   token user, set after authentication and restored once the response is rendered), `authentication.py` (DRF's token check plus the
   deactivated-facility refusal sign-in has)
@@ -445,4 +466,7 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   named on their in-house work, a ProSim due soon, a defibrillator analyzer past due, an infusion analyzer found out of tolerance with no
   review; slice 36: a July fiscal year, the beds' life lowered so a few are past it, the dialysis machines' support ended, the
   sterilizers' parts no longer available (the must-act flag), the vital signs monitors' parts end announced, the patient monitors
-  supported; no random draws; the beyond-repair bed stays retired)
+  supported; no random draws; the beyond-repair bed stays retired; slice 37: profiles for the connectable models, the pumps on two
+  fictional firmware releases "(demo)" (the older past its security updates), the monitors' MDS2 on file for an older release, a C-arm
+  whose OS support ended, the ventilators' MDS2 requested, the loaner pump recorded, the fleet's "Added" history dated before the demo's
+  work so Changes for IT lists only the recent devices)
