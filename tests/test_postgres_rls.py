@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 import pytest
 from django.core.management import call_command
 from django.db import DatabaseError, connection, transaction
+from django.urls import resolve
 from pg_helpers import as_app_role, needs_postgres
 
 from apps.accounts import invitations, services
@@ -152,12 +153,21 @@ def test_every_screen_renders_under_the_policies(client, seeded):
         model = DeviceModel.objects.order_by("manufacturer").first()
     urls += [f"/work-orders/{wo.number}/", f"/print/work-orders/{wo.number}/", f"/equipment/{asset.tag}/", f"/pm/models/{model.pk}/",
              f"/equipment/{asset.tag}/?tab=pm", f"/equipment/{asset.tag}/?tab=costs", f"/pm/models/{model.pk}/?tab=aem"]
+    # slice 37: the Device security screen (Fleet, Models, a model's panel, Changes for IT, their CSVs) and the drawer's Security tab
+    urls += ["/security/", "/security/export.csv", f"/security/devices.csv?model={model.pk}", "/security/models/",
+             f"/security/models/{model.pk}/", "/security/changes/", "/security/changes.csv", f"/equipment/{asset.tag}/?tab=security"]
     assert client.get("/search/?q=CE-1")["Location"] == "/equipment/?q=CE-1"
+    pending = []
     for url in urls:
+        if getattr(resolve(urlsplit(url).path).func, "__name__", "") == "_todo":  # a scaffold stub wave 2 has not replaced here yet
+            pending.append(url)
+            continue
         r = client.get(url)
         assert r.status_code == 200, (url, r.status_code)
         if hasattr(r, "streaming_content"):
             assert b"".join(r.streaming_content), url  # a CSV is read after the view returns, inside the request's tenant
+    if pending:
+        pytest.xfail(f"slice 37 wave 2's screens are not merged here yet: {pending}")
 
 
 def test_a_scoped_user_sees_their_share_under_the_policies(client, seeded):
