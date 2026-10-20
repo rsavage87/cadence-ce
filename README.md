@@ -384,12 +384,12 @@ model's manufacturer support from Replacement planning) and the OS vendor's ("Th
 as recorded> ends Jan 31, 2030", or "ended after ..."; extended support bought for one unit is not recorded yet). Fleet lists one row per
 model with devices on site, ours and temporary alike (devices, connected here, by release with "not recorded", past security updates, OS
 past its vendor's support, the MDS2 and which version it is for, patient data, who installs updates, segment), with the facility's counts
-above it: models that can connect with no MDS2 on file (requested ones apart), devices that can connect on a release past its security
+above it: models that can connect with no MDS2 on file (with how many of them are requested), devices that can connect on a release past its security
 updates, devices that can connect with no release recorded, and models with connected devices not on a separate segment or whose segment
 is not recorded; a model's row opens its devices (tag, location, release, since, connected, the two lines). Models keeps each model's
 profile and releases. Changes for IT lists the devices whose model can connect or handle patient data (or that are connected here) added,
 marked missing, retired, or returned to their owner in the last 7, 30, or 90 days, so the IT department can follow the network's medical
-devices. Each list downloads as CSV with the columns on screen.
+devices. Fleet, a model's devices, and Changes for IT download as CSV with the columns on screen.
 
 Never kept: device credentials (no field can hold one), network identifiers (IP, MAC, hostname, VLAN, ports), SBOM contents, the MDS2
 file itself, advisory text, and free text of any kind: references are tokens and https links (never with a password, token, or signature

@@ -157,6 +157,18 @@ def _fleet_options() -> dict:
             "connected": CONNECTED_FILTERS, "standings": STANDING_FILTERS}
 
 
+def _with_kept(options: dict, f) -> dict:
+    """The filter bar's choices with a department or category kept from the address but not among them (an old bookmark: it matches
+    nothing here) shown selected, "(none here)", so the bar says what is in force and the next change keeps it."""
+    out = dict(options)
+    if f.dept and f.dept not in {v for v, _ in options["departments"]}:
+        out["departments"] = [*options["departments"], (f.dept, "A department not in this facility (none here)")]
+    if f.category and f.category not in options["categories"]:
+        out["categories"] = [*options["categories"], f.category]
+        out["category_none"] = f.category
+    return out
+
+
 def _narrowed(f, today):
     """The devices on site the filters keep (apps.cybersecurity.filters, as the API's device list): a queryset, or a list when a filter
     reads each device's facts (rules.standings)."""
@@ -206,7 +218,7 @@ def _fleet_context(request) -> dict:
     rows = [{"r": r, "releases": _releases_words(r), "patient": _label("patient_data", r.facts.get("patient_data")),
              "updates_by": _label("updates_by", r.facts.get("updates_by")), "segmented": _label("segmented", r.facts.get("segmented")),
              "url": reverse("web:cybersecurity_model", args=[r.device_model.pk]) + panel_q} for r in page.object_list]
-    return {**_shell(request, "fleet"), "list_url": reverse("web:cybersecurity"), "f": f, "options": options, "fleet": fl,
+    return {**_shell(request, "fleet"), "list_url": reverse("web:cybersecurity"), "f": f, "options": _with_kept(options, f), "fleet": fl,
             "figures": _figures(fl, f), "page": page, "rows": rows, "hicp": rules.HICP_SENTENCE, "counts": rules.COUNTS_ON_SITE}
 
 

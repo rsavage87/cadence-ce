@@ -571,6 +571,7 @@ The mock's export and print buttons work since slice 11, Add device since slice 
   type, and the binder, evaluation, and capital readers are slice 38; the CISA feed slice 39. The review (then four rounds of fixes, each
   pinned by tests that fail with the fix undone and re-checked by skeptics): Changes for IT reads only the history near its window; a
   model change in progress is waited for, never an old model's release saved; the register's writers take one facility lock and the
-  devices FOR KEY SHARE in tag order, the order every multi-device writer keeps (each lock tried first traded one race for another:
+  devices FOR KEY SHARE in the database's tag order, as contracts and Recorded in error keep it (an import chunk, in its file's
+  order, can still meet it: the bulk set answers RACE; each lock tried first traded one race for another:
   pk-order row locks deadlocked with contracts and AEM, a shared lock let two register writers collide); a release only retired devices
   name can be marked entered in error; the device API takes the Fleet's filters; the MDS2 link refuses credential keys, never anchors.

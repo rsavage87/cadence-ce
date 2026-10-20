@@ -140,7 +140,13 @@ def narrow(qs, f: FleetFilters):
     if f.dept:
         qs = qs.filter(department_id=f.dept)
     if f.category:
-        qs = qs.filter(device_model__category__iexact=f.category)
+        # one case rule (Python's casefold, as the screen's parse and FleetFilters.matches), never the database's iexact (ASCII only on
+        # SQLite, UPPER on PostgreSQL): the facility's categories that fold to the one asked
+        from apps.equipment.models import DeviceModel
+
+        asked = f.category.casefold()
+        names = [c for c in DeviceModel.objects.order_by().values_list("category", flat=True).distinct() if c.casefold() == asked]
+        qs = qs.filter(device_model__category__in=names)
     return qs
 
 

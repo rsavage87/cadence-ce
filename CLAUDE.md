@@ -314,7 +314,8 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `os_standing` (two lines, never merged; last days), `standings`, `fleet`, `changes_for_it` (devices added, missing, retired, returned,
   from equipment's history), `QUESTIONS`, `NEVER_WORDS`; every device on site, ours and temporary; fixed queries); `services.py` every
   write (level checks inside; locks: the facility's register lock (`lock_register`), a release, the devices FOR KEY SHARE in tag order
-  (every multi-device writer's order), then security rows; `model_changed` from equipment.update_asset, never taking the register lock,
+  (as contracts and Recorded in error keep them; an import chunk locks in its file's order: the bulk set then answers RACE), then
+  security rows; `model_changed` from equipment.update_asset, never taking the register lock,
   clears a release of the old model); `filters.py` the Fleet's filters (`FleetFilters`, `parse`, `parse_strict` for the API's 400s, `within` for a head figure's link) shared by the screen and the API; `services.running` / `removal_refusal` count devices on site only (a retired device keeps naming a release entered in error). Never kept: credentials, network
   identifiers, SBOM contents, the MDS2 file, advisory text, free text; never in an email, a custom report, the device's own CSV or API
   record, the portal, labels, or Scan. Slice 38: advisories, decisions and controls, software update events and a work order type,
