@@ -993,7 +993,8 @@ def recorded_in_error(incident, *, by=None, today=None) -> Incident:
     A device waiting for its incoming inspection, or held out by a repair, never goes back in service or on loan this way (out of
     service then). An adopted work order is left as it is (the request it was goes on). The held days' late PMs get their reason, as
     any release gives it (the device was held all the same). Locks: the incident, the holds and the late PMs, the work order it
-    opened, then each device's inspections and row, in the devices' order (every work order before any device).
+    opened, then each device's inspections and row, in tag order (every work order before any device; tag order is every multi-device
+    writer's, apps.cybersecurity's bulk set and AEM's pull-in among them, so they wait in turn rather than deadlock).
 
     Review fixes: never a side door around Equipment or Work orders. A hold whose device would go back in service or on loan needs
     Equipment Edit too (as a return to use does: perms.can_return_to_use), and cancelling the work order it opened needs Work orders
@@ -1026,7 +1027,7 @@ def recorded_in_error(incident, *, by=None, today=None) -> Incident:
             if wo.status == WoStatus.IN_PROGRESS:  # in progress cannot be cancelled: back to open first
                 change_status(wo, WoStatus.OPEN, by=by, note=IN_ERROR_NOTE, as_of=today)
             change_status(wo, WoStatus.CANCELLED, by=by, note=IN_ERROR_NOTE, as_of=today)
-    for hold in holds:
+    for hold in sorted(holds, key=lambda h: h.asset.tag):  # the devices' rows in tag order, as every multi-device writer (slice 37's bulk set)
         _release_device(hold, current, kind=Release.IN_ERROR, by=by)
     current.status = Status.IN_ERROR
     current.report_number, current.fda_reported_on, current.manufacturer_reported_on = "", None, None

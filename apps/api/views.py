@@ -224,6 +224,13 @@ class AssetViewSet(EquipmentWrites, TenantViewSet):
     # before its incoming inspection (use_before_inspection), which the drawer never offers them either.
     scoped_actions = frozenset({"list", "retrieve"})
     in_use = "{0.tag} has work orders or service requests, so it cannot be deleted; retire it instead."
+
+    def perform_destroy(self, instance):
+        """The device's row FOR UPDATE first (slice 37's lock order: a device, then its security row), so the cascade that deletes its
+        device security row never waits on that row while a register writer holding the device waits on it."""
+        with transaction.atomic():
+            Asset.objects.select_for_update().filter(pk=instance.pk).first()
+            super().perform_destroy(instance)
     FIXED_ON_UPDATE = {
         "tag": "Asset tags never change: they are on the sticker and in links.",
         "status": "Use POST /api/v1/assets/{id}/status/ to change the status.",

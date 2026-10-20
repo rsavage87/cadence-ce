@@ -14,9 +14,10 @@ The filters (query parameters):
   "security_not_recorded", "os_ended", "os_end_announced".
 - norelease: "1", the devices with no release recorded.
 
-The last three read each device's facts (rules.standings): `FleetFilters.matches` on a device's standing; `narrow` applies the first
-three to a queryset of devices. `parse` is the screen's (an unknown value dropped, never a 500; a department or a category only from those
-the screen offers); `parse_strict` is the API's (an unknown value refused, in words keyed by the parameter: FilterError).
+The last three read each device's facts (rules.standings): `FleetFilters.matches` on a device's standing; `narrow` applies the first three
+to a queryset of devices. `parse` is the screen's (an unknown choice dropped, never a 500; a department id or a category kept as asked, in
+any letter case, so one matching nothing answers none as in the API); `parse_strict` is the API's (an unknown value refused, in words
+keyed by the parameter: FilterError).
 
 `FleetFilters.within(...)`: the filters on screen narrowed to what a head figure counts, or None when the two cannot be written as one
 query (the figure's link is then left off). A figure is counted under the filters on screen, so its link keeps every one of them and adds
@@ -162,7 +163,7 @@ def parse(params, *, departments=(), categories=()) -> FleetFilters:
     dept = str(uuid.UUID(dept)) if _is_uuid(dept) else ""  # any department id: one with no device here answers none, as the API does
     typed = str(params.get("category", "")).strip()
     known = {c.casefold(): c for c in categories}
-    category = known.get(typed.casefold(), typed) if typed and "\x00" not in typed and len(typed) <= 120 else ""
+    category = known.get(typed.casefold(), typed) if typed and "\x00" not in typed else ""  # any length: one matching nothing answers none
     return FleetFilters(whose=one_of("whose", WHOSE), dept=dept, category=category,
                         connected=one_of("connected", CONNECTED_KEYS), standing=one_of("standing", STANDINGS),
                         norelease=params.get("norelease") == NORELEASE)
@@ -193,7 +194,7 @@ def parse_strict(params) -> FleetFilters:
             dept = str(uuid.UUID(value))
         else:
             errors[name] = [DEPARTMENT_WORDS]
-    category = params.get("category") or ""
+    category = str(params.get("category") or "").strip()  # trimmed, as the screen's parse (the same devices for the same address)
     if "\x00" in category:
         errors["category"] = [CATEGORY_WORDS]
         category = ""

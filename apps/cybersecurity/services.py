@@ -7,9 +7,10 @@ system (the seed, tests).
 Lock order (review fixes C2, C3, C13, rounds 2 and 3): the facility's register lock first (lock_register: every writer here, so two
 of them never race, whatever devices or releases they touch); then a release's row (select_for_update of its own row only: never its
 model's, which a join would lock too) when editing, removing, or naming it; then the devices' rows FOR KEY SHARE in tag order
-(_locked_devices), each device's model and status read once held: KEY SHARE waits only for a writer holding a device FOR UPDATE (a model or
-status change: equipment.services.update_asset, set_status, _locked_row), whose result is then read, so the old model's release is refused,
-never saved, while ordinary saves of a device (a contract's Add model, a PM's completion) never wait on it; then the devices' security rows
+(_locked_devices), each device's model and status read once held: KEY SHARE waits for every writer holding a device FOR UPDATE (a model
+or status change: equipment.services.update_asset, set_status, _locked_row; an incoming inspection's pass; a work order's Start or
+completion through workorders.services._lock_for_hold), whose result is then read, so the old model's release is refused, never saved;
+only plain saves of a device (a contract's Add model) never wait on it; then the devices' security rows
 (FOR UPDATE, in asset pk order), a missing one inserted after. These writers never lock work orders. The one outside caller is
 equipment.services.update_asset -> model_changed, which runs with the device's work and row already held and takes the security row last
 (never the register lock: a writer of devices waits on its devices, never on the register). Writers that lock a model's devices FOR UPDATE
@@ -527,7 +528,7 @@ def _gone(asset) -> str:
 
 
 def _named_release(release, model_id, message: str) -> SoftwareRelease:
-    """A versioned, not removed release of the model, locked (the lock order's first row)."""
+    """A versioned, not removed release of the model, locked (the lock order's first row after the register lock)."""
     locked = _locked_release(release, message=message)
     if not locked.version_key or locked.removed_on is not None or locked.device_model_id != model_id:
         raise ValidationError({"release": message})
@@ -536,9 +537,9 @@ def _named_release(release, model_id, message: str) -> SoftwareRelease:
 
 def _locked_devices(ids) -> list:
     """The devices' rows held FOR KEY SHARE in tag order until the transaction ends, then read: after the release's row, before any
-    security row (the lock order, review fixes C2 and C3, round 2). KEY SHARE waits only for a writer holding a device FOR UPDATE (a model
-    or status change: equipment.services.update_asset, set_status, _locked_row), whose result is then read here, never a copy from before
-    the wait; ordinary saves of a device (a contract's Add model, a PM's completion) never wait on it nor it on them. Tag order is the
+    security row (the lock order, review fixes C2 and C3, rounds 2 and 3). KEY SHARE waits for every writer holding a device FOR UPDATE
+    (a model or status change, an inspection's pass, a work order's Start or completion: the module docstring), whose result is then
+    read here, never a copy from before the wait; plain saves of a device (a contract's Add model) never wait on it. Tag order is the
     other multi-device writers' (Asset's ordering: contracts, AEM's pull-in), so the two wait in turn rather than deadlock. Django has no
     FOR KEY SHARE, so it is the same query's SQL with the clause, read as devices in one query; SQLite locks nothing."""
     from django.db import connection
@@ -611,7 +612,7 @@ def record_facts(asset, *, by, today: date | None = None, release=KEEP, release_
     """One device's facts: the versioned release of its model it runs (None clears it, and its day), since when (today by default when
     the release changes; never after today, never before the device was installed; with no release, none), its network fact (blank: as
     the model discloses), and the day checked (today by default; never after today), checked by `by`. Refused for a retired device (or
-    one returned to its owner) and a device or release of another facility. The release is locked first, then the device's row (its
+    one returned to its owner) and a device or release of another facility. The register lock first, then the release, then the device's row (its
     model and status read again there: a model change that commits meanwhile refuses the old model's release, CHOOSE_VERSION), then its
     security row, got or created (a create that loses a race reads the row back, locked). History "Facts recorded" (": release set to
     <version>" or ": release cleared" when it changes). Returns the device's DeviceSecurity row."""
@@ -691,8 +692,8 @@ def record_facts_for(model, assets, *, by, today: date | None = None, release, r
     """Set one model's devices (at most BULK_MAX, all of `model`, on site) to `release` (a versioned, not removed release of `model`),
     since `release_since` (today by default for a device whose release changes; never after today, never before a device was
     installed), with `network` when given, checked today by `by`: each changed device saved with history ("Set with N devices of
-    <model>"), in one transaction; a device already so is left as it is. The release is locked first, then the devices' rows in asset pk
-    order (their models and statuses read there: a model change committed meanwhile is refused in words), then their security rows in
+    <model>"), in one transaction; a device already so is left as it is. The register lock first, then the release, then the devices' rows in
+    tag order (their models and statuses read there: a model change committed meanwhile is refused in words), then their security rows in
     asset pk order (a missing one inserted after its device's row is held). More than BULK_MAX devices are refused, worded by whether a
     department would narrow them (TOO_MANY, or TOO_MANY_IN_ONE when they are all one department's). A security row created by another
     record meanwhile, or PostgreSQL ending the transaction in a deadlock with another writer of these devices, answers RACE, saving

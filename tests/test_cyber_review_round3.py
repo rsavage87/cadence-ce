@@ -572,7 +572,8 @@ def test_round3_parse_keeps_a_department_id_and_a_category_as_asked():
     assert filters.parse({"category": "  ventilators "}, categories=known).category == "Ventilators"
     assert filters.parse({"category": "Sterilizers"}, categories=known).category == "Sterilizers"  # none here: kept, answers none
     assert filters.parse({"category": "a\x00b"}, categories=known).category == ""
-    assert filters.parse({"category": "x" * 121}, categories=known).category == ""
+    assert filters.parse({"category": "x" * 121}, categories=known).category == "x" * 121  # any length, as the API: answers none
+    assert filters.parse_strict({"category": " Infusion pumps "}).category == "Infusion pumps"  # trimmed, as the screen
     assert filters.parse({"dept": str(dept).upper()}).dept == str(dept)  # any department id, in its canonical form
     assert filters.parse({"dept": "nope"}).dept == ""
 
