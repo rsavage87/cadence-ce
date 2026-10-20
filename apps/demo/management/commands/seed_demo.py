@@ -89,12 +89,14 @@ about a few models through equipment.services.update_device_model, as the model 
 SUPPORT_RECORDS), so the Replacement planning report and the device drawer's outlook (apps.capital.priority) have something real: the
 smart beds' expected life lowered to the manufacturer's 10 years, which puts a few of them past it; the infusion pumps' life as the AHA
 guide's; the dialysis machines' manufacturer support ended a few months ago, after their sale ended (the notice on file, checked
-recently: the review flag "Manufacturer support ended" on each, which TechCare services under contract); the vital signs monitors' parts
+recently: the review flag "Manufacturer support ended" on each, which TechCare services under contract); the sterilizers' parts no
+longer available, after their support ended (the must-act flag "Parts no longer available": suggested for the current fiscal year); the
+vital signs monitors' parts
 available until a day announced about two and a half years ahead; and the patient monitors' support checked with Philips, nothing
 announced. The other models read "Support not checked" and "life source not recorded": the report's worklist. The smart bed found beyond
 repair (slice 30) stays retired: kept out of service waiting for its replacement, it would raise the must-act flag "Kept out of use after a
 repair", but the survey binder's repairs section would then ask for it to be retired or repaired (a check the slice 30 demo does not
-have), so the demo shows review flags only. The demo's work begins 180 days back, so failures and service cost read "too little history"
+have), so the sterilizers carry the demo's must-act flag instead. The demo's work begins 180 days back, so failures and service cost read "too little history"
 on every device (35 points unknown beside each score), as for any facility in its first year on Cadence. Calls that draw nothing, after
 the draws: no device's install date moves, and every later draw is as before. The North Campus keeps a calendar fiscal year.
 """

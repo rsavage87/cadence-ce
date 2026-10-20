@@ -465,6 +465,8 @@ def _window_words(p) -> str:
     no work orders in Cadence yet.")."""
     months = p.extras.get("window_months", 0)
     since = f"{p.window_start:%b} {p.window_start.day}, {p.window_start.year}"
+    if p.failures is None and p.age_years is None and p.asset.installed_on is not None:  # stored after today (saved outside the services)
+        return "Failures and service cost are not counted: the install date is after today."
     if p.failures is None and p.extras.get("first_day") is None:
         return f"Failures and service cost have {priority.TOO_LITTLE_HISTORY}: no work orders in Cadence yet."
     if p.failures is None:

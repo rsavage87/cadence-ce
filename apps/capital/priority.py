@@ -125,7 +125,8 @@ class Priority:
     window_years: float  # its length in years (before the 1-year floor)
     failures: int | None  # in the window; None with too little history
     unrecorded: int  # of those, how many had no finding recorded
-    service_cost_year: Decimal | None  # labor, parts, and the contract share a year; None with too little history
+    service_cost_year: Decimal | None  # labor, parts, and the contract share a year; None with too little history or a share that
+    # cannot be worked out (with the lines alone at the top the component is still 1.0, "at least": read the component, not this)
     extras: dict = field(default_factory=dict)  # anything else a door needs, named by the rule's body
 
     @property
@@ -412,7 +413,7 @@ def estimate_for(asset, list_set_on: date | None = None) -> Estimate:
 
 def _score(a, today: date, start: int, inp: _Inputs) -> Priority:
     from apps.equipment.models import AssetStatus
-    from apps.equipment.services import support_status
+    from apps.equipment.services import SUPPORT_CHECK_MONTHS, support_status
     from apps.pm.dates import add_months
     from apps.recalls.models import AlertMatch
     from apps.workorders.models import RepairCheck
@@ -439,8 +440,8 @@ def _score(a, today: date, start: int, inp: _Inputs) -> Priority:
 
     # Manufacturer support
     support = support_status(dm, today)
-    if support.key == "unknown":
-        gaps.add(SUPPORT_UNCHECKED)
+    if dm.support_checked_on is None or dm.support_checked_on < add_months(today, -SUPPORT_CHECK_MONTHS):
+        gaps.add(SUPPORT_UNCHECKED)  # the worklist's words, whatever the notice on record says (final review: the gap and its words agree)
     if support.key == "parts_ended":
         flags.add(PARTS_ENDED)
     if support.key == "support_ended" or (dm.support_ends_on is not None and dm.support_ends_on < today):  # its last day still supported

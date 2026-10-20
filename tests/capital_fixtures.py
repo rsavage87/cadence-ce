@@ -6,9 +6,8 @@ Slice 36, the replacement priority (apps.capital.priority): helpers for its inpu
 - device(model, dept, tag, *, years=None, **fields): a device of ours installed `years` before TODAY (None: no install date).
 - work(asset, type, opened, *, completed=None, cancelled=False, labor=(), parts=(), finding=None, check=None, vendor=False,
   vendor_name=None, imported=False, alert=None): a work order opened on `opened` and, when given, completed (or cancelled); labor
-  (hours, rate) and part (quantity, unit cost) lines; on vendor service, the vendor's name ("Vendor field service" unless given; a live
-  contract pays only for its own vendor's work); the stored finding, checks after repair, and source set as completion and the
-  import would (they are not editable by hand).
+  (hours, rate) and part (quantity, unit cost) lines; on vendor service, the vendor's name ("Vendor field service" unless given); the
+  stored finding, checks after repair, and source set as completion and the import would (they are not editable by hand).
 - recall_match(model, *, classification="Class II", status=IN_PROGRESS): an alert matched to the model, with its status.
 """
 from datetime import date, timedelta

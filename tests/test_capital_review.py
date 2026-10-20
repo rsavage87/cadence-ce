@@ -1,9 +1,9 @@
 """
 Slice 36's review fixes (C1 to C15), each on its finding's own scenario:
 
-C1  a vendor's work is left out of service cost only when the device's live contract pays for it: full service and parts and labor
-    cover the contract's own vendor's work, PM only its PMs, parts only its parts, time and materials nothing; another vendor's job
-    always counts.
+C1  (round 4) every labor and parts line recorded counts, never recall work, plus the share of a contract not ended, whatever the
+    contract covers and whoever did the work: which past lines a contract paid for cannot be told from the records (rounds 1 to 3 tried
+    and each dropped real bills); a visit the contract covers is recorded at $0.
 C2  a live contract with a cost whose share cannot be worked out (no acquisition cost) makes service cost unknown, its 15 points shown
     as unknown (never a silent $0), as the Costs tab says; a $0 contract is a known share of 0.
 C3  an imported repair still open is "still open", never also "imported: not recorded then".
@@ -18,15 +18,9 @@ C12 too little history names the day the records start and the day there will be
 C14 the drawer's drivers round points as the table, the CSV, and the API do (half up).
 C15 support's end and parts' end are their last days (passed the day after); a sale's end is its first day.
 
-Rounds 2 and 3 (after the skeptics, each on the skeptic's own scenario; round 3's rule of whose a line is replaced round 2's):
-R1  whose a line is: the vendor's only on a work order that is vendor service now (labor with no technician, and every part line);
-    labor a technician logged on a vendor repair is ours, and every line of work that is in-house now is ours, whoever billed it before
-    it came back (the contract's vendor, or a third party).
-R2  what a line is: an imported outside cost, total, or in-house time written as a part line on an imported work order is never a part
-    (parts only never leaves it out); the same words typed as a part on live work are a part.
-R3  coverage is monotonic: a wider coverage never pays for less on the same records; a part fitted in-house is never the contract's.
-R4  a contract that costs $0 pays for nothing recorded: its vendor's work counts, its share is a known $0, and the Costs tab agrees.
-R5  a vendor job with no vendor name on a device under a live contract is the contract's vendor's.
+Rounds 2 and 3 (after the skeptics, each on the skeptic's own scenario; their rules for which lines a contract paid for, R1 to R3, R5,
+R14, and R15, were replaced by round 4's C1 and their tests removed):
+R4  a contract that costs $0: its share is a known $0 and the Costs tab agrees.
 R6  a share that cannot be worked out, with the lines counted alone at the top of the scale: known 1.0, "at least N%" (the report's
     cell too); below the top: unknown.
 R7  a sale's, support's, or parts' end from 1950 is accepted (a 1990s milestone is real); the check day from 2000; 0028 refused.
@@ -37,11 +31,6 @@ R11 enough_history_on(start) is the first day window_of counts enough (a Feb 29 
     work order in Cadence yet, the words name no day ("no work orders in Cadence yet").
 R12 recalls done on this device are counted ("2 confirmed recalls done on this device").
 R13 (round 2's compact version cell on every row) was undone by round 3: see C7.
-R14the documented limitations, pinned: a contract whose vendor was renamed since counts the earlier vendor work on top; work moved
-    from one vendor to another is judged by the vendor named now; a part fitted in-house before the repair went to the vendor is the
-    vendor's.
-R15 a contract pays only for work completed on or after its start: a part bought before a parts only contract started, and the same
-    vendor's billed work before a full-service contract was signed, are counted; work completed on its first day is the contract's.
 R16 a life past the calendar, saved outside update_device_model, never raises: the rule's life end is unknown.
 The day is pinned (the services and the views read the facility's clock).
 """
@@ -454,6 +443,23 @@ def test_c9a_an_old_check_is_not_checked_in_the_last_12_months(client, signed_in
     assert gap["devices"] == 2  # and the history fixture's pump, its model never checked
     signed_in("director")
     assert "Manufacturer support not checked in the last 12 months: 2 devices" in client.get("/reports/replace/").content.decode()
+
+
+@pytest.mark.parametrize("dates", [{"support_ends_on": date(2029, 6, 30)}, {"parts_end_on": date(2026, 1, 31)}, {"sale_ended_on": date(2025, 1, 1)}])
+@pytest.mark.parametrize("checked, gap", [(None, True), (date(2021, 1, 5), True), (date(2025, 10, 19), False)])
+def test_final_the_support_gap_is_the_check_day_whatever_the_notice_says(history, dept, model, dates, checked, gap):
+    """Final review: the gap's words are "not checked in the last 12 months", so it is raised on the check day alone, also for a model
+    with an end on record; the support component stays known from the dates."""
+    DeviceModel.objects.filter(pk=model.pk).update(support_checked_on=checked, **dates)
+    p = score(device(model, dept, "CE-1", years=3))
+    assert (P.SUPPORT_UNCHECKED in p.gaps) is gap and p.component(P.SUPPORT).value is not None
+
+
+def test_final_an_install_date_after_today_is_never_a_records_start(history, dept, model):
+    a = device(model, dept, "CE-1", installed_on=TODAY + timedelta(days=400))
+    p = score(a)
+    assert p.age_years is None and p.failures is None
+    assert asset_tabs._window_words(p) == "Failures and service cost are not counted: the install date is after today."
 
 
 def test_c9b_a_confirmed_recall_done_on_this_device_says_so(history, dept, model):
