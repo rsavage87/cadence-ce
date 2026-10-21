@@ -1,0 +1,25 @@
+{% extends "web/base.html" %}
+{% load web %}
+{% block title %}Device security{% endblock %}
+{% block content %}
+{% comment %}Slice 39 (views_cyber_decisions): the Device security screen's Decisions tab, its own address. The filters (state, scope,
+   decision, IT exception number) re-fetch the tab's body (#cy-decisions, which re-fetches itself on cyber-changed) and push the address,
+   which the Export link follows (data-act="with-filters"). A decision's number opens its page in the drawer; the page renders with it
+   open when its address is opened directly. Every word about a decision is apps.cybersecurity.rules'.{% endcomment %}
+<div class="page-head">
+  <div><h1>Device security</h1><p class="sub">What each model's software can do and what its manufacturer discloses, and what this facility knows about each device's software and connection</p></div>
+  <div class="actions">
+    {% query request.GET page=None as sd_q %}<a class="btn" href="{% url 'web:security_decisions_csv' %}{{ sd_q }}" data-act="with-filters" data-base="{% url 'web:security_decisions_csv' %}" download title="Download the decisions in this list as CSV, one row each">{% icon "dl" %} Export</a>
+  </div>
+</div>
+{% include "web/_cyber_tabs.html" %}
+<form class="toolbar cy-filters" id="sd-filters" method="get" action="{{ list_url }}" role="search"
+      hx-get="{{ list_url }}" hx-trigger="change, submit, input changed delay:300ms from:#sd-ref" hx-target="#cy-decisions" hx-swap="outerHTML" hx-push-url="true">
+  <label class="field"><span>State</span><select name="state" aria-label="State">{% for v, l in options.states %}<option value="{{ v }}"{% if f.state == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+  <label class="field"><span>Scope</span><select name="scope" aria-label="Scope">{% for v, l in options.scopes %}<option value="{{ v }}"{% if f.scope == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+  <label class="field"><span>Decision</span><select name="response" aria-label="Decision">{% for v, l in options.responses %}<option value="{{ v }}"{% if f.response == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+  <label class="field"><span>IT exception</span><input id="sd-ref" type="search" name="ref" value="{{ f.ref }}" placeholder="Number, or part of it" aria-label="IT exception number" autocomplete="off" spellcheck="false"></label>
+  <noscript><button class="btn sm" type="submit">Apply</button></noscript>
+</form>
+{% include "web/_cyber_decisions.html" %}
+{% endblock %}

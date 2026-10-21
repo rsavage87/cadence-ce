@@ -41,6 +41,64 @@ def _user(tenant, slug, email, **extra):
     return User.objects.create_user(username=email, email=email, password=PASSWORD, tenant=tenant, role=role, **extra)
 
 
+# --- slice 39: security decisions on the seed (read as the suite's role, inside the facility) -------------------------------------------
+
+def _record_links(today) -> list:
+    """The scopes Needs attention offers Record decision for (rules.Link, a scope with no decision yet), as the system reads them."""
+    from apps.cybersecurity import rules
+
+    return [row.record for h in rules.needs_attention(today, user=None).headings for row in h.rows
+            if row.record is not None and row.record.query[0][0] != "supersedes"]
+
+
+def _record_address(link) -> str:
+    from urllib.parse import urlencode
+
+    return f"/security/decisions/new/?{urlencode([(k, str(v)) for k, v in link.query])}"
+
+
+def _scope_of(link) -> dict:
+    """record_decision's scope for a Record decision link (asset=<tag>, release=<id>, or model=<id>)."""
+    from apps.cybersecurity.models import SoftwareRelease
+
+    key, value = link.query[0]
+    if key == "asset":
+        return {"asset": Asset.objects.get(tag=value)}
+    if key == "release":
+        return {"release": SoftwareRelease.objects.get(pk=value)}
+    return {"device_model": DeviceModel.objects.get(pk=value)}
+
+
+def _seeded_decision(tenant):
+    """(a live security decision, its sentence, its first device's tag or "", Record decision's address for a scope Needs attention
+    offers). The seed's first live decision; when the seed has none yet, one recorded here as the system on the first scope offered, with
+    the reasons that hold for it (rules.support_need over its devices)."""
+    from django.utils import timezone
+
+    from apps.cybersecurity import decisions, rules
+    from apps.cybersecurity.models import AcceptedBy, DecisionResponse, DeviceSecurityDecision
+
+    with tenant_context(tenant):
+        today = timezone.localdate()
+        offered = _record_links(today)
+        assert offered, "the seed has devices past their support with no decision (Needs attention's Record decision)"
+        live = DeviceSecurityDecision.objects.filter(ended_on__isnull=True).order_by("number").first()
+        if live is None:
+            scope = _scope_of(offered[0])
+            if "asset" in scope:
+                devices = rules.scope_devices(asset=scope["asset"])
+            elif "release" in scope:
+                devices = rules.scope_devices(device_model=scope["release"].device_model_id, release=scope["release"])
+            else:
+                devices = rules.scope_devices(device_model=scope["device_model"])
+            needs = [rules.support_need(s, today) for s in rules.standings(devices, today).values()]
+            reasons = [k for k in rules.REASONS if any(n is not None and n.decidable and k in n.reasons for n in needs)]
+            live = decisions.record_decision(**scope, reasons=reasons, response=DecisionResponse.KEEP_WITHOUT_ADDED_CONTROLS,
+                                             accepted_by=AcceptedBy.CE_LEADER, by=None, today=today)
+        held = rules.decision_devices(live, today)
+        return live, rules.decision_words(live, today), held[0].asset.tag if held else "", _record_address(offered[0])
+
+
 # --- the policies themselves ---------------------------------------------------------------------------------------------------
 
 def test_the_database_is_postgres_and_the_suite_bypasses_the_policies(db):
@@ -198,6 +256,16 @@ def test_every_screen_renders_under_the_policies(client, seeded):
     urls += [url for url in shown if url not in modals and url not in urls]
     log = ["/users/log/?area=software_updates", "/users/log/export.csv?area=software_updates", "/users/log/print/?area=software_updates"]
     urls += log
+    # Slice 39: the Decisions tab (Needs attention and the list) and its CSV, a decision's page (the full page: the tab with the drawer
+    # open), its print and devices' CSV, the change log's decisions area, and the modals (Record decision for a scope Needs attention
+    # offers, Review and renew, End, Entered in error): a live decision of the seed's, or one recorded here as the system when it has none
+    decision, words, tag, offered = _seeded_decision(seeded)
+    page = f"/security/decisions/{decision.number}/"
+    shown.update({"/security/decisions/": [decision.number], "/security/decisions/export.csv": [decision.number], page: [decision.number, words],
+                  f"{page}print/": [words], f"{page}devices.csv": [tag], "/users/log/?area=device_security_decisions": [decision.number]})
+    urls += ["/security/decisions/", "/security/decisions/export.csv", page, f"{page}print/", f"{page}devices.csv",
+             "/users/log/?area=device_security_decisions"]
+    modals += [offered, f"/security/decisions/new/?supersedes={decision.number}", f"{page}end/", f"{page}in-error/"]
     as_app_role()
     assert client.get("/search/?q=CE-1")["Location"] == "/equipment/?q=CE-1"
     for url in urls + modals:
@@ -497,6 +565,63 @@ def test_software_updates_written_under_the_policies(client, seeded):
     mine, was = after[seeded.slug], before[seeded.slug]
     assert mine["work orders"] - was["work orders"] == mine["updates"] - was["updates"] == 1 + batch
     assert all(mine[k] > was[k] for k in ("work order history", "update history", "record history")), (was, mine)
+
+
+def test_security_decisions_written_under_the_policies(client, seeded):
+    """Slice 39: the decision doors' writes as the runtime role, each landing in this facility only (stamped with the request's tenant and
+    passing WITH CHECK, with their history; the other facility's rows untouched): Record decision on a scope Needs attention offers (its
+    reasons read from the modal's hidden values, as a browser sends them), Review and renew, Entered in error, Record decision again on
+    the scope, and End."""
+    import re
+
+    from django.utils import timezone
+
+    from apps.cybersecurity.models import DecisionEnd, DeviceSecurityDecision
+
+    north = Tenant.objects.exclude(pk=seeded.pk).get()  # the seed's second facility, Kim's too
+
+    def counts(tenant) -> dict:
+        with tenant_context(tenant):
+            return {"decisions": DeviceSecurityDecision.objects.count(),
+                    "history": DeviceSecurityDecision.history.filter(tenant_id=tenant.pk).count()}
+
+    with tenant_context(seeded):
+        today = timezone.localdate()
+        url = _record_address(_record_links(today)[0])
+    before = {t.slug: counts(t) for t in (seeded, north)}
+    client.force_login(User.objects.get(username="kim@riverside.example"))
+    as_app_role()
+    hx = {"HTTP_HX_REQUEST": "true"}
+    body = client.get(url, **hx).content.decode()
+    reasons = re.findall(r'<input type="hidden" name="reasons" value="(\w+)">', body)
+    assert reasons and "<form" in body, body[:500]
+    fields = {"reasons": reasons, "response": "keep_without_added_controls", "accepted_by": "it_security", "decided_on": today.isoformat()}
+
+    def saved(r):
+        assert r.status_code == 200 and r.get("HX-Retarget") == "#drawer", r.content.decode()[:500]
+
+    def stored(reference):
+        with tenant_context(seeded):
+            row = DeviceSecurityDecision.objects.get(exception_reference=reference)
+            assert row.tenant_id == seeded.pk
+            return row
+
+    saved(client.post(url, {**fields, "exception_reference": "DEMO-EX-9001"}, **hx))
+    first = stored("DEMO-EX-9001")
+    saved(client.post(f"/security/decisions/new/?supersedes={first.number}", {**fields, "exception_reference": "DEMO-EX-9002"}, **hx))
+    renewed = stored("DEMO-EX-9002")
+    saved(client.post(f"/security/decisions/{renewed.number}/in-error/", {}, **hx))
+    saved(client.post(url, {**fields, "exception_reference": "DEMO-EX-9003"}, **hx))
+    third = stored("DEMO-EX-9003")
+    saved(client.post(f"/security/decisions/{third.number}/end/", {}, **hx))
+    with tenant_context(seeded):
+        ends = {d.number: (d.end_reason, d.supersedes_id) for d in DeviceSecurityDecision.objects.filter(pk__in=[first.pk, renewed.pk, third.pk])}
+    assert ends == {first.number: (DecisionEnd.SUPERSEDED, None), renewed.number: (DecisionEnd.ENTERED_IN_ERROR, first.pk),
+                    third.number: (DecisionEnd.NO_LONGER_NEEDED, None)}
+    after = {t.slug: counts(t) for t in (seeded, north)}
+    assert after[north.slug] == before[north.slug]  # the other facility: nothing written, nothing changed
+    mine, was = after[seeded.slug], before[seeded.slug]
+    assert mine["decisions"] - was["decisions"] == 3 and mine["history"] - was["history"] >= 6, (was, mine)
 
 
 # --- management commands -------------------------------------------------------------------------------------------------------

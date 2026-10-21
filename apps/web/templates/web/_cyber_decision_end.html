@@ -1,0 +1,21 @@
+{% load web %}
+{% comment %}Slice 39: End (no longer needed) and Entered in error (views_cyber_decisions._ending; decisions.end_decision and
+   mark_entered_in_error; Device security Approve and Equipment View). Says what it does before it is done: the decision stays on record
+   as it was, with its history, and governs no device from today. A decision already ended gets the modal saying so; the service's
+   refusal (a lock conflict) comes back at the top.{% endcomment %}
+<div class="modal-h"><h2>{{ d.number }}: {% if kind == "end" %}end it{% else %}entered in error{% endif %}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note" role="alert">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="sd-end-form" hx-post="{{ action }}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]">
+  <div class="form">
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    <div class="full cy-in-error">
+      <p>{{ scope_words }}.</p>
+      <p>{{ words }}</p>
+    </div>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn {% if kind == 'end' %}primary{% else %}danger{% endif %}" type="submit">{% if kind == "end" %}End it{% else %}Mark entered in error{% endif %}</button></div>
+</form>
+{% endif %}

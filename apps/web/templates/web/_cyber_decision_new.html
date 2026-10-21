@@ -1,0 +1,50 @@
+{% load web %}
+{% comment %}Slice 39: Record decision (views_cyber_decisions.decision_new; decisions.record_decision; Device security Approve and Equipment
+   View). The scope is the door's (the modal's address); the reasons are what holds now for its devices, as words, sent as hidden values
+   (a change meanwhile is refused under them, and the modal comes back with them as they hold then). Then the decision, the controls (the
+   support controls as checkboxes with their words; never "taken off the network": the hint says to record that on the device), IT's
+   reference for them, the plan with its day and owner, who accepted it, IT's exception number, the day decided, and the review day
+   (blank for the default, each response's rule in words). A review day already passed is said once before it is saved. Each refusal
+   comes back under its field, one about the scope at the top. What cannot be recorded now gets the modal saying why (and Review and
+   renew for a decision already in force).{% endcomment %}
+<div class="modal-h"><h2>{% if scope.old %}Review and renew {{ scope.old.number }}{% else %}Record decision{% endif %} · {{ scope_words }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note" role="alert">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button>{% if renew_url %}<button class="btn primary" type="button" hx-get="{{ renew_url }}" hx-target="#modal-card">Review and renew</button>{% endif %}</div>
+{% else %}
+<form id="sd-form" class="sd-form" hx-post="{{ action }}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    <p class="full hint">For devices past the manufacturer's or the OS vendor's support that stay in use, or whose end is announced within 12 months. IT's exception stays in IT's system; record its number here.{% if scope.old %} Recording this ends {{ scope.old.number }} as superseded.{% endif %}</p>
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    <div class="full fld sd-reasons"{% if form.reasons.errors %} aria-describedby="sd-reasons_error"{% endif %}>
+      <span class="label">Reasons, as they hold now</span>
+      {% for k in now.reasons %}<input type="hidden" name="reasons" value="{{ k }}">{% endfor %}
+      <ul class="cy-rels">{% for words in reason_words %}<li>{{ words }}</li>{% empty %}<li>None hold now.</li>{% endfor %}</ul>
+      {% if now.lines %}<span class="hint">{% for line in now.lines %}{{ line }}{% if not forloop.last %}; {% endif %}{% endfor %}</span>{% endif %}
+      {% if form.reasons.errors %}<span class="err" id="sd-reasons_error">{{ form.reasons.errors|striptags }}</span>{% endif %}
+    </div>
+    <fieldset class="full cy-fs"{% if form.response.errors %} aria-describedby="sd-response_error"{% endif %}>
+      <legend>{{ form.response.label }}</legend>
+      <div class="radio">{% for radio in form.response %}<label for="{{ radio.id_for_label }}">{{ radio.tag }}<span>{{ radio.choice_label }}</span></label>{% endfor %}</div>
+      {% if form.response.errors %}<span class="err" id="sd-response_error">{{ form.response.errors|striptags }}</span>{% endif %}
+    </fieldset>
+    <fieldset class="full cy-fs"{% if form.controls.errors %} aria-describedby="sd-controls_error"{% endif %}>
+      <legend>{{ form.controls.label }}</legend>
+      <div class="sd-checks">{% for box in form.controls %}<label class="check-row" for="{{ box.id_for_label }}">{{ box.tag }} {{ box.choice_label }}</label>{% endfor %}</div>
+      <span class="hint" id="sd-controls_helptext">{{ form.controls.help_text }} {{ hint }}</span>
+      {% if form.controls.errors %}<span class="err" id="sd-controls_error">{{ form.controls.errors|striptags }}</span>{% endif %}
+    </fieldset>
+    {% include "web/_asset_field.html" with field=form.controls_reference cls="full" %}
+    {% include "web/_asset_field.html" with field=form.plan %}
+    {% include "web/_asset_field.html" with field=form.plan_by %}
+    {% include "web/_asset_field.html" with field=form.plan_owner cls="full" %}
+    {% include "web/_asset_field.html" with field=form.accepted_by %}
+    {% include "web/_asset_field.html" with field=form.exception_reference %}
+    {% include "web/_asset_field.html" with field=form.decided_on %}
+    {% include "web/_asset_field.html" with field=form.review_by %}
+    {{ form.review_passed }}
+    {% if note %}<p class="full note warn" role="status">{{ note }} Save again to record it.</p>{% endif %}
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Record the decision</button></div>
+</form>
+{% endif %}

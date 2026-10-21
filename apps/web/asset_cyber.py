@@ -17,11 +17,22 @@ owner (its facts stay as they were, with its history).
   answers are named by their questions in words, never by a form's question ID; the MDS2 sentence (rules.MDS2_SENTENCE) under it. A
   model whose MDS2 is on file only for other releases says which ("The model's MDS2 on file for: 9.19.2").
 - Its own history: the device's DeviceSecurity row's changes (the device_security area, apps.web.history_tabs), its Show older served by
-  the Record facts URL (?history=1&older=), since the drawer's own ?older= is the device's History tab's.
+  the Record facts URL (?history=1&older=), since the drawer's own ?older= is the device's History tab's. A device-scope security
+  decision's changes are not in it (slice 39: history_tabs.RELATED keys a related area by the record's own id, and this record is the
+  DeviceSecurity row, not the device): the decision's page has its own History, linked from the tab.
+- Slice 39, the device's support decision (rules.device_lines; `decision_lines`, web/_cyber_decision_device.html): its support need
+  (past the manufacturer's or the OS vendor's support; or, as information, an end announced within 12 months, or the OS vendor's support
+  ended while the manufacturer's security updates continue), its response lines (an update open to a supported release, and one done with
+  the version not confirmed with Confirm version, each work order's number a link with Work orders View; the governing decision's sentence
+  with its number linking to its page and its state; or "No decision recorded"), and, for permissions.can_decide with a need a decision
+  answers, Record decision for this device (Review and renew when its own decision governs it).
 
-Words: never the ones rules.NEVER_WORDS lists (tests/test_cyber_never.py scans the tab with it).
+Words: never the ones rules.NEVER_WORDS lists (tests/test_cyber_never.py scans the tab with it); the decision's lines never the ones
+rules.DECISION_NEVER_WORDS lists either (tests/test_cyber_decisions_web.py).
 """
 from __future__ import annotations
+
+from urllib.parse import urlencode
 
 from django.urls import reverse
 
@@ -146,10 +157,56 @@ def facts_url(asset) -> str:
     return reverse("web:cybersecurity_facts", args=[asset.tag])
 
 
+NEED_TONES = {rules.NEEDS: "warn", rules.ENDING: "info", rules.EXTENDED: "neutral"}
+
+
+def decision_url(number: str) -> str:
+    return reverse("web:security_decision", args=[number])
+
+
+def record_decision_url(**query) -> str:
+    """Record decision's address (views_cyber_decisions.decision_new) for this device's scope or its renewal, answering here."""
+    return f"{reverse('web:security_decision_new')}?{urlencode({**query, 'from': 'device'})}"
+
+
+def _split(words: str, number: str, url: str) -> dict:
+    """A response line split around the number it names, so the number can be a link: {"before", "number", "after", "url"}."""
+    if number and number in words:
+        before, after = words.split(number, 1)
+        return {"before": before, "number": number, "after": after, "url": url}
+    return {"before": words, "number": "", "after": "", "url": ""}
+
+
+def decision_lines(request, asset, dl: rules.DeviceLines, today) -> dict | None:
+    """The Security tab's support decision (slice 39) from rules.device_lines, or None when the device has no need and no decision
+    governs it: {"need", "need_tone", "rows" (each {"kind", "line" split around its number, "state", "tone", "confirm_url"}),
+    "record_url", "renew_url"}. No query beyond device_lines'."""
+    if dl.need is None and dl.decision is None:
+        return None
+    can_confirm = cyber_perms.can_edit_devices(request.user) and asset.status != AssetStatus.RETIRED
+    rows = []
+    for r in dl.responses:
+        row = {"kind": r.kind, "line": _split(r.words, "", ""), "state": "", "tone": "", "confirm_url": ""}
+        if r.kind in (rules.UPDATE_OPEN, rules.UPDATE_NOT_CONFIRMED):
+            row["line"] = _split(r.words, r.number, reverse("web:wo", args=[r.number]) if dl.link_work_orders else "")
+            if r.kind == rules.UPDATE_NOT_CONFIRMED and can_confirm and r.update is not None:
+                row["confirm_url"] = reverse("web:cybersecurity_update_confirm", args=[r.update.pk])
+        elif r.kind == rules.DECIDED:
+            row.update(line={"before": "", "number": r.number, "after": f" · {r.words}", "url": decision_url(r.number)},
+                       state=rules.DECISION_STATE_WORDS[rules.decision_state(r.decision, today)], tone="ok" if r.covers else "warn")
+        rows.append(row)
+    own = dl.decision is not None and rules.scope_kind(dl.decision) == rules.DEVICE_SCOPE
+    return {"need": dl.need, "need_tone": NEED_TONES.get(dl.need.key, "neutral") if dl.need is not None else "", "rows": rows,
+            "record_url": record_decision_url(asset=asset.tag) if dl.can_record and not own else "",
+            "renew_url": record_decision_url(supersedes=dl.decision.number) if dl.can_record and own else ""}
+
+
 def tab_context(request, asset, today) -> dict:
-    """{"cyber": ...} for the device drawer's Security tab (the caller offers the tab only to can_view_devices, never scoped)."""
+    """{"cyber": ...} for the device drawer's Security tab (the caller offers the tab only to can_view_devices, never scoped). The
+    device's standing is rules.device_lines' (slice 39), read once for its facts and its support decision."""
     user = request.user
-    s = rules.device_standing(asset, today)
+    dl = rules.device_lines(asset, today, user=user)
+    s = dl.standing
     lines = [_row("Software release", s.release_words), _row("Connected here", s.connection.words),
              _row("Manufacturer", s.security.words, wide=True), _row("Operating system", s.os.words, wide=True),
              _row("Checked", _checked(s))]
@@ -160,4 +217,5 @@ def tab_context(request, asset, today) -> dict:
     return {"cyber": {"standing": s, "lines": lines, "card": release_card(s.facts, _others(asset, s)),
                       "mds2_sentence": rules.MDS2_SENTENCE, "gone": gone, "can_record": cyber_perms.can_edit_devices(user) and not gone,
                       "facts_url": facts_url(asset), "model_url": reverse("web:cybersecurity_model", args=[asset.device_model_id]),
-                      "hist": hist, "updates": asset_cyber_updates.context(request, asset, today)}}  # slice 38
+                      "hist": hist, "updates": asset_cyber_updates.context(request, asset, today),  # slice 38
+                      "decision": decision_lines(request, asset, dl, today)}}  # slice 39
