@@ -14,7 +14,8 @@ timeline when a system past its support stays in use (rules.HICP_DECISIONS, said
   reasons recorded and what holds now, the controls, the plan, who accepted it, IT's exception number, who recorded it and the day,
   the review, the end, supersedes and superseded by, the devices on site in its scope (tag, serial, model, department, connection,
   release, response), and History (the device_security_decisions area). Review and renew, End, and Entered in error for those who may
-  decide, on a live one. Print (a new tab, print_base) and the devices' CSV.
+  decide, on a live one: Review and renew only while the renewal would be taken, else decisions.refusal_for's words say why (a fact to
+  record first; or nothing in its scope needing one, End then the main action). Print (a new tab, print_base) and the devices' CSV.
 - Record decision (`/security/decisions/new/`, a modal): its scope from the address (asset=<tag>, release=<id>, model=<id>, or
   supersedes=<number> for Review and renew), and `from=device` (the device drawer's Security tab) or `from=panel` (a release row of the
   model panel, with the panel's filters) for where the save answers; otherwise the new decision's page. What cannot be recorded now (a
@@ -323,8 +324,10 @@ def _page_context(request, d) -> dict:
     kind = rules.scope_kind(d)
     live = d.ended_on is None
     may = cyber_perms.can_decide(user) and live
-    # Review and renew only while its renewal would be taken (review 39 F15: a decision no device in its scope needs now offers End)
-    renewable = may and decisions.refusal_for(**_scope_kwargs(d), supersedes=d, today=today) is None
+    # Review and renew only while its renewal would be taken (review 39 F15); else the refusal's words say why (skeptics S3: a fact to
+    # record first, or nothing in its scope needing one, when End is what answers it)
+    refusal = decisions.refusal_for(**_scope_kwargs(d), supersedes=d, today=today) if may else None
+    renewable = may and refusal is None
     can_wo = user.has_level(Module.WORKORDERS, Level.VIEW)
     url = decision_url(d.number)
     can_history = history_tabs.allowed(user, AREA)
@@ -345,6 +348,7 @@ def _page_context(request, d) -> dict:
         "earlier": d.supersedes, "later": later, "sd_devices": rows, "governed_count": sum(1 for r in rows if r["governed"]),
         "checks": [{"words": c.words, "info": c.info, "end": may and c.action == "end"} for c in checks],
         "can_decide": may, "renew_url": record_url(supersedes=d.number) if renewable else "",
+        "renew_refusal": refusal.words if refusal is not None else "", "end_answers": refusal is not None and refusal.ends_it,
         "end_url": reverse("web:security_decision_end", args=[d.number]) if may else "",
         "in_error_url": reverse("web:security_decision_in_error", args=[d.number]) if may else "",
         "print_url": people.with_facility(reverse("web:security_decision_print", args=[d.number]), request.tenant),
@@ -537,17 +541,18 @@ def _now(scope: Scope, today: date) -> Now:
 def _blocker(request, scope: Scope, now: Now) -> tuple[str, str, str]:
     """(why a decision cannot be recorded for the scope now, or ""; Review and renew's address for the live decision in force for it,
     or ""; End's address for the live decision being renewed when nothing in its scope needs one now (review 39 F15: renewing it is
-    refused, ending it is what is left), or ""), said before it is tried: decisions.refusal_for, the service's own checks in its order and
-    words. Review and renew's address keeps where the save answers and the rest of this address (_carried: a release row's panel filters,
-    so the renewal saved answers with the panel as it was opened)."""
+    refused, ending it is what is left; never for a fact not recorded, which the words say to record first: Refusal.ends_it, skeptics
+    S3), or ""), said before it is tried: decisions.refusal_for, the service's own checks in its order and words. Review and renew's
+    address keeps where the save answers and the rest of this address (_carried: a release row's panel filters, so the renewal saved
+    answers with the panel as it was opened)."""
     refusal = decisions.refusal_for(**scope.kwargs(), supersedes=scope.old, today=now.today)
     if refusal is None:
         return "", "", ""
     if refusal.live is not None:
         return refusal.words, record_url(supersedes=refusal.live.number, **{"from": scope.origin}, **_carried(request)), ""
     old = scope.old
-    end = reverse("web:security_decision_end", args=[old.number]) if old is not None and old.ended_on is None else ""
-    return refusal.words, "", end
+    ends = old is not None and old.ended_on is None and refusal.ends_it
+    return refusal.words, "", reverse("web:security_decision_end", args=[old.number]) if ends else ""
 
 
 def owners(request) -> list:

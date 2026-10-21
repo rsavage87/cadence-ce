@@ -131,7 +131,8 @@ def test_an_extended_device_under_a_model_decision_is_no_check(floor):
     assert "checks" not in headings()
     # naming the OS is refused, as before (it is no reason that holds): nothing asks for it any more
     assert refused(device_model=floor.model, supersedes=d, reasons=["security_updates", "os_support"]) == {
-        "reasons": "Choose the reasons that hold now: the manufacturer's security updates or support ended, or their end is announced."}
+        "reasons": "Choose the reasons that hold now: the manufacturer's security updates, support, or parts ended, or their end is "
+                   "announced."}
 
 
 def test_an_end_entered_later_is_worded_as_known_never_since(floor):
@@ -161,8 +162,8 @@ def test_a_device_joining_long_past_its_support_is_worded_as_known(floor, dept):
         rules.CHECK_ALSO_ENDED: "The OS vendor's support has ended, and this decision does not name it",
         rules.CHECK_JOINED: "1 device joined since: P-9"}
     assert not [w for w in rules.ALSO_ENDED.values() if "since" in w]
-    assert rules.ALSO_ENDED[rules.SECURITY_UPDATES] == ("The manufacturer's security updates or support have ended, and this decision does "
-                                                        "not name them")
+    assert rules.ALSO_ENDED[rules.SECURITY_UPDATES] == ("The manufacturer's security updates, support, or parts have ended, and this "
+                                                        "decision does not name them")
 
 
 # --- F1: the devices a decision governed when recorded ------------------------------------------------------------------------------
@@ -258,13 +259,17 @@ def test_the_review_words_for_a_temporary_device_say_the_rule_it_computes(floor,
 
 # --- F5: network identifiers in IT's references ----------------------------------------------------------------------------------
 
-ADDRESS_LIKE = ["001A-2B3C-4D5E", "0011-2233-4455", "001a2b-3c4d5e", "00_1A_2B_3C_4D_5E", "001A_2B3C_4D5E", "10.20.30.40#443",
+ADDRESS_LIKE = ["001A-2B3C-4D5E", "001a2b-3c4d5e", "00_1A_2B_3C_4D_5E", "001A_2B3C_4D5E", "10.20.30.40#443",
                 "10.20.30.40-443", "10.20.30.40_8080", "10.20.30.0-24", "10.20.30.40.443", "10.20.30.40-10.20.30.50", "FW-10.20.30.40",
                 "fw-10.20.30.40#8443",
+                # a MAC joined on within the token (skeptics S5)
+                "EX-001A-2B3C-4D5E", "FW-00-1A-2B-3C-4D-5E",
                 # as before
                 "001A2B3C4D5E", "192.168.1.10/32", "00-1A-2B-3C-4D-5E", "001A.2B3C.4D5E", "10.20.30.40", "VLAN120", "tcp-443"]
 TOKENS = ["CHG0012345", "DEMO-EX-1042", "EX-1042", "RITM0012345", "2026-0042", "INC-20261021-7", "GRC_EX_2026_17", "123456789012",
-          "SR-00017", "EX-1.2"]
+          "SR-00017", "EX-1.2",
+          # a ticket of decimal digits in a MAC's layout: a MAC needs a hex letter there (skeptics S6)
+          "0011-2233-4455", "2026-1021-0042", "202610-000042", "2026_1021_0042", "000123-000456", "100200-300400"]
 
 
 def test_the_references_refuse_every_layout_of_a_network_identifier(floor):
@@ -306,9 +311,10 @@ def test_a_releases_refusals_name_a_decision_only_to_its_readers(tenant, floor, 
         assert refused(services.remove_release, lone, by=user) == {"release": unread_live}
         assert refused(services.update_release, lone, by=user, version="4.1 (demo)") == {"version": unread_names}
     named_live, named_version = "SD-26-0001 is decided for this release: end it first.", "SD-26-0001 names this version: add the new version instead."
-    for user in (reader, None):  # a reader of decisions, and the system
-        assert services.removal_refusal(lone, by=user) == named_live
-        assert refused(services.remove_release, lone, by=user) == {"release": named_live}
+    read_live = "SD-26-0001 is decided for this release: ending it needs Device security Approve and Equipment View."  # skeptics S9
+    for user in (reader, None):  # a reader of decisions (who may not end one), and the system
+        assert services.removal_refusal(lone, by=user) == (read_live if user is reader else named_live)
+        assert refused(services.remove_release, lone, by=user) == {"release": read_live if user is reader else named_live}
         assert refused(services.update_release, lone, by=user, version="4.1 (demo)") == {"version": named_version}
     assert services.removal_refusal(lone) == named_live
     end_decision(DeviceSecurityDecision.objects.get(), by=None, today=TODAY)  # ended: still names the version, for anyone
@@ -382,12 +388,12 @@ def test_a_model_whose_parts_ended_is_worded_by_its_own_standing(floor):
     (temp,) = found["temporary"].rows
     assert temp.words == ("T-1 (rental, Summit Medical Rentals; due back Nov 10, 2026): parts no longer available after Aug 22, 2026 "
                           "(the model's); its owner installs updates: ask the owner to update it, or return it")
-    assert found["no_decision"].words == ("Security updates, manufacturer support, or OS support ended, connected or able to connect: no "
-                                          "decision recorded")
+    assert found["no_decision"].words == ("Security updates, manufacturer support or parts, or OS support ended, connected or able to "
+                                          "connect: no decision recorded")
     on20 = next(r for r in found["no_decision"].rows if "2.0 (demo)" in r.words)
     assert on20.words == "Alaris 8015 PCU on 2.0 (demo): 1 device of ours; parts no longer available after Aug 22, 2026 (the model's)"
     d = record(asset=floor.d["P-4"])
-    assert rules.reason_words(d) == ["The manufacturer's security updates or support ended, or their end is announced"]
+    assert rules.reason_words(d) == ["The manufacturer's security updates, support, or parts ended, or their end is announced"]
     assert not [w for w in (temp.words, *rules.REASONS.values(), *rules.ATTENTION_HEADINGS.values()) if never(w)]
 
 

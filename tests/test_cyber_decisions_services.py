@@ -250,7 +250,8 @@ def test_the_scope_needs_a_device_past_its_support(floor, dept, vent_model):
     facts(floor.d["P-3"], ext)
     assert refused(asset=floor.d["P-3"]) == {"asset": "P-3: the manufacturer's security updates continue (announced to end Mar 31, 2028): "
                                                       "a decision can be recorded once their end is within 12 months."}
-    assert refused(release=ext) == {"release": decisions.NONE_NEEDED}
+    assert refused(release=ext) == {"release": "P-3: the manufacturer's security updates continue (announced to end Mar 31, 2028): "
+                                               "a decision can be recorded once their end is within 12 months."}  # skeptics S7
     empty = release(floor.model, "4.0 (demo)", security_updates_end_on=TODAY - DAY)
     assert refused(release=empty) == {"release": "No device of ours on site runs 4.0 (demo)."}
     facts(floor.d["T-1"], empty)  # a rental on it: never in a release's scope
@@ -263,14 +264,14 @@ def test_the_scope_needs_a_device_past_its_support(floor, dept, vent_model):
 
 
 def test_the_reasons_are_those_that_hold_now(floor):
-    words = "the manufacturer's security updates or support ended, or their end is announced"
+    words = "the manufacturer's security updates, support, or parts ended, or their end is announced"
     assert refused(asset=floor.d["P-1"], reasons=["os_support"]) == {"reasons": f"Choose the reasons that hold now: {words}."}
     assert refused(asset=floor.d["P-1"], reasons=["security_updates", "os_support"]) == {
         "reasons": f"Choose the reasons that hold now: {words}."}
     floor.r52.os_family, floor.r52.os_support_ends_on = OsFamily.LINUX, TODAY - DAY
     floor.r52.save()
-    both = ("Choose the reasons that hold now: the manufacturer's security updates or support ended, or their end is announced; the OS "
-            "vendor's published support ended, or its end is announced.")
+    both = ("Choose the reasons that hold now: the manufacturer's security updates, support, or parts ended, or their end is announced; "
+            "the OS vendor's published support ended, or its end is announced.")
     assert refused(asset=floor.d["P-1"], reasons=["security_updates"]) == {"reasons": both}  # every reason that ended is named
     floor.r52.os_support_ends_on = TODAY + 100 * DAY
     floor.r52.save()
@@ -496,7 +497,7 @@ def test_a_decisions_history_reads_in_words(floor, make_user):
     changes = {c.field: c.after for c in added.changes}
     assert changes["Controls"] == ("Traffic limited to the ports and hosts it needs (firewall or access list); Controls recorded in IT's "
                                    "system (with its reference)")
-    assert changes["Reasons"] == "The manufacturer's security updates or support ended, or their end is announced"
+    assert changes["Reasons"] == "The manufacturer's security updates, support, or parts ended, or their end is announced"
     assert changes["Decision"] == "Keep in use with controls" and changes["Plan"] == "Update planned, not opened yet"
     assert changes["Accepted by"] == "IT security or the CISO" and changes["IT's change or exception number for the controls"] == "CHG0012345"
     assert "Number" not in changes and "Governed ids" not in changes
