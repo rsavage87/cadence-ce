@@ -52,7 +52,7 @@ KEEP_WITH, KEEP_WITHOUT, OUT_OF_USE = (DecisionResponse.KEEP_WITH_CONTROLS, Deci
 
 def never(text: str) -> list:
     """rules.NEVER_WORDS found in `text`, as whole words in any letter case (none may be)."""
-    return [w for w in rules.NEVER_WORDS if re.search(rf"(?<![A-Za-z]){re.escape(w)}(?![A-Za-z])", text, re.IGNORECASE)]
+    return [w for w in rules.DECISION_NEVER_WORDS if re.search(rf"(?<![A-Za-z]){re.escape(w)}(?![A-Za-z])", text, re.IGNORECASE)]
 
 
 def seen(text: str) -> str:

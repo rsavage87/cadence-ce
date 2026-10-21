@@ -113,7 +113,10 @@ NEVER_WORDS = ("secure", "compliant", "certified", "patched", "unpatched", "vuln
                "protected", "safe", "at risk", "exposed", "exploitable", "remediated", "end of life", "high risk", "critical", "required",
                "requires", "NPRM", "FDA-approved", "FDA-cleared", "IEC 80001", "DNV",
                # slice 39 (build39 section 4; the advisory words come with slice 40)
-               "exempt", "waiver", "hardened", "overdue", "deadline")
+               "exempt", "waiver", "hardened", "deadline")
+# A decision's words also never say "overdue" (its only clock is its own review date: "Review due since ..."). Not in NEVER_WORDS, which
+# every door's whole page is scanned with: the device drawer around the Security tab carries Equipment's own PM words ("overdue for PM").
+DECISION_NEVER_WORDS = (*NEVER_WORDS, "overdue")
 
 ALL_FIELDS = (*SUPPORT_GROUP, *MDS2_GROUP, *DISCLOSURE_GROUP, *FACILITY_GROUP)
 DATE_FIELDS = frozenset(f for f in ALL_FIELDS if f.endswith("_on"))

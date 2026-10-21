@@ -48,7 +48,7 @@ BASE = {"reasons": ["security_updates"], "response": KEEP_WITHOUT, "accepted_by"
 
 
 def never(text: str) -> list:
-    return [w for w in rules.NEVER_WORDS if re.search(rf"(?<![A-Za-z]){re.escape(w)}(?![A-Za-z])", text, re.IGNORECASE)]
+    return [w for w in rules.DECISION_NEVER_WORDS if re.search(rf"(?<![A-Za-z]){re.escape(w)}(?![A-Za-z])", text, re.IGNORECASE)]
 
 
 def refused(fn=None, *args, **kwargs) -> dict:

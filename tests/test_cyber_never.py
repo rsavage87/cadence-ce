@@ -57,13 +57,7 @@ REGISTER_VALUES = ("9.33.1-DEMO", "Demo embedded OS 7", "DEMO-MDS2-0001", "Conne
                    "Release not recorded", "as disclosed", "software release")
 
 
-# Slice 39 added "overdue" to rules.NEVER_WORDS (the register's voice). The device drawer around the Security tab carries Equipment's own
-# PM wording (apps.equipment.services: Mark missing's confirm), which is not the register's: it is left out of the scan.
-EQUIPMENT_PM_WORDS = "It counts as overdue for PM until it is found."
-
-
 def never(text: str) -> list:
-    text = text.replace(EQUIPMENT_PM_WORDS, "")
     return [w for w in rules.NEVER_WORDS if re.search(rf"(?<![A-Za-z]){re.escape(w)}(?![A-Za-z])", text, re.IGNORECASE)]
 
 
