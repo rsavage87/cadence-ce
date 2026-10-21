@@ -32,7 +32,7 @@ security tests, `tests/test_postgres_rls.py`).
    `apps/accounts/services.py`, `apps/credentials/services.py`, `apps/recalls/services.py`, `apps/facility/services.py`, `apps/equipment/services.py`,
    `apps/pm/aem.py`, `apps/pm/procedures.py`, `apps/workorders/costs.py`, `apps/workorders/completion.py`, `apps/workorders/legacy.py`, `apps/reports/custom.py`,
    `apps/imports/services.py`, `apps/incidents/services.py`, `apps/vendors/services.py`, `apps/evaluations/services.py`,
-   `apps/testequipment/services.py`, `apps/cybersecurity/services.py`; slice 36's model support through `apps/equipment/services.py`), never by setting fields in a
+   `apps/testequipment/services.py`, `apps/cybersecurity/services.py`, `apps/cybersecurity/updates.py`; slice 36's model support through `apps/equipment/services.py`), never by setting fields in a
    view or calling model helpers like
    `Contract.add_assets` directly. Services validate, write status history, and keep the asset in sync.
 6. **No PHI by design.** The portal never asks for patient identifiers. Don't add free-text fields that invite them, and never offer
@@ -128,7 +128,8 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   work orders in number order before its row: `workorders.services.lock_work`, the lock order every writer of a device's work keeps;
   slice 29: `ownership` (`Ownership`: ours, rental, vendor loaner, demo) with a temporary device's stay on its own record (owner,
   `owner_reference` a token, arrived, due back, the owner's PM date, returned, kept, `stands_in_for`, the return's cleaning and patient
-  data), written only by create_asset and `add_temporary_device` / `update_temporary` / `return_to_owner` (the shared `_retire` body) /
+  data), written only by create_asset and `add_temporary_device` / `update_temporary` / `return_to_owner` (the shared `_retire` body; slice 38: retiring or returning cancels open and awaiting-parts software updates, `views_temporary.CANCELLABLE` in step, the status
+  toast counting them) /
   `keep_temporary_device` (Approve); its owner maintains it (`owner_maintains`: no next PM, no PM work orders, SupportType.OWNER); a
   returned one is RETIRED and reads "Returned to owner"; `OWNED` / `WORK_ORDER_OWNED` are the counting rule (CE-program and fleet figures
   count ours only; work, recalls, and incidents count every device); `service_vendor` names a work order's vendor (a temporary device's
@@ -202,6 +203,12 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `apply_uses`: a re-completion never moves it), and every reader judges it on that day; `assign` (work moving to a vendor), a completion
   as checked by the vendor (a list there may name only kept ones), and a cancel (taking no item lock) take them off, never a use the
   kept-use rule keeps (a calibration dated on or after the use's day is on file); keep_open never records any;
+  slice 38: `WoType.SOFTWARE_UPDATE` ("Software update", short "Update"; the Overview's "other" series), opened only by
+  apps.cybersecurity.updates (`create_work_order(_register_opener=True)`; otherwise refused, keyed type, `UPDATE_OPENED_ELSEWHERE`; never
+  on New work order, whose type field keeps its refusals per form (`web.forms._TypeField`); the legacy import refuses an open one,
+  `OPEN_UPDATE`); started on completion (`starts_on_completion`), never a
+  failure, a finding, a re-check, or a PM tab entry; `complete_work_order(software=KEEP)` with the default resolution when an outcome is
+  recorded and none typed;
   slice 29: no PM on a temporary device (`no_pm_message`), its incoming inspection on `inspections.TEMPORARY_INCOMING` and refused a
   pass while its owner's PM date is past (`owner_pm_refusal`), recall batches give its recall work order to its owner;
   slice 28, a device held as evidence (Asset.incident_hold): `change_status` refuses a start or completion (`HOLD_MOVES`) of any of its
@@ -318,8 +325,39 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   security rows; `model_changed` from equipment.update_asset, never taking the register lock,
   clears a release of the old model); `filters.py` the Fleet's filters (`FleetFilters`, `parse`, `parse_strict` for the API's 400s, `within` for a head figure's link) shared by the screen and the API; `services.running` / `removal_refusal` count devices on site only (a retired device keeps naming a release entered in error). Never kept: credentials, network
   identifiers, SBOM contents, the MDS2 file, advisory text, free text; never in an email, a custom report, the device's own CSV or API
-  record, the portal, labels, or Scan. Slice 38: advisories, decisions and controls, software update events and a work order type,
-  hardening facts, the import, PM capture, the binder section, evaluation indicators; slice 39: the CISA CSAF feed
+  record, the portal, labels, or Scan. Slice 39: advisories, decisions and controls; slice 40: the version at every
+  completion, the import, hardening facts, the binder section, evaluation indicators; slice 41: the CISA CSAF feed.
+  Slice 38, software updates (FDA 2016: a routine update is "not considered a repair"; no rule requires any of it): `SoftwareUpdate`
+  (one per update work order, made when it is opened, holding its target: a release of the model (`target_release`) or the
+  manufacturer's patches (`target_reference`, a token); or an install recorded by hand (no work order, `installed_by`); `outcome`
+  installed / patches / already (blank: pending or not confirmed, as its work order's status says), `release_after` (never a "before":
+  the records cannot say what a device ran on a past day once corrections and backdated days mix, so an update states only what the
+  person recording it says it did; the device's History shows each change of its release), `reference`, `basis`
+  (`UpdateBasis`: validated_list for patches only), `applied_on`, `later_kept`, `on_vendor_service` / `vendor_report` (where the outcome
+  came from, as the work order was when it was recorded, never as it is later); a hand row entered in error is marked, never deleted;
+  CheckConstraints for the two shapes); `updates.py` every write (level checks inside, refusals keyed by field, never
+  "required"): `open_update` / `open_updates` (the batch: one release's devices on site from chosen releases or none recorded, optionally a
+  department, at most `UPDATE_BATCH_MAX`, due on a day or each next PM; held, already open, and model-changed devices skipped with
+  words; assigned only at Work orders Approve, by the profile's `updates_by`: CE to the technician chosen, the manufacturer and a
+  temporary device to vendor service, IT and the department unassigned), the fixed problems `UPDATE_PROBLEM` / `PATCHES_PROBLEM` (no
+  version or reference), `choice_from` / `UpdateChoice` / `NOT_CONFIRMED`, `check_choice` and `record_at_completion` (complete_work_order's
+  `software`), `confirm` (Confirm version, dated the completion), `record` (Record update; a duplicate of a live record refused,
+  `DUPLICATE`), `remove` (Entered in error: a hand row marked, a work order's outcome cleared; the facts never touched), the facts never
+  backwards (`later_kept`); no outcome is judged against the device's register record (installed and already name a release of its
+  model, already on a release target names the target; patches never take a release: they name the recorded one when the facts are
+  written); the facts written: installed moves the release since that day, already a release the record does not name (found), patches
+  only the day checked; `open_number` (an open update work order, with its
+  record or not: a reopened imported one counts); the lock contract in its docstring (register, lock_work, numbering, releases, devices,
+  security rows, update rows; nothing takes the register after a work order's or a device's row; a completion takes the register only
+  when its choice records). Django creates PostgreSQL foreign keys DEFERRABLE INITIALLY DEFERRED: an INSERT naming a row locks nothing
+  until COMMIT, so the openers take the device explicitly FOR KEY SHARE after numbering (`services._locked_devices`) and read its model,
+  status, and hold there; an IntegrityError at commit (a device deleted meanwhile) answers RACE; `rules.py` `release_offer` / `offer_or_why`
+  (the one predicate: an update with its record, the device on site, can_edit_devices; None is the system), `update_state` (open,
+  not_confirmed, done, cancelled, removed) and `STATE_LABELS`, `update_words` (the sentences, behind can_view_devices only; never
+  "updated from X to Y"), `release_name` ("(entered in error since)"), `updates_of` and `campaigns` / `campaign_words` (one query each);
+  `permissions.can_open_updates` (Edit, Equipment View, Work orders Edit) and `can_correct_updates` (Approve, Equipment View); the
+  history Area `software_updates` (Device security View and Equipment View; never in a work order drawer's History); `remove_release`
+  refused while an open update is to install the release. Never a version, reference, target, or sentence outside can_view_devices
 - `apps/recalls` Alert (global), AlertMatch (per tenant), matching, openFDA importer; `services.py` dispositions and recall work-order batches,
   `permissions.py` (review at Edit, close/reopen at Approve); `feeds.py` the openFDA fetch shared by `import_openfda` and the Recalls
   screen's Check FDA feed (one fetch per 15 minutes for everyone, kept in apps.jobs' `JobRun`; a check matches only its own facility).
@@ -392,6 +430,12 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `views_cybersecurity.py` the Device security screen (slice 37, with `forms_cybersecurity.py` and `_cyber_*.html`: Fleet with its head
   figures and filters, a model's panel, Set devices to this release, Models with profiles and releases, Changes for IT, the CSVs),
   `asset_cyber.py` and `views_cyber_facts.py` the device drawer's Security tab and Record facts;
+  slice 38: `views_cyber_updates.py` with `forms_cyber_updates.py` (Open software update, Record update, Confirm version, Entered in
+  error, and a release row's Open updates to this release; fields set in `__init__`; one device's routing words `ASSIGN_NEEDS_ONE`), `asset_cyber_updates.py` and
+  `_asset_cyber_updates.html` (the Security tab's "Software updates", fixed queries), `cyber_release_actions.py` and
+  `_cyber_release_actions.html` (a release row's campaign counts), `views_wo_release.py` (the completion modal's "Software on the
+  device", `_wo_release_picker.html`, offered only where rules.release_offer holds, the `shown_software_outcome` marker; the drawer's and
+  print's "Software update" line for can_view_devices only);
   `views_temporary.py` loaners and rentals (slice 29, with `forms_temporary.py`: Add rental or
   loaner, the drawer's temporary section (`asset_tabs.temporary_box`), Change details, Return to owner, Keep it, Vendor loaner arrived,
   Return the loaner; the Equipment "Whose" filter through `forms.equipment_assets`), `views_incidents.py` Incidents (slice 28, with
@@ -434,7 +478,13 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   the transition's `test_equipment` (omitted keeps), the `test-equipment` action, destroy refused with uses; slice 36: a device model's
   support fields by PATCH through update_device_model (refused on POST) and its read-only `support_status`; slice 37:
   `views_cybersecurity.py` / `serializers_cybersecurity.py` software releases and device security, read only (Device security View, and
-  Equipment View for devices; never nested in the asset or model records); serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
+  Equipment View for devices; never nested in the asset or model records); slice 38: a work order's `software_update` (its record in rules' words: target, state, outcome, sentence; null unless
+  can_view_devices; a list's page in one query, `serializers_cybersecurity.updates_of`) and `software_choices` (a single open work order,
+  for a user rules.release_offer offers and who may complete it), the transition's `software_outcome` / `software_release` /
+  `software_reference` / `software_basis` (refused on every other move and on create; a missing one names what to send), an update
+  work order keeps its device, type, and problem and is cancelled, never deleted; `views_cybersecurity.SoftwareUpdateViewSet`
+  `/api/v1/software-updates/`, read only (Device security View and Equipment View; ?device= id or tag, ?release=, ?state=; entered in
+  error left out; the work order's number, never a link); serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
   same thing and calls the same service; the API never imports apps.web. `tenancy.py` (`TenantAPIMixin`: the tenant from the session or
   token user, set after authentication and restored once the response is rendered), `authentication.py` (DRF's token check plus the
   deactivated-facility refusal sign-in has)
@@ -453,7 +503,8 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   fills in: its columns with their model lengths, a natural key, `apply` one row through the services), `parse.py` (dates, money,
   intervals, choices: an unreadable value raises, never defaults), `services.py` (upload, confirm_columns, process: a chunk at a time,
   the check rolling each back and the import committing each; start_import, discard, expire_stale), `permissions.py` (each kind at its
-  screen's level), `kinds/` (devices, contracts, technicians, work_orders). No free text comes over from another system. A pass acts as
+  screen's level), `kinds/` (devices, contracts, technicians, work_orders; slice 38: the work orders' type words take software and firmware updates and patches as software_update, never a bare "upgrade";
+  done ones only). No free text comes over from another system. A pass acts as
   whoever started it (`ImportRun.pass_by`), whoever's browser moves it on; the check rolls each chunk back, so an importer whose rows depend
   on earlier rows reads them (`ctx.rows`) to check a later chunk as the import will; the daily job `expire_imports` ends unfinished runs
 - `apps/demo` seed data (Riverside Regional, and Riverside North Campus with Kim linked: the demo shows the facility menu; slice 25: a few
@@ -470,4 +521,7 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   supported; no random draws; the beyond-repair bed stays retired; slice 37: profiles for the connectable models, the pumps on two
   fictional firmware releases "(demo)" (the older past its security updates), the monitors' MDS2 on file for an older release, a C-arm
   whose OS support ended, the ventilators' MDS2 requested, the loaner pump recorded, the fleet's "Added" history dated before the demo's
-  work so Changes for IT lists only the recent devices)
+  work so Changes for IT lists only the recent devices; slice 38: Kim's update batch to the pumps' newer release in one department (3 or 4 pumps, due at each next PM, assigned to a
+  credentialed technician), one completed as installed and one with the version not confirmed today, the rest open, and the other
+  C-arm's patches by the manufacturer remotely recorded by hand on a release added for its model ("7.2 (demo)"); no vendor job, nothing
+  on the ventilators, today's work only (no evaluation or vendor review figure moves))

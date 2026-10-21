@@ -48,7 +48,8 @@ with its calibration certificates, named on the work done with it, and reviewed 
 | 34 | Contracted service review | (none: Contracts, Reviews; the review and the contracted services summary prints; the binder) | `evaluations` + `vendors` + `contracts` + `reports` + `accounts` + `web` + `api` | done (criteria rows, amendments, a previous-figures column, expectation fields on Contract, vendor aliases, reminder emails, a vendor copy deferred) |
 | 35 | Test equipment calibration | (none: Equipment, Test equipment; Mark completed's test equipment; the work order drawer and print; the binder) | new `testequipment` + `equipment` + `workorders` + `reports` + `core` + `web` + `api` | done (the import, labels and Scan, reminders and the Overview line, evaluation indicators, the write API, in-house verification against a reference standard, modules, checkout, and calibration cost deferred) |
 | 36 | Replacement priority | Reports (Replacement planning: the score and its components, flags, fleets, the fiscal year outlook, what the scores do not know); the device drawer's Costs and Overview; a model's Life and support; Settings, Fiscal year | new `capital` + `equipment` + `facility` + `reports` + `core` + `web` + `api` | done (capital requests, committee decisions, budgets, and the plan; the replaced-by link, retire reasons, and fulfillment (later slices); per-facility weights, a dated condition assessment, cybersecurity status, import columns for model fields, evaluation indicators, a binder section deferred) |
-| 37 | Device security register | (none: Device security, with Fleet, Models, and Changes for IT; the device drawer's Security tab) | new `cybersecurity` + `accounts` + `equipment` + `core` + `web` + `api` | done (advisories with decisions and compensating controls, software update events and a work order type, hardening facts, PM capture of the version, the tag/serial import, the binder section, evaluation indicators, and the capital flag (slice 38); the CISA CSAF feed (slice 39); MAC, procurement review, sanitization at retire deferred) |
+| 37 | Device security register | (none: Device security, with Fleet, Models, and Changes for IT; the device drawer's Security tab) | new `cybersecurity` + `accounts` + `equipment` + `core` + `web` + `api` | done (software update events and a work order type (slice 38); advisories with decisions and compensating controls (slice 39); hardening facts, PM capture of the version, the tag/serial import, the binder section, evaluation indicators, and the capital flag (slice 40); the CISA CSAF feed (slice 41); MAC, procurement review, sanitization at retire deferred) |
+| 38 | Software updates | (none: the device drawer's Security tab, Software updates; the Device security screen's model panel, a release's updates; Mark completed's Software on the device; the work order drawer and print) | `cybersecurity` + `workorders` + `equipment` + `imports` + `reports` + `core` + `web` + `api` | done (advisories, decisions and compensating controls, the advisory batch, the nav badge (slice 39); the version at every completion, the tag/serial import, bulk validated patches, hardening facts, the binder section, evaluation indicators, the capital outlook line (slice 40); the CISA CSAF feed (slice 41); a pilot unit, a function check after an update, and a rollback deferred) |
 
 ## KPI definitions (from the mock's `computeKpis`)
 - **PM completion on time** for a month: PM work orders with `due_on` in the month and (already past due, or completed), of which `completed_on <= due_on`. Current month uses today as the period end.
@@ -567,11 +568,27 @@ The mock's export and print buttons work since slice 11, Add device since slice 
   register: a module of its own ("Device security", never "security"), releases per model and version with a versionless profile
   (group-wise fallback), each device's release and connection, the two standing lines, bulk entry, Changes for IT (the CE/IT handoff
   with no network identifier), a screen, the drawer's tab, a read-only API, and a seed of fictional versions. Never kept: credentials,
-  network identifiers, SBOM contents, the MDS2 file, advisory text, free text. Advisories, decisions, update events and their work order
-  type, and the binder, evaluation, and capital readers are slice 38; the CISA feed slice 39. The review (then four rounds of fixes, each
+  network identifiers, SBOM contents, the MDS2 file, advisory text, free text. Update events and their work order type are slice 38,
+  advisories and decisions slice 39, the binder, evaluation, and capital readers slice 40, the CISA feed slice 41. The review (then four rounds of fixes, each
   pinned by tests that fail with the fix undone and re-checked by skeptics): Changes for IT reads only the history near its window; a
   model change in progress is waited for, never an old model's release saved; the register's writers take one facility lock and the
   devices FOR KEY SHARE in the database's tag order, as contracts and Recorded in error keep it (an import chunk, in its file's
   order, can still meet it: the bulk set answers RACE; each lock tried first traded one race for another:
   pk-order row locks deadlocked with contracts and AEM, a shared lock let two register writers collide); a release only retired devices
   name can be marked entered in error; the device API takes the Fleet's filters; the MDS2 link refuses credential keys, never anchors.
+- Software updates (slice 38, beyond the mock; the user picked "Security advisories and updates"; the critics split it: updates first,
+  since the advisory batch needs the work order type and an advisory's outcome needs update records, then advisories and decisions, then
+  the register's upkeep and readers, then the CISA feed). FDA's 2016 postmarket guidance calls a routine cybersecurity update an
+  enhancement, "not considered a repair", so it is a neutral work order type of its own, "Software update", opened only from the Device
+  security screen (one device, or a release's devices as a batch assigned only at Work orders Approve and routed by who installs updates
+  here), with a fixed problem that names no version (the work order's doors reach readers without Device security View and scoped
+  users) and a record on the register's side holding the target. What it did is recorded at Mark completed (installed, patches applied,
+  already on the update, or not confirmed now), confirmed later for a vendor's job, or recorded by hand for an install with no work
+  order. The register's lock comes first for every writer that records (nothing takes it after a work order's or a device's row).
+  The review found that Django creates PostgreSQL foreign keys DEFERRABLE INITIALLY DEFERRED, so an INSERT locks the row it names only
+  at COMMIT: the openers now take the device explicitly. Its fixes took four rounds on one question, what a device ran before an update
+  (for "recorded before" and for checking a correction against the register): each rule (the history as of the day, a before taken once,
+  judging against it, carrying it across a correction) produced new false results, because the facts are never rolled back, "since"
+  days are backdated, and a later record can be a correction or a real change. The records cannot answer it, so the fourth round removed
+  it: an update states only what the person recording it says it did (patches name the version as recorded), and the device's History
+  shows each change of its release.

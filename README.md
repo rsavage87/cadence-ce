@@ -400,15 +400,61 @@ for an end of support, nor "high risk" or "critical" in its own voice; an MDS2 a
 form's question number.
 
 Device security is a module of its own in Roles: the director Full, the CE manager Approve, technicians Edit, Finance and quality,
-requesters, and vendors None. View sees the register; Edit records models' profiles and releases and devices' facts; Approve decides
-nothing more yet. Every list naming devices by tag or location (Fleet's devices, Changes for IT, the drawer's tab, their CSVs) also needs
+requesters, and vendors None. View sees the register; Edit records models' profiles and releases and devices' facts; Approve marks a
+software update entered in error (below). Every list naming devices by tag or location (Fleet's devices, Changes for IT, the drawer's tab, their CSVs) also needs
 Equipment View; the Models tab needs Device security View alone. A vendor's or a requester's account never sees it, whatever its levels
 (on a custom role that sees only its company's or unit's share, Device security has no effect). For the IT department, make a custom role
 "IT security" with Device security Edit and Equipment View: it records the facts without adding, editing, or retiring devices. Upgrading:
 every custom role made before this release reads None for Device security, so a custom role that administers users cannot invite anyone
 into a role holding it (a technician's, for one: nobody gives more access than their own) until a director raises its Device security
-level. Advisories and the decisions on them, compensating controls, software update work orders, the version recorded at a PM, the
-import, the survey binder's section, and the evaluation's figures come next.
+level. Software updates are below. Advisories and the decisions on them, compensating controls, the version recorded at every
+completion, the import, the survey binder's section, and the evaluation's figures come next.
+
+## Software updates
+A software update is work of its own (FDA's 2016 postmarket guidance calls a routine cybersecurity update an enhancement, "not
+considered a repair"; HHS 405(d)'s HICP keeps security maintenance as its own work), so it has its own work order type, "Software update"
+("Update" in the lists). It is opened only from the Device security screen: "Open software update" on a device's Security tab (one
+device: a release of its model to install, or the manufacturer's patches with the list's reference and its month or revision), or "Open
+updates to this release" on a release's row in Models (one work order per device of that model on site whose recorded release is one you
+choose, or not recorded, optionally in one department, up to 100 at once, due on a day or on each device's next PM, priority normal or
+high). New work order never offers the type, the API's create refuses it, and the work order import brings in done updates as history
+only (an open one is refused). Each update's problem is one of two fixed sentences with no version or reference in it. When the
+person opening them may assign work, who they go to follows the model's "Who installs updates here?": clinical engineering's go to the
+technician chosen (or stay unassigned for a technician to take); the manufacturer's, and every rental's, loaner's, or demo unit's, to the
+vendor's service; IT's and the department's stay unassigned, and the result says who installs them. A device held as evidence for an
+incident, or with an update already open, is skipped (the batch says which and why); retiring a device or returning it to its owner
+cancels its updates not yet started (one in progress is completed or put back to open first).
+
+What an update did is recorded when it is completed: Mark completed's "Software on the device" asks whether the release was installed
+(and which one the device runs now), patches were applied (the version as recorded; the manufacturer's list and its month or revision),
+the device was already on the update (nothing installed), or "Not confirmed now". The device's release, since when, and the day checked
+follow (never backwards: a record dated before the device's latest facts is kept as a record, and says so). A vendor's job, or one
+completed with the version not confirmed, is confirmed afterwards with "Confirm version" on the Security tab (dated the day it was
+completed), and an install with no work order (by the manufacturer remotely, automatically, by IT, or by the department that uses it) is
+recorded with "Record update". The basis for each install is recorded too: the manufacturer's validated patch list (patches only), the
+manufacturer's release, service notice, or field change, or not stated. An update states what the person recording it says it did; Cadence
+never infers what a device ran before it (the device's History shows each change of its release). The Security tab lists the device's updates newest first, each in
+a sentence ("5.6 installed Oct 20, 2026", "Patches on the manufacturer's validated patch list applied Oct 14,
+2026, version unchanged (7.2); ref ICAR-2026-09; installed by the manufacturer remotely", "Completed Oct 20, 2026; version not
+confirmed"); a release's row in Models counts its updates ("Updates to 5.6: 3 open, 1 done, 1 not confirmed"). "Entered in error"
+marks an install recorded by hand as a mistake, or clears a work order's recorded outcome so it can be confirmed again; the device's
+facts stay as they are (correct them with Record facts). A release cannot be marked entered in error while an open update is to install
+it. Drug libraries are not recorded here. An update's labor and parts are service cost, never a failure; the survey binder reads an
+update as work (the technician's credential for the device, a vendor's staff evidence).
+
+Who may do what: recording what an update did, Confirm version, and Record update need Device security Edit and Equipment View; opening
+updates also needs Work orders Edit, and assigning them Work orders Approve (without it they stay unassigned); Entered in error needs
+Device security Approve and Equipment View. For the IT department's custom role "IT security" (Device security Edit and Equipment View),
+add Work orders Edit for it to open updates, and Work orders Approve to assign them. A vendor's or a requester's account never records
+what an update did (a vendor's completion reads "Completed by the vendor ...; version not confirmed" until the facility confirms it) and
+never sees the versions.
+
+Never shown outside the register: an update's target, versions, references, and sentences are read only with Device security View and
+Equipment View. The work order list, its CSV, the drawer and print (whose "Software update" line is for those readers only), My work,
+the Overview, Scan, labels, the portal, emails, custom reports, the API's work order for anyone else, and the status history and
+resolution show the type and the fixed problem only. Upgrading: every custom role made before this release still reads None for Device
+security, so its users see update work orders without their targets, and cannot record what one did, until a director raises its
+Device security level.
 
 ## Custom reports
 Reports' "+ Custom report" (Reports Edit: the director and Finance and quality by default) builds a report from work orders, devices,
@@ -485,6 +531,16 @@ its module's docstring under `apps/api/`, and the browsable API (open `/api/v1/`
   standing words; the Fleet's filters `?whose=`, `?department=`, `?category=`, `?connected=`, `?standing=`, `?norelease=1`, plus
   `?device_model=` and `?search=` a tag or serial); a write answers 405 naming the Device security screen. The device and device model
   records never carry the register;
+- software updates (slice 38): `/api/v1/software-updates/`, read only (Device security View and Equipment View; never a vendor's or a
+  requester's account): every update work order's record and every install recorded by hand (one entered in error is left out), newest
+  first, with the device, the work order's id and number (never a link), the target, the state (`open`, `done`, `not_confirmed`,
+  `cancelled`) and the sentence the Security tab shows, the outcome, the releases before and after, the reference, the basis, the
+  installer, and who recorded it; `?device=` (an id, or a tag in any letter case), `?release=` (the release to install or the one run
+  after), `?state=`. A work order reads `software_update` (its target, state, outcome, and sentence) for those readers, and, GET one
+  open, `software_choices` (what you may send). The transition to completed takes `software_outcome` (`installed`, `patches`,
+  `already`, or `not_confirmed`; needed while nothing is recorded, then left out keeps what was), `software_release` (an id from
+  `software_choices`), `software_reference`, and `software_basis`; a missing one answers a 400 naming what to send. Every other move,
+  and a new work order, refuses them; an update work order keeps its device, type, and problem, and is cancelled rather than deleted.
 - the signed-in person's facilities and All facilities (`views_facilities.py`, `views_all_facilities.py`; session only).
 
 Vendor technicians and clinical requesters reach only their own devices and work orders (and Scan), as on the screens. Nobody gives
