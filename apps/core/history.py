@@ -413,6 +413,14 @@ LABELS = {
                                      "release_after": "Runs after", "reference": "Manufacturer's reference",
                                      "basis": "Basis", "installed_by": "Installed by", "applied_on": "Done on", "recorded_by": "Recorded by",
                                      "later_kept": "A later record kept", "removed_on": "Entered in error", "removed_by": "Marked by"},
+    # Slice 39
+    "cybersecurity.devicesecuritydecision": {"applies_to": "Applies to", "asset": "Device", "device_model": "Device model",
+                                             "release": "Software release", "reasons": "Reasons", "response": "Decision",
+                                             "controls": "Controls", "controls_reference": "IT's change or exception number for the controls",
+                                             "plan": "Plan", "plan_by": "Plan by", "plan_owner": "Plan owner", "accepted_by": "Accepted by",
+                                             "exception_reference": "IT exception", "recorded_by": "Recorded by", "decided_on": "Decided",
+                                             "review_by": "Review by", "supersedes": "Supersedes", "ended_on": "Ended",
+                                             "ended_by": "Ended by", "end_reason": "Why it ended"},
     "testequipment.testequipment": {"tag": "Tag", "kind": "Kind", "serial": "Serial number", "program": "Certificates",
                                     "interval_months": "Interval", "status_reason": "Why", "status_since": "Since", "held_by": "Held by",
                                     "held_since": "Needs a pass dated on or after"},  # out of service: the one release rule's day
@@ -472,6 +480,8 @@ KINDS = {
     "testequipment.testequipment": {"interval_months": "months"},  # slice 35
     "evaluations.vendorreview": {"vendor_names": "names", "uptime_target_pct": "percent", "uptime_reported_pct": "percent",
                                  "uptime_lowest_pct": "percent", "response_target_pct": "percent", "response_reported_pct": "percent"},
+    # Slice 39: a decision's controls and reasons in the register's words (apps.cybersecurity.rules.CONTROLS, REASONS), never slugs
+    "cybersecurity.devicesecuritydecision": {"controls": "security_controls", "reasons": "security_reasons"},
 }
 
 # Staff-written text that stays on its own page, its print, and its History (slice 32's narrative, slice 34's summary): the change log,
@@ -750,6 +760,13 @@ def _kind_text(kind: str, value, rec) -> str:
         return _device_models_text(value)
     if kind == "names":
         return ", ".join(str(v) for v in value or ()) or EMPTY
+    if kind in ("security_controls", "security_reasons"):  # slice 39: in the form's order, joined by "; " (the words hold commas)
+        from apps.cybersecurity import rules
+
+        words = rules.CONTROLS if kind == "security_controls" else rules.REASONS
+        if not isinstance(value, list) or any(v not in words for v in value):
+            raise ValueError(kind)
+        return "; ".join(text for slug, text in words.items() if slug in value) or EMPTY
     raise ValueError(kind)
 
 
