@@ -380,10 +380,13 @@ def test_a_re_completion_keeps_or_replaces_the_outcome_with_history(pump, r52, r
     row.refresh_from_db()
     assert row.outcome == INSTALLED
     wo_services.change_status(wo, WoStatus.IN_PROGRESS, by=kim)
-    complete(wo, tech, choice(ALREADY), "Checked again")  # now on 5.6 (demo), the target
+    # review round 3: already is judged against what was taken before (5.2), never the record now (this row's own install of 5.6)
+    assert refused(complete, wo, tech, choice(ALREADY), "Checked again") == {
+        "software_release": updates.NOT_THE_TARGET.format(version="5.2 (demo)", target="5.6 (demo)")}
+    complete(wo, tech, choice(PATCHES, reference="ICAR-2026-09", basis=NS), "Patched instead")
     row.refresh_from_db()
-    assert (row.outcome, row.release_before, row.release_after) == (ALREADY, r52, r56)  # what it ran before: taken once (round 2)
-    assert outcomes(row) == ["", INSTALLED, ALREADY]
+    assert (row.outcome, row.release_before, row.release_after) == (PATCHES, r52, r52)  # what it ran before: taken once (round 2)
+    assert outcomes(row) == ["", INSTALLED, PATCHES]
     assert reasons(row) == [None, f"Recorded at completion of {wo.number}", f"Recorded at completion of {wo.number}"]
 
 
@@ -542,9 +545,12 @@ def test_a_work_orders_outcome_entered_in_error_is_cleared_and_confirm_is_offere
     assert (row.release_before, row.before_taken) == (r52, True)  # what it ran before stays (review round 2: taken once)
     assert reasons(row)[-1] == "Outcome entered in error" and state(row) == rules.NOT_CONFIRMED
     assert rules.release_offer(wo, tech).needed and DeviceSecurity.objects.get().release == r56
-    confirm(row, choice(ALREADY), by=tech)  # recorded again: already on 5.6 (demo), the target
+    # review round 3: already is judged against what was taken before (5.2), never the record now (the outcome entered in error's 5.6)
+    assert refused(confirm, row, choice(ALREADY), by=tech) == {
+        "software_release": updates.NOT_THE_TARGET_DONE.format(target="5.6 (demo)", version="5.2 (demo)")}
+    confirm(row, choice(INSTALLED, r56, basis=MR), by=tech)  # recorded again
     row.refresh_from_db()
-    assert (row.outcome, row.applied_on) == (ALREADY, today)
+    assert (row.outcome, row.applied_on, row.release_before) == (INSTALLED, today, r52)
 
 
 def test_a_release_with_an_open_update_to_install_it_stays(pump, r56, job, kim):

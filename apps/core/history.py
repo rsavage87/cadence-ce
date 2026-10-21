@@ -322,7 +322,8 @@ HIDE = {
     # Slice 37 (the model and the device are in each record's name; the stored key is the version's)
     "cybersecurity.softwarerelease": {"device_model", "version_key"},
     "cybersecurity.devicesecurity": {"asset"},
-    "cybersecurity.softwareupdate": {"asset", "work_order"},  # slice 38: both in the record's name
+    # slice 38: both in the record's name; before_taken is bookkeeping (review round 3: "Recorded before" is the fact shown)
+    "cybersecurity.softwareupdate": {"asset", "work_order", "before_taken"},
 }
 
 # Labels that read better than the verbose names, per model; `_label` falls back to the verbose name.

@@ -140,6 +140,16 @@ def release_ref(release):
     return {"id": str(release.pk), "version": release.version} if release is not None else None
 
 
+def _shows_before(update) -> bool:
+    """Whether the API names the update's release_before: something is recorded, and it is not an install of the release it names
+    (review round 3: rules._outcome_words leaves that claim out too)."""
+    from apps.cybersecurity.models import UpdateOutcome
+
+    if not update.release_before_id or not update.outcome:
+        return False
+    return not (update.outcome == UpdateOutcome.INSTALLED and update.release_before_id == update.release_after_id)
+
+
 def update_data(update) -> dict:
     """GET software-updates/ (slice 38): one update as the device's Security tab shows it, read with its device, work order, releases, and who
     recorded it (the viewset's select_related: no query). Every word is the rules' (rules.update_state, STATE_LABELS, update_words): id;
@@ -147,8 +157,9 @@ def update_data(update) -> dict:
     View); target ("release", "patches", "" for a hand row), target_release {id, version} or null, target_reference (a token); state
     (open, done, not_confirmed, cancelled) and state_label; outcome ("installed", "patches", "already", "" while nothing is recorded)
     and outcome_label; words (the sentence the tab shows); applied_on; release_before and release_after ({id, version} or null;
-    release_before null while nothing is recorded: a work order's outcome entered in error keeps what was taken before for its next
-    recording, review round 2, but shows none); reference (a token); basis and basis_label; installed_by and installed_by_label (a hand
+    release_before null while nothing is recorded (a work order's outcome entered in error keeps what was taken before for its next
+    recording, review round 2, but shows none), and null on an install of the release it names (review round 3: stored as taken, the
+    claim left out, as the words leave it out)); reference (a token); basis and basis_label; installed_by and installed_by_label (a hand
     row's); recorded_by (a name, null when none or the system); later_kept (the device's facts were newer: kept, not written); opened_on
     (a work order's)."""
     from apps.cybersecurity.models import InstalledBy, UpdateBasis, UpdateOutcome
@@ -161,7 +172,7 @@ def update_data(update) -> dict:
             "target_reference": update.target_reference, "state": state, "state_label": rules.STATE_LABELS[state],
             "outcome": update.outcome, "outcome_label": label(UpdateOutcome, update.outcome), "words": rules.update_words(update),
             "applied_on": _day(update.applied_on),
-            "release_before": release_ref(update.release_before if update.release_before_id and update.outcome else None),
+            "release_before": release_ref(update.release_before if _shows_before(update) else None),
             "release_after": release_ref(update.release_after if update.release_after_id else None),
             "reference": update.reference, "basis": update.basis, "basis_label": label(UpdateBasis, update.basis),
             "installed_by": update.installed_by, "installed_by_label": label(InstalledBy, update.installed_by),

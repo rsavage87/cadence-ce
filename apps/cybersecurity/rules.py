@@ -610,8 +610,9 @@ NOT_AN_UPDATE, NO_RECORD, NOT_ON_SITE, NO_PERMISSION = "not_an_update", "no_reco
 
 def offer_or_why(wo, user) -> tuple:
     """(Offer, "") where release_offer holds, else (None, why): NOT_AN_UPDATE, NO_RECORD, NOT_ON_SITE, NO_PERMISSION, checked in that
-    order (updates.check_choice words each refusal by it). `user` None is the system: it may record. Queries: none for another type;
-    the record (one); with an offer, the releases and the recorded release (two; and the device when `wo` has not read it)."""
+    order (updates.check_choice words each refusal by it; a scoped user's choice it refuses with the permission's words before reading
+    this, review round 3). `user` None is the system: it may record. Queries: none for another type; the record (one, with its target
+    and taken before); with an offer, the releases and the recorded release (two; and the device when `wo` has not read it)."""
     from apps.workorders.models import Source, WoType
 
     from . import permissions as perms
@@ -622,7 +623,9 @@ def offer_or_why(wo, user) -> tuple:
         return None, NOT_AN_UPDATE
     update = None
     if wo.source != Source.IMPORTED:
-        update = SoftwareUpdate.objects.filter(work_order_id=wo.pk).select_related("target_release").order_by("pk").first()
+        # with its taken before (updates.check_choice judges a re-completion's patches and already against it: review round 3)
+        update = (SoftwareUpdate.objects.filter(work_order_id=wo.pk).select_related("target_release", "release_before").order_by("pk")
+                  .first())
     if update is None:
         return None, NO_RECORD
     asset = wo.asset
@@ -709,8 +712,10 @@ def _outcome_words(update) -> str:
     after = release_name(update.release_after) if update.release_after_id else ""
     ref = f"; ref {update.reference}" if update.reference else ""
     if update.outcome == UpdateOutcome.INSTALLED:
-        # what was recorded before only when it is known (review round 2: taken once; never "recorded before: not recorded")
-        before = f" (recorded before: {release_name(update.release_before)})" if update.release_before_id else ""
+        # what was recorded before only when it is known (review round 2: taken once; never "recorded before: not recorded"), and
+        # never for an install of the release it names (review round 3: stored as taken, the claim left out here: the record named it)
+        before = (f" (recorded before: {release_name(update.release_before)})"
+                  if update.release_before_id and update.release_before_id != update.release_after_id else "")
         text = f"{after or 'A release'} installed {day}{before}{ref}"
     elif update.outcome == UpdateOutcome.PATCHES:
         what = "Patches on the manufacturer's validated patch list" if update.basis == UpdateBasis.VALIDATED_LIST else "Patches"
@@ -732,10 +737,10 @@ def update_words(update, *, today=None) -> str:
     - open: "Open: to install 5.6 (demo)", or "Open: to apply the manufacturer's patches (ref ICAR-2026-09)";
     - not confirmed: "Completed Oct 20, 2026; version not confirmed" ("Completed by the vendor ..." only for vendor service);
     - cancelled: "Cancelled"; a hand row entered in error: "Entered in error";
-    - done: "5.6 (demo) installed Oct 20, 2026 (recorded before: 5.2 (demo))" (no "recorded before" when none is known: release_before
-      None); "Patches applied Oct 20, 2026, version unchanged (5.6 (demo)); ref ICAR-2026-09" ("(version not recorded)" with none, and
-      nothing there when a later record was kept; "Patches on the manufacturer's
-      validated patch list applied ..." only for UpdateBasis.VALIDATED_LIST); "Checked Oct 20, 2026: already on 5.6 (demo); nothing
+    - done: "5.6 (demo) installed Oct 20, 2026 (recorded before: 5.2 (demo))" (no "recorded before" when none is known, release_before
+      None, or when it is the release installed: the record named it already); "Patches applied Oct 20, 2026, version unchanged
+      (5.6 (demo)); ref ICAR-2026-09" ("(version not recorded)" with none, and nothing there when a later record was kept; "Patches on
+      the manufacturer's validated patch list applied ..." only for UpdateBasis.VALIDATED_LIST); "Checked Oct 20, 2026: already on 5.6 (demo); nothing
       installed"; a reference as "; ref <it>"; then where it came from ("; as the vendor's report <number> states" when recorded on
       vendor service (the record's own on_vendor_service and vendor_report), "; installed by information technology" by hand, nothing
       for in-house work), and "; a later record of the device is kept" when later_kept.

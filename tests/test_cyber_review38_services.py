@@ -219,12 +219,13 @@ def test_c1_the_vendors_job_confirmed_after_a_bulk_set(pump, pump_model, r52, r5
 
 def test_c1_the_record_facts_first_then_completion_as_installed(pump, r52, r56, on52, job, tech, techs, kim, today):
     """The technician records 5.6 with Record facts, then completes as installed 5.6: accepted, with no false before (the record named
-    5.6 already). The same over two days: started and recorded the day before, completed the next."""
+    5.6 already: stored as taken, round 3, the claim left out of the words). The same over two days: started and recorded the day
+    before, completed the next: the since stays the day recorded (round 3)."""
     wo, row = job
     record_facts(pump, by=None, release=r56)
     complete(wo, tech, choice(INSTALLED, r56, basis=MR))
     row.refresh_from_db()
-    assert (row.outcome, row.release_before, row.release_after, row.later_kept) == (INSTALLED, None, r56, False)
+    assert (row.outcome, row.release_before, row.release_after, row.later_kept) == (INSTALLED, r56, r56, False)
     assert words(row) == f"5.6 (demo) installed {day(today)}"
 
     other = Asset.objects.create(tag="CE-10009", device_model=pump.device_model, department=pump.department)
@@ -234,7 +235,10 @@ def test_c1_the_record_facts_first_then_completion_as_installed(pump, r52, r56, 
     record_facts(other, by=None, release=r56, release_since=today - 2 * DAY, checked_on=today - 2 * DAY)
     complete(wo2, tech, choice(INSTALLED, r56, basis=MR), today=today - DAY)
     row2.refresh_from_db()
-    assert (row2.release_before, row2.release_after, row2.applied_on, row2.later_kept) == (None, r56, today - DAY, False)
+    assert (row2.release_before, row2.release_after, row2.applied_on, row2.later_kept) == (r56, r56, today - DAY, False)
+    assert words(row2) == f"5.6 (demo) installed {day(today - DAY)}"
+    sec = DeviceSecurity.objects.get(asset=other)
+    assert (sec.release, sec.release_since, sec.checked_on) == (r56, today - 2 * DAY, today - DAY)  # the since never moves forward
 
 
 def test_c1_installed_is_never_refused_for_the_release_the_record_names(pump, r56, vendor_job, tech, today):
@@ -244,9 +248,10 @@ def test_c1_installed_is_never_refused_for_the_release_the_record_names(pump, r5
     facts(pump, r56, release_since=today - 10 * DAY, checked_on=today - 10 * DAY)
     confirm(row, choice(INSTALLED, r56, basis=MR), by=tech)
     row.refresh_from_db()
-    assert (row.release_before, row.later_kept) == (None, False)
+    assert (row.release_before, row.later_kept) == (r56, False)  # stored as taken (round 3); the words claim none
+    assert words(row) == f"5.6 (demo) installed {day(today - 5 * DAY)}; as the vendor's report VR-2026-77 states"
     hand = record(pump, choice(INSTALLED, r56, basis=MR), installed_by=InstalledBy.IT, applied_on=today - 4 * DAY, by=tech)
-    assert (hand.release_before, hand.release_after) == (None, r56)
+    assert (hand.release_before, hand.release_after) == (r56, r56)
     assert words(hand) == f"5.6 (demo) installed {day(today - 4 * DAY)}; installed by information technology"
 
 
@@ -373,7 +378,8 @@ def test_a_work_orders_outcome_is_never_refused_for_a_hand_rows(pump, r52, r56, 
     record(pump, choice(INSTALLED, r56, basis=MR), installed_by=InstalledBy.IT, applied_on=today, by=tech)
     complete(wo, tech, choice(INSTALLED, r56, basis=MR))
     row.refresh_from_db()
-    assert (row.outcome, row.release_before) == (INSTALLED, None)  # the record named 5.6 already
+    assert (row.outcome, row.release_before) == (INSTALLED, r56)  # the record named 5.6 already (stored as taken, round 3)
+    assert words(row) == f"5.6 (demo) installed {day(today)}"
     _vwo, vrow = vendor_job
     record(pump, choice(INSTALLED, r56, basis=MR), installed_by=InstalledBy.IT, applied_on=today - 5 * DAY, by=tech)
     confirm(vrow, choice(INSTALLED, r56, basis=MR), by=tech)

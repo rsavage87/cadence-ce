@@ -25,7 +25,7 @@ from django.utils import timezone
 from pg_helpers import needs_postgres
 
 from apps.credentials.models import Technician
-from apps.cybersecurity import services, updates
+from apps.cybersecurity import rules, services, updates
 from apps.cybersecurity.models import DeviceSecurity, SoftwareUpdate
 from apps.cybersecurity.services import record_facts_for
 from apps.cybersecurity.updates import UpdateChoice, confirm, open_updates, remove
@@ -159,13 +159,14 @@ def test_a_recording_completion_and_the_bulk_set_take_the_register_in_turn(tenan
     if first_is == "completion":
         assert not errors and results == {"first": "installed", "second": 1}, (results, errors)  # CE-1 already ran 2.0: left as it was
     else:  # the bulk set ran first: CE-1 already runs 2.0, and the completion's installed is recorded all the same (the person states
-        # what was installed: review round 2), naming no before (the record named 2.0 already)
+        # what was installed: review round 2), naming no before in its words (the record named 2.0 already; stored as taken, round 3)
         assert not errors and results == {"first": 2, "second": "installed"}, (results, errors)
     with tenant_context(tenant):
         assert set(DeviceSecurity.objects.values_list("release_id", flat=True)) == {s.rel2.pk}
-        row = SoftwareUpdate.objects.get()
+        row = SoftwareUpdate.objects.select_related("work_order", "target_release", "release_before", "release_after").get()
         assert row.outcome == "installed"
-        assert row.release_before_id == (s.rel1.pk if first_is == "completion" else None)
+        assert row.release_before_id == (s.rel1.pk if first_is == "completion" else s.rel2.pk)
+        assert ("recorded before" in rules.update_words(row)) is (first_is == "completion")
 
 
 # --- 2. Confirm version and a reopen ---------------------------------------------------------------------------------------------
