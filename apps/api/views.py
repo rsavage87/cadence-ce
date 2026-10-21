@@ -16,6 +16,7 @@ from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import ProtectedError
+from django.utils import timezone
 from rest_framework import routers, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import MethodNotAllowed, PermissionDenied
@@ -435,6 +436,17 @@ def _software_words(errors: dict) -> dict:
     return errors
 
 
+def _missing_outcome_words(wo, user) -> str:
+    """Slice 38 review fix: software_release, software_reference, or software_basis sent with no software_outcome (updates.choice_from
+    answers the modal's CHOOSE_OUTCOME). A user who may record what this update did is told what to send (SEND_OUTCOME); anyone else is
+    told why nothing is recorded here, in the words any outcome they sent would get (updates.check_choice on rules.offer_or_why:
+    ONLY_UPDATES on another type, NOT_FROM_REGISTER, a device not on site, RECORD_PERMISSION: a scoped user learns nothing more), never
+    told to choose one. The modal's words stay the modal's."""
+    errors: dict = {}
+    cyber_updates.check_choice(wo, cyber_updates.UpdateChoice(cyber_updates.NOT_CONFIRMED), user, errors, today=timezone.localdate())
+    return errors.get("software_outcome") or cyber_updates.SEND_OUTCOME
+
+
 def _test_equipment_ids(value):
     """The test_equipment a body sent (slice 35): a list of ids as text (the services check each one), or None for anything else (null,
     text, a number, an object, a list holding one): the caller's 400, keyed test_equipment."""
@@ -567,6 +579,7 @@ class WorkOrderViewSet(TenantViewSet):
                 raise DRFValidationError({field: [self.RECORDED_AT_COMPLETION[field]]})
         self._refuse_engineer(body, wo)  # slice 31: the vendor's engineer, likewise
         self._refuse_test_equipment(body, wo)  # slice 35: the test equipment it recorded, likewise
+        self._refuse_software(body)  # slice 38 review fix: what an update did, likewise (no GET returns these fields: never sent back)
         changed = [f for f, v in d.items() if v != getattr(wo, f)]
         self._check_update_change(wo, d, changed)  # slice 38: before anything else, as an investigation's
         self._check_investigation_change(wo, changed)
@@ -724,7 +737,9 @@ class WorkOrderViewSet(TenantViewSet):
           keeps what was recorded), "software_release" (the id of the release the device runs now, from software_choices),
           "software_reference" (the manufacturer's patch list and its month or revision, or a notice number: a token), and
           "software_basis" (one of software_choices' bases for the outcome). Refused from a user who may not record (a scoped user
-          among them), never dropped; refused on another type.
+          among them), never dropped; refused on another type. The others sent with no software_outcome name what to send, or, to a
+          user who may not record or on another type, why nothing is recorded (the words an outcome would get). Refused, keyed, on
+          every other move, on create, and on an edit (SOFTWARE_RECORDED).
         "signature" (optional): the completion_checklist's (or the PM procedure checklist's) signature the results were typed against;
         a checklist revised since is refused. A text field sent as a list, number, or object is a 400 keyed by it. Refusals are a 400
         keyed by field in the service's words, but a repair sent with no repair_check, or "passed" with no results, or with no
@@ -759,6 +774,8 @@ class WorkOrderViewSet(TenantViewSet):
                     not_text["test_equipment"] = [TEST_EQUIPMENT_IDS + TEST_EQUIPMENT_KEPT]
             parsed: dict = {}
             software = cyber_updates.choice_from(d, parsed)  # slice 38: left out, nothing recorded (KEEP)
+            if parsed.get("software_outcome") == cyber_updates.CHOOSE_OUTCOME:  # review fix: the API's words, never the modal's
+                parsed["software_outcome"] = _missing_outcome_words(wo, request.user)
             not_text.update({field: [words] for field, words in parsed.items()})  # a list per field, as every 400 here
             if not_text:
                 raise DRFValidationError(not_text)
