@@ -9,9 +9,13 @@ Slice 39, a release row's security decision (x["decision"]; Device security View
 decision names devices): the release's live decision for devices past support, its number linking to its page with its review in rules'
 words (rules.review_words), or the model's live decision for every device of ours when the release has none of its own; else "Record
 decision" for this release (permissions.can_decide) when a device of ours on site on it has a need a decision answers (rules.support_need:
-past its support, or an end announced within 12 months), its address carrying the panel's filters (`from=panel`: the save answers with
-the panel as it was). A fixed number of queries however many releases, devices, and decisions: the live decisions of the model (one), and
-for permissions.can_decide the model's devices of ours on site with their rows and the profile (rules.standings: two).
+past its support, or an end announced within 12 months) with no decision governing it (rules.governing_decisions: its own, a device
+scope) and no update responding to it (rules.update_responses), as Needs attention's rows read them (rules.needs_attention: a device so
+answered is never "no decision recorded"), its address carrying the panel's filters (`from=panel`: the save answers with the panel as it
+was). A fixed number of queries however many releases, devices, and decisions: the live decisions of the model (one), and for
+permissions.can_decide, when a release has no decision of its own or the model's, the model's devices of ours on site with their rows and
+the profile (rules.standings: two), and for those with a need on such a release the decisions that may govern them and their update
+responses (two).
 """
 from urllib.parse import urlencode
 
@@ -34,15 +38,22 @@ def record_url(release, params: dict) -> str:
     return f"{reverse('web:security_decision_new')}?{urlencode({'release': release.pk, 'from': 'panel', **params})}"
 
 
-def _needing(dm, today) -> set:
-    """The ids of the model's releases a device of ours on site runs with a need a decision answers (rules.support_need decidable)."""
+def _needing(dm, among: set, today) -> set:
+    """The ids of `among` (releases of the model with no live decision of their own or the model's) that a device of ours on site runs
+    with a need a decision answers (rules.support_need decidable), no decision governing it (rules.governing_decisions: its own), and no
+    update responding to it (rules.update_responses: an open update to a supported release, or one done with the version not confirmed),
+    as Needs attention reads them: the row's "with no decision recorded" holds for each device it counts."""
+    if not among:
+        return set()
     read = rules.standings(rules.on_site().filter(device_model=dm, ownership=Ownership.OWNED), today)
-    out = set()
-    for s in read.values():
-        need = rules.support_need(s, today)
-        if s.release is not None and need is not None and need.decidable:
-            out.add(s.release.pk)
-    return out
+    waiting = [s for s in read.values() if s.release is not None and s.release.pk in among
+               and (need := rules.support_need(s, today)) is not None and need.decidable]
+    if not waiting:
+        return set()
+    assets = [s.asset for s in waiting]
+    governing = rules.governing_decisions(assets, today)
+    responses = rules.update_responses(assets, today)
+    return {s.release.pk for s in waiting if governing.get(s.asset.pk) is None and not responses.get(s.asset.pk)}
 
 
 def _decisions(request, dm, releases: list, params: dict) -> None:
@@ -52,7 +63,8 @@ def _decisions(request, dm, releases: list, params: dict) -> None:
                                                       asset__isnull=True).order_by("number"))
     by_release = {d.release_id: d for d in live if d.release_id}
     model_wide = next((d for d in live if not d.release_id), None)
-    needing = _needing(dm, today) if cyber_perms.can_decide(request.user) else set()
+    undecided = {x["r"].pk for x in releases if x["r"].pk not in by_release} if model_wide is None else set()
+    needing = _needing(dm, undecided, today) if cyber_perms.can_decide(request.user) else set()
     for x in releases:
         release = x["r"]
         d = by_release.get(release.pk) or model_wide

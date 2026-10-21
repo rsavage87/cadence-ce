@@ -19,7 +19,9 @@ timeline when a system past its support stays in use (rules.HICP_DECISIONS, said
   supersedes=<number> for Review and renew), and `from=device` (the device drawer's Security tab) or `from=panel` (a release row of the
   model panel, with the panel's filters) for where the save answers; otherwise the new decision's page. What cannot be recorded now (a
   device not on site, nothing past its support, a live decision for the scope, a decision already ended) is said before it is tried,
-  in the service's words. Refusals come back under the fields they name, the scope's at the top, with what was chosen kept.
+  in the service's words (Review and renew's address keeping the rest of this one: a release row's panel filters). Refusals come back
+  under the fields they name, the scope's at the top, with what was chosen kept. A review day already passed is said once before it is
+  saved, only for a decision the service would take (a dry run, rolled back: else its refusals come back first).
 
 Who: reading needs permissions.can_view_devices (Device security View and Equipment View: a decision names devices); recording, renewing,
 ending, and marking one entered in error need permissions.can_decide (Device security Approve and Equipment View). Anyone else gets a
@@ -31,6 +33,7 @@ from urllib.parse import urlencode
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.paginator import Paginator
+from django.db import transaction
 from django.db.models import F, Q
 from django.http import Http404
 from django.shortcuts import redirect, render
@@ -447,8 +450,17 @@ class Scope:
             return decision_url(self.old.number)
         if self.kind == rules.DEVICE_SCOPE:
             return reverse("web:asset", args=[self.asset.tag]) + "?tab=security"
-        query = {k: v for k, v in request.GET.items() if k not in ("asset", "release", "model", "supersedes", "from")}
+        query = _carried(request)
         return reverse("web:cybersecurity_model", args=[self.model.pk]) + (f"?{urlencode(query)}" if query else "")
+
+
+SCOPE_PARAMS = ("asset", "release", "model", "supersedes", "from")  # the modal's own: its scope and where its save answers
+
+
+def _carried(request) -> dict:
+    """The rest of the modal's address (from a release row: the panel's filters), kept by every address it leads to (the panel opened
+    directly, Review and renew), so a save from=panel answers with the panel as it was opened."""
+    return {k: v for k, v in request.GET.items() if k not in SCOPE_PARAMS}
 
 
 def _scope(request) -> Scope:
@@ -505,14 +517,17 @@ def _now(scope: Scope, today: date) -> Now:
     return Now(read=read, needs=needs, reasons=reasons, lines=_unique(line for n in decidable for line in n.lines), today=today)
 
 
-def _blocker(scope: Scope, now: Now) -> tuple[str, str]:
+def _blocker(request, scope: Scope, now: Now) -> tuple[str, str]:
     """(why a decision cannot be recorded for the scope now, or ""; Review and renew's address for the live decision in force for it,
-    or ""), said before it is tried: decisions.refusal_for, the service's own checks in its order and words."""
+    or ""), said before it is tried: decisions.refusal_for, the service's own checks in its order and words. Review and renew's address
+    keeps where the save answers and the rest of this address (_carried: a release row's panel filters, so the renewal saved answers
+    with the panel as it was opened)."""
     refusal = decisions.refusal_for(**scope.kwargs(), supersedes=scope.old, today=now.today)
     if refusal is None:
         return "", ""
-    renew = record_url(supersedes=refusal.live.number, **{"from": scope.origin}) if refusal.live is not None else ""
-    return refusal.words, renew
+    if refusal.live is None:
+        return refusal.words, ""
+    return refusal.words, record_url(supersedes=refusal.live.number, **{"from": scope.origin}, **_carried(request))
 
 
 def owners(request) -> list:
@@ -531,13 +546,30 @@ def _day(text: str):
 
 
 def _passed(kwargs: dict, today: date, scope: Scope):
-    """The review day the decision would read, when it has already passed and the service would take it (after the day decided: an
-    exception that lapsed): the day typed, or the default (rules.review_default) for a blank one; else None."""
+    """The review day the decision would read, when it has already passed (after the day decided: an exception that lapsed): the day
+    typed, or the default (rules.review_default) for a blank one; else None. Whether the service would take the decision is _dry_run's."""
     decided = _day(kwargs["decided_on"]) or today
     review = _day(kwargs["review_by"])
     if review is None and not kwargs["review_by"] and kwargs["response"] in DecisionResponse.values and decided <= today:
         review = rules.review_default(kwargs["response"], decided, asset=scope.asset)
     return review if review is not None and decided < review < today else None
+
+
+class _DryRun(Exception):
+    """Raised at the end of _dry_run's transaction to roll back the decision it recorded."""
+
+
+def _dry_run(record: dict) -> None:
+    """decisions.record_decision with `record`, rolled back (apps.imports' check precedent): its refusal (a ValidationError, every field
+    problem at once, or the scope's under its locks) raised as the save would raise it, nothing kept when it would be recorded (the
+    decision, its number, its history). Record decision says a review day already passed only for a decision the service would take, so
+    the second save the note asks for records it."""
+    try:
+        with transaction.atomic():
+            decisions.record_decision(**record)
+            raise _DryRun
+    except _DryRun:
+        pass
 
 
 def _record_modal(request, scope: Scope, now: Now, form, *, blocker: str = "", renew: str = "", note: str = ""):
@@ -564,7 +596,7 @@ def decision_new(request):
     people_ = owners(request)
     options = {"owners": people_, "today": today, "temporary": scope.temporary, "asset": scope.asset}
     if request.method != "POST":
-        blocker, renew = _blocker(scope, now)
+        blocker, renew = _blocker(request, scope, now)
         initial = renew_initial(scope.old, today) if scope.old is not None else {}
         return _record_modal(request, scope, now, None if blocker else RecordDecisionForm(initial=initial, **options),
                              blocker=blocker, renew=renew)
@@ -572,17 +604,20 @@ def decision_new(request):
     saved = None
     if form.is_valid():
         kwargs = form.service_kwargs()
+        record = {**scope.kwargs(), "reasons": request.POST.getlist("reasons"), "by": request.user, "today": today, **kwargs}
         passed = _passed(kwargs, today, scope)
-        if passed is not None and form.cleaned_data.get("review_passed") != passed.isoformat():
-            data = request.POST.copy()
-            data["review_passed"] = passed.isoformat()
-            form = RecordDecisionForm(data, **options)
-            form.is_valid()
-            note = decisions.REVIEW_PASSED.format(day=rules.day_words(passed))
-            return _record_modal(request, scope, now, form, note=note)
         try:
-            saved = decisions.record_decision(**scope.kwargs(), reasons=request.POST.getlist("reasons"), supersedes=scope.old,
-                                              by=request.user, today=today, **kwargs)
+            if passed is not None and form.cleaned_data.get("review_passed") != passed.isoformat():
+                # Said once before it is saved, and only when the service would take it: else its refusals now, never the note first.
+                # The decision superseded by its id: the dry run never touches this request's copy (record_decision syncs an instance).
+                _dry_run({**record, "supersedes": scope.old.pk if scope.old is not None else None})
+                data = request.POST.copy()
+                data["review_passed"] = passed.isoformat()
+                form = RecordDecisionForm(data, **options)
+                form.is_valid()
+                note = decisions.REVIEW_PASSED.format(day=rules.day_words(passed))
+                return _record_modal(request, scope, now, form, note=note)
+            saved = decisions.record_decision(**record, supersedes=scope.old)
         except (ValidationError, PermissionDenied) as e:
             form.add_service_errors(e)
     if saved is None:

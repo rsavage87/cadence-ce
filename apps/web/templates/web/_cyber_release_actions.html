@@ -3,7 +3,8 @@
    model on site on another release or none recorded), whose address carries the panel's filters. Slice 39 (under x.decision, Device
    security View and Equipment View): the release's live security decision (or the model's, for every device of ours), its number opening
    its page with its review in rules' words; else Record decision (permissions.can_decide) when a device of ours on it is past its
-   support or has an end announced within 12 months.{% endcomment %}
+   support or has an end announced within 12 months, with no decision governing it (its own) and no update responding to it, as Needs
+   attention reads it (cyber_release_actions._needing).{% endcomment %}
 {% if x.update.words or x.update.can_open %}<div class="cy-campaign">
   {% if x.update.words %}<span class="cy-campaign-w">{{ x.update.words }}</span>{% endif %}
   {% if x.update.can_open %}<button class="link" type="button" hx-get="{{ x.update.open_url }}" hx-target="#modal-card">Open updates to this release</button>{% endif %}
