@@ -104,6 +104,9 @@ def _lower_first(text: str) -> str:
     return text[:1].lower() + text[1:]
 
 
+LEVEL_NOTE = "Status kept: retiring or reinstating a device needs Equipment Approve"
+
+
 def _status_shown(asset) -> str:
     """The "Devices by status" total's words: a temporary device that went back is "Returned to owner", never "Retired" (slice 29)."""
     if asset.status == AssetStatus.RETIRED and eq.owner_maintains(asset):
@@ -383,19 +386,27 @@ class DevicesImporter(Importer):
             result.warn(_temporary_kept(asset))
             return False
         if not self._may(ctx, eq_perms.status_level(asset.status, status)):
-            result.warn("Status kept: retiring or reinstating a device needs Equipment Approve")
+            result.warn(LEVEL_NOTE)
             return False
         was = asset.get_status_display().lower()
         try:
-            eq.set_status(asset, status, by=ctx.user, note="Imported", today=ctx.today, may_number=ctx.cache["numbering"])
+            # The level again on the device's row as it is now (set_status): one retired or reinstated since the chunk read it
+            eq.set_status(asset, status, by=ctx.user, note="Imported", today=ctx.today, may_number=ctx.cache["numbering"],
+                          level=ctx.cache["level"])
+        except PermissionDenied:  # retired or reinstated since the chunk read it, and its move now needs Approve
+            asset.refresh_from_db()
+            result.warn(LEVEL_NOTE)
+            return False
         except ValidationError as e:
             asset.refresh_from_db()
-            if e.messages and e.messages[0] == eq.CHANGED_MEANWHILE.format(tag=asset.tag):  # the device changed meanwhile: its words
-                result.warn(f"Status kept: {e.messages[0]}")
-            elif asset.incident_hold:  # held a moment ago, after the check above
+            if asset.incident_hold:  # held a moment ago, after the check above
                 result.warn(HELD_NOTE)
-            elif eq.temporary_status_refusal(asset, status):  # slice 29: as read now
+            elif eq.temporary_status_refusal(asset, status):  # slice 29: as read now, whatever the level
                 result.warn(_temporary_kept(asset))
+            elif not self._may(ctx, eq_perms.status_level(asset.status, status)):  # retired since the chunk read it: the level
+                result.warn(LEVEL_NOTE)
+            elif e.messages and e.messages[0] == eq.CHANGED_MEANWHILE.format(tag=asset.tag):  # the device changed meanwhile: its words
+                result.warn(f"Status kept: {e.messages[0]}")
             elif asset.awaiting_inspection and status in eq.HOLD:
                 # Slice 26: a new device waiting for its incoming inspection goes in use when it passes; set_status says which one.
                 result.warn(f"Status kept: {e.messages[0]}")

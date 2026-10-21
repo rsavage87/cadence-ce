@@ -53,7 +53,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import BooleanField, Case, Exists, OuterRef, Q, Value, When
 from django.utils import timezone
 
-from apps.equipment.models import AssetStatus
+from apps.equipment.models import Asset, AssetStatus
 from apps.notifications import assignments
 from apps.pm.dates import add_months
 from apps.pm.windows import window_of, windows
@@ -119,6 +119,25 @@ def _check_update_type(type, register_opener: bool) -> None:
         raise ValidationError({"type": UPDATE_OPENED_ELSEWHERE})
 
 
+def _tag_out_row(asset, opened_on) -> Asset:
+    """The device's row as it is now, for a work order that tags it out, locked in the facility's order (its work, the work order
+    numbering, its row: as equipment.services._locked_row), so the tag-out moves the row as it is, never the caller's copy: moving
+    a device in service out of service needs no Equipment level, but the same write on a device retired since the caller read it
+    would reinstate it, which needs Equipment Approve. A retired device (or one returned to its owner) is refused, keyed "asset"."""
+    from apps.equipment.services import owner_maintains  # equipment.services imports this app inside its functions; keep it one way
+
+    lock_work(asset.pk)
+    lock_numbering(opened_on.year)
+    fresh = Asset.objects.select_for_update().get(pk=asset.pk)  # the device's row only (a join would lock its model's row too)
+    if fresh.status == AssetStatus.RETIRED:
+        state = "returned to its owner" if owner_maintains(fresh) else "retired"
+        raise ValidationError({"asset": TAG_OUT_REFUSED.format(tag=fresh.tag, state=state)})
+    return fresh
+
+
+TAG_OUT_REFUSED = "{tag} is {state}, so no work order tags it out."
+
+
 def _check_owner_maintained(asset, type) -> None:
     """Slice 29: no PM work order on a device its owner maintains (equipment.services.owner_maintains)."""
     from apps.equipment.services import owner_maintains  # equipment.services imports this app inside its functions; keep it one way
@@ -139,14 +158,16 @@ def create_work_order(*, asset, type, priority, problem, requester="", source=So
     _check_waiting_device(asset, type, extra.get("follow_up_of"))
     opened_on = opened_on or timezone.localdate()
     due_on = due_on or opened_on + timedelta(days=DUE_DAYS[priority])
+    tagged = _tag_out_row(asset, opened_on) if tag_out else None
     wo = WorkOrder(asset=asset, type=type, priority=priority, problem=problem, requester=requester, source=source, assigned_to=assigned_to,
                    vendor_service=vendor_service, vendor_name=vendor_name, opened_on=opened_on, due_on=due_on, created_by=created_by,
                    tagged_out=tag_out, tenant=asset.tenant, **extra)
     wo.save()
     WorkOrderStatusHistory.objects.create(tenant=wo.tenant, work_order=wo, from_status="", to_status=WoStatus.OPEN, changed_by=created_by, note="Opened")
-    if tag_out and asset.status == AssetStatus.IN_SERVICE:
-        asset.status = AssetStatus.OUT_OF_SERVICE
-        asset.save(update_fields=["status", "updated_at"])
+    if tagged is not None and tagged.status == AssetStatus.IN_SERVICE:
+        tagged.status = AssetStatus.OUT_OF_SERVICE
+        tagged.save(update_fields=["status", "updated_at"])
+        asset.status = tagged.status  # the caller's copy follows
     if assigned_to is not None and not vendor_service:
         assignments.announce(wo, assigned_to, by=created_by)  # slice 20: the technician is emailed once this commits
     return wo

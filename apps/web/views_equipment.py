@@ -265,9 +265,12 @@ def asset_status(request, tag):
     # them for the toast.
     open_wos = set(asset.work_orders.filter(status__in=OPEN_STATUSES).values_list("pk", flat=True)) if to_status == AssetStatus.RETIRED else set()
     try:
-        eq.set_status(asset, to_status, by=request.user)
+        # The level again on the device's row as it is now: one retired or reinstated since it was read above needs Approve
+        eq.set_status(asset, to_status, by=request.user, level=request.user.level_for(eq_perms.MODULE))
     except ValidationError as e:
         return toast(_drawer(request, tag), e.messages[0])
+    except PermissionDenied as e:  # retired or reinstated since it was read: the drawer as it is now, and why
+        return toast(_drawer(request, tag), str(e))
     cancelled = list(asset.work_orders.filter(pk__in=open_wos, status=WoStatus.CANCELLED).values_list("type", flat=True)) if open_wos else []
     # wo-changed too: retiring cancels the device's open PM work orders, reinstating a waiting device may open an inspection.
     return toast(_changed(_drawer(request, tag), "wo-changed"),

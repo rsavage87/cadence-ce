@@ -23,6 +23,7 @@ from contextlib import contextmanager
 
 from django.conf import settings
 from django.core.cache import caches
+from django.core.exceptions import ValidationError
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.csrf import csrf_protect
@@ -116,13 +117,18 @@ def request_form(request, tenant_slug):
                 shop = f"the Clinical Engineering shop at {facility.portal_hotline}" if facility.portal_hotline else "the Clinical Engineering shop"
                 return HttpResponse(f"Too many requests from this location. Please call {shop}.", status=429)
             form = ServiceRequestForm(request.POST, require_callback=facility.portal_require_callback, email_domains=email_domains)
+            sr = None
             if form.is_valid():
-                with _anonymous_history():
-                    sr = create_service_request(asset=form.asset, department=form.cleaned_data["department"], problem=form.cleaned_data["problem"],
-                                                urgency=form.cleaned_data["urgency"], requester_name=form.cleaned_data["requester_name"],
-                                                callback=form.cleaned_data["callback"], room=form.cleaned_data["room"],
-                                                tagged_out=form.cleaned_data["tagged_out"], ip=ip,
-                                                requester_email=form.cleaned_data.get("requester_email", ""))
+                try:
+                    with _anonymous_history():
+                        sr = create_service_request(asset=form.asset, department=form.cleaned_data["department"],
+                                                    problem=form.cleaned_data["problem"], urgency=form.cleaned_data["urgency"],
+                                                    requester_name=form.cleaned_data["requester_name"], callback=form.cleaned_data["callback"],
+                                                    room=form.cleaned_data["room"], tagged_out=form.cleaned_data["tagged_out"], ip=ip,
+                                                    requester_email=form.cleaned_data.get("requester_email", ""))
+                except ValidationError as e:  # the device retired since the form read it (a tag-out): on the tag's field
+                    form.add_error("asset_tag", e.messages)
+            if sr is not None:
                 response = redirect("portal:done", tenant_slug=tenant.slug, number=sr.number)
                 # The facility and the number: request numbers repeat across facilities, so a cookie from one must not open another's
                 response.set_signed_cookie(SENT_COOKIE, _sent_value(tenant, sr), salt=SENT_SALT, max_age=SENT_MAX_AGE, path=f"/r/{tenant.slug}/",

@@ -321,8 +321,10 @@ class AssetViewSet(EquipmentWrites, TenantViewSet):
         if to not in AssetStatus.values:
             raise DRFValidationError({"to": [f"Required; one of {', '.join(AssetStatus.values)}."]})
         if not eq_perms.can_set_status(request.user, asset.status, to):
-            raise PermissionDenied("Retiring or reinstating a device needs Approve access.")
-        _via_service(eq_services.set_status, asset, to, by=request.user, note=str(body.get("note") or ""))
+            raise PermissionDenied(eq_services.STATUS_PERMISSION)
+        # The level again on the device's row as it is now (set_status): one retired or reinstated since it was read needs Approve
+        _via_service(eq_services.set_status, asset, to, by=request.user, note=str(body.get("note") or ""),
+                     level=request.user.level_for(eq_perms.MODULE))
         return Response(self.get_serializer(asset).data)
 
     @action(detail=True, methods=["post"], url_path="use-before-inspection", url_name="use-before-inspection")

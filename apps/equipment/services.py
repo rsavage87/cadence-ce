@@ -992,7 +992,7 @@ def _move_open_pm(asset: Asset, by=None) -> None:
 
 @transaction.atomic
 def set_status(asset: Asset, to_status: str, *, by=None, note: str = "", today: date | None = None, changed_on: date | None = None,
-               may_number: bool = True) -> Asset:
+               may_number: bool = True, level: int | None = None) -> Asset:
     """Move a device along STATUS_CHANGES. Retiring cancels its open PM work orders that can be cancelled and refuses while any
     other work is open (finish or cancel it first); the device leaves the PM schedule (_retire). Reinstating puts it back with a PM
     due today. `note` is kept in the device's history. `changed_on` dates the history row on an earlier day (not before the install
@@ -1014,7 +1014,11 @@ def set_status(asset: Asset, to_status: str, *, by=None, note: str = "", today: 
     numbering between them (workorders.services.lock_numbering), since it opens one, as a batch takes the numbering before each device
     (one that became retired and waiting after the check before the locks is refused in words: CHANGED_MEANWHILE). `may_number=False`:
     the caller holds other devices' rows and decided before them not to take the numbering (a devices import chunk, at its load), so a
-    reinstate that would open an inspection is refused in the same words, never numbered after those rows."""
+    reinstate that would open an inspection is refused in the same words, never numbered after those rows.
+    `level`: the Equipment level of the person moving it (the drawer, the API, the devices import), who was checked against the device
+    as they read it (permissions.can_set_status): checked again on its row as it is now, locked, so a device retired or reinstated
+    meanwhile never moves at a level its move now needs more than (PermissionDenied, STATUS_PERMISSION). None: never checked here (the
+    system, or a work order's own move: a completion's tag-out)."""
     today = today or timezone.localdate()
     if to_status not in AssetStatus.values:
         raise ValidationError("Choose a device status.")
@@ -1029,6 +1033,9 @@ def set_status(asset: Asset, to_status: str, *, by=None, note: str = "", today: 
     refusal = temporary_status_refusal(asset, to_status)  # slice 29: before the general refusal, whose words say "retired"
     if refusal:
         raise ValidationError(refusal)
+    # The caller checked the level on an older copy; after the refusals every level gets, whose words are the true reason
+    if level is not None and level < permissions.status_level(asset.status, to_status):
+        raise PermissionDenied(STATUS_PERMISSION)
     if to_status not in STATUS_CHANGES.get(asset.status, set()):
         raise ValidationError(f"{asset.tag} cannot go from {asset.get_status_display().lower()} to {AssetStatus(to_status).label.lower()}.")
     if asset.awaiting_inspection and to_status in HOLD:
@@ -1398,6 +1405,7 @@ REFERENCE_MAX = Asset._meta.get_field("owner_reference").max_length
 OWNER_MAX = Asset._meta.get_field("owner").max_length
 TEMPORARY_INTAKE = (AddedAs.NEW, AddedAs.EXISTING)  # how a temporary device comes to be in Cadence (never imported)
 STAY_FIELDS = ("owner", "owner_reference", "due_back_on", "owner_pm_due_on", "stands_in_for")  # what update_temporary changes
+STATUS_PERMISSION = "Retiring or reinstating a device needs Approve access."
 TEMPORARY_PERMISSION = "Adding a rental, vendor loaner, or demo unit, changing its stay, or returning it to its owner needs Equipment Edit."
 KEEP_PERMISSION = "Keeping a rental, vendor loaner, or demo unit as the facility's own needs Equipment Approve."
 STAY_REASON = "Stay changed"  # the device's history reasons
