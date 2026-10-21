@@ -397,17 +397,20 @@ in them), answers are choices. None of it reaches an email, a report email, a cu
 portal, labels, or Scan. The register never calls a device or a release "secure", "compliant", "certified", "patched" or "unpatched",
 "vulnerable", "unsupported", "mitigated", "protected", "safe", "at risk", "exposed", "exploitable", or "remediated", never "end of life"
 for an end of support, nor "high risk" or "critical" in its own voice; an MDS2 answer is named by its question in words, never by a
-form's question number.
+form's question number. A security decision is never an exemption or a waiver, a device never "hardened", and a review date never a
+"deadline" or "overdue".
 
 Device security is a module of its own in Roles: the director Full, the CE manager Approve, technicians Edit, Finance and quality,
 requesters, and vendors None. View sees the register; Edit records models' profiles and releases and devices' facts; Approve marks a
-software update entered in error (below). Every list naming devices by tag or location (Fleet's devices, Changes for IT, the drawer's tab, their CSVs) also needs
+software update entered in error and records security decisions (both below). Every list naming devices by tag or location (Fleet's devices, Changes for IT, the drawer's tab, their CSVs) also needs
 Equipment View; the Models tab needs Device security View alone. A vendor's or a requester's account never sees it, whatever its levels
 (on a custom role that sees only its company's or unit's share, Device security has no effect). For the IT department, make a custom role
-"IT security" with Device security Edit and Equipment View: it records the facts without adding, editing, or retiring devices. Upgrading:
+"IT security" with Device security Edit and Equipment View: it records the facts without adding, editing, or retiring devices. For IT to
+record its exceptions as decisions, raise Device security to Approve; with Equipment View it then also marks updates entered in error.
+Add Work orders View to follow update work orders. Upgrading:
 every custom role made before this release reads None for Device security, so a custom role that administers users cannot invite anyone
 into a role holding it (a technician's, for one: nobody gives more access than their own) until a director raises its Device security
-level. Software updates are below. Advisories and the decisions on them, compensating controls, the version recorded at every
+level. Software updates and security decisions are below. Advisories and the decisions on them, the version recorded at every
 completion, the import, the survey binder's section, and the evaluation's figures come next.
 
 ## Software updates
@@ -455,6 +458,58 @@ the Overview, Scan, labels, the portal, emails, custom reports, the API's work o
 resolution show the type and the fixed problem only. Upgrading: every custom role made before this release still reads None for Device
 security, so its users see update work orders without their targets, and cannot record what one did, until a director raises its
 Device security level.
+
+## Security decisions
+When a device stays in use after its manufacturer's security updates end, or after its operating system vendor's support does, HHS
+405(d)'s HICP 2023 recommends documenting mitigating controls and a timeline for resolving the risk, through the organization's risk
+acceptance or exception process; no rule requires it, and Cadence never says one does. A security decision records that for one device,
+for a model's devices of ours on one release, or for every device of ours of a model: the reasons (the manufacturer's security updates,
+the OS vendor's support: ended, or announced to end within 12 months), the decision (Keep in use with controls, Keep in use without
+added controls, or Take out of use), the controls it relies on from a list (a medical device network segment, traffic limited to the
+ports and hosts it needs, no internet access, a connectivity feature turned off, the manufacturer's published mitigation, vendor remote
+access off or attended only, a malware scan when serviced, application allowlisting, unused ports and services turned off, network
+monitoring, physical access and removable media controlled, or controls recorded in IT's system with its change number), a plan (wait
+for the manufacturer; an update planned by a day; a replacement planned by a day, worded by the fiscal year it falls in; return it to its
+owner, for a rental, loaner, or demo unit; or none) with an optional owner, who accepted it (the CE leader, IT security or the CISO, a
+committee, department leadership, or the authorizing official), IT's exception number, the day decided, and a review date (by default
+12 months after the day decided, 3 to take out of use; for a rental, loaner, or demo unit its due back day when sooner, else 3 months; at
+most 36 months, 12 to take out of use: Cadence's choices, not a rule). IT's exception stays in IT's system of record: Cadence keeps its number, never its text, and a reference
+is never an address, a VLAN, or a port. A device recorded "Not connected here" (Record facts) needs no decision, so "taken off the
+network" is not offered as a control, and the segment is refused as one while the model's record says its devices are on no separate
+segment. A decision is never changed: Review and renew records the next one and ends it as superseded; End (no longer needed: updated,
+replaced, retired, or returned) and Entered in error end one. Retiring, returning, or updating a device never touches a decision: the
+screens read what holds now.
+
+The most specific decision in force governs each device: its own, else its release's, else its model's; a rental, loaner, or demo unit
+only its own (a release or model decision describes where the facility put its own devices). Past its review date a decision reads
+"Review due since ..." first and covers nothing, and a broader one never takes over. An open update to a release still supported, and
+an update done with the version not confirmed, are shown beside the decision as answers of their own. A decision reads as one sentence:
+"Keep in use with controls (2: traffic limited to the ports and hosts it needs; vendor remote access off, or attended only); review by
+Oct 21, 2027. Plan: replace, planned for FY2029. Accepted by IT security or the CISO, as recorded by Rob Feldman on Oct 21, 2026; IT
+exception DEMO-EX-1042." "Risk accepted until" appears only in the sentence for Keep in use without added controls, and never once past
+its review.
+
+Device security's Decisions tab opens with Needs attention: devices of ours past their support, connected or able to connect, with no
+decision recorded (per model and release, with Record decision); rentals, loaners, and demo units past theirs (ask the owner to update it,
+or return it); updates done with the version not confirmed; ends announced within 12 months (information); decisions past their review
+date, to review within 30 days, or governing no device here now (End); and Check lines: a reason that ended since the decision, the
+model's record no longer giving the segment it relies on, devices joined since, the plan's date passed, a device still in service after a
+decision to take it out of use, the plan owner's account deactivated. With nothing listed it reads "Nothing listed from what is recorded
+here." Below, the decisions by state (In force, Review within 30 days, Review due, Ended), filtered by scope, decision, or IT exception
+number, download as CSV. A decision's page shows its sentence, its reasons with their dates, controls, plan, who accepted and recorded it,
+its review, the devices it governs (tag, serial, model, department, connection, release, and what answers each), its Check lines, the
+decision it superseded or that superseded it, and its History; it prints for IT and the committee ("As recorded in Cadence; IT's
+exception record is the system of record") and its devices download as CSV. Record decision opens from a release's row in Models (a
+release's devices or the model's), from a device's Security tab (that device), from Needs attention, and as Review and renew (prefilled,
+the exception number blank); the Security tab shows the device's need, what answers it, and the decision that governs it. Device
+security's nav item carries a badge counting the decisions past their review date that still govern a device here. Decisions never reach
+an email, a digest, the Overview's attention list, a custom report, the portal, labels, or Scan.
+
+Who may do what: reading decisions (the tab, a decision's page, print, and CSVs, the badge, the API, and their history in the change log)
+needs Device security View and Equipment View, since a decision can name a device; recording, Review and renew, End, and Entered in error
+need Device security Approve and Equipment View. A vendor's or a requester's account never sees them. A release a decision is in force for
+cannot be marked entered in error until the decision ends, and a release any decision names keeps its version (add the new version
+instead).
 
 ## Custom reports
 Reports' "+ Custom report" (Reports Edit: the director and Finance and quality by default) builds a report from work orders, devices,
@@ -541,6 +596,13 @@ its module's docstring under `apps/api/`, and the browsable API (open `/api/v1/`
   `already`, or `not_confirmed`; needed while nothing is recorded, then left out keeps what was), `software_release` (an id from
   `software_choices`), `software_reference`, and `software_basis`; a missing one answers a 400 naming what to send. Every other move,
   and a new work order, refuses them; an update work order keeps its device, type, and problem, and is cancelled rather than deleted.
+- security decisions (slice 39): `/api/v1/security-decisions/`, read only (Device security View and Equipment View; never a vendor's or a
+  requester's account), each by id or number: its scope (the device's id and tag, the model's id, the release's id and version), the
+  reasons, the decision and its label, the controls and their words, the controls' reference, the plan with its day, words, and owner,
+  who accepted it (with its words), IT's exception number, who recorded it, the days decided, to review, and ended, why it ended, the
+  decision it supersedes, its sentence, the devices it governed when recorded, and its Check lines; `?scope=device|release|model`,
+  `?state=in_force|review_due|ended`, `?device=` (an id, or a tag in any letter case). Recording them is the Device security screen's. A
+  device or model a decision names is never deleted (the refusal names the decision for a Device security reader; retire the device).
 - the signed-in person's facilities and All facilities (`views_facilities.py`, `views_all_facilities.py`; session only).
 
 Vendor technicians and clinical requesters reach only their own devices and work orders (and Scan), as on the screens. Nobody gives

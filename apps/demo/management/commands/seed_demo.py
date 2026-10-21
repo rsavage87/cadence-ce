@@ -123,6 +123,20 @@ last round of checks, then the manufacturer applied the patches on its validated
 list of the month before). The work orders' problems and resolutions name no version and no reference. Today's work: every period the
 program evaluation and the vendor review count is as before; no vendor job, nothing on the ventilators. Constants only: nothing is drawn.
 The North Campus has none.
+
+Slice 39: security decisions (_security_decisions), after the software updates, recorded by the CE manager through
+apps.cybersecurity.decisions as Record decision records them, each accepted by IT security with its exception number in IT's system
+(DEMO-EX-): SD-<yy>-0001 for the pumps of ours on the older release (release scope), kept in use with controls (the medical device
+segment the pumps' profile records, traffic limited), decided a week after their security updates ended (recorded with that day as
+today), an update planned by the last day of last month with Kim as its owner and reviewed on that day, so it reads "Review due since
+...", the nav badge is hot, its Check says the plan's date has passed, and its pumps with an open update show it beside the decision;
+and the next number for the other C-arm (device scope: the first by tag is kept off the network), its OS vendor's support ended, kept in
+use with controls its profile allows (no separate segment: traffic limited; the manufacturer installs remotely: remote access off or
+attended only), a replacement planned in the fiscal year after next, in force for 12 months. And the rental bed on a release of the
+beds' own ("2.0 (demo)") whose security updates ended last month, recorded connected here (wireless) today, with no decision: Needs
+attention's rentals row. Every device of ours past its support is governed by one of the two (the pumps' listed under decisions past
+their review), so Needs attention's list of ours with no decision recorded is empty. No link, no CVE. Constants only: nothing is drawn, no
+device moves. The North Campus has none.
 """
 import random
 from datetime import date, datetime, time, timedelta
@@ -139,10 +153,14 @@ from apps.contracts.models import Contract, ContractType, Coverage
 from apps.core.workdays import is_work_day
 from apps.credentials.models import Credential, Scope, Technician
 from apps.credentials.services import qualified_technicians, renew_credential
+from apps.cybersecurity import decisions as cyber_decisions
 from apps.cybersecurity import services as cyber
 from apps.cybersecurity import updates as cyber_updates
 from apps.cybersecurity.models import (
+    AcceptedBy,
     Connects,
+    DecisionPlan,
+    DecisionResponse,
     Disclosed,
     InstalledBy,
     Mds2Edition,
@@ -175,6 +193,7 @@ from apps.equipment.models import (
 from apps.evaluations import services as evaluations
 from apps.evaluations import vendor_reviews
 from apps.evaluations.models import Decision, ObjectiveKind, ObjectiveResult, Overall, Rating, StatedInContract
+from apps.facility import fiscal
 from apps.facility.models import PmWindow
 from apps.facility.services import labor_rates, update_settings
 from apps.incidents import notify as incident_notify
@@ -572,6 +591,45 @@ UPDATE_NOT_CONFIRMED_RESOLUTION = "Update installed and the pump restarted; the 
 C_ARM_RELEASE, C_ARM_FOUND_DAYS_AGO, C_ARM_PATCHED_DAYS_AGO = "7.2 (demo)", 20, 6
 C_ARM_PATCHES = "DEMO-PATCH-{year}-{month:02d}"
 
+# Slice 39, security decisions (_security_decisions), after the software updates, through apps.cybersecurity.decisions as Record
+# decision records them, by SECURITY_RECORDED_BY (the CE manager: Device security Approve), each as IT security accepted it with its
+# exception number in IT's system (every one DEMO-; no link, no CVE):
+# - the pumps of ours on the older release (release scope): kept in use on the medical device segment the pumps' profile records, with
+#   their traffic limited, decided DECISION_PUMPS_AFTER_DAYS after their security updates ended (the decision's own day: entered with
+#   that day as today), an update planned by the last day of last month (owner Kim) and reviewed on the plan's day, so it is past its
+#   review now ("Review due since ...", the nav badge, the Check "The plan's date ... has passed"); the pumps with an open update to the
+#   newer release show it beside the decision.
+# - the other C-arm (the second by tag: the first is kept off the network), its OS vendor's support ended (device scope): kept in use
+#   with controls its profile allows (its devices are on no separate segment, so traffic limited; the manufacturer installs its updates
+#   remotely, so its remote access off or attended only), a replacement planned by the last day of the fiscal year after next
+#   (DECISION_C_ARM_FY_AHEAD), reviewed in 12 months (the default): in force.
+# - the rental bed T-0101 on a release of the beds' own (RENTAL_RELEASE) whose security updates ended last month, connected here
+#   (wireless), checked today: no decision, so Needs attention's rentals row asks its owner to update it, or return it.
+DECISION_PUMPS_AFTER_DAYS = 7
+DECISION_PUMPS = {"reasons": ["security_updates"], "response": DecisionResponse.KEEP_WITH_CONTROLS,
+                  "controls": ["segmented", "traffic_restricted"], "plan": DecisionPlan.UPDATE_PLANNED,
+                  "accepted_by": AcceptedBy.IT_SECURITY, "exception_reference": "DEMO-EX-1037"}
+DECISION_C_ARM = {"reasons": ["os_support"], "response": DecisionResponse.KEEP_WITH_CONTROLS,
+                  "controls": ["traffic_restricted", "remote_access_controlled"], "plan": DecisionPlan.REPLACE_PLANNED,
+                  "accepted_by": AcceptedBy.IT_SECURITY, "exception_reference": "DEMO-EX-1042"}
+DECISION_C_ARM_FY_AHEAD = 2  # the fiscal year after next
+# The rental bed's release: tag, the beds' version, its fields (as SECURITY_RELEASES: the last day of the month that many months from
+# today's; a day that many days from today), and how it is connected here.
+RENTAL_RELEASE = ("T-0101", "2.0 (demo)", {"security_updates_end_on": -1, "support_checked_on": 0}, Network.WIRELESS)
+
+
+def _security_fields(spec: dict, today: date) -> dict:
+    """A release's fields as SECURITY_PROFILES, SECURITY_RELEASES, and RENTAL_RELEASE write them: a last day (SECURITY_LAST_DAYS) the
+    last day of the month that many months from today's, any other day that many days from today."""
+    out = {}
+    for name, value in spec.items():
+        if name in SECURITY_LAST_DAYS:
+            value = add_months(today.replace(day=1), value + 1) - timedelta(days=1)
+        elif name.endswith("_on"):
+            value = today + timedelta(days=value)
+        out[name] = value
+    return out
+
 
 def _noon(day: date) -> datetime:
     """Noon of `day` in the current time zone (the facility's, inside tenant_context): a backdated timestamp's moment."""
@@ -744,6 +802,7 @@ class Command(BaseCommand):
             self._fleet_in_cadence(today, assets)  # slice 37: the fleet's "Added" rows dated the day before the demo's work begins
             self._device_security(today, domain)  # slice 37: draws nothing, after every draw
             self._software_updates(today, domain)  # slice 38: draws nothing, after the register (today's work: outside every period)
+            self._security_decisions(today, domain)  # slice 39: draws nothing, after the updates (the pumps' decision shows them)
             self._vendor_review(today, domain)  # slice 34: before the program evaluation, which stays made last
             self._program_evaluation(today, domain)  # slice 32: last, so its figures count everything above
         devices = len(assets) + len(NEW_DEVICES) + len(TEMPORARY_DEVICES)
@@ -1008,24 +1067,14 @@ class Command(BaseCommand):
         monitors' MDS2 is on file for an older release than most of them run. Constants only: nothing is drawn, no device moves."""
         manager = User.objects.get(username=f"{SECURITY_RECORDED_BY}@{domain}")  # the CE manager: Device security Approve
 
-        def fields(spec: dict) -> dict:
-            out = {}
-            for name, value in spec.items():
-                if name in SECURITY_LAST_DAYS:  # the last day of the month `value` months from today's
-                    value = add_months(today.replace(day=1), value + 1) - timedelta(days=1)
-                elif name.endswith("_on"):
-                    value = today + timedelta(days=value)
-                out[name] = value
-            return out
-
         def ours(device_model) -> list:
             return list(Asset.objects.filter(device_model=device_model, ownership=Ownership.OWNED).exclude(status=AssetStatus.RETIRED)
                         .order_by("tag"))
 
         models = {dm.model: dm for dm in DeviceModel.objects.all()}
         for model, spec in SECURITY_PROFILES:
-            cyber.add_release(models[model], by=manager, today=today, **fields(spec))
-        releases = {version: cyber.add_release(models[model], by=manager, today=today, version=version, **fields(spec))
+            cyber.add_release(models[model], by=manager, today=today, **_security_fields(spec, today))
+        releases = {version: cyber.add_release(models[model], by=manager, today=today, version=version, **_security_fields(spec, today))
                     for model, version, spec in SECURITY_RELEASES}
         for model, version, (start, stop), since, network in SECURITY_BULK:
             cyber.record_facts_for(models[model], ours(models[model])[start:stop], by=manager, today=today, release=releases[version],
@@ -1089,6 +1138,36 @@ class Command(BaseCommand):
             if len(here) in UPDATE_DEPARTMENT_PUMPS and not any(p.incident_hold for p in here):
                 return here[0].department, here
         raise RuntimeError("No department has 3 or 4 pumps on the older release: the demo's update batch has nowhere to go.")
+
+    @staticmethod
+    def _security_decisions(today: date, domain: str) -> None:
+        """Slice 39: the CE manager's security decisions through apps.cybersecurity.decisions, as Record decision records them (each
+        row's history says who), after the software updates (the pumps' decision governs the pumps still on the older release, and
+        shows their open updates beside it): the pumps on the older release (DECISION_PUMPS: release scope, decided a week after their
+        security updates ended, so recorded with that day as today; its plan's day and review the last day of last month, past now),
+        then the other C-arm (DECISION_C_ARM: device scope, today, a replacement planned in the fiscal year after next, the review by
+        default). And, through the register's services, the rental bed on a release of the beds' own whose security updates ended last
+        month, connected here, with no decision (RENTAL_RELEASE). Constants only: nothing is drawn, no device moves, no work order is
+        added (the evaluations and the vendor review count nothing here)."""
+        manager = User.objects.get(username=f"{SECURITY_RECORDED_BY}@{domain}")  # Device security Approve and Equipment View
+        kim = User.objects.get(username=f"kim@{domain}")
+        pump_model = DeviceModel.objects.get(model="Alaris 8015 PCU")
+        older = SoftwareRelease.objects.get(device_model=pump_model, version=PUMP_OLDER)
+        decided = older.security_updates_end_on + timedelta(days=DECISION_PUMPS_AFTER_DAYS)
+        last_month_end = today.replace(day=1) - timedelta(days=1)
+        cyber_decisions.record_decision(release=older, **DECISION_PUMPS, plan_by=last_month_end, plan_owner=kim, review_by=last_month_end,
+                                        by=manager, today=decided)
+
+        c_arm_model = DeviceModel.objects.get(model="Cios Spin")
+        c_arm = Asset.objects.filter(device_model=c_arm_model, ownership=Ownership.OWNED).exclude(status=AssetStatus.RETIRED).order_by("tag")[1]
+        start = fiscal.start_month()
+        _first, replace_by = fiscal.fiscal_bounds(fiscal.current_fy(today, start) + DECISION_C_ARM_FY_AHEAD, start)
+        cyber_decisions.record_decision(asset=c_arm, **DECISION_C_ARM, plan_by=replace_by, by=manager, today=today)
+
+        tag, version, spec, network = RENTAL_RELEASE
+        rental = Asset.objects.get(tag=tag)
+        release = cyber.add_release(rental.device_model, by=manager, today=today, version=version, **_security_fields(spec, today))
+        cyber.record_facts(rental, by=manager, today=today, release=release, release_since=rental.arrived_on, network=network)
 
     @staticmethod
     def _credential_lapse(today: date) -> None:

@@ -10,6 +10,13 @@ the screens answer.
 Wave 2 builds the screens (A), the drawer's tab and the API (B) beside this seed: a page whose view is still the scaffold's stub (or an
 API route not registered yet, or a drawer without the Security tab) is pending, and a test with pages pending is an expected failure
 once everything else in it passed; it runs in full the moment they are merged.
+
+Slice 38's software updates (_software_updates) and slice 39's security decisions (_security_decisions) follow the register: the pumps'
+decision past its review (the nav badge hot, its Check that the plan's date has passed, its pumps' open updates beside it), the C-arm's
+in force with controls its profile allows, and the rental bed on a release past its security updates with no decision (Needs attention's
+rentals row); the Fleet's head figures count the bed too. The decision pages, the device drawer's decision lines, and the decisions API
+are slice 39 wave 2's: pending (as above) until merged, and read with rules.DECISION_NEVER_WORDS (the drawer with rules.NEVER_WORDS: it
+carries Equipment's own PM words).
 """
 import importlib.util
 import re
@@ -20,26 +27,31 @@ from urllib.parse import urlsplit
 
 import pytest
 from django.core.management import call_command
-from django.urls import Resolver404, resolve
+from django.urls import NoReverseMatch, Resolver404, resolve, reverse
 from django.utils import timezone
 from pg_helpers import as_app_role, needs_postgres
 
 from apps.accounts.models import User
-from apps.cybersecurity import rules
+from apps.cybersecurity import decisions, rules
 from apps.cybersecurity.models import (
     DeviceSecurity,
+    DeviceSecurityDecision,
     InstalledBy,
     Mds2Status,
     Network,
+    Segmented,
     SoftwareRelease,
     SoftwareUpdate,
     UpdateBasis,
     UpdateOutcome,
+    UpdatesBy,
     UpdateTarget,
 )
 from apps.cybersecurity.updates import PATCHES_PROBLEM, UPDATE_PROBLEM
 from apps.demo.management.commands import seed_demo
 from apps.equipment.models import Asset, AssetStatus, DeviceModel, Ownership
+from apps.facility import fiscal
+from apps.pm.dates import add_months
 from apps.tenants.context import tenant_context
 from apps.tenants.models import Tenant
 from apps.workorders.models import OPEN_STATUSES, RepairCheck, Source, WorkOrder, WoStatus, WoType
@@ -55,9 +67,10 @@ def seeded(db):
     return Tenant.objects.get(slug="riverside")
 
 
-def never_said(text: str) -> list:
-    """The words of rules.NEVER_WORDS in `text`, as whole words in any letter case (none: [])."""
-    return [w for w in rules.NEVER_WORDS if re.search(rf"(?<![A-Za-z]){re.escape(w)}(?![A-Za-z])", text, re.IGNORECASE)]
+def never_said(text: str, words=rules.NEVER_WORDS) -> list:
+    """The words of `words` (rules.NEVER_WORDS; a decision's door rules.DECISION_NEVER_WORDS) in `text`, as whole words in any letter
+    case (none: [])."""
+    return [w for w in words if re.search(rf"(?<![A-Za-z]){re.escape(w)}(?![A-Za-z])", text, re.IGNORECASE)]
 
 
 def ours(model: str) -> list:
@@ -89,9 +102,12 @@ def test_the_ce_manager_recorded_profiles_releases_and_devices_through_the_servi
         profiles = {r.device_model.model: r for r in rows if r.is_profile}
         assert set(profiles) == {m for m, _ in seed_demo.SECURITY_PROFILES} == {PUMP, MONITOR, VENT, BED, C_ARM, STERILIZER}
         versions = sorted((r.device_model.model, r.version) for r in rows if not r.is_profile)
-        # slice 38: the C-arm's release, added when CE found the other C-arm on it (_software_updates)
-        assert versions == sorted([*((m, v) for m, v, _ in seed_demo.SECURITY_RELEASES), (C_ARM, seed_demo.C_ARM_RELEASE)]) == [
-            (PUMP, "5.2 (demo)"), (PUMP, "5.6 (demo)"), (C_ARM, "7.2 (demo)"), (MONITOR, "3.1 (demo)"), (MONITOR, "3.4 (demo)")]
+        # slice 38: the C-arm's release, added when CE found the other C-arm on it (_software_updates); slice 39: the rental bed's, added
+        # when CE recorded it (_security_decisions)
+        assert versions == sorted([*((m, v) for m, v, _ in seed_demo.SECURITY_RELEASES), (C_ARM, seed_demo.C_ARM_RELEASE),
+                                   (BED, seed_demo.RENTAL_RELEASE[1])]) == [
+            (PUMP, "5.2 (demo)"), (PUMP, "5.6 (demo)"), (BED, "2.0 (demo)"), (C_ARM, "7.2 (demo)"), (MONITOR, "3.1 (demo)"),
+            (MONITOR, "3.4 (demo)")]
         # fictional: every version reads "(demo)", every MDS2 document number DEMO-, the OS's name is made up, no link anywhere
         assert all("(demo)" in v for _, v in versions) and not any(r.removed_on for r in rows)
         assert sorted(r.mds2_document for r in rows if r.mds2_document) == ["DEMO-MDS2-0001", "DEMO-MDS2-0002", "DEMO-MDS2-0003"]
@@ -125,7 +141,11 @@ def test_the_ce_manager_recorded_profiles_releases_and_devices_through_the_servi
         other = facts[ours(C_ARM)[1].tag]
         assert (other.release.version, other.release_since, other.checked_on) == (
             "7.2 (demo)", today - seed_demo.C_ARM_FOUND_DAYS_AGO * DAY, today - seed_demo.C_ARM_PATCHED_DAYS_AGO * DAY)
-        assert len(facts) == len(pumps) - 4 + len(monitors) + 3
+        # slice 39: the rental bed on the beds' release, connected here (wireless), checked today (_security_decisions)
+        rental = facts["T-0101"]
+        assert (rental.release.version, rental.network, rental.release_since, rental.checked_on) == (
+            "2.0 (demo)", Network.WIRELESS, rental.asset.arrived_on, today)
+        assert len(facts) == len(pumps) - 4 + len(monitors) + 4
 
         # each by the CE manager, with history saying who (slice 38: but the pump the technician updated today, recorded at its
         # completion by him); the North Campus has none
@@ -147,8 +167,10 @@ def test_the_fleet_tab_head_figures_each_count_something(seeded):
         beds = len(ours(BED)) + 1  # with the rental bed (slice 29); the bed beyond repair is retired
         assert figures == {
             "no_mds2": (2, 1),  # the beds (none recorded) and the ventilators (requested from the manufacturer)
-            "updates_ended": (11, None),  # the pumps on the older release (slice 38: one updated today)
-            "no_release": (4 + vents + beds, None),  # pumps not recorded, the ventilators, the beds (slice 38: the C-arm on the network found)
+            # the pumps on the older release (slice 38: one updated today), and slice 39's rental bed on a release past its updates
+            "updates_ended": (11 + 1, None),
+            # pumps not recorded, the ventilators, the beds (slice 38: the C-arm on the network found; slice 39: the rental bed recorded)
+            "no_release": (4 + vents + beds - 1, None),
             "not_segmented": (1, None),  # the C-arms
             "segment_not_recorded": (2, None),  # the ventilators and the beds
         }
@@ -292,6 +314,149 @@ def test_the_seeded_software_updates(seeded):
         assert not SoftwareUpdate.objects.exists()
 
 
+def _decisions() -> tuple:
+    """Slice 39's two seeded decisions: the pumps' (decided months ago), then the C-arm's (today)."""
+    pumps, c_arm = DeviceSecurityDecision.objects.select_related("asset", "device_model", "release", "plan_owner", "recorded_by").order_by(
+        "decided_on", "number")
+    return pumps, c_arm
+
+
+def test_the_seeded_security_decisions(seeded):
+    """Slice 39 (_security_decisions, after the software updates, through apps.cybersecurity.decisions, by the CE manager): the pumps of
+    ours on the older release kept in use with controls (release scope), decided a week after their security updates ended, an update
+    planned by the last day of last month (Kim's) and reviewed that day: past its review, the nav badge hot, its Check that the plan's date
+    has passed, and its pumps' slice 38 updates beside it; the C-arm on the network (never the one kept off it) kept in use with controls
+    its profile allows, a replacement planned in the fiscal year after next, in force for 12 months; the rental bed on a release past its
+    security updates, connected, with no decision: Needs attention's rentals row. Every token DEMO-, no link, no CVE; none of the words a
+    decision never says; the North Campus has none."""
+    with tenant_context(seeded):
+        today = timezone.localdate()
+        day = rules.day_words
+        rob, kim = manager(), User.objects.get(username="kim@riverside.example")
+        assert DeviceSecurityDecision.objects.count() == 2
+        pumps, c_arm = _decisions()
+        older = SoftwareRelease.objects.get(device_model__model=PUMP, version=seed_demo.PUMP_OLDER)
+        decided = older.security_updates_end_on + seed_demo.DECISION_PUMPS_AFTER_DAYS * DAY
+        plan_day = today.replace(day=1) - DAY  # the last day of last month
+        # numbered by the year decided, in the order recorded (SD-26-0001 and SD-26-0002 when both fall in one year)
+        assert pumps.number == f"SD-{decided:%y}-0001"
+        assert c_arm.number == f"SD-{today:%y}-{2 if decided.year == today.year else 1:04d}"
+
+        # the pumps of ours on the older release (release scope), on the medical device segment their profile records
+        assert (rules.scope_kind(pumps), pumps.release, pumps.device_model.model, pumps.asset) == (rules.RELEASE_SCOPE, older, PUMP, None)
+        assert {f: getattr(pumps, f) for f in seed_demo.DECISION_PUMPS} == seed_demo.DECISION_PUMPS
+        assert (pumps.plan_by, pumps.plan_owner, pumps.review_by, pumps.decided_on, pumps.recorded_by, pumps.controls_reference) == (
+            plan_day, kim, plan_day, decided, rob, "")
+        assert (pumps.ended_on, pumps.end_reason, pumps.supersedes_id, pumps.applies_to) == (None, "", None, "support_ended")
+        assert rules.profile(pumps.device_model).segmented == Segmented.ALL and rules.SEGMENTED_CONTROL in pumps.controls
+        on_older = [a for a in ours(PUMP) if (runs := rules.release_of(a)) is not None and runs.pk == older.pk]
+        assert len(on_older) == 11 and sorted(pumps.governed_ids) == sorted(str(a.pk) for a in on_older)
+        # past its review: read first in its sentence, the plan's date passed in its Check, the badge hot
+        assert rules.decision_state(pumps, today) == rules.REVIEW_DUE and not rules.covers(pumps, today)
+        assert rules.review_words(pumps, today) == f"Review due since {day(plan_day)}"
+        assert rules.decision_words(pumps, today) == (
+            f"Review due since {day(plan_day)}: keep in use with controls (2: on a medical device network segment; traffic limited to the "
+            f"ports and hosts it needs). Plan: update by {day(plan_day)} (owner {kim}). Accepted by IT security or the CISO, as recorded by "
+            f"{rob} on {day(decided)}; IT exception DEMO-EX-1037.")
+        assert [(c.key, c.words) for c in rules.decision_checks(pumps, today)] == [
+            (rules.CHECK_PLAN_PASSED, f"The plan's date ({day(plan_day)}) has passed")]
+        assert rules.badge(today) == {"count": 1, "hot": True}
+        # its pumps: slice 38's open updates beside the decision, the one done with the version not confirmed its own line; the pump
+        # updated today is on the newer release, out of its scope
+        devices = rules.decision_devices(pumps, today)
+        assert [dd.asset.tag for dd in devices] == [a.tag for a in on_older] and all(dd.governed for dd in devices)
+        assert installed_pump().tag not in {dd.asset.tag for dd in devices}
+        batch = {r.asset_id: r.work_order for r in SoftwareUpdate.objects.filter(work_order__isnull=False).select_related("work_order")}
+        shown = {"open": 0, "not_confirmed": 0}
+        for dd in devices:
+            words, wo = dd.words(today), batch.get(dd.asset.pk)
+            if wo is None:
+                assert words == f"Review due since {day(plan_day)}"
+            elif wo.status in OPEN_STATUSES:
+                assert words == f"Update open to {seed_demo.PUMP_NEWER}: {wo.number}; Review due since {day(plan_day)}"
+                shown["open"] += 1
+            else:
+                assert words == (f"Update done {day(today)}, version not confirmed: Confirm version ({wo.number}); Review due since "
+                                 f"{day(plan_day)}")
+                shown["not_confirmed"] += 1
+        assert shown["open"] >= 1 and shown["not_confirmed"] == 1
+
+        # the C-arm on the network (device scope), its OS vendor's support ended; the one kept off the network needs no decision
+        on_network, off_network = ours(C_ARM)[1], ours(C_ARM)[0]
+        start = fiscal.start_month()  # July (slice 36)
+        fy = fiscal.current_fy(today, start) + seed_demo.DECISION_C_ARM_FY_AHEAD
+        assert (rules.scope_kind(c_arm), c_arm.asset, c_arm.device_model, c_arm.release) == (rules.DEVICE_SCOPE, on_network, None, None)
+        assert {f: getattr(c_arm, f) for f in seed_demo.DECISION_C_ARM} == seed_demo.DECISION_C_ARM
+        assert (c_arm.plan_by, c_arm.plan_owner, c_arm.decided_on, c_arm.review_by, c_arm.recorded_by, c_arm.governed_ids) == (
+            fiscal.fiscal_bounds(fy, start)[1], None, today, add_months(today, 12), rob, [str(on_network.pk)])
+        assert rules.decision_state(c_arm, today) == rules.IN_FORCE and rules.covers(c_arm, today)
+        assert rules.decision_words(c_arm, today) == (
+            f"Keep in use with controls (2: traffic limited to the ports and hosts it needs; vendor remote access off, or attended only); "
+            f"review by {day(c_arm.review_by)}. Plan: replace, planned for FY{fy}. Accepted by IT security or the CISO, as recorded by "
+            f"{rob} on {day(today)}; IT exception DEMO-EX-1042.")
+        assert rules.decision_checks(c_arm, today) == []
+        # its controls agree with its model's profile: no separate segment (so never "segmented": traffic limited instead), and the
+        # manufacturer installs its updates remotely (slice 38's patches), so its remote access off or attended only
+        c_arm_profile = rules.profile(on_network.device_model)
+        assert c_arm_profile.segmented == Segmented.NONE and rules.SEGMENTED_CONTROL not in c_arm.controls
+        assert c_arm_profile.updates_by == UpdatesBy.MANUFACTURER and "remote_access_controlled" in c_arm.controls
+        need = rules.support_need(rules.device_standing(on_network, today), today)
+        assert (need.key, need.reasons, need.ended) == (rules.NEEDS, (rules.OS_SUPPORT,), (rules.OS_SUPPORT,))
+        assert rules.support_need(rules.device_standing(off_network, today), today) is None
+        assert not DeviceSecurityDecision.objects.filter(asset=off_network).exists()
+        lines = rules.device_lines(on_network, today, user=kim)
+        assert [(r.kind, r.number, r.covers) for r in lines.responses] == [(rules.DECIDED, c_arm.number, True)]
+
+        # the rental bed on the beds' release past its security updates, connected here: no decision
+        tag, version, _spec, network = seed_demo.RENTAL_RELEASE
+        rental = Asset.objects.get(tag=tag)
+        release = rules.release_of(rental)
+        assert (release.device_model.model, release.version, release.security_updates_end_on, release.support_checked_on) == (
+            BED, version, plan_day, today)
+        assert (rental.ownership, rental.cyber.network) == (Ownership.RENTAL, network)
+        standing = rules.device_standing(rental, today)
+        assert (standing.connection.words, standing.security.key) == ("Connected (wireless)", rules.UPDATES_ENDED)
+        need = rules.support_need(standing, today)
+        assert (need.key, need.reasons) == (rules.NEEDS, (rules.SECURITY_UPDATES,))
+        assert rules.governing_decisions([rental], today) == {rental.pk: None}
+        lines = rules.device_lines(rental, today, user=kim)
+        assert [(r.kind, r.words) for r in lines.responses] == [(rules.NO_DECISION, rules.NO_DECISION_WORDS)] and lines.can_record
+
+        # Needs attention, as Kim reads it: the rental, the pump to confirm, the pumps' decision past its review, and its Check; no
+        # device of ours with no decision recorded (every one past its support is governed)
+        attention = rules.needs_attention(today, user=kim)
+        headings = {h.key: h for h in attention.headings}
+        assert list(headings) == ["temporary", "not_confirmed", "review_due", "checks"]
+        (row,) = headings["temporary"].rows
+        assert row.words == (f"{tag} (rental, {seed_demo.RENTAL_COMPANY}; due back {day(rental.due_back_on)}): security updates ended; its "
+                             "owner installs updates: ask the owner to update it, or return it")
+        assert (row.asset, row.link, row.record) == (rental, rules.Link(rules.URLS["device"], (tag,), (("tab", "security"),)),
+                                                     rules.Link(rules.URLS["record"], (), (("asset", tag),)))
+        (unconfirmed,) = headings["not_confirmed"].rows
+        assert unconfirmed.asset == SoftwareUpdate.objects.get(work_order__status=WoStatus.COMPLETED, outcome="").asset
+        (due,) = headings["review_due"].rows
+        assert (due.decision, due.record) == (pumps, rules.Link(rules.URLS["record"], (), (("supersedes", pumps.number),)))
+        assert due.words == f"{pumps.number} · {PUMP} on {seed_demo.PUMP_OLDER}: 11 devices of ours on site; review due since {day(plan_day)}"
+        (check,) = headings["checks"].rows
+        assert check.words == f"{pumps.number} · The plan's date ({day(plan_day)}) has passed"
+
+        # each recorded by the CE manager, its history saying so; a decision's words never say what it never says
+        assert {(h.history_user_id, h.history_change_reason) for h in DeviceSecurityDecision.history.all()} == {(rob.pk, decisions.RECORDED)}
+        rows = (pumps, c_arm)
+        said = [rules.decision_words(d, today) for d in rows] + [rules.review_words(d, today) for d in rows]
+        said += [rules.scope_words(d) for d in rows] + [rules.plan_words(d) for d in rows] + [rules.who_words(d) for d in rows]
+        said += [w for d in rows for w in (*rules.control_words(d), *rules.reason_words(d))]
+        said += [dd.words(today) for d in rows for dd in rules.decision_devices(d, today)]
+        said += [h.words for h in attention.headings] + [r.words for h in attention.headings for r in h.rows]
+        said += [r.words for a in (on_network, rental) for r in rules.device_lines(a, today, user=kim).responses]
+        assert not [w for w in said if never_said(w, rules.DECISION_NEVER_WORDS)]
+        tokens = [d.exception_reference for d in rows]
+        assert tokens == ["DEMO-EX-1037", "DEMO-EX-1042"] and not [d for d in rows if d.controls_reference]
+        assert not [w for w in said if "http" in w or "CVE" in w]
+    with tenant_context(Tenant.objects.get(slug="riverside-north")):
+        assert not DeviceSecurityDecision.objects.exists()
+
+
 # --- the seeded pages -----------------------------------------------------------------------------------------------------------
 
 def _pending(client, url: str) -> bool:
@@ -349,6 +514,7 @@ def _pages(seeded) -> tuple[list, dict]:
         f"/equipment/{older_pump}/?tab=security": ["5.2 (demo)", "Security updates ended after "],
         f"/equipment/{c_arm}/?tab=security": ["Not connected here", "Demo embedded OS 7"],
         "/equipment/T-0102/?tab=security": ["5.6 (demo)", "Connected (wireless)"],
+        "/equipment/T-0101/?tab=security": ["2.0 (demo)", "Connected (wireless)", "Security updates ended after "],  # slice 39
         "/api/v1/software-releases/": ["DEMO-MDS2-0001", "5.2 (demo)"],
         f"/api/v1/device-security/?device_model={pump_model.pk}": ["5.2 (demo)"],
         "/api/v1/device-security/T-0102/": ["5.6 (demo)", "Connected (wireless)"],
@@ -358,27 +524,75 @@ def _pages(seeded) -> tuple[list, dict]:
     return list(shows), {"shows": shows, "never": never}
 
 
-def _read_pages(client, seeded) -> list:
-    """Each seeded page as Kim (the director: every level), answering 200 with what it shows and none of the never-words. Returns
-    the pages still pending."""
-    urls, expect = _pages(seeded)
-    pending = []
+def _read(client, urls, expect, *, pending=_pending, words=lambda url: rules.NEVER_WORDS) -> list:
+    """Each page as the signed-in client, answering 200 with what it shows and none of the words `words(url)` names. Returns the
+    pages still pending."""
+    left = []
     for url in urls:
-        if _pending(client, url):
-            pending.append(url)
+        if pending(client, url):
+            left.append(url)
             continue
         # the drawer's tab and a model's panel as the screens fetch them (a partial); every other page whole
         partial = "tab=" in url or re.search(r"/security/models/[0-9a-f-]{36}/$", url)
         r = client.get(url, HTTP_HX_REQUEST="true") if partial else client.get(url)
         assert r.status_code == 200, (url, r.status_code)
         shown = _shown(r)
-        assert not never_said(shown), (url, never_said(shown))
+        assert not never_said(shown, words(url)), (url, never_said(shown, words(url)))
         body = _body(r) if hasattr(r, "streaming_content") else shown
         for text in expect["shows"][url]:
             assert text in body or text in shown, (url, text)
         for text in expect["never"].get(url, []):
             assert text not in body, (url, text)
-    return pending
+    return left
+
+
+def _read_pages(client, seeded) -> list:
+    """Each seeded register page as Kim (the director: every level), answering 200 with what it shows and none of the never-words.
+    Returns the pages still pending."""
+    urls, expect = _pages(seeded)
+    return _read(client, urls, expect)
+
+
+def _decision_pages(seeded) -> tuple[list, dict]:
+    """Slice 39's seeded pages (build39 section 7 and 8): the Decisions tab with Needs attention, each decision's page, the decisions
+    API, and the device drawer's decision lines (the C-arm's decision; the rental's "No decision recorded"), and what each shows."""
+    with tenant_context(seeded):
+        today = timezone.localdate()
+        pumps, c_arm = _decisions()
+        plan_day = rules.day_words(pumps.plan_by)
+        start = fiscal.start_month()
+        replace = rules.plan_words(c_arm, fy_start=start)
+        pump = rules.decision_devices(pumps, today)[0].asset.tag
+        c_arm_tag = c_arm.asset.tag
+    shows = {
+        "/security/decisions/": [pumps.number, c_arm.number, f"Review due since {plan_day}", "DEMO-EX-1037", "DEMO-EX-1042", "T-0101"],
+        f"/security/decisions/{pumps.number}/": [pumps.number, "DEMO-EX-1037", f"The plan's date ({plan_day}) has passed", pump,
+                                                 f"Update open to {seed_demo.PUMP_NEWER}"],
+        f"/security/decisions/{c_arm.number}/": [c_arm.number, "DEMO-EX-1042", replace, c_arm_tag],
+        "/api/v1/security-decisions/": [pumps.number, c_arm.number, "DEMO-EX-1037", "DEMO-EX-1042"],
+        f"/equipment/{c_arm_tag}/?tab=security": [c_arm.number],
+        "/equipment/T-0101/?tab=security": [rules.NO_DECISION_WORDS],
+    }
+    return list(shows), {"shows": shows, "never": {}}
+
+
+def _decision_pending(client, url: str) -> bool:
+    """A slice 39 page not built here yet: its route not there (as _pending), or, for the drawer's tab (built in slice 37), the
+    decision page its lines link to not there."""
+    if "tab=security" in url:
+        try:
+            reverse(rules.URLS["decision"], args=["SD-00-0000"])
+        except NoReverseMatch:
+            return True
+    return _pending(client, url)
+
+
+def _read_decision_pages(client, seeded) -> list:
+    """Slice 39's seeded pages as Kim, a decision's doors read with rules.DECISION_NEVER_WORDS and the drawer with rules.NEVER_WORDS
+    (it carries Equipment's own PM words). Returns the pages still pending."""
+    urls, expect = _decision_pages(seeded)
+    return _read(client, urls, expect, pending=_decision_pending,
+                 words=lambda url: rules.NEVER_WORDS if "tab=security" in url else rules.DECISION_NEVER_WORDS)
 
 
 def test_the_seeded_pages_show_the_register_and_never_say_the_words(client, seeded):
@@ -386,6 +600,15 @@ def test_the_seeded_pages_show_the_register_and_never_say_the_words(client, seed
     pending = _read_pages(client, seeded)
     if pending:
         pytest.xfail(f"slice 37 wave 2's pages are not merged here yet: {pending}")
+
+
+def test_the_seeded_decision_pages_show_the_decisions_and_never_say_the_words(client, seeded):
+    """Slice 39: the Decisions tab (the pumps' decision past its review, the C-arm's, the rental in Needs attention), each decision's
+    page (its exception number, its Check, its devices with their updates), the decisions API, and the drawer's decision lines."""
+    client.force_login(User.objects.get(username="kim@riverside.example"))
+    pending = _read_decision_pages(client, seeded)
+    if pending:
+        pytest.xfail(f"slice 39 wave 2's pages are not merged here yet: {pending}")
 
 
 # --- under row-level security ---------------------------------------------------------------------------------------------------
@@ -414,3 +637,28 @@ def test_the_seeded_register_reads_the_same_under_the_policies(client, seeded):
     pending = _read_pages(client, seeded)
     if pending:
         pytest.xfail(f"slice 37 wave 2's pages are not merged here yet: {pending}")
+
+
+@needs_postgres
+def test_the_seeded_decisions_read_the_same_under_the_policies(client, seeded):
+    """Slice 39: as the runtime role the decisions' readers (each decision's sentence, Check lines, and devices; Needs attention; the
+    badge) read the seeded rows exactly as the owner does, and the decision pages answer."""
+    def read():
+        today = timezone.localdate()
+        kim = User.objects.get(username="kim@riverside.example")
+        decided = [(d.number, rules.decision_words(d, today), [c.words for c in rules.decision_checks(d, today)],
+                    [(dd.asset.tag, dd.words(today)) for dd in rules.decision_devices(d, today)]) for d in _decisions()]
+        attention = [(h.key, h.count, [r.words for r in h.rows]) for h in rules.needs_attention(today, user=kim).headings]
+        return decided, attention, rules.badge(today)
+
+    with tenant_context(seeded):
+        before = read()
+    assert len(before[0]) == 2 and len(before[0][0][3]) == 11 and before[2] == {"count": 1, "hot": True}
+    assert [key for key, _n, _rows in before[1]] == ["temporary", "not_confirmed", "review_due", "checks"]
+    client.force_login(User.objects.get(username="kim@riverside.example"))
+    as_app_role()
+    with tenant_context(seeded):
+        assert read() == before
+    pending = _read_decision_pages(client, seeded)
+    if pending:
+        pytest.xfail(f"slice 39 wave 2's pages are not merged here yet: {pending}")
