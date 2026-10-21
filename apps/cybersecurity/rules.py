@@ -15,7 +15,8 @@ these, never the fields directly, so the words and the fallbacks are the same ev
 
 Words never used (NEVER_WORDS; a test scans every words string these rules can produce): secure, compliant, certified, patched,
 unpatched, vulnerable, unsupported, mitigated, protected, safe, at risk, exposed, exploitable, remediated, end of life, high risk,
-critical, required.
+critical, required; slice 39 adds exempt, waiver, hardened, overdue, and deadline (a decision is the facility's record, never an
+exemption, and its review date is its own, never a deadline).
 
 Counting: every device on site that is not retired (ours and temporary alike: a rental is on the network too), with slice 29's Whose
 filter; each figure says which devices it counts. Read in a fixed number of queries (standings, fleet, changes_for_it).
@@ -28,6 +29,17 @@ an update work order did (the completion modal, the API's software_choices, and 
 update_words word a record on every door (the Security tab, the work order drawer and print, the API), for Device security View and
 Equipment View only; updates_of (the Security tab's list) and campaigns (a model's releases' update work orders by state) are one query
 each.
+
+Slice 39, security decisions for devices past support (written by apps.cybersecurity.decisions; build39 sections 2 to 4, 7): the one
+place for the controls and reasons in words (CONTROLS, SUPPORT_CONTROLS, REASONS), a device's support need (support_need), the governing
+decision (governing_decisions: the most specific live one; a temporary device only by its own), the responses to a need
+(update_responses: an open update to a supported release, an update done with the version not confirmed), the Security tab's lines
+(device_lines), a decision's sentence and state (decision_words, decision_state), the devices it governs and its Check lines
+(decision_devices, decision_checks), the Decisions tab's Needs attention (needs_attention), and the nav badge (badge). Positive conditions
+only; every reader a fixed number of queries however many devices and decisions. Two readings of "a decision's devices", each named:
+in scope (the devices on site its scope holds: a device-scope decision's device; a release's or a model's devices of ours) for the badge,
+the past-review and govern-no-device lists, and the Check that says to end it; governed (in scope and this the most specific live decision)
+for the device list's responses, joined since, and the other Checks.
 """
 from __future__ import annotations
 
@@ -40,7 +52,9 @@ from django.utils import timezone
 from apps.core.days import local_day
 from apps.core.history import _rows
 from apps.equipment.models import AddedAs, Asset, AssetStatus, DeviceModel, Ownership
-from apps.equipment.services import support_status
+from apps.equipment.services import owner_maintains, support_status
+from apps.facility import fiscal
+from apps.pm.dates import add_months
 
 from .models import (
     DISCLOSURE_GROUP,
@@ -48,8 +62,14 @@ from .models import (
     GROUPS,
     MDS2_GROUP,
     SUPPORT_GROUP,
+    AcceptedBy,
+    AppliesTo,
     Connects,
+    DecisionEnd,
+    DecisionPlan,
+    DecisionResponse,
     DeviceSecurity,
+    DeviceSecurityDecision,
     Mds2Status,
     Network,
     OsFamily,
@@ -91,7 +111,9 @@ CHANGES_DAYS = (7, 30, 90)  # Changes for IT: the windows offered (30 by default
 # Never in Cadence's voice on any door (build37 "Words"): matched as whole words, in any letter case (tests scan every door with it).
 NEVER_WORDS = ("secure", "compliant", "certified", "patched", "unpatched", "vulnerable", "unsupported", "mitigated",
                "protected", "safe", "at risk", "exposed", "exploitable", "remediated", "end of life", "high risk", "critical", "required",
-               "requires", "NPRM", "FDA-approved", "FDA-cleared", "IEC 80001", "DNV")
+               "requires", "NPRM", "FDA-approved", "FDA-cleared", "IEC 80001", "DNV",
+               # slice 39 (build39 section 4; the advisory words come with slice 40)
+               "exempt", "waiver", "hardened", "overdue", "deadline")
 
 ALL_FIELDS = (*SUPPORT_GROUP, *MDS2_GROUP, *DISCLOSURE_GROUP, *FACILITY_GROUP)
 DATE_FIELDS = frozenset(f for f in ALL_FIELDS if f.endswith("_on"))
@@ -791,3 +813,928 @@ def campaign_words(release, counts: dict | None) -> str:
     """ "Updates to 5.6 (demo): 3 open, 1 done, 1 not confirmed" (the states with a count, in STATES order), or "" for none."""
     parts = [f"{counts[s]} {_CAMPAIGN_WORDS[s]}" for s in STATES if counts and counts.get(s)]
     return f"Updates to {release_name(release)}: {', '.join(parts)}" if parts else ""
+
+
+# --- slice 39: security decisions for devices past support ---------------------------------------------------------------------------
+
+# The controls a decision may name (build39 section 2), stable slugs, in the form's order. A decision for devices past support never
+# offers network_removed: a device recorded "Not connected here" needs no decision (NETWORK_REMOVED_HINT says so on the form); slice
+# 40's advisory decisions offer it.
+NETWORK_REMOVED, SEGMENTED_CONTROL, RECORDED_ELSEWHERE = "network_removed", "segmented", "recorded_elsewhere"
+CONTROLS = {
+    "segmented": "On a medical device network segment",
+    "traffic_restricted": "Traffic limited to the ports and hosts it needs (firewall or access list)",
+    "no_internet": "No internet access in either direction",
+    "network_removed": "Taken off the network (used standalone)",
+    "feature_disabled": "A connectivity feature turned off (for example, wireless)",
+    "manufacturer_mitigation": "The manufacturer's published mitigation applied",
+    "remote_access_controlled": "Vendor remote access off, or attended only",
+    "malware_scan_at_service": "Malware scan when serviced, before reconnecting",
+    "allowlisting": "Application allowlisting turned on",
+    "services_disabled": "Unused ports and services turned off, per the manufacturer's guide",
+    "monitored": "Network monitoring covers it (alerts on unusual traffic)",
+    "physical_controls": "Physical access and removable media controlled",
+    "recorded_elsewhere": "Controls recorded in IT's system (with its reference)",
+}
+SUPPORT_CONTROLS = {slug: words for slug, words in CONTROLS.items() if slug != NETWORK_REMOVED}
+NETWORK_REMOVED_HINT = "Taken off the network? Record it on the device (Record facts): it then needs no decision."
+CONTROLS_REFERENCE_HELP = "The change or exception number in IT's system (e.g. CHG0012345): the control's details stay there."
+
+# Why a decision was recorded, as kinds (never states: an announced end that passes is the same reason)
+SECURITY_UPDATES, OS_SUPPORT = "security_updates", "os_support"
+REASONS = {
+    SECURITY_UPDATES: "The manufacturer's security updates ended, or their end is announced",
+    OS_SUPPORT: "The OS vendor's published support ended, or its end is announced",
+}
+ALSO_ENDED = {SECURITY_UPDATES: "The manufacturer's security updates also ended since this decision",
+              OS_SUPPORT: "The OS vendor's support also ended since this decision"}
+
+# The Decisions tab's sentence (never "requires", never "must")
+HICP_DECISIONS = ("HHS 405(d) HICP 2023 recommends documenting mitigating controls and a timeline for resolving the risk, through the "
+                  "organization's risk acceptance or exception process, when a system past its support stays in use. IT's exception stays "
+                  "in IT's system; record its number here.")
+
+ENDING_MONTHS = 12  # an end announced within this many months may be decided ahead (HHS 405(d) HICP 2023: "within the upcoming year")
+REVIEW_SOON_DAYS = 30  # "Decisions to review within 30 days"
+# The review date's defaults and caps (review_default, review_cap): product choices, not a rule
+REVIEW_MONTHS, OUT_OF_USE_REVIEW_MONTHS, TEMPORARY_REVIEW_MONTHS = 12, 3, 3
+REVIEW_CAP_MONTHS, OUT_OF_USE_CAP_MONTHS = 36, 12
+
+# A support need's keys: past support (a decision answers it), an end announced within 12 months (information; a decision may be
+# recorded), and the OS vendor's support ended while the manufacturer's security updates for the release continue (information only)
+NEEDS, ENDING, EXTENDED = "needs", "ending", "extended"
+DECIDABLE = (NEEDS, ENDING)
+# A response line's kinds (build39 section 3, in its order)
+UPDATE_OPEN, UPDATE_NOT_CONFIRMED, DECIDED, NO_DECISION = "update_open", "update_not_confirmed", "decision", "no_decision"
+NO_DECISION_WORDS = "No decision recorded"
+# A decision's scope kinds
+DEVICE_SCOPE, RELEASE_SCOPE, MODEL_SCOPE = "device", "release", "model"
+SCOPE_LABELS = {DEVICE_SCOPE: "One device", RELEASE_SCOPE: "A model's devices of ours on one release",
+                MODEL_SCOPE: "Every device of ours of a model"}
+# A decision's states (decision_state) and their words
+IN_FORCE, REVIEW_SOON, REVIEW_DUE, ENDED = "in_force", "review_soon", "review_due", "ended"
+DECISION_STATES = (IN_FORCE, REVIEW_SOON, REVIEW_DUE, ENDED)
+DECISION_STATE_WORDS = {IN_FORCE: "In force", REVIEW_SOON: "Review within 30 days", REVIEW_DUE: "Review due", ENDED: "Ended"}
+ON_SITE_STATUSES = tuple(s for s in AssetStatus.values if s != AssetStatus.RETIRED)  # on_site's devices, as a positive condition
+
+# Check lines (decision_checks; information, never refusals)
+CHECK_ALSO_ENDED, CHECK_SEGMENT, CHECK_SEGMENT_SOME, CHECK_SEGMENT_BLANK = "also_ended", "segment", "segment_some", "segment_blank"
+CHECK_NO_DEVICE, CHECK_JOINED, CHECK_PLAN_PASSED, CHECK_IN_SERVICE, CHECK_OWNER = (
+    "no_device", "joined", "plan_passed", "in_service", "owner_inactive")
+SEGMENT_NONE_WORDS = ("The model's record now says its devices are not on a separate segment, and this decision relies on a medical "
+                      "device network segment")
+SEGMENT_SOME_WORDS = "Only some of its devices are on a segment, as the model's record says"
+SEGMENT_BLANK_WORDS = "The model's record does not say whether its devices are on a segment"
+NO_DEVICE_WORDS = "Governs no device here now: end it"
+PLAN_PASSED_WORDS = "The plan's date ({day}) has passed"
+OWNER_INACTIVE_WORDS = "The plan owner's account is deactivated"
+
+# Needs attention (build39 section 7): each heading's words, in the panel's order
+ATTENTION_HEADINGS = {
+    "no_decision": "Security updates or OS support ended, connected or able to connect: no decision recorded",
+    "temporary": "Rentals, loaners, and demo units past their support, connected or able to connect: no decision recorded",
+    "not_confirmed": "Updates done, version not confirmed",
+    "ending": "Ending within 12 months, no decision recorded",
+    "review_due": "Decisions past their review date",
+    "review_soon": "Decisions to review within 30 days",
+    "no_device": "Decisions that govern no device here now",
+    "checks": "Checks",
+}
+ATTENTION_INFO = ("ending",)  # information only
+ATTENTION_EMPTY = "Nothing listed from what is recorded here."
+BADGE_TITLE = "Decisions past their review date"
+# The pages the panel links to, by URL name (apps.web's; the doors reverse them): a decision's page (its number), Record decision (the
+# scope in the query: asset=<tag>, release=<id>, model=<id>, or supersedes=<number> for Review and renew), End (its number), a model's
+# panel on the Device security screen (with the Fleet's filters), a device's drawer (tab=security), a work order
+URLS = {"decision": "web:security_decision", "record": "web:security_decision_new", "end": "web:security_decision_end",
+        "model": "web:cybersecurity_model", "device": "web:asset", "work_order": "web:wo"}
+
+
+def _lower_first(text: str) -> str:
+    return text[:1].lower() + text[1:]
+
+
+def _short(words: str) -> str:
+    """A control's words without their closing explanation in parentheses (a decision's sentence lists them in parentheses already)."""
+    return words.rsplit(" (", 1)[0] if words.endswith(")") else words
+
+
+def _joined(lines, *, lower: bool = False) -> str:
+    """Standing lines in one sentence: "Security updates ended after ...; the OS vendor's published support ..."."""
+    return "; ".join(_lower_first(w) if (lower or i) else w for i, w in enumerate(lines))
+
+
+def _tags(tags, shown: int = 5) -> str:
+    tags = list(tags)
+    more = len(tags) - shown
+    return ", ".join(tags[:shown]) + (f" and {more} more" if more > 0 else "")
+
+
+def _plural(n: int, one: str, many: str) -> str:
+    return f"{n} {one if n == 1 else many}"
+
+
+# --- a device's support need ---------------------------------------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Need:
+    """A device's support need (support_need): `key` NEEDS (past support: a decision answers it), ENDING (an end announced within 12
+    months: information, and a decision may be recorded), or EXTENDED (the OS vendor's support ended while the manufacturer's security
+    updates for the release continue: information only). `reasons`: the kinds that hold (ended, or announced to end within 12 months);
+    `ended`: those that ended; `lines`: the standings' own words; `words`: the line in one sentence; `day`: the earliest announced end
+    (ENDING, EXTENDED)."""
+
+    key: str
+    reasons: tuple
+    ended: tuple
+    lines: tuple
+    words: str
+    day: date | None = None
+
+    @property
+    def decidable(self) -> bool:
+        return self.key in DECIDABLE
+
+
+def support_need(asset_standing, today: date) -> Need | None:
+    """A device's support need from its standing (device_standing / standings), or None (build39 section 3). Only a device on site whose
+    connection is in ON_SITE_KEYS (connected here, or able to connect as disclosed) has one:
+    - NEEDS: its release standing is in ENDED_KEYS (the manufacturer's security updates ended, or the model's support), or its OS
+      standing is OS_ENDED while the release standing is not UPDATES_END_ANNOUNCED;
+    - ENDING: else UPDATES_END_ANNOUNCED or OS_END_ANNOUNCED on a day within 12 months (ENDING_MONTHS): "Ending within 12 months: ...";
+    - EXTENDED: else the OS vendor's support ended while the manufacturer's security updates continue (announced later):
+      "The OS vendor's support ended; the manufacturer's security updates for 5.2 (demo) end Mar 31, 2028 (announced)".
+    Its reasons are kinds (REASONS): those ended, or announced to end within 12 months. No query."""
+    asset = asset_standing.asset
+    if asset.status == AssetStatus.RETIRED or asset_standing.connection.key not in ON_SITE_KEYS:
+        return None
+    sec, os_ = asset_standing.security, asset_standing.os
+    horizon = add_months(today, ENDING_MONTHS)
+    sec_ended = sec.key in ENDED_KEYS
+    sec_soon = sec.key == UPDATES_END_ANNOUNCED and sec.day is not None and sec.day <= horizon
+    os_ended = os_.key == OS_ENDED
+    os_soon = os_.key == OS_END_ANNOUNCED and os_.day is not None and os_.day <= horizon
+    held = ((SECURITY_UPDATES, sec, sec_ended, sec_soon), (OS_SUPPORT, os_, os_ended, os_soon))
+    reasons = tuple(kind for kind, _s, gone, soon in held if gone or soon)
+    ended = tuple(kind for kind, _s, gone, _soon in held if gone)
+    lines = tuple(s.words for _kind, s, gone, soon in held if gone or soon)
+    if sec_ended or (os_ended and sec.key != UPDATES_END_ANNOUNCED):
+        return Need(NEEDS, reasons, ended, lines, _joined(lines))
+    if sec_soon or os_soon:
+        day = min(s.day for _kind, s, _gone, soon in held if soon)
+        return Need(ENDING, reasons, ended, lines, f"Ending within 12 months: {_joined(lines, lower=True)}", day)
+    if os_ended:  # the manufacturer's security updates for the release continue, announced to end later than 12 months from now
+        release = asset_standing.release
+        version = f" for {release.version}" if release is not None else ""
+        words = f"The OS vendor's support ended; the manufacturer's security updates{version} end {day_words(sec.day)} (announced)"
+        return Need(EXTENDED, (), ended, (os_.words, sec.words), words, sec.day)
+    return None
+
+
+# --- the governing decision ----------------------------------------------------------------------------------------------------------
+
+def _live():
+    """Live (not ended) decisions for devices past support."""
+    return DeviceSecurityDecision.objects.filter(applies_to=AppliesTo.SUPPORT_ENDED, ended_on__isnull=True)
+
+
+_DECISION_RELATED = ("asset", "device_model", "release", "plan_owner", "recorded_by")
+
+
+def scope_kind(decision) -> str:
+    """DEVICE_SCOPE, RELEASE_SCOPE, or MODEL_SCOPE (the database's one shape)."""
+    if decision.asset_id:
+        return DEVICE_SCOPE
+    return RELEASE_SCOPE if decision.release_id else MODEL_SCOPE
+
+
+def _recorded_release_id(asset):
+    """The device's recorded release id as release_of reads it (a versioned, not removed release of its model), from its row already
+    read (_devices_with_records), or None."""
+    record = _cached_record(asset)
+    release = record.release if record not in (None, _UNREAD) and record.release_id else None
+    return release.pk if _names(release, asset) else None
+
+
+def _governing(devices, decisions) -> dict:
+    """{device id: the most specific live decision whose scope holds it, or None}: its own (device scope); else, for a device of ours on
+    site, its recorded release's (release scope), else its model's (model scope). A temporary device is governed only by its own."""
+    by_asset = {d.asset_id: d for d in decisions if d.asset_id}
+    by_release = {d.release_id: d for d in decisions if d.release_id}
+    by_model = {d.device_model_id: d for d in decisions if not d.asset_id and not d.release_id}
+    out = {}
+    for a in devices:
+        found = by_asset.get(a.pk)
+        if found is None and a.ownership == Ownership.OWNED and a.status != AssetStatus.RETIRED:
+            release_id = _recorded_release_id(a)
+            found = by_release.get(release_id) if release_id is not None else None
+            if found is None:
+                found = by_model.get(a.device_model_id)
+        out[a.pk] = found
+    return out
+
+
+def _decisions_for(devices) -> list:
+    """The live decisions that may govern `devices` (their own, or their models' release and model scopes), with what their words read.
+    One query."""
+    model_ids = {a.device_model_id for a in devices}
+    return list(_live().filter(Q(asset_id__in=[a.pk for a in devices]) | Q(asset__isnull=True, device_model_id__in=model_ids))
+                .select_related(*_DECISION_RELATED).order_by("number"))
+
+
+def governing_decisions(assets, today: date) -> dict:
+    """{asset id: the governing live decision, or None} for the devices of `assets` (a queryset or a list): the most specific live
+    support decision whose scope holds it, whether or not past its review (build39 section 3): its own (device scope); else, only for a
+    device of ours on site, the one for its recorded release (release scope), else the one for its model (model scope). A temporary
+    device (rental, loaner, demo unit) is governed only by its own: a release or model decision describes where the facility put its own
+    devices. Never a fallback past a lapsed decision: a decision past review still governs (and covers nothing: covers). `today` is
+    unused (every live decision governs). Fixed queries: the devices with their rows (one for a queryset; none for a list that has
+    them, as standings leaves it), the decisions (one)."""
+    devices = _devices_with_records(assets)
+    if not devices:
+        return {}
+    return _governing(devices, _decisions_for(devices))
+
+
+def covers(decision, today: date) -> bool:
+    """Whether a governing decision covers the need: live, its review on or after today."""
+    return decision is not None and decision.ended_on is None and decision.review_by >= today
+
+
+# --- the responses to a need -----------------------------------------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Response:
+    """One response line (build39 section 3): `kind` UPDATE_OPEN, UPDATE_NOT_CONFIRMED, DECIDED, or NO_DECISION; `words` the line;
+    `number` the work order's or the decision's (a door links a work order's only with Work orders View); `update` the SoftwareUpdate
+    (Confirm version's door); `decision` the governing decision; `covers` whether that decision covers the need now."""
+
+    kind: str
+    words: str
+    number: str = ""
+    update: object | None = None
+    decision: object | None = None
+    covers: bool = False
+
+
+def _target_profile(row):
+    """The target release's model's profile as an unsaved row holding only its support group (annotated on the update's query), or
+    None when the model has none."""
+    if row.p_id is None:
+        return None
+    return SoftwareRelease(id=row.p_id, device_model_id=row.target_release.device_model_id, version_key="", removed_on=None,
+                           **{name: getattr(row, f"p_{name}") for name in SUPPORT_GROUP})
+
+
+def supported_target(release, profile_row, today: date) -> bool:
+    """A release an update to which answers a support need: versioned, not entered in error, its release standing not in ENDED_KEYS and
+    its OS standing not OS_ENDED (build39 section 3). Reads release.device_model (slice 36's model support)."""
+    if release is None or not release.version_key or release.removed_on is not None:
+        return False
+    merged = facts(release, profile_row)
+    return (release_standing(merged, release.device_model, today).key not in ENDED_KEYS
+            and os_standing(merged, today).key != OS_ENDED)
+
+
+def update_responses(assets, today: date) -> dict:
+    """{asset id: [Response]} for the devices of `assets` (a list of devices or their ids: each maps, [] for none; or a queryset: only
+    the devices with a response map, so read with .get(pk, [])): build39 section 3's update responses, open ones by number, then those
+    not confirmed by number:
+    - UPDATE_OPEN: an open update work order (open, in progress, or awaiting parts), its record holding a target release that is
+      supported (supported_target: never ended, its OS not ended): "Update open to 5.6 (demo): WO-26-0042". Never updates.open_number
+      alone (it counts any update).
+    - UPDATE_NOT_CONFIRMED: an update work order completed or closed with nothing recorded (update_state NOT_CONFIRMED), to a supported
+      release, as an open one: "Update done Oct 20, 2026, version not confirmed: Confirm version (WO-26-0041)". Its own state, never "no
+      response". An update to a release past its support, or of the manufacturer's patches (the version stays), answers no support need.
+    One query for any number of devices: the records with their work orders, targets, and the targets' models, the models' profiles'
+    support fields annotated."""
+    from apps.workorders.models import OPEN_STATUSES, WoStatus
+
+    from .models import SoftwareUpdate
+
+    if isinstance(assets, QuerySet):
+        out: dict = {}
+        which = Q(asset_id__in=assets.values("pk"))
+    else:
+        ids = [getattr(a, "pk", a) for a in assets]
+        out = {pk: [] for pk in ids}
+        if not ids:
+            return out
+        which = Q(asset_id__in=ids)
+    profile_rows = SoftwareRelease.objects.filter(device_model_id=OuterRef("target_release__device_model_id"), version_key="",
+                                                  removed_on__isnull=True).order_by("pk")
+    annotations = {f"p_{name}": Subquery(profile_rows.values(name)[:1]) for name in SUPPORT_GROUP}
+    rows = (SoftwareUpdate.objects.filter(which, work_order__isnull=False, target_release__isnull=False)
+            .filter(Q(work_order__status__in=OPEN_STATUSES)
+                    | Q(work_order__status__in=(WoStatus.COMPLETED, WoStatus.CLOSED), outcome=""))
+            .select_related("work_order", "target_release", "target_release__device_model")
+            .annotate(p_id=Subquery(profile_rows.values("pk")[:1]), **annotations)
+            .order_by("work_order__number"))
+    opened, done = {}, {}
+    for row in rows:
+        if not supported_target(row.target_release, _target_profile(row), today):
+            continue
+        wo = row.work_order
+        if wo.status in OPEN_STATUSES:
+            opened.setdefault(row.asset_id, []).append(
+                Response(UPDATE_OPEN, f"Update open to {release_name(row.target_release)}: {wo.number}", wo.number, update=row))
+        else:
+            day = f" {day_words(wo.completed_on)}" if wo.completed_on else ""
+            done.setdefault(row.asset_id, []).append(
+                Response(UPDATE_NOT_CONFIRMED, f"Update done{day}, version not confirmed: Confirm version ({wo.number})", wo.number,
+                         update=row))
+    for pk in set(opened) | set(done) | set(out):
+        out[pk] = opened.get(pk, []) + done.get(pk, [])
+    return out
+
+
+# --- words ---------------------------------------------------------------------------------------------------------------------------
+
+_CONTROL_ORDER = {slug: i for i, slug in enumerate(CONTROLS)}
+
+
+def _ordered(controls) -> list:
+    return sorted(controls or (), key=lambda s: _CONTROL_ORDER.get(s, len(_CONTROL_ORDER)))
+
+
+def control_words(decision) -> list:
+    """The decision's controls in words, in the form's order (recorded_elsewhere with its reference: "Controls recorded in IT's system
+    (CHG0012345)")."""
+    return [f"Controls recorded in IT's system ({decision.controls_reference})"
+            if slug == RECORDED_ELSEWHERE and decision.controls_reference else CONTROLS.get(slug, slug) for slug in _ordered(decision.controls)]
+
+
+def _sentence_controls(decision) -> list:
+    """The controls as a decision's sentence lists them: lower case, without their explanations ("traffic limited to the ports and
+    hosts it needs"), IT's reference kept ("controls recorded in IT's system (CHG0012345)")."""
+    out = []
+    for slug in _ordered(decision.controls):
+        if slug == RECORDED_ELSEWHERE:
+            ref = f" ({decision.controls_reference})" if decision.controls_reference else ""
+            out.append(f"controls recorded in IT's system{ref}")
+        else:
+            out.append(_lower_first(_short(CONTROLS.get(slug, slug))))
+    return out
+
+
+def reason_words(decision) -> list:
+    """The reasons the decision names, in words (REASONS: kinds, never states)."""
+    return [words for kind, words in REASONS.items() if kind in (decision.reasons or ())]
+
+
+def scope_words(decision, count: int | None = None) -> str:
+    """ "CE-10002" (a device), "Alaris 8015 PCU on 5.2 (demo)" (a release: ": 11 devices of ours on site" with `count`), "Every Alaris
+    8015 PCU of ours" (a model: ": 23 on site" with `count`)."""
+    kind = scope_kind(decision)
+    if kind == DEVICE_SCOPE:
+        return decision.asset.tag
+    model = decision.device_model.model
+    if kind == RELEASE_SCOPE:
+        text = f"{model} on {release_name(decision.release)}"
+        return text if count is None else f"{text}: {_plural(count, 'device', 'devices')} of ours on site"
+    text = f"Every {model} of ours"
+    return text if count is None else f"{text}: {count} on site"
+
+
+def plan_words(decision, *, fy_start: int | None = None) -> str:
+    """ "Plan: update by Mar 1, 2027 (owner Dana Ruiz)", "Plan: replace, planned for FY2028" (the fiscal year read now from plan_by and
+    the facility's start month: never stored), "Plan: wait for the manufacturer", "Plan: return it to its owner", or "No plan recorded".
+    Never "due" or "deadline". `fy_start` None reads the facility's start month (one query) for a replacement planned."""
+    plan = decision.plan
+    if plan == DecisionPlan.NONE or not plan:
+        return "No plan recorded"
+    if plan == DecisionPlan.UPDATE_PLANNED:
+        text = f"Plan: update by {day_words(decision.plan_by)}" if decision.plan_by else "Plan: update"
+    elif plan == DecisionPlan.REPLACE_PLANNED:
+        if decision.plan_by:
+            start = fy_start if fy_start is not None else fiscal.start_month()
+            text = f"Plan: replace, planned for {fiscal.fy_label(fiscal.fiscal_year_of(decision.plan_by, start))}"
+        else:
+            text = "Plan: replace"
+    elif plan == DecisionPlan.WAIT_FOR_MANUFACTURER:
+        text = "Plan: wait for the manufacturer"
+    else:
+        text = "Plan: return it to its owner"
+    return f"{text} (owner {decision.plan_owner})" if decision.plan_owner_id else text
+
+
+def who_words(decision) -> str:
+    """ "Accepted by IT security or the CISO, as recorded by Kim Lee on Oct 21, 2026; IT exception DEMO-EX-1042" (or "...; no IT
+    exception number recorded"); "Decided by ..." to take out of use. The day is the day decided; nobody recording (the system) reads
+    "as recorded on ..."."""
+    verb = "Decided by" if decision.response == DecisionResponse.TAKE_OUT_OF_USE else "Accepted by"
+    day = day_words(decision.decided_on)
+    recorder = f"as recorded by {decision.recorded_by} on {day}" if decision.recorded_by_id else f"as recorded on {day}"
+    exception = (f"IT exception {decision.exception_reference}" if decision.exception_reference
+                 else "no IT exception number recorded")
+    return f"{verb} {AcceptedBy(decision.accepted_by).label}, {recorder}; {exception}"
+
+
+def _past_review(decision, today: date) -> bool:
+    return decision.ended_on is None and decision.review_by < today
+
+
+def decision_words(decision, today: date, *, fy_start: int | None = None) -> str:
+    """The decision's sentence (build39 section 4): "<response>; <review>. <plan>. <who>.":
+    - keep with controls: "Keep in use with controls (2: traffic limited to the ports and hosts it needs; vendor remote access off, or
+      attended only); review by Oct 21, 2027."
+    - keep without added controls: "Keep in use without added controls: risk accepted until Oct 21, 2027." (the only place "risk
+      accepted" appears)
+    - take out of use: "Take out of use, decided Oct 21, 2026; review by Jan 21, 2027." (never "out of use" as a device's state: the
+      decision retires nothing)
+    Past its review (a live decision, review_by before today), "Review due since Oct 21, 2027" is read first and replaces the review part
+    (and "risk accepted until" is dropped): "Review due since Oct 21, 2027: keep in use without added controls." Then plan_words and
+    who_words. `fy_start`: the facility's fiscal year start month, read once by the caller (else read here, when a replacement is
+    planned)."""
+    review = day_words(decision.review_by)
+    response = decision.response
+    if response == DecisionResponse.KEEP_WITH_CONTROLS:
+        controls = _sentence_controls(decision)
+        head, tail = f"Keep in use with controls ({len(controls)}: {'; '.join(controls)})", f"; review by {review}"
+    elif response == DecisionResponse.KEEP_WITHOUT_ADDED_CONTROLS:
+        head, tail = "Keep in use without added controls", f": risk accepted until {review}"
+    else:
+        head, tail = f"Take out of use, decided {day_words(decision.decided_on)}", f"; review by {review}"
+    first = f"Review due since {review}: {_lower_first(head)}." if _past_review(decision, today) else f"{head}{tail}."
+    return f"{first} {plan_words(decision, fy_start=fy_start)}. {who_words(decision)}."
+
+
+def decision_state(decision, today: date) -> str:
+    """ENDED (superseded, no longer needed, or entered in error), REVIEW_DUE (its review before today), REVIEW_SOON (its review within
+    REVIEW_SOON_DAYS days from today), or IN_FORCE. Words: DECISION_STATE_WORDS."""
+    if decision.ended_on is not None:
+        return ENDED
+    if decision.review_by < today:
+        return REVIEW_DUE
+    if decision.review_by <= today + timedelta(days=REVIEW_SOON_DAYS):
+        return REVIEW_SOON
+    return IN_FORCE
+
+
+END_WORDS = {DecisionEnd.SUPERSEDED: "Superseded {day}", DecisionEnd.NO_LONGER_NEEDED: "Ended {day}: no longer needed",
+             DecisionEnd.ENTERED_IN_ERROR: "Entered in error {day}"}
+
+
+def end_words(decision) -> str:
+    """ "Superseded Oct 22, 2026", "Ended Oct 22, 2026: no longer needed", "Entered in error Oct 22, 2026", or "" (live)."""
+    if decision.ended_on is None:
+        return ""
+    return END_WORDS.get(decision.end_reason, "Ended {day}").format(day=day_words(decision.ended_on))
+
+
+def review_words(decision, today: date) -> str:
+    """The list's review column: "Review by Oct 21, 2027", "Review due since Oct 21, 2027", or (ended) end_words."""
+    if decision.ended_on is not None:
+        return end_words(decision)
+    if decision.review_by < today:
+        return f"Review due since {day_words(decision.review_by)}"
+    return f"Review by {day_words(decision.review_by)}"
+
+
+# --- review dates --------------------------------------------------------------------------------------------------------------------
+
+def review_cap(response: str, decided_on: date) -> date:
+    """The latest review day Cadence accepts: 12 months after the day decided to take out of use (a "take out of use" that leaves a device
+    in use for years is a keep-in-use decision under another name), 36 months for the others. Product choices, not a rule: no rule sets
+    an interval (HHS 405(d) HICP 2023 recommends a timeline and a review, and names none)."""
+    months = OUT_OF_USE_CAP_MONTHS if response == DecisionResponse.TAKE_OUT_OF_USE else REVIEW_CAP_MONTHS
+    return add_months(decided_on, months)
+
+
+def review_default(response: str, decided_on: date, *, asset=None) -> date:
+    """The review day Record decision offers: 12 months after the day decided; 3 months to take out of use; for a temporary device
+    (rental, loaner, demo unit), the earlier of that and its due back day (when after the day decided), else 3 months; never past
+    review_cap. Product choices, not a rule (review_cap's docstring)."""
+    months = OUT_OF_USE_REVIEW_MONTHS if response == DecisionResponse.TAKE_OUT_OF_USE else REVIEW_MONTHS
+    default = add_months(decided_on, months)
+    if asset is not None and owner_maintains(asset):
+        due_back = getattr(asset, "due_back_on", None)
+        stay = due_back if due_back is not None and due_back > decided_on else add_months(decided_on, TEMPORARY_REVIEW_MONTHS)
+        default = min(default, stay)
+    return min(default, review_cap(response, decided_on))
+
+
+def review_rule_words(response: str, *, asset=None) -> str:
+    """The review field's words on Record decision: "By default 12 months after the day decided (at most 36 months)"."""
+    cap = OUT_OF_USE_CAP_MONTHS if response == DecisionResponse.TAKE_OUT_OF_USE else REVIEW_CAP_MONTHS
+    if asset is not None and owner_maintains(asset):
+        return (f"By default the day it is due back, or {TEMPORARY_REVIEW_MONTHS} months after the day decided when none is recorded "
+                f"(at most {cap} months)")
+    months = OUT_OF_USE_REVIEW_MONTHS if response == DecisionResponse.TAKE_OUT_OF_USE else REVIEW_MONTHS
+    return f"By default {months} months after the day decided (at most {cap} months)"
+
+
+# --- a decision's devices and Check lines --------------------------------------------------------------------------------------------
+
+def scope_devices(*, asset=None, device_model=None, release=None):
+    """The devices on site a scope holds (a queryset; rows or ids): a device's own (device scope); a model's devices of ours whose
+    recorded release is `release` (release scope); a model's devices of ours (model scope)."""
+    on = Asset.objects.filter(status__in=ON_SITE_STATUSES)
+    if asset is not None:
+        return on.filter(pk=getattr(asset, "pk", asset))
+    model_id = getattr(device_model, "pk", device_model)
+    if release is not None:
+        return on.filter(ownership=Ownership.OWNED, device_model_id=model_id, cyber__release_id=getattr(release, "pk", release))
+    return on.filter(ownership=Ownership.OWNED, device_model_id=model_id)
+
+
+def _scope_of(decision):
+    return scope_devices(asset=decision.asset_id or None, device_model=decision.device_model_id, release=decision.release_id or None)
+
+
+def _in_scope(decision, a) -> bool:
+    """Whether the device `a` (its row read) is on site in the decision's scope (scope_devices, in Python)."""
+    if a.status == AssetStatus.RETIRED:
+        return False
+    if decision.asset_id:
+        return a.pk == decision.asset_id
+    if a.ownership != Ownership.OWNED or a.device_model_id != decision.device_model_id:
+        return False
+    return not decision.release_id or _recorded_release_id(a) == decision.release_id
+
+
+@dataclass(frozen=True)
+class DecisionDevice:
+    """A device on site in a decision's scope (decision_devices): its standing, its need (or None), its update responses, the decision
+    governing it, and whether that is this decision (`governed`; else a more specific one governs it)."""
+
+    asset: object
+    standing: DeviceStanding
+    need: Need | None
+    updates: tuple
+    governing: object | None
+    governed: bool
+
+    def words(self, today: date) -> str:
+        """The device's response on the decision's page: its update lines, then "This decision" (or "Review due since ..."), or the
+        number of the decision that governs it instead."""
+        parts = [r.words for r in self.updates]
+        if self.governed:
+            parts.append(f"Review due since {day_words(self.governing.review_by)}" if _past_review(self.governing, today)
+                         else "This decision")
+        elif self.governing is not None:
+            parts.append(f"Governed by {self.governing.number}")
+        return "; ".join(parts)
+
+
+def _decision_device(a, standing, today, governing: dict, decision, responses: dict) -> DecisionDevice:
+    gov = governing.get(a.pk)
+    return DecisionDevice(asset=a, standing=standing, need=support_need(standing, today), updates=tuple(responses.get(a.pk, ())),
+                          governing=gov, governed=gov is not None and gov.pk == decision.pk)
+
+
+def decision_devices(decision, today: date) -> list:
+    """The devices on site in the decision's scope (scope_devices), in tag order, each a DecisionDevice: its standing (tag, serial,
+    model, department, connection, release), its need, its update responses, and the decision governing it (this one, `governed`, or a
+    more specific one). Fixed queries however many devices: the devices with their rows, their models' profiles, the live decisions
+    that may govern them, the update responses (four; one when the scope holds no device on site)."""
+    devices = list(_scope_of(decision).select_related(*_WITH_RECORD).order_by("tag"))
+    if not devices:
+        return []
+    profiles = _profiles(a.device_model_id for a in devices)
+    governing = _governing(devices, _decisions_for(devices))
+    responses = update_responses(devices, today)
+    return [_decision_device(a, _standing(a, _cached_record(a), profiles.get(a.device_model_id), today), today, governing, decision,
+                             responses) for a in devices]
+
+
+@dataclass(frozen=True)
+class Check:
+    """A Check line (build39 section 3): information, never a refusal. `key` one of the CHECK_ keys; `info` True for the lines that only
+    describe (the model's segment record SOME or blank); `action` "end" where End answers it; `tags` the devices it names."""
+
+    key: str
+    words: str
+    info: bool = False
+    action: str = ""
+    tags: tuple = ()
+
+
+def _model_of(decision):
+    """The decision's model: its device's model now (device scope; reads decision.asset), else its own."""
+    return decision.asset.device_model_id if decision.asset_id else decision.device_model_id
+
+
+def _checks(decision, devices: list, profile_row, today: date) -> list:
+    """The Check lines from the decision's devices on site (DecisionDevices) and its model's profile row (or None). No query but the
+    plan owner's row when the decision has not read it."""
+    out = []
+    governed = [dd for dd in devices if dd.governed]
+    ended_now = {kind for dd in governed if dd.need is not None for kind in dd.need.ended}
+    for kind in REASONS:
+        if kind in ended_now and kind not in (decision.reasons or ()):
+            out.append(Check(CHECK_ALSO_ENDED, ALSO_ENDED[kind]))
+    if SEGMENTED_CONTROL in (decision.controls or ()):
+        segmented = profile_row.segmented if profile_row is not None else ""
+        if segmented == Segmented.NONE:
+            out.append(Check(CHECK_SEGMENT, SEGMENT_NONE_WORDS))
+        elif segmented == Segmented.SOME:
+            out.append(Check(CHECK_SEGMENT_SOME, SEGMENT_SOME_WORDS, info=True))
+        elif not segmented:
+            out.append(Check(CHECK_SEGMENT_BLANK, SEGMENT_BLANK_WORDS, info=True))
+    if not devices:
+        out.append(Check(CHECK_NO_DEVICE, NO_DEVICE_WORDS, action="end"))
+    if scope_kind(decision) != DEVICE_SCOPE:
+        known = {str(i) for i in (decision.governed_ids or ())}
+        joined = [dd.asset.tag for dd in governed if str(dd.asset.pk) not in known]
+        if joined:
+            out.append(Check(CHECK_JOINED, f"{_plural(len(joined), 'device', 'devices')} joined since: {_tags(joined)}",
+                             tags=tuple(joined)))
+    if decision.plan_by is not None and decision.plan_by < today:
+        out.append(Check(CHECK_PLAN_PASSED, PLAN_PASSED_WORDS.format(day=day_words(decision.plan_by))))
+    if decision.response == DecisionResponse.TAKE_OUT_OF_USE and today > decision.decided_on:
+        in_service = [dd.asset.tag for dd in governed if dd.asset.status == AssetStatus.IN_SERVICE]
+        decided = day_words(decision.decided_on)
+        if in_service and scope_kind(decision) == DEVICE_SCOPE:
+            out.append(Check(CHECK_IN_SERVICE, f"Still in service since the decision to take it out of use ({decided})",
+                             tags=tuple(in_service)))
+        elif in_service:
+            them = "it" if len(in_service) == 1 else "them"
+            out.append(Check(CHECK_IN_SERVICE, f"{_tags(in_service)} still in service since the decision to take {them} out of use "
+                                               f"({decided})", tags=tuple(in_service)))
+    if decision.plan_owner_id and not decision.plan_owner.is_active:
+        out.append(Check(CHECK_OWNER, OWNER_INACTIVE_WORDS))
+    return out
+
+
+def decision_checks(decision, today: date, *, devices=None) -> list:
+    """The decision's Check lines (build39 section 3), each a Check: a reason ended since that it does not name ("The OS vendor's support
+    also ended since this decision"); the model's record now says not on a separate segment while it relies on `segmented` (and, as
+    information, only some or not recorded); no device on site in its scope ("Governs no device here now: end it"); devices it governs
+    that it did not when recorded (release or model scope: "2 devices joined since: CE-10017, CE-10021", by identity from governed_ids);
+    the plan's date passed ("The plan's date (Mar 1, 2027) has passed"); take out of use with a device it governs still in service a day
+    or more after ("Still in service since the decision to take it out of use (Oct 21, 2026)"); the plan owner's account deactivated.
+    An ended decision has none. `devices`: decision_devices' result when the caller has it (else read here). Fixed queries:
+    decision_devices' (when not given), the model's profile (only when no device of its model was read and it relies on `segmented`),
+    the decision's device and plan owner (when not read)."""
+    if decision.ended_on is not None:
+        return []
+    if devices is None:
+        devices = decision_devices(decision, today)
+    model_id = _model_of(decision)
+    profile_row = next((dd.standing.facts.profile for dd in devices if dd.asset.device_model_id == model_id), _UNREAD)
+    if profile_row is _UNREAD:
+        profile_row = profile(model_id) if SEGMENTED_CONTROL in (decision.controls or ()) else None
+    return _checks(decision, devices, profile_row, today)
+
+
+# --- the device drawer's Security tab --------------------------------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class DeviceLines:
+    """What the Security tab shows for slice 39 (device_lines): the device's standing and support need (or None); its response lines
+    (build39 section 3's order: updates open, versions not confirmed, then the governing decision's sentence, or "No decision recorded"
+    when nothing responds); the governing decision (or None) and whether it covers the need; whether this reader may record a decision
+    for the device (`can_record`: permissions.can_decide, a decidable need on a device on site) and sees work orders
+    (`link_work_orders`: a work order's number is a link only with Work orders View)."""
+
+    standing: DeviceStanding
+    need: Need | None
+    responses: tuple
+    decision: object | None
+    covers: bool
+    can_record: bool
+    link_work_orders: bool
+
+
+def device_lines(asset, today: date, *, user, fy_start: int | None = None) -> DeviceLines:
+    """The Security tab's slice 39 lines for one device (DeviceLines): the need's words, or the "Ending within 12 months" or extended
+    support information; with a decidable need, its update responses; the governing decision's sentence (decision_words: "Review due
+    since ..." first once past review), shown with or without a need (it still governs); "No decision recorded" for a decidable need
+    nothing responds to. `user` None is the system (it may record and sees work orders). Fixed queries: the device's row and profile
+    (device_standing), the decisions (one), the update responses (one, only with a decidable need), the fiscal year start (one, only
+    for a replacement planned when `fy_start` is not given)."""
+    from apps.accounts.models import Level, Module
+
+    from . import permissions as perms
+
+    standing = device_standing(asset, today)
+    device = standing.asset
+    need = support_need(standing, today)
+    decision = governing_decisions([device], today).get(device.pk)
+    responses: list = []
+    if need is not None and need.decidable:
+        responses = list(update_responses([device], today).get(device.pk, ()))
+    covering = covers(decision, today)
+    if decision is not None:
+        responses.append(Response(DECIDED, decision_words(decision, today, fy_start=fy_start), decision.number, decision=decision,
+                                  covers=covering))
+    elif need is not None and need.decidable and not responses:
+        responses.append(Response(NO_DECISION, NO_DECISION_WORDS))
+    can_record = (user is None or perms.can_decide(user)) and need is not None and need.decidable
+    link = user is None or user.has_level(Module.WORKORDERS, Level.VIEW)
+    return DeviceLines(standing=standing, need=need, responses=tuple(responses), decision=decision, covers=covering,
+                       can_record=can_record, link_work_orders=link)
+
+
+# --- Needs attention -----------------------------------------------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Link:
+    """A link as data: a URL name (URLS), its args, and its query as (key, value) pairs; the doors reverse it."""
+
+    name: str
+    args: tuple = ()
+    query: tuple = ()
+
+
+@dataclass(frozen=True)
+class AttentionRow:
+    """One row of a Needs attention heading: its words; the devices it counts (`count`); where it links (`link`); Record decision
+    (`record`) and End (`end`) for permissions.can_decide only; the work order's link for Work orders View only; the decision or
+    device it names, and the devices' tags."""
+
+    words: str
+    count: int = 1
+    link: Link | None = None
+    record: Link | None = None
+    end: Link | None = None
+    work_order: Link | None = None
+    decision: object | None = None
+    asset: object | None = None
+    tags: tuple = ()
+
+
+@dataclass(frozen=True)
+class Heading:
+    key: str
+    words: str
+    count: int
+    rows: tuple
+    info: bool = False
+
+
+@dataclass(frozen=True)
+class Attention:
+    """The Decisions tab's Needs attention: its headings with rows, in ATTENTION_HEADINGS' order (only those with rows); empty, the words
+    ATTENTION_EMPTY ("Nothing listed from what is recorded here."), never a claim that everything is answered."""
+
+    headings: tuple
+    empty_words: str = ATTENTION_EMPTY
+
+    @property
+    def empty(self) -> bool:
+        return not self.headings
+
+
+def _model_link(model_id, need: Need) -> Link:
+    """A model's panel narrowed to devices of ours that can connect, by the need's standing (the Fleet's filters)."""
+    if need.key == ENDING:
+        standing = "updates_end_announced" if SECURITY_UPDATES in need.reasons and SECURITY_UPDATES not in need.ended else "os_end_announced"
+    else:
+        standing = "updates_ended" if SECURITY_UPDATES in need.ended else "os_ended"
+    return Link(URLS["model"], (model_id,), (("whose", "ours"), ("connected", "either"), ("standing", standing)))
+
+
+def _device_link(asset) -> Link:
+    return Link(URLS["device"], (asset.tag,), (("tab", "security"),))
+
+
+_TEMPORARY_ENDED = {(SECURITY_UPDATES,): "security updates ended", (OS_SUPPORT,): "the OS vendor's support ended"}
+
+
+def _temporary_words(a, need: Need) -> str:
+    """ "T-0101 (rental, Summit Medical Rentals; due back Nov 10, 2026): security updates ended; its owner installs updates: ask the owner
+    to update it, or return it"."""
+    who = a.get_ownership_display().lower()
+    if a.owner:
+        who += f", {a.owner}"
+    if a.due_back_on:
+        who += f"; due back {day_words(a.due_back_on)}"
+    if need.key == ENDING:
+        return f"{a.tag} ({who}): {_lower_first(need.words)}; its owner installs updates: ask the owner about it, or return it"
+    what = _TEMPORARY_ENDED.get(tuple(need.ended), "security updates and the OS vendor's support ended")
+    return f"{a.tag} ({who}): {what}; its owner installs updates: ask the owner to update it, or return it"
+
+
+def _release_sort(a) -> str:
+    return _cached_record(a).release.version_key if _recorded_release_id(a) is not None else "￿"
+
+
+def _group_rows(groups: dict, needs: dict, *, may_decide: bool) -> list:
+    """Rows per model and release (devices of ours): "Alaris 8015 PCU on 5.2 (demo): 4 devices of ours; security updates ended after
+    ...", linked to the model's panel narrowed to them, Record decision for the release (or, with no release recorded, the model)."""
+    rows = []
+    for (model_id, release_id), members in sorted(groups.items(), key=lambda kv: (kv[1][0].device_model.manufacturer.casefold(),
+                                                                                    kv[1][0].device_model.model.casefold(),
+                                                                                    _release_sort(kv[1][0]))):
+        first = members[0]
+        need = needs[first.pk]
+        model = first.device_model.model
+        where = f"{model} on {_cached_record(first).release.version}" if release_id is not None else f"{model}, release not recorded"
+        record = None
+        if may_decide:
+            record = Link(URLS["record"], (), (("release", release_id),) if release_id is not None else (("model", model_id),))
+        rows.append(AttentionRow(f"{where}: {_plural(len(members), 'device', 'devices')} of ours; {_lower_first(need.words)}",
+                                 count=len(members), link=_model_link(model_id, need), record=record,
+                                 tags=tuple(a.tag for a in members)))
+    return rows
+
+
+def _decision_row(d, words: str, *, held: int, may_decide: bool, renew: bool = False, end: bool = False) -> AttentionRow:
+    scope = scope_words(d, held if scope_kind(d) != DEVICE_SCOPE and held else None)
+    return AttentionRow(f"{d.number} · {scope}; {_lower_first(words)}", link=Link(URLS["decision"], (d.number,)), decision=d,
+                        record=Link(URLS["record"], (), (("supersedes", d.number),)) if may_decide and renew else None,
+                        end=Link(URLS["end"], (d.number,)) if may_decide and end else None)
+
+
+def needs_attention(today: date, *, user) -> Attention:
+    """The Decisions tab's Needs attention (build39 section 7), as data: each heading (ATTENTION_HEADINGS) with its count and rows, links
+    as URL names and args (Link), no HTML. Only for permissions.can_view_devices (anyone else: an empty panel); `user` None is the system.
+    - no_decision: devices of ours on site with a need (NEEDS), no open update to a supported release, no update done with the version
+      not confirmed, and no decision governing them, one row per model and release; Record decision (release scope, or model scope with
+      no release recorded) for permissions.can_decide.
+    - temporary: each temporary device so, one row each ("T-0101 (rental, ...): security updates ended; its owner installs updates: ask
+      the owner to update it, or return it"), Record decision (device scope).
+    - not_confirmed: devices with a decidable need, an update done with the version not confirmed, and none open (Confirm version).
+    - ending (information): devices with an end announced within 12 months, no decision governing them, and no update responding (ours
+      per model and release, temporary devices each).
+    - review_due: live decisions past review whose scope holds a device on site (the badge's count), Review and renew.
+    - review_soon: live decisions to review within 30 days whose scope holds a device on site, Review and renew.
+    - no_device: live decisions whose scope holds no device on site, End.
+    - checks: the other Check lines of live decisions whose scope holds a device on site (decision_checks', not the information ones).
+    A device with a need and a decision past review is listed under its decision (review_due), never as "no decision recorded".
+    Fixed queries however many devices and decisions: the devices on site with their rows, the live decisions, the models' profiles, the
+    update responses (four)."""
+    from apps.accounts.models import Level, Module
+
+    from . import permissions as perms
+
+    if user is not None and not perms.can_view_devices(user):
+        return Attention(headings=())
+    may_decide = user is None or perms.can_decide(user)
+    sees_work = user is None or user.has_level(Module.WORKORDERS, Level.VIEW)
+    devices = _devices_with_records(on_site())
+    decisions = list(_live().select_related(*_DECISION_RELATED).order_by("number"))
+    model_ids = {a.device_model_id for a in devices} | {_model_of(d) for d in decisions}
+    profiles = _profiles(model_ids) if model_ids else {}
+    standings = {a.pk: _standing(a, _cached_record(a), profiles.get(a.device_model_id), today) for a in devices}
+    needs = {pk: support_need(s, today) for pk, s in standings.items()}
+    governing = _governing(devices, decisions)
+    responses = update_responses(devices, today) if devices else {}
+
+    rows: dict = {key: [] for key in ATTENTION_HEADINGS}
+    groups: dict = {"no_decision": {}, "ending": {}}
+    for a in devices:  # tag order (Asset's ordering)
+        need = needs[a.pk]
+        if need is None or not need.decidable:
+            continue
+        kinds = {r.kind for r in responses.get(a.pk, ())}
+        if UPDATE_NOT_CONFIRMED in kinds and UPDATE_OPEN not in kinds:
+            line = next(r for r in responses[a.pk] if r.kind == UPDATE_NOT_CONFIRMED)
+            rows["not_confirmed"].append(AttentionRow(f"{a.tag}: {line.words}", link=_device_link(a), asset=a, tags=(a.tag,),
+                                                      work_order=Link(URLS["work_order"], (line.number,)) if sees_work else None))
+        if kinds or governing.get(a.pk) is not None:
+            continue  # an update responds, or a decision governs (one past review is listed under it: review_due)
+        key = "no_decision" if need.key == NEEDS else "ending"
+        if a.ownership != Ownership.OWNED:
+            rows["temporary" if key == "no_decision" else key].append(
+                AttentionRow(_temporary_words(a, need), link=_device_link(a), asset=a, tags=(a.tag,),
+                             record=Link(URLS["record"], (), (("asset", a.tag),)) if may_decide else None))
+            continue
+        groups[key].setdefault((a.device_model_id, _recorded_release_id(a)), []).append(a)
+    for key in ("no_decision", "ending"):
+        rows[key] = _group_rows(groups[key], needs, may_decide=may_decide) + rows[key]
+
+    by_pk, by_model = {a.pk: a for a in devices}, {}
+    for a in devices:
+        by_model.setdefault(a.device_model_id, []).append(a)
+    for d in decisions:
+        if d.asset_id:
+            held = [by_pk[d.asset_id]] if d.asset_id in by_pk else []
+        else:
+            held = [a for a in by_model.get(d.device_model_id, ()) if _in_scope(d, a)]
+        if not held:
+            rows["no_device"].append(_decision_row(d, review_words(d, today), held=0, may_decide=may_decide, end=True))
+            continue
+        state = decision_state(d, today)
+        if state in (REVIEW_DUE, REVIEW_SOON):
+            rows[state].append(_decision_row(d, review_words(d, today), held=len(held), may_decide=may_decide, renew=True))
+        dds = [_decision_device(a, standings[a.pk], today, governing, d, responses) for a in held]
+        for check in _checks(d, dds, profiles.get(_model_of(d)), today):
+            if not check.info and check.key != CHECK_NO_DEVICE:
+                rows["checks"].append(AttentionRow(f"{d.number} · {check.words}", link=Link(URLS["decision"], (d.number,)), decision=d,
+                                                   tags=check.tags))
+    headings = tuple(Heading(key, words, sum(r.count for r in rows[key]), tuple(rows[key]), info=key in ATTENTION_INFO)
+                     for key, words in ATTENTION_HEADINGS.items() if rows[key])
+    return Attention(headings=headings)
+
+
+# --- the nav badge ---------------------------------------------------------------------------------------------------------------------
+
+def badge(today: date) -> dict:
+    """{"count": n, "hot": n > 0}: live support decisions past their review (review_by before today) whose scope still holds a device on
+    site (device scope: its device not retired; release scope: a device of ours on site whose recorded release is it; model scope: a
+    device of ours on site of the model), as Needs attention's review_due counts them. One aggregate query (an EXISTS per scope kind);
+    never reads standings. The caller gates it (permissions.can_view_devices, never a scoped user)."""
+    from django.db.models import Exists
+
+    on = Asset.objects.filter(status__in=ON_SITE_STATUSES)
+    device = Q(asset__isnull=False) & Exists(on.filter(pk=OuterRef("asset_id")))
+    release = Q(release__isnull=False) & Exists(DeviceSecurity.objects.filter(
+        release_id=OuterRef("release_id"), asset__ownership=Ownership.OWNED, asset__status__in=ON_SITE_STATUSES,
+        asset__device_model_id=OuterRef("device_model_id")))
+    model = Q(asset__isnull=True, release__isnull=True) & Exists(on.filter(ownership=Ownership.OWNED,
+                                                                           device_model_id=OuterRef("device_model_id")))
+    count = _live().filter(review_by__lt=today).filter(device | release | model).count()
+    return {"count": count, "hot": count > 0}

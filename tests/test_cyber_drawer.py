@@ -43,8 +43,14 @@ HX = {"HTTP_HX_REQUEST": "true", "HTTP_HX_TARGET": "drawer"}
 MODAL = {"HTTP_HX_REQUEST": "true", "HTTP_HX_TARGET": "modal-card"}
 
 
+# Slice 39 added "overdue" to rules.NEVER_WORDS (the register's voice). The device drawer around the Security tab carries Equipment's own
+# PM wording (apps.equipment.services: Mark missing's confirm), which is not the register's: it is left out of the scan.
+EQUIPMENT_PM_WORDS = "It counts as overdue for PM until it is found."
+
+
 def words_ok(text: str) -> list:
     """The never-words (rules.NEVER_WORDS) found in `text`, as whole words in any letter case."""
+    text = text.replace(EQUIPMENT_PM_WORDS, "")
     return [w for w in rules.NEVER_WORDS if re.search(rf"(?<![A-Za-z]){re.escape(w)}(?![A-Za-z])", text, re.IGNORECASE)]
 
 
