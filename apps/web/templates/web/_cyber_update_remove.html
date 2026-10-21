@@ -1,0 +1,23 @@
+{% load web %}
+{% comment %}Slice 38: Entered in error (views_cyber_updates.update_remove; updates.remove; Device security Approve and Equipment View). Says
+   what it does before it is done: an install recorded by hand stays on record, marked, and leaves the tab; a work order's recorded outcome
+   is cleared and Confirm version is offered again. The device's facts are never touched (Record facts corrects them). An update with
+   nothing recorded gets the modal saying so.{% endcomment %}
+<div class="modal-h"><h2>{% if hand %}{{ asset.tag }}{% else %}{{ number }}{% endif %}: entered in error</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note" role="alert">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="cu-remove-form" hx-post="{% url 'web:cybersecurity_update_remove' update.pk %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]">
+  <div class="form">
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    <div class="full cy-in-error">
+      <p>{{ words }}.</p>
+      {% if hand %}<p>This update recorded by hand on {{ asset.tag }} stays on record, marked entered in error: its history keeps it, and it leaves the Security tab.</p>
+      {% else %}<p>What {{ number }} recorded is cleared: the work order stays as it is, with the version not confirmed, and Confirm version is offered again. Its history keeps what was recorded.</p>{% endif %}
+      <p>{{ asset.tag }}'s facts stay as they are: correct its release with Record facts if it should change.</p>
+    </div>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn danger" type="submit">Mark entered in error</button></div>
+</form>
+{% endif %}

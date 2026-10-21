@@ -1,0 +1,29 @@
+{% load web %}
+{% comment %}Slice 38: Confirm version (views_cyber_updates.update_confirm; updates.confirm; Device security Edit and Equipment View): what a
+   completed update work order did, when its completion did not record it (the vendor's job, or "not confirmed now"): a release installed,
+   patches applied, or already on the update, dated the work order's completion day. The device's facts never move backwards. Each
+   refusal comes back under its field. An update that is not completed with the version not confirmed (reopened, recorded meanwhile,
+   cancelled), or a device not on site, gets the modal saying why.{% endcomment %}
+{% with dm=asset.device_model %}
+<div class="modal-h"><h2>{{ number|default:asset.tag }}: confirm version</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note" role="alert">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="cu-confirm-form" class="cu-form" hx-post="{% url 'web:cybersecurity_update_confirm' update.pk %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    <p class="full hint">{{ asset.tag }} · {{ dm.manufacturer }} {{ dm.model }}. {{ words }}.{% if target %} {{ target }}{% endif %} What it did is dated the day the work order was completed.</p>
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    <fieldset class="full cu-fs"{% if form.software_outcome.errors %} aria-describedby="cu-software_outcome_error"{% endif %}>
+      <legend>{{ form.software_outcome.label }}</legend>
+      <div class="radio">{% for radio in form.software_outcome %}<label for="{{ radio.id_for_label }}">{{ radio.tag }}<span>{{ radio.choice_label }}</span></label>{% endfor %}</div>
+      {% if form.software_outcome.errors %}<span class="err" id="cu-software_outcome_error">{{ form.software_outcome.errors|striptags }}</span>{% endif %}
+    </fieldset>
+    {% include "web/_asset_field.html" with field=form.software_release %}
+    {% include "web/_asset_field.html" with field=form.software_reference %}
+    {% include "web/_asset_field.html" with field=form.software_basis cls="full" %}
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Confirm</button></div>
+</form>
+{% endif %}
+{% endwith %}

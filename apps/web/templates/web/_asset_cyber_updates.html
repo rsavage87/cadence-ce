@@ -1,1 +1,24 @@
-{% comment %}Slice 38: the Security tab's "Software updates" section (apps.web.asset_cyber_updates.context, under cyber.updates). Wave 2 builds it.{% endcomment %}
+{% comment %}Slice 38: the Security tab's "Software updates" section (apps.web.asset_cyber_updates.context, under cyber.updates): the
+   device's update work orders' records and its installs recorded by hand, newest first, each with its state (rules.STATE_LABELS) and its
+   sentence (rules.update_words); the work order's number always, a link only with Work orders View. Open software update, Record update,
+   Confirm version, and Entered in error open their modals. No priority chip.{% endcomment %}
+{% if updates %}<div class="sec cy-ups"><h3>Software updates <span>newest first</span></h3>
+  {% if updates.can_open or updates.can_record %}<div class="cy-up-act">
+    {% if updates.can_open %}<button class="link" type="button" hx-get="{{ updates.open_url }}" hx-target="#modal-card">Open software update</button>{% endif %}
+    {% if updates.can_record %}<button class="link" type="button" hx-get="{{ updates.record_url }}" hx-target="#modal-card">Record update</button>{% endif %}
+  </div>{% endif %}
+  {% if updates.rows %}
+  <ul class="cy-up-list">
+    {% for u in updates.rows %}
+    <li class="cy-up" data-state="{{ u.state }}">
+      <div class="cy-up-h"><span class="chip {{ u.tone }}">{{ u.label }}</span>{% if u.number %}{% if u.wo_url %}<a class="link" href="{{ u.wo_url }}" hx-get="{{ u.wo_url }}" hx-target="#drawer">{{ u.number }}</a>{% else %}<span class="cy-up-n">{{ u.number }}</span>{% endif %}{% endif %}</div>
+      <div class="cy-up-s">{{ u.words }}</div>
+      {% if u.confirm_url or u.remove_url %}<div class="cy-up-f">
+        {% if u.confirm_url %}<button class="link" type="button" hx-get="{{ u.confirm_url }}" hx-target="#modal-card">Confirm version</button>{% endif %}
+        {% if u.remove_url %}<button class="link" type="button" hx-get="{{ u.remove_url }}" hx-target="#modal-card">Entered in error</button>{% endif %}
+      </div>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<div class="empty">{{ updates.empty }}</div>{% endif %}
+</div>{% endif %}
