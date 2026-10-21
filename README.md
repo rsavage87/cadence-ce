@@ -493,7 +493,7 @@ its review.
 Device security's Decisions tab opens with Needs attention: devices of ours past their support, connected or able to connect, with no
 decision recorded and no update to a supported release open (per model and release, with Record decision); rentals, loaners, and demo units past theirs (ask the owner to update it,
 or return it); updates done with the version not confirmed; ends announced within 12 months (information); decisions past their review
-date or to review within 30 days, each still governing a device here (a decision none of whose devices needs one any more offers End,
+date or to review within 30 days, each whose scope still holds a device here (a decision none of whose devices needs one any more offers End,
 not Review and renew; the count opens the list narrowed the same way), or governing no device here now (End); and Check lines: a support
 or OS end that holds now and the decision does not name, the model's record no longer giving the segment it relies on, devices joined since, the plan's date passed, a device still in service after a
 decision to take it out of use, the plan owner's account deactivated. With nothing listed it reads "Nothing listed from what is recorded
@@ -505,7 +505,7 @@ exception record is the system of record") and its devices download as CSV. Reco
 release's devices of ours, offered while one of them has no decision governing it and no update answering it), from a model's panel ("Record decision for every <model> of ours"), from a device's Security tab (that device), from Needs attention, and as Review and renew (prefilled,
 the exception number blank, a plan no longer offered starting at No plan recorded, and the panel's filters kept); a review date already
 passed is said once, and only when the service would take the decision; the Security tab shows the device's need, what answers it, and the decision that governs it. Device
-security's nav item carries a badge counting the decisions past their review date that still govern a device here. Decisions never reach
+security's nav item carries a badge counting the decisions past their review date whose scope still holds a device here. Decisions never reach
 an email, a digest, the Overview's attention list, a custom report, the portal, labels, or Scan.
 
 Who may do what: reading decisions (the tab, a decision's page, print, and CSVs, the badge, the API, and their history in the change log)
