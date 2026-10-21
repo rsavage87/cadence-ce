@@ -155,6 +155,13 @@ class _TypeField(forms.ChoiceField):
         super().__init__(*args, **kwargs)
         self.refusals = dict(refusals or {})
 
+    def __deepcopy__(self, memo):
+        # Each form gets its own copy of the declared field (Field.__deepcopy__ copies only the widget, error_messages, validators, and
+        # choices): without its own `refusals`, a refusal one form adds (a rental's PM) would be every later form's, in any facility.
+        result = super().__deepcopy__(memo)
+        result.refusals = dict(self.refusals)
+        return result
+
     def validate(self, value):
         if value in self.refusals:
             raise forms.ValidationError(self.refusals[value], code="invalid_choice")

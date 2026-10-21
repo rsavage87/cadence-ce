@@ -64,9 +64,21 @@ OPENED_TO_PATCH = "Opened to apply the manufacturer's patches{ref}."
 FACTS_STAY = "The device's facts stay as they were: correct its release with Record facts if it should change."
 HAND_REMOVED = "The update recorded by hand on {tag} is marked entered in error. " + FACTS_STAY
 OUTCOME_REMOVED = "{number}'s outcome is marked entered in error: Confirm version is offered again. " + FACTS_STAY
+# On a device not on site (retired, or returned to its owner) neither Confirm version nor Record facts is offered: the toast says what
+# was marked and the device's own words (cybersecurity.services._gone: "CE-10002 is retired: its facts stay as they were.")
+HAND_REMOVED_GONE = "The update recorded by hand on {tag} is marked entered in error. {gone}"
+OUTCOME_REMOVED_GONE = "{number}'s outcome is marked entered in error. {gone}"
 BATCH_OPENED = "{count} opened to install {version}."
 NONE_OPENED = "No software update opened."
-LEFT_UNASSIGNED = "{count} left unassigned. {reason}"
+# Why work orders were left unassigned (the service's UpdateBatch.unassigned_reason), worded for how many, "left unassigned" said once:
+# assigning needs Work orders Approve (updates.ASSIGN_NEEDS) or nobody was chosen (updates.NOBODY_CHOSEN), else the service's own reason
+# after its "Left unassigned: " (updates.INSTALLED_HERE: who installs updates to this model here)
+LEFT_ONE = "Left unassigned: {why}"
+LEFT_UNASSIGNED = "{count} left unassigned: {why}"
+UNASSIGNED_LEAD = "Left unassigned: "
+UNASSIGNED_WHY = {updates.ASSIGN_NEEDS: "assigning needs Work orders Approve", updates.NOBODY_CHOSEN: "nobody was chosen to assign"}
+THEN_ONE = "{why}, so a manager assigns it or a technician takes it."
+THEN_MANY = "{why}, so a manager assigns them or technicians take them."
 SKIPS = (("held", "Skipped, held as evidence for an incident: {tags}."),
          ("already_open", "Skipped, with an open software update already: {tags}."),
          ("changed", "Skipped, its model changed or it was retired meanwhile: {tags}."))
@@ -78,6 +90,16 @@ ALREADY_ON_IT = "{on_site} of this model on site; {count} already {verb} {versio
 
 def _plural(n: int, word: str) -> str:
     return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+def _left_unassigned(count: int, reason: str, *, batch: bool) -> str:
+    """Why `count` work orders were left unassigned, in one sentence (the service's `reason`, worded for the count): "Left unassigned:
+    ..." for one update opened on its own, "<count> left unassigned: ..." for a batch."""
+    if reason in UNASSIGNED_WHY:
+        why = (THEN_ONE if count == 1 else THEN_MANY).format(why=UNASSIGNED_WHY[reason])
+    else:
+        why = reason.removeprefix(UNASSIGNED_LEAD)
+    return LEFT_UNASSIGNED.format(count=count, why=why) if batch else LEFT_ONE.format(why=why)
 
 
 # --- lookups ------------------------------------------------------------------------------------------------------------------------
@@ -211,7 +233,7 @@ def update_open(request, tag):
     row = _fresh(work_order_id=wo.pk)
     message = OPENED.format(number=wo.number, tag=asset.tag, words=rules.update_words(row))
     if batch.unassigned_reason:
-        message += f" {batch.unassigned_reason}"
+        message += " " + _left_unassigned(batch.unassigned, batch.unassigned_reason, batch=False)
     return _saved(request, asset, message)
 
 
@@ -321,13 +343,14 @@ def update_confirm(request, pk):
 def update_remove(request, pk):
     """Entered in error on the update `pk`: permissions.can_correct_updates; updates.remove. GET the modal saying what it does (or why
     it cannot: nothing recorded); POST marks it. The device's facts are never touched (the toast says to correct them with Record
-    facts)."""
+    facts). On a device not on site (retired, or returned to its owner: cybersecurity.services._gone) neither Confirm version nor
+    Record facts is offered, so the modal and the toast promise neither: they say its facts stay as they were."""
     if not cyber_perms.can_correct_updates(request.user):
         raise PermissionDenied(updates.CORRECT_PERMISSION)
     update, asset = _update(request, pk)
     if request.method != "POST" and not request.htmx:
         return redirect(_drawer_url(asset))
-    ctx = {"asset": asset, "update": update, "hand": update.work_order_id is None,
+    ctx = {"asset": asset, "update": update, "hand": update.work_order_id is None, "gone": cyber._gone(asset),
            "number": update.work_order.number if update.work_order_id else "", "words": rules.update_words(update)}
     if request.method != "POST":
         return render(request, REMOVE, {**ctx, "form": RemoveForm(), "blocker": "" if update.outcome else updates.NOTHING_RECORDED})
@@ -338,9 +361,11 @@ def update_remove(request, pk):
     except (ValidationError, PermissionDenied) as e:
         form.add_service_errors(e)
         return render(request, REMOVE, {**ctx, "form": form, "blocker": ""})
+    gone = ctx["gone"]
     if ctx["hand"]:
-        return _saved(request, asset, HAND_REMOVED.format(tag=asset.tag))
-    return _saved(request, asset, OUTCOME_REMOVED.format(number=ctx["number"]))
+        return _saved(request, asset, HAND_REMOVED_GONE.format(tag=asset.tag, gone=gone) if gone else HAND_REMOVED.format(tag=asset.tag))
+    return _saved(request, asset, OUTCOME_REMOVED_GONE.format(number=ctx["number"], gone=gone) if gone
+                  else OUTCOME_REMOVED.format(number=ctx["number"]))
 
 
 # --- Open updates to this release (the batch) -----------------------------------------------------------------------------------------
@@ -379,7 +404,7 @@ def _batch_message(release, batch) -> str:
     parts = [BATCH_OPENED.format(count=_plural(batch.created, "software update"), version=rules.release_name(release))
              if batch.created else NONE_OPENED]
     if batch.unassigned:
-        parts.append(LEFT_UNASSIGNED.format(count=batch.unassigned, reason=batch.unassigned_reason))
+        parts.append(_left_unassigned(batch.unassigned, batch.unassigned_reason, batch=True))
     for key, words in SKIPS:
         tags = getattr(batch, key)
         if tags:

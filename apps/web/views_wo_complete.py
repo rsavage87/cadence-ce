@@ -137,6 +137,7 @@ NO_REPAIR_CHECK = "No checks after repair were recorded with this repair"  # com
 IMPORTED_NO_CHECK = "Imported from the previous system: no checks after repair recorded here"
 REVISIONS = (completion.REVISED, completion.REPAIR_REVISED)  # the checklist errors that show the steps as they are now, unanswered
 NEVER_NA_WORDS = "steps " + " and ".join(str(i + 1) for i in repair_checks.NEVER_NA)  # "steps 1 and 5"
+CYBER_CHANGED = "cyber-changed"  # slice 38: the register changed (views_cybersecurity.CHANGED): the screen's lists refetch themselves
 STEP_CSS = {completion.PASS: "ok", completion.FAIL: "crit", completion.NA: "neutral"}
 NO_RESULT = "No result recorded"  # an inspection of a device that was not waiting, completed with its checklist and no result
 FROM_MY_WORK = "my_work"  # the modal opened from a My work card: ?from=my_work, then a hidden field the form posts
@@ -585,12 +586,16 @@ def _message(request, wo, done, late_given: bool = False) -> str:
 def _saved(request, wo, done, late_given: bool = False):
     """The drawer, as the work order is now; from My work (slice 24) nothing is swapped, so the technician stays on the list, which
     re-fetches itself on wo-changed. A failed PM shows its drawer either way: it names the repair it opened; so does a failed incoming
-    inspection (slice 26), its re-inspection. `late_given`: a reason for lateness came with it (slice 25), which the toast names."""
+    inspection (slice 26), its re-inspection. `late_given`: a reason for lateness came with it (slice 25), which the toast names.
+    Slice 38: a completion that recorded what a software update did (done.software) changed the device's recorded release, so the
+    Device security screen's lists (opened behind the drawer) refetch themselves on CYBER_CHANGED, as every other register write's do."""
     if from_my_work(request) and wo.pm_result != PmResult.FAIL and wo.inspection_result != InspectionResult.FAILED:
         response = reswap(HttpResponse(), "none")
     else:
         response = retarget(_render_wo_drawer(request, wo), "#drawer")
-    for event in ("wo-changed", *(("devices-changed",) if done.device_changed else ())):
+    events = ("wo-changed", *(("devices-changed",) if done.device_changed else ()),
+              *((CYBER_CHANGED,) if done.software is not None else ()))
+    for event in events:
         trigger_client_event(response, event, {})
     toast(response, _message(request, wo, done, late_given))
     return trigger_client_event(response, "modal-close", {}, after="settle")

@@ -11,7 +11,6 @@ from urllib.parse import urlsplit
 import pytest
 from django.core.management import call_command
 from django.db import DatabaseError, connection, transaction
-from django.urls import resolve
 from pg_helpers import as_app_role, needs_postgres
 
 from apps.accounts import invitations, services
@@ -168,25 +167,21 @@ def test_every_screen_renders_under_the_policies(client, seeded):
         idle = Asset.objects.filter(device_model__model="Alaris 8015 PCU", status="in_service").exclude(pk__in=updated).order_by("tag").first()
         newer = SoftwareRelease.objects.get(device_model__model="Alaris 8015 PCU", version="5.6 (demo)")
         update_wo = SoftwareUpdate.objects.select_related("work_order").filter(work_order__isnull=False).order_by("work_order__number").first()
-    urls += [f"/security/devices/{idle.tag}/updates/open/", f"/security/devices/{hand.asset.tag}/updates/record/",
-             f"/security/updates/{unconfirmed.pk}/confirm/", f"/security/updates/{hand.pk}/remove/",
-             f"/security/releases/{newer.pk}/open-updates/", f"/work-orders/{update_wo.work_order.number}/",
-             f"/print/work-orders/{update_wo.work_order.number}/", f"/equipment/{hand.asset.tag}/?tab=security"]
+    # The modals are opened as htmx opens them (HX-Request): opened directly, each answers with a redirect to the drawer or the panel
+    modals = [f"/security/devices/{idle.tag}/updates/open/", f"/security/devices/{hand.asset.tag}/updates/record/",
+              f"/security/updates/{unconfirmed.pk}/confirm/", f"/security/updates/{hand.pk}/remove/",
+              f"/security/releases/{newer.pk}/open-updates/"]
+    urls += [f"/work-orders/{update_wo.work_order.number}/", f"/print/work-orders/{update_wo.work_order.number}/",
+             f"/equipment/{hand.asset.tag}/?tab=security"]
     assert client.get("/search/?q=CE-1")["Location"] == "/equipment/?q=CE-1"
-    pending = []
-    for url in urls:
-        if getattr(resolve(urlsplit(url).path).func, "__name__", "") == "_todo":  # a scaffold stub wave 2 has not replaced here yet
-            pending.append(url)
-            continue
-        r = client.get(url)
-        if r.status_code == 501:  # slice 38's scaffold stub (views_cyber_updates.NOT_BUILT): wave 2's view not merged here yet
-            pending.append(url)
-            continue
+    for url in urls + modals:
+        r = client.get(url, **({"HTTP_HX_REQUEST": "true"} if url in modals else {}))
         assert r.status_code == 200, (url, r.status_code)
         if hasattr(r, "streaming_content"):
             assert b"".join(r.streaming_content), url  # a CSV is read after the view returns, inside the request's tenant
-    if pending:
-        pytest.xfail(f"wave 2's screens are not merged here yet: {pending}")
+    for url in modals:  # opened directly: the device's drawer, or the model's panel
+        r = client.get(url)
+        assert r.status_code == 302 and client.get(r["Location"]).status_code == 200, (url, r.status_code)
 
 
 def test_a_scoped_user_sees_their_share_under_the_policies(client, seeded):
