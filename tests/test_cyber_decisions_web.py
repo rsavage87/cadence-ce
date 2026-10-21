@@ -389,7 +389,7 @@ def test_record_from_a_release_row_answers_with_the_panel(client, signed_in, mak
     r = client.get(url, **MODAL)
     body = html(r)
     assert decisions.IN_FORCE.format(number=d.number) in body and "Review and renew</button>" in body and "<form" not in body
-    assert r.context["renew_url"] == f"/security/decisions/new/?supersedes={d.number}&from=panel"
+    assert r.context["renew_url"] == f"/security/decisions/new/?supersedes={d.number}&from=panel&whose=ours"  # the panel's filters kept
 
 
 def test_record_from_the_security_tab_answers_with_the_device_drawer(client, signed_in, floor):

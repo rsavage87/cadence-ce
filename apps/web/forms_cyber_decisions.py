@@ -11,10 +11,12 @@ the field it names (the service's keys are these fields' names; one about the sc
 - The controls are rules.SUPPORT_CONTROLS as checkboxes with their words (never network_removed: rules.NETWORK_REMOVED_HINT says to record
   the device as not connected instead); IT's reference with rules.CONTROLS_REFERENCE_HELP.
 - The plan, its day, and its owner (an active, unscoped person of this facility with Device security View: the view reads them); "Return
-  it to its owner" only on one rental's, vendor loaner's, or demo unit's own decision.
+  it to its owner" only on one rental's, vendor loaner's, or demo unit's own decision (Review and renew of one whose device the facility
+  has since kept starts at No plan recorded: a plan not offered is never prefilled).
 - The review day: blank for the default (rules.review_default, worded by rules.review_rule_words for each response). A day already
-  passed (an exception that lapsed, decided in the past) is said once before it is saved (decisions.REVIEW_PASSED); the form sends it
-  again with `review_passed` naming that day.
+  passed (an exception that lapsed, decided in the past) is said once before it is saved (decisions.REVIEW_PASSED), only when the
+  service would take the decision (the view's dry run; else its refusals come back first); the form sends it again with `review_passed`
+  naming that day.
 
 Choices are set in __init__ from what the view read, never a class-level queryset. Never "required" (a field the service needs says so
 in its refusal: "Choose ...", "Enter ..."), never a never word (rules.DECISION_NEVER_WORDS).
@@ -117,9 +119,13 @@ class RecordDecisionForm(ServiceForm):
         initial = kwargs.setdefault("initial", {})
         initial.setdefault("decided_on", today.isoformat())
         initial.setdefault("plan", DecisionPlan.NONE)
+        plans = [(p.value, p.label) for p in DecisionPlan if temporary or p != DecisionPlan.RETURN_TO_OWNER]
+        if initial["plan"] not in {value for value, _label in plans}:
+            # A plan no longer offered (Review and renew of a rental's "Return it to its owner" once the facility kept it): No plan
+            # recorded, the select showing what it sends, never its first option chosen by nobody; no plan names no day and no owner.
+            initial.update(plan=DecisionPlan.NONE, plan_by="", plan_owner="")
         super().__init__(*args, **kwargs)
         self.fields["controls"].choices = list(rules.SUPPORT_CONTROLS.items())
-        plans = [(p.value, p.label) for p in DecisionPlan if temporary or p != DecisionPlan.RETURN_TO_OWNER]
         self.fields["plan"].widget.choices = plans
         people = owner_choices(owners)
         self.fields["plan_owner"].widget.choices = [NO_OWNER, *people]
