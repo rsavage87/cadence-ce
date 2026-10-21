@@ -159,7 +159,7 @@ def complete(wo, *, software=None, by=None, resolution="Done", today=None):
 
 
 def fresh(row) -> SoftwareUpdate:
-    return SoftwareUpdate.objects.select_related("work_order", "target_release", "release_before", "release_after").get(pk=row.pk)
+    return SoftwareUpdate.objects.select_related("work_order", "target_release", "release_after").get(pk=row.pk)
 
 
 # --- fixtures -----------------------------------------------------------------------------------------------------------------------
@@ -223,7 +223,7 @@ def test_the_tab_shows_each_state_in_rules_words_newest_first(client, world, use
     by_pk = {u["pk"]: u for u in ups["rows"]}
     day = rules.day_words(today)
     expected = {
-        "done": ("done", "Done", f"5.6 (demo) installed {day} (recorded before: 5.2 (demo))"),
+        "done": ("done", "Done", f"5.6 (demo) installed {day}"),  # review round 4: never "(recorded before: …)"
         "not_confirmed": ("not_confirmed", "Version not confirmed", f"Completed {day}; version not confirmed"),
         "hand": ("done", "Done", f"Patches on the manufacturer's validated patch list applied {day}, version unchanged (5.6 (demo)); "
                                  "ref ICAR-2026-09; installed by the manufacturer remotely"),
@@ -558,8 +558,7 @@ def test_the_record_modal_and_an_install_by_it(client, world, users, today):
     r = client.post(record_url(world["pump"]), record_data(world, today), **MODAL)
     saved_drawer(r, "CE-10002")
     day = rules.day_words(today)
-    assert toast_of(r) == (f"Update recorded for CE-10002: 5.6 (demo) installed {day} (recorded before: 5.2 (demo)); installed by "
-                           "information technology")
+    assert toast_of(r) == f"Update recorded for CE-10002: 5.6 (demo) installed {day}; installed by information technology"
     assert DeviceSecurity.objects.get(asset=world["pump"]).release == world["r56"]
     row = SoftwareUpdate.objects.get()
     assert (row.work_order, row.installed_by, row.recorded_by) == (None, "it", users["it"])
@@ -660,7 +659,7 @@ def test_the_confirm_modal_and_a_confirmation(client, world, users, unconfirmed,
     assert f"<h2>{wo.number}: confirm version</h2>" in body
     r = client.post(confirm_url(row), confirm_data(world), **MODAL)
     saved_drawer(r, "CE-10002")
-    assert toast_of(r) == f"{wo.number} confirmed: 5.6 (demo) installed {done_day} (recorded before: 5.2 (demo))"
+    assert toast_of(r) == f"{wo.number} confirmed: 5.6 (demo) installed {done_day}"  # review round 4: never "(recorded before: …)"
     assert DeviceSecurity.objects.get(asset=world["pump"]).release == world["r56"] and fresh(row).recorded_by == users["it"]
     rows = r.context["cyber"]["updates"]["rows"]
     assert [(u["label"], u["confirm_url"]) for u in rows] == [("Done", "")]
@@ -694,7 +693,6 @@ def test_already_on_the_update_sends_no_basis_and_the_vendors_job_says_so(client
     ({"software_release": ""}, {"software_release": updates.CHOOSE_RUNS_NOW}),
     ({"software_basis": VL}, {"software_basis": updates.VALIDATED_PATCHES_ONLY}),
     ({"software_outcome": "patches"}, {"software_reference": updates.REFERENCE_NEEDED}),
-    ({"software_outcome": "already"}, {"software_release": updates.RECORDED_AS.format(version="5.2 (demo)")}),  # never NO_BASIS
     ({"software_outcome": "already", "software_release": "r52"},
      {"software_release": updates.NOT_THE_TARGET_DONE.format(version="5.2 (demo)", target="5.6 (demo)")}),
 ])
@@ -979,6 +977,7 @@ def test_no_rendered_state_modal_or_toast_says_a_never_word(client, world, users
                 bodies.append(html(r))
         assert all(not never(b) for b in bodies)
     for words in (forms.TARGET_HELP, forms.TARGET_RELEASE_HELP, forms.NO_OTHER_RELEASE, forms.TARGET_REFERENCE_HELP, forms.RELEASE_HELP,
+                  forms.RECORD_RELEASE_HELP, forms.CONFIRM_RELEASE_LABEL, forms.CONFIRM_RELEASE_HELP,
                   forms.NO_RELEASE_ON_FILE, forms.REFERENCE_HELP, forms.BASIS_HELP, forms.INSTALLED_BY_HELP, forms.APPLIED_HELP,
                   forms.ASSIGN_HELP, forms.NO_QUALIFIED, forms.OWNER_ROUTE, forms.VENDOR_ROUTE, forms.BATCH_VENDOR_ROUTE,
                   forms.BATCH_OWNER_ROUTE, forms.FROM_HELP, forms.DEPARTMENT_HELP, forms.DUE_AT_NEXT_PM, views.OPENED, views.RECORDED,

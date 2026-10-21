@@ -12,9 +12,11 @@ radios, each with its label (UpdateOutcome's, and "Not confirmed now") and what 
 re-completion with an outcome recorded, "Keep as recorded" first and chosen (it sends nothing: the record stays), and "Not confirmed now"
 saying it keeps the record too (NOT_CONFIRMED_KEEPS: updates.check_choice records nothing for it, so Confirm version is never offered on
 that row; Entered in error at Device security Approve clears the outcome). The release it runs
-now (the model's releases, version order, the recorded one marked; the target chosen to begin with on a release target), the reference
-(the target's patch list to begin with on a patches target), the basis (UpdateBasis), and the help line (drug libraries are not
-recorded here). The hidden `shown_software_outcome` marker says the section was on screen: without it nothing is sent (KEEP), and the
+now (the model's releases, version order, the recorded one marked as information, never a constraint; the target chosen to begin with
+on a release target), read for Release installed and Already on the update only: patches applied send none whatever it shows (review
+round 4: RELEASE_HINT says so, forms_wo_complete drops it; the service keeps the version as the device's record names it), the
+reference (the target's patch list to begin with on a patches target), the basis (UpdateBasis), and the help line (drug libraries are
+not recorded here). The hidden `shown_software_outcome` marker says the section was on screen: without it nothing is sent (KEEP), and the
 service asks for a choice where one is needed. forms_wo_complete.CompleteForm turns the post into updates.choice_from's choice (the basis
 blanked for "already": the service refuses one there). A scoped user, or one without the offer, sees no section, and the form takes
 nothing from their post.
@@ -33,15 +35,17 @@ from apps.cybersecurity.models import SoftwareUpdate, UpdateBasis, UpdateOutcome
 from apps.cybersecurity.updates import NOT_CONFIRMED
 from apps.workorders.models import WoType
 
+from .forms_cyber_updates import RELEASE_HELP
+
 LEGEND = "Software on the device"
 KEEP = "keep"  # the re-completion's "Keep as recorded": nothing is sent (cybersecurity.services.KEEP), the recorded outcome stays
 KEEP_LABEL = "Keep as recorded"
 KEEP_HINT = "Recorded when it was last completed: {label}"
 NOT_CONFIRMED_LABEL = "Not confirmed now"
 OUTCOME_HINTS = {
-    UpdateOutcome.INSTALLED: "The release installed, chosen below; the device's record moves to it from today",
+    UpdateOutcome.INSTALLED: "The release installed, chosen below; the device's record moves to it from that day.",
     UpdateOutcome.PATCHES: "The version is unchanged; enter the manufacturer's patch list below",
-    UpdateOutcome.ALREADY: "Checked today: it already runs the update",
+    UpdateOutcome.ALREADY: "It already ran the update when checked; nothing installed.",
     NOT_CONFIRMED: "Nothing is recorded now; Confirm version on the device's Security tab records it later. Say why in the resolution",
 }
 # "Not confirmed now" on a re-completion with an outcome recorded: it records nothing, so what was recorded stays (build38: a correction is
@@ -49,9 +53,9 @@ OUTCOME_HINTS = {
 NOT_CONFIRMED_KEEPS = ("Keeps what was recorded: {label}; Entered in error on the device's Security tab (Device security Approve) clears it. "
                        "Say why in the resolution")
 RELEASE_LABEL = "The release it runs now"
-RELEASE_HINT = "Patches applied leave the version as recorded: choose the recorded one, or Not chosen."
+RELEASE_HINT = RELEASE_HELP  # review round 4: the release is for Release installed and Already only; patches applied send none
 RELEASE_BLANK = "Not chosen"
-RECORDED_MARK = "{name} · recorded now"
+RECORDED_MARK = "{name} · recorded now"  # information on the option, never a constraint (review round 4)
 REFERENCE_LABEL = "Reference"
 REFERENCE_HINT = "The manufacturer's patch list and its month or revision, e.g. ICAR-2026-09."
 BASIS_LABEL = "Basis for this update"

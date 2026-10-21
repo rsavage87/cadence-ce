@@ -59,8 +59,10 @@ shown_software_outcome, the section's marker. Fields only where views_wo_release
 and taken from the post only when the marker came back (clean: self.software, for complete_work_order's `software`): no marker, no
 outcome, or "keep" sends nothing (KEEP: the service asks for a choice where one is needed, with every other problem at once); "not
 confirmed now" sends its outcome alone; installed, patches, and already go through updates.choice_from, already with the basis blanked
-(the service refuses one there: NO_BASIS). The section comes after the steps and the test equipment picker, before the late reason and
-the resolution, in the focus order (LAYOUT_SOFTWARE). Not offered: no fields, nothing sent, and a software_* refusal shows at the top.
+(the service refuses one there: NO_BASIS) and patches with no release, whatever the select shows (review round 4: the release is for
+Release installed and Already on the update only, as Record update and Confirm version send it; the service refuses patches naming
+one). The section comes after the steps and the test equipment picker, before the late reason and the resolution, in the focus order
+(LAYOUT_SOFTWARE). Not offered: no fields, nothing sent, and a software_* refusal shows at the top.
 """
 import re
 
@@ -372,8 +374,9 @@ class CompleteForm(forms.Form):
     def _software(self, data):
         """complete_work_order's `software` (slice 38): KEEP unless the section's marker came back with an outcome that records, or
         "not confirmed now" (its outcome alone: the rest is never read); a release its field refused (one gone meanwhile) matters only
-        to an outcome that reads it. Already goes with its basis blanked (the service refuses one there); a value that is no outcome is
-        refused in choice_from's words."""
+        to an outcome that reads it: installed and already (review round 4: patches applied send no release, whatever the select shows,
+        as Record update and Confirm version do). Already goes with its basis blanked (the service refuses one there); a value that is
+        no outcome is refused in choice_from's words."""
         outcome = str(data.get("software_outcome") or "").strip() if data.get("shown_software_outcome") else ""
         if outcome in ("", SOFTWARE_KEEP_CHOICE):
             self._errors.pop("software_release", None)
@@ -382,7 +385,10 @@ class CompleteForm(forms.Form):
             self._errors.pop("software_release", None)
             fields = {"software_outcome": outcome}  # not confirmed now, or no outcome at all (choice_from refuses it)
         else:
-            fields = {"software_outcome": outcome, "software_release": data.get("software_release") or "",
+            reads_release = outcome != UpdateOutcome.PATCHES
+            if not reads_release:
+                self._errors.pop("software_release", None)
+            fields = {"software_outcome": outcome, "software_release": (data.get("software_release") or "") if reads_release else "",
                       "software_reference": data.get("software_reference") or "",
                       "software_basis": "" if outcome == UpdateOutcome.ALREADY else (data.get("software_basis") or "")}
         errors: dict = {}
