@@ -1,0 +1,65 @@
+{% extends "web/print_base.html" %}
+{% comment %}A security decision for IT's file or the committee (slice 39, views_cyber_decisions.decision_print; build39 section 7): the
+   facility and the day printed, its number and sentence (rules.decision_words), the scope, the reasons recorded and what holds now with
+   their days, the controls, the plan, who accepted it, IT's exception number, who recorded it, the day decided, the review, its end, the
+   Check lines, and the devices on site in its scope (tag, serial, model, department, connection, release, response); then that this is
+   as recorded in Cadence with IT's exception record the system of record, and HHS 405(d) HICP 2023's recommendation, said as one.
+   Device security View and Equipment View only.{% endcomment %}
+{% block title %}{{ d.number }} security decision{% endblock %}
+{% block page_style %}<style>
+@page{size:letter;margin:.5in}
+.sdp-sub{color:var(--ink-2);margin:0 0 12px}
+.sdp-sentence{font-size:13.5px;font-weight:600;margin:0 0 12px}
+.sdp-lines{padding-left:18px;margin:4px 0 10px}
+.sdp-lines li{margin:2px 0}
+.sdp-close{margin-top:14px;font-size:11.5px;color:var(--ink-2)}
+table.sdp td{overflow-wrap:anywhere;vertical-align:top}
+table.sdp thead{display:table-header-group}
+</style>{% endblock %}
+{% block bar_title %}{{ d.number }} · {{ scope_words }}{% endblock %}
+{% block bar_hint %}The decision for IT's file or the committee. Print it, or choose Save as PDF in the print dialog.{% endblock %}
+{% block content %}
+<h1>Security decision {{ d.number }}</h1>
+<p class="sdp-sub">{{ request.tenant.name }} · Clinical Engineering · printed {{ printed_on|date:"M j, Y" }} · {{ sd_state.words }}{% if end %} · {{ end }}{% endif %}</p>
+<p class="sdp-sentence">{{ sentence }}</p>
+<dl class="kv">
+  <div><dt>Facility</dt><dd>{{ request.tenant.name }}</dd></div>
+  <div><dt>Number</dt><dd>{{ d.number }}</dd></div>
+  <div><dt>Scope</dt><dd>{{ scope_words }}</dd></div>
+  <div><dt>Decision</dt><dd>{{ d.get_response_display }}</dd></div>
+  <div><dt>{{ verb }}</dt><dd>{{ accepted|capfirst }}</dd></div>
+  <div><dt>IT exception number</dt><dd>{{ d.exception_reference|default:"None recorded" }}</dd></div>
+  <div><dt>Recorded by</dt><dd>{{ d.recorded_by|default:"Cadence" }}</dd></div>
+  <div><dt>Decided on</dt><dd>{{ d.decided_on|date:"M j, Y" }}</dd></div>
+  <div><dt>Review by</dt><dd>{{ d.review_by|date:"M j, Y" }}</dd></div>
+  {% if d.ended_on or sd_state.key == "review_due" %}<div><dt>Review</dt><dd>{{ review }}</dd></div>{% endif %}
+  {% if earlier %}<div><dt>Supersedes</dt><dd>{{ earlier.number }}</dd></div>{% endif %}
+  {% if later %}<div><dt>Superseded by</dt><dd>{{ later.number }}</dd></div>{% endif %}
+</dl>
+
+<h2>Reasons</h2>
+<ul class="sdp-lines">{% for r in reasons %}<li>{{ r }}</li>{% endfor %}</ul>
+{% if now_lines %}<p class="muted">What holds now:</p><ul class="sdp-lines">{% for line in now_lines %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}
+
+<h2>Controls</h2>
+{% if controls %}<ul class="sdp-lines">{% for c in controls %}<li>{{ c }}</li>{% endfor %}</ul>{% else %}<p class="muted">None named: {{ d.get_response_display|lower }}.</p>{% endif %}
+{% if d.controls_reference %}<p>IT's reference for the controls: {{ d.controls_reference }}</p>{% endif %}
+
+<h2>Timeline</h2>
+<p>{{ plan_words }}.</p>
+<p class="muted">{{ who }}.</p>
+
+{% if checks %}<h2>Checks</h2>
+<ul class="sdp-lines">{% for c in checks %}<li>{{ c.words }}</li>{% endfor %}</ul>{% endif %}
+
+<h2>Devices on site in its scope ({{ sd_devices|length }})</h2>
+{% if sd_devices %}
+<table class="sdp">
+  <thead><tr><th>Tag</th><th>Serial</th><th>Model</th><th>Department</th><th>Connection</th><th>Release</th><th>Response</th></tr></thead>
+  <tbody>{% for row in sd_devices %}<tr><td>{{ row.a.tag }}</td><td>{{ row.a.serial|default:"—" }}</td><td>{{ row.model }}</td><td>{{ row.department }}</td><td>{{ row.connection }}</td><td>{{ row.release }}</td><td>{{ row.words }}</td></tr>{% endfor %}</tbody>
+</table>
+{% else %}<p class="muted">No device on site in its scope now.</p>{% endif %}
+
+<p class="sdp-close">{{ closing }}</p>
+<p class="sdp-close">{{ hicp }}</p>
+{% endblock %}

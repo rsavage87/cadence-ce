@@ -1,7 +1,14 @@
 {% comment %}Slice 38: a release row's update campaign (apps.web.cyber_release_actions, under x.update): its update work orders by state as
    counts (rules.campaign_words; no device named), and "Open updates to this release" (permissions.can_open_updates, with devices of the
-   model on site on another release or none recorded), whose address carries the panel's filters.{% endcomment %}
+   model on site on another release or none recorded), whose address carries the panel's filters. Slice 39 (under x.decision, Device
+   security View and Equipment View): the release's live security decision (or the model's, for every device of ours), its number opening
+   its page with its review in rules' words; else Record decision (permissions.can_decide) when a device of ours on it is past its
+   support or has an end announced within 12 months.{% endcomment %}
 {% if x.update.words or x.update.can_open %}<div class="cy-campaign">
   {% if x.update.words %}<span class="cy-campaign-w">{{ x.update.words }}</span>{% endif %}
   {% if x.update.can_open %}<button class="link" type="button" hx-get="{{ x.update.open_url }}" hx-target="#modal-card">Open updates to this release</button>{% endif %}
+</div>{% endif %}
+{% if x.decision %}<div class="cy-campaign cy-decision">
+  {% if x.decision.number %}<span class="cy-campaign-w">Security decision <a class="link" href="{{ x.decision.url }}" hx-get="{{ x.decision.url }}" hx-target="#drawer">{{ x.decision.number }}</a>{% if x.decision.model_wide %} (every device of ours of this model){% endif %} · {{ x.decision.words }}</span>{% endif %}
+  {% if x.decision.record_url %}<span class="cy-campaign-w">Devices of ours on it are past their support, or their end is announced, with no decision recorded.</span><button class="link" type="button" hx-get="{{ x.decision.record_url }}" hx-target="#modal-card">Record decision</button>{% endif %}
 </div>{% endif %}

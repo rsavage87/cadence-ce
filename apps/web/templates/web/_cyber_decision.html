@@ -1,0 +1,64 @@
+{% load web %}
+{% comment %}Slice 39: a security decision's page (views_cyber_decisions._page_context), in the drawer. Its sentence (rules.decision_words),
+   its Check lines (information, never refusals; End where it answers one), what was decided (scope, reasons recorded and what holds now,
+   controls, plan, who accepted it, IT's exception number, who recorded it, the days, its end, supersedes and superseded by), the devices
+   on site in its scope (tag, serial, model, department, connection, release, and its response: update lines with their work orders, then
+   this decision or the one governing it instead), and History. Review and renew, End, and Entered in error for permissions.can_decide on
+   a live one; Print (a new tab) and the devices' CSV for every reader. Device security View and Equipment View only.{% endcomment %}
+<div class="dr-h cy-panel-h">
+  <div>
+    <h2>{{ d.number }} · {{ scope_words }}</h2>
+    <div class="sub">{{ scope_label }} · {{ applies }}</div>
+    <div class="chips"><span class="chip {{ sd_state.tone }}">{{ sd_state.words }}</span>{% if end %}<span class="chip neutral">{{ end }}</span>{% endif %}</div>
+  </div>
+  <button class="iconbtn" type="button" data-act="close-drawer" aria-label="Close">{% icon "x" %}</button>
+</div>
+<div class="dr-b cy-panel">
+  <div class="sec"><p class="cy-line">{{ sentence }}</p></div>
+
+  {% if checks %}<div class="sec"><h3>Checks <span>information from what is recorded here</span></h3>
+    <ul class="cy-up-list">{% for c in checks %}<li class="cy-up"><div class="cy-up-s">{{ c.words }}</div>{% if c.end %}<div class="cy-up-f"><button class="link" type="button" hx-get="{{ end_url }}" hx-target="#modal-card">End it</button></div>{% endif %}</li>{% endfor %}</ul>
+  </div>{% endif %}
+
+  <div class="sec"><h3>What was decided</h3>
+    <dl class="dl">
+      <div class="inc-wide"><dt>Scope</dt><dd>{{ scope_words }}</dd></div>
+      <div class="inc-wide"><dt>Reasons recorded</dt><dd>{% for r in reasons %}{{ r }}{% if not forloop.last %}<br>{% endif %}{% endfor %}</dd></div>
+      {% if now_lines %}<div class="inc-wide"><dt>What holds now</dt><dd>{% for line in now_lines %}{{ line }}{% if not forloop.last %}<br>{% endif %}{% endfor %}</dd></div>{% endif %}
+      <div class="inc-wide"><dt>Decision</dt><dd>{{ d.get_response_display }}</dd></div>
+      {% if controls %}<div class="inc-wide"><dt>Controls</dt><dd><ul class="cy-rels">{% for c in controls %}<li>{{ c }}</li>{% endfor %}</ul></dd></div>{% endif %}
+      <div class="inc-wide"><dt>Timeline</dt><dd>{{ plan_words }}</dd></div>
+      <div><dt>{{ verb }}</dt><dd>{{ accepted|capfirst }}</dd></div>
+      <div><dt>IT exception number</dt><dd>{{ d.exception_reference|default:"None recorded" }}</dd></div>
+      <div><dt>Recorded by</dt><dd>{{ d.recorded_by|default:"Cadence" }}</dd></div>
+      <div><dt>Decided on</dt><dd>{{ d.decided_on|date:"M j, Y" }}</dd></div>
+      <div class="inc-wide"><dt>Review</dt><dd>{{ review }}</dd></div>
+      {% if d.ended_on %}<div><dt>Ended by</dt><dd>{{ d.ended_by|default:"Cadence" }}</dd></div>{% endif %}
+      {% if earlier %}<div><dt>Supersedes</dt><dd><a class="link" href="{% url 'web:security_decision' earlier.number %}" hx-get="{% url 'web:security_decision' earlier.number %}" hx-target="#drawer">{{ earlier.number }}</a></dd></div>{% endif %}
+      {% if later %}<div><dt>Superseded by</dt><dd><a class="link" href="{% url 'web:security_decision' later.number %}" hx-get="{% url 'web:security_decision' later.number %}" hx-target="#drawer">{{ later.number }}</a></dd></div>{% endif %}
+    </dl>
+    <p class="hint cy-sentence">{{ who }}.</p>
+  </div>
+
+  <div class="sec"><h3>Devices on site in its scope <span>{{ sd_devices|length }}{% if sd_devices %}, {{ governed_count }} governed by it{% endif %}</span></h3>
+    {% if sd_devices %}
+    <ul class="cy-devs">
+      {% for row in sd_devices %}{% with a=row.a %}
+      <li class="cy-dev">
+        <div class="cy-dev-h"><a class="tag" href="{% url 'web:asset' a.tag %}?tab=security" hx-get="{% url 'web:asset' a.tag %}?tab=security" hx-target="#drawer">{{ a.tag }}</a> {% whose_chip a %}<span class="muted">{{ row.model }} · {{ row.department }}{% if a.serial %} · serial {{ a.serial }}{% endif %}</span></div>
+        <div class="cy-dev-s">{{ row.release }} · {{ row.connection }}</div>
+        <div class="cy-dev-s">{% for u in row.updates %}{{ u.before }}{% if u.url %}<a class="link" href="{{ u.url }}" hx-get="{{ u.url }}" hx-target="#drawer">{{ u.number }}</a>{% else %}{{ u.number }}{% endif %}{{ u.after }}{% if not forloop.last or row.tail.before %}; {% endif %}{% endfor %}{% with t=row.tail %}{{ t.before }}{% if t.url %}<a class="link" href="{{ t.url }}" hx-get="{{ t.url }}" hx-target="#drawer">{{ t.number }}</a>{% endif %}{{ t.after }}{% endwith %}</div>
+      </li>
+      {% endwith %}{% endfor %}
+    </ul>
+    <p class="cy-csv"><a class="link" href="{{ csv_url }}" download>These devices as CSV</a></p>
+    {% else %}<div class="empty">No device on site in its scope now.</div>{% endif %}
+  </div>
+  {% if can_history %}{% include "web/_history_section.html" %}{% endif %}
+</div>
+<div class="dr-f">
+  {% if can_decide %}<button class="btn primary" type="button" hx-get="{{ renew_url }}" hx-target="#modal-card">Review and renew</button>
+  <button class="btn" type="button" hx-get="{{ end_url }}" hx-target="#modal-card">End</button>
+  <button class="btn danger" type="button" hx-get="{{ in_error_url }}" hx-target="#modal-card">Entered in error</button>{% endif %}
+  <a class="btn" href="{{ print_url }}" target="_blank" rel="noopener" title="The decision for IT's file or the committee, for paper or saved as a PDF">{% icon "print" %} Print</a>
+</div>

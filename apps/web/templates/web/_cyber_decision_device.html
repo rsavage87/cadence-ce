@@ -1,0 +1,23 @@
+{% comment %}Slice 39: the Security tab's support decision (apps.web.asset_cyber.decision_lines over rules.device_lines, under cyber.decision;
+   Device security View and Equipment View, never a scoped user). The device's support need in rules' words (past support; or, as
+   information, an end announced within 12 months, or the OS vendor's support ended while the manufacturer's updates continue), then its
+   response lines: an update open to a supported release, one done with the version not confirmed (Confirm version for Device security
+   Edit), each work order's number a link with Work orders View; the governing decision's number (a link to its page), its state, and its
+   sentence; or "No decision recorded". Record decision (Review and renew for its own decision) for permissions.can_decide.{% endcomment %}
+{% if decision %}<div class="sec cy-ups"><h3>Support decision <span>the response to the end of support</span></h3>
+  {% if decision.record_url or decision.renew_url %}<div class="cy-up-act">
+    {% if decision.record_url %}<button class="link" type="button" hx-get="{{ decision.record_url }}" hx-target="#modal-card">Record decision</button>{% endif %}
+    {% if decision.renew_url %}<button class="link" type="button" hx-get="{{ decision.renew_url }}" hx-target="#modal-card">Review and renew</button>{% endif %}
+  </div>{% endif %}
+  {% if decision.need %}<div class="cy-lines"><span class="chip {{ decision.need_tone }}">{{ decision.need.words }}</span></div>{% endif %}
+  {% if decision.rows %}
+  <ul class="cy-up-list">
+    {% for row in decision.rows %}{% with t=row.line %}
+    <li class="cy-up" data-kind="{{ row.kind }}">
+      <div class="cy-up-s">{% if row.state %}<span class="chip {{ row.tone }}">{{ row.state }}</span> {% endif %}{{ t.before }}{% if t.number %}{% if t.url %}<a class="link" href="{{ t.url }}" hx-get="{{ t.url }}" hx-target="#drawer">{{ t.number }}</a>{% else %}{{ t.number }}{% endif %}{% endif %}{{ t.after }}</div>
+      {% if row.confirm_url %}<div class="cy-up-f"><button class="link" type="button" hx-get="{{ row.confirm_url }}" hx-target="#modal-card">Confirm version</button></div>{% endif %}
+    </li>
+    {% endwith %}{% endfor %}
+  </ul>
+  {% endif %}
+</div>{% endif %}

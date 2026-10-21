@@ -1,6 +1,7 @@
-{# The Device security screen's tabs (slice 37). Fleet and Changes for IT list devices: only for Equipment View too (can_devices). Context: cyber_tab ("fleet", "models", "changes"). #}
+{# The Device security screen's tabs (slice 37; slice 39's Decisions). Fleet, Decisions, and Changes for IT list devices: only for Equipment View too (can_devices). Context: cyber_tab ("fleet", "models", "decisions", "changes"). #}
 <div class="tabs page-tabs" role="tablist">
   {% if can_devices %}<a class="tab{% if cyber_tab == 'fleet' %} active{% endif %}" role="tab" href="{% url 'web:cybersecurity' %}"{% if cyber_tab == 'fleet' %} aria-current="page"{% endif %}>Fleet</a>{% endif %}
   <a class="tab{% if cyber_tab == 'models' %} active{% endif %}" role="tab" href="{% url 'web:cybersecurity_models' %}"{% if cyber_tab == 'models' %} aria-current="page"{% endif %}>Models</a>
+  {% if can_devices %}<a class="tab{% if cyber_tab == 'decisions' %} active{% endif %}" role="tab" href="{% url 'web:security_decisions' %}"{% if cyber_tab == 'decisions' %} aria-current="page"{% endif %}>Decisions</a>{% endif %}
   {% if can_devices %}<a class="tab{% if cyber_tab == 'changes' %} active{% endif %}" role="tab" href="{% url 'web:cybersecurity_changes' %}"{% if cyber_tab == 'changes' %} aria-current="page"{% endif %}>Changes for IT</a>{% endif %}
 </div>
