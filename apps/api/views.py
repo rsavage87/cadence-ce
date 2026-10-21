@@ -436,15 +436,19 @@ def _software_words(errors: dict) -> dict:
     return errors
 
 
-def _missing_outcome_words(wo, user) -> str:
-    """Slice 38 review fix: software_release, software_reference, or software_basis sent with no software_outcome (updates.choice_from
-    answers the modal's CHOOSE_OUTCOME). A user who may record what this update did is told what to send (SEND_OUTCOME); anyone else is
-    told why nothing is recorded here, in the words any outcome they sent would get (updates.check_choice on rules.offer_or_why:
-    ONLY_UPDATES on another type, NOT_FROM_REGISTER, a device not on site, RECORD_PERMISSION: a scoped user learns nothing more), never
-    told to choose one. The modal's words stay the modal's."""
+def _outcome_words(wo, user, words: str, today) -> str:
+    """Slice 38 review fix: the transition's answer when updates.choice_from refused software_outcome with `words`: CHOOSE_OUTCOME (the
+    modal's: software_release, software_reference, or software_basis sent with no outcome) or OUTCOME_WORDS (a value not in
+    OUTCOME_VALUES), on a work order that may be completed now (the caller answers completion.blocker's reason first). A user who may
+    record what this update did is told what to send (SEND_OUTCOME) or the values (OUTCOME_WORDS); anyone else is told why nothing is
+    recorded here, in the words any valid outcome they sent would get (updates.check_choice on rules.offer_or_why: ONLY_UPDATES on another
+    type, NOT_FROM_REGISTER, a device not on site, RECORD_PERMISSION: a scoped user learns nothing more), never told to choose one. The
+    modal's words stay the modal's."""
     errors: dict = {}
-    cyber_updates.check_choice(wo, cyber_updates.UpdateChoice(cyber_updates.NOT_CONFIRMED), user, errors, today=timezone.localdate())
-    return errors.get("software_outcome") or cyber_updates.SEND_OUTCOME
+    cyber_updates.check_choice(wo, cyber_updates.UpdateChoice(cyber_updates.NOT_CONFIRMED), user, errors, today=today)
+    if errors.get("software_outcome"):
+        return errors["software_outcome"]
+    return cyber_updates.SEND_OUTCOME if words == cyber_updates.CHOOSE_OUTCOME else words
 
 
 def _test_equipment_ids(value):
@@ -737,9 +741,11 @@ class WorkOrderViewSet(TenantViewSet):
           keeps what was recorded), "software_release" (the id of the release the device runs now, from software_choices),
           "software_reference" (the manufacturer's patch list and its month or revision, or a notice number: a token), and
           "software_basis" (one of software_choices' bases for the outcome). Refused from a user who may not record (a scoped user
-          among them), never dropped; refused on another type. The others sent with no software_outcome name what to send, or, to a
-          user who may not record or on another type, why nothing is recorded (the words an outcome would get). Refused, keyed, on
-          every other move, on create, and on an edit (SOFTWARE_RECORDED).
+          among them), never dropped; refused on another type. The others sent with no software_outcome answer what to send, and a
+          software_outcome not one of those values answers the values; to a user who may not record, or on another type, either
+          answers why nothing is recorded (the words a valid outcome would get); on a work order that cannot be completed now
+          (completed, cancelled, not assigned, held), either answers why not ({"detail"}, as with no software fields). Refused, keyed,
+          on every other move, on create, and on an edit (SOFTWARE_RECORDED).
         "signature" (optional): the completion_checklist's (or the PM procedure checklist's) signature the results were typed against;
         a checklist revised since is refused. A text field sent as a list, number, or object is a 400 keyed by it. Refusals are a 400
         keyed by field in the service's words, but a repair sent with no repair_check, or "passed" with no results, or with no
@@ -760,7 +766,7 @@ class WorkOrderViewSet(TenantViewSet):
             # for it, when only a pass puts the device in service) and, optionally, its checklist's results (all of them or none).
             # Slice 30: a repair with repair_check ("passed" with the post-repair checklist's results, "vendor_report" with
             # checks_reference, the vendor's service report number, or "not_returned"), by completion's rules.
-            from apps.workorders.completion import complete_work_order
+            from apps.workorders.completion import blocker, complete_work_order
 
             d = request.data
             not_text = {f: ["Send this as text."] for f in self.COMPLETION_TEXT if d.get(f) is not None and not isinstance(d.get(f), str)}
@@ -774,11 +780,21 @@ class WorkOrderViewSet(TenantViewSet):
                     not_text["test_equipment"] = [TEST_EQUIPMENT_IDS + TEST_EQUIPMENT_KEPT]
             parsed: dict = {}
             software = cyber_updates.choice_from(d, parsed)  # slice 38: left out, nothing recorded (KEEP)
-            if parsed.get("software_outcome") == cyber_updates.CHOOSE_OUTCOME:  # review fix: the API's words, never the modal's
-                parsed["software_outcome"] = _missing_outcome_words(wo, request.user)
+            blocked = ""
+            if parsed.get("software_outcome") in (cyber_updates.CHOOSE_OUTCOME, cyber_updates.OUTCOME_WORDS):
+                # Review fix: the API's words, never the modal's. A work order that cannot be completed now answers why (the service's
+                # first refusal, whatever an outcome sent: the answer with no software fields); else _outcome_words.
+                today = timezone.localdate()
+                blocked = blocker(wo, today, request.user)
+                if blocked:
+                    del parsed["software_outcome"]
+                else:
+                    parsed["software_outcome"] = _outcome_words(wo, request.user, parsed["software_outcome"], today)
             not_text.update({field: [words] for field, words in parsed.items()})  # a list per field, as every 400 here
             if not_text:
                 raise DRFValidationError(not_text)
+            if blocked:  # answered here, never by completing with the software fields left out: they are refused, never dropped
+                return Response({"detail": blocked}, status=status.HTTP_400_BAD_REQUEST)
             kwargs = {"resolution": d.get("resolution") or "", "pm_result": d.get("pm_result") or "", "results": d.get("results"),
                       "inspection_result": d.get("inspection_result") or "",
                       "repair_check": d.get("repair_check") or "",
