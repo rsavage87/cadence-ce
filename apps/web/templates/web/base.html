@@ -54,7 +54,7 @@
   <div class="body">
     <nav class="nav" id="nav" aria-label="Main">
       {% for item in shell.nav %}
-      <a href="{{ item.url }}" class="{% if item.key == nav_active %}active{% endif %}"{% if item.key == nav_active %} aria-current="page"{% endif %}>{% icon item.icon %}<span>{{ item.label }}</span>{% if item.count is not None %}<span class="cnt{% if item.hot %} hot{% endif %}">{{ item.count }}</span>{% endif %}</a>
+      <a href="{{ item.url }}" class="{% if item.key == nav_active %}active{% endif %}"{% if item.key == nav_active %} aria-current="page"{% endif %}>{% icon item.icon %}<span>{{ item.label }}</span>{% if item.count is not None %}<span class="cnt{% if item.hot %} hot{% endif %}"{% if item.title %} title="{{ item.title }}"{% endif %}>{{ item.count }}</span>{% endif %}</a>
       {% endfor %}
       <div class="sep"></div>
       <div class="foot">{{ request.tenant.name }}<br>Clinical Engineering{% if shell.technicians is not None %} · {{ shell.technicians }} technician{{ shell.technicians|pluralize }}{% endif %}</div>

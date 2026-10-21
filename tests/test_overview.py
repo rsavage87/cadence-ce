@@ -46,6 +46,8 @@ def test_nav_counts_flag_unassigned_portal_requests(ctx, dept, vent, pump):
     create_work_order(asset=pump, type="pm", priority="normal", problem="PM")
     counts = nav_counts()
     assert (counts["equipment"], counts["workorders"], counts["workorders_hot"]) == (2, 1, False)
+    # no user: no reader's badge (slice 28's Incidents, slice 39's Device security)
+    assert not [k for k in counts if k.startswith(("incidents", "cybersecurity"))]
     create_service_request(asset=vent, department=dept, problem="Alarm", urgency="normal")
     assert nav_counts()["workorders_hot"] is True
 

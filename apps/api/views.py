@@ -112,6 +112,13 @@ class DepartmentViewSet(EquipmentWrites, TenantViewSet):
             dept.save(update_fields=["cost_center"])
 
 
+def _decision_numbers(decisions) -> str:
+    """Slice 39: the security decisions holding a row, by number, for a reader of decisions: "a security decision (SD-26-0004)",
+    "security decisions (SD-26-0004, SD-26-0007)"."""
+    numbers = sorted({d.number for d in decisions})
+    return f"a security decision ({numbers[0]})" if len(numbers) == 1 else f"security decisions ({', '.join(numbers)})"
+
+
 class DeviceModelViewSet(EquipmentWrites, TenantViewSet):
     model, module, serializer_class = DeviceModel, "equipment", s.DeviceModelSerializer
     search_fields = ["manufacturer", "model", "description", "category"]
@@ -133,17 +140,25 @@ class DeviceModelViewSet(EquipmentWrites, TenantViewSet):
         PROTECT) is never deleted, devices or not: the register keeps a model's releases and profile with their history (a release
         entered in error is never a database delete, a profile is never removed; build37). The 400 says what holds it (no version named):
         devices, the register's rows, or both (review C5/C9); a reader without Device security View reads only that the register holds it
-        (round 2: whether a profile or releases are on file is the register's)."""
+        (round 2: whether a profile or releases are on file is the register's). Slice 39: a security decision for the model's devices
+        (DeviceSecurityDecision.device_model, PROTECT: a release's or the model's) holds it too, ended or not (a decision is never
+        deleted); its number is named only for a reader of decisions (permissions.can_view_devices), anyone else reads only that the
+        register holds records."""
         try:
             instance.delete()
         except ProtectedError as e:
+            from apps.cybersecurity.models import DeviceSecurityDecision
+
             protected = list(e.protected_objects)
             register = [o for o in protected if isinstance(o, SoftwareRelease)]
-            if not register:
+            decided = [o for o in protected if isinstance(o, DeviceSecurityDecision)]
+            if not register and not decided:
                 raise DRFValidationError({"detail": self.in_use.format(instance)}) from None
             from apps.cybersecurity import permissions as cyber_perms
 
-            if not cyber_perms.can_view(self.request.user):  # round 2: what the register holds is its readers' only
+            user = self.request.user
+            reads = cyber_perms.can_view_devices(user) if decided else cyber_perms.can_view(user)
+            if not reads:  # round 2: what the register holds is its readers' only (slice 39: a decision's, can_view_devices)
                 held = "devices, and records" if any(isinstance(o, Asset) for o in protected) else "records"
                 raise DRFValidationError({"detail": f"{instance} has {held} in the Device security register, so it cannot be "
                                                     "deleted."}) from None
@@ -155,11 +170,15 @@ class DeviceModelViewSet(EquipmentWrites, TenantViewSet):
                     parts[-1] += " entered in error"
             if any(r.is_profile for r in register):
                 parts.append("a profile")
-            what = f"{' and '.join(parts)} in the Device security register"
-            if any(isinstance(o, Asset) for o in protected):
-                what = f"devices, and {what}"
-            raise DRFValidationError({"detail": f"{instance} has {what}, so it cannot be deleted: the register keeps a model's releases and "
-                                                "profile, with their history, even a release entered in error."}) from None
+            held = ["devices"] if any(isinstance(o, Asset) for o in protected) else []
+            why = []
+            if parts:
+                held.append(f"{' and '.join(parts)} in the Device security register")
+                why.append("the register keeps a model's releases and profile, with their history, even a release entered in error")
+            if decided:
+                held.append(_decision_numbers(decided))
+                why.append("a security decision stays as recorded, ended or not")
+            raise DRFValidationError({"detail": f"{instance} has {', and '.join(held)}, so it cannot be deleted: {'; '.join(why)}."}) from None
 
     def perform_create(self, serializer):
         # Through create_device_model, which needs a risk class and never takes an AEM interval: that is set only by approving an
@@ -231,10 +250,27 @@ class AssetViewSet(EquipmentWrites, TenantViewSet):
 
     def perform_destroy(self, instance):
         """The device's row FOR UPDATE first (slice 37's lock order: a device, then its security row), so the cascade that deletes its
-        device security row never waits on that row while a register writer holding the device waits on it."""
+        device security row never waits on that row while a register writer holding the device waits on it. Slice 39: a device a security
+        decision names (DeviceSecurityDecision.asset, PROTECT) is never deleted, ended or not (a decision stays as recorded): retire it
+        instead. The 400 names the decision's number for a reader of decisions (Device security View and Equipment View:
+        permissions.can_view_devices) and only that the register holds records for anyone else, beside the work orders or service requests
+        when those hold it too."""
         with transaction.atomic():
             Asset.objects.select_for_update().filter(pk=instance.pk).first()
-            super().perform_destroy(instance)
+            try:
+                instance.delete()
+            except ProtectedError as e:
+                from apps.cybersecurity.models import DeviceSecurityDecision
+
+                protected = list(e.protected_objects)
+                decided = [o for o in protected if isinstance(o, DeviceSecurityDecision)]
+                if not decided:
+                    raise DRFValidationError({"detail": self.in_use.format(instance)}) from None
+                held = (_decision_numbers(decided) if cyber_perms.can_view_devices(self.request.user)
+                        else "records in the Device security register")
+                if any(not isinstance(o, DeviceSecurityDecision) for o in protected):
+                    held = f"work orders or service requests, and {held}"
+                raise DRFValidationError({"detail": f"{instance.tag} has {held}, so it cannot be deleted; retire it instead."}) from None
     FIXED_ON_UPDATE = {
         "tag": "Asset tags never change: they are on the sticker and in links.",
         "status": "Use POST /api/v1/assets/{id}/status/ to change the status.",

@@ -40,7 +40,9 @@ def nav_entries(user) -> list[tuple]:
 def _shell(request):
     user = request.user
     counts = nav_counts(user)  # a scoped user's badges count their own devices and work orders
-    items = [{"key": key, "label": label, "icon": icon, "url": reverse(url_name), "count": counts.get(key), "hot": counts.get(f"{key}_hot", False)}
+    # slice 39: a badge's title, when nav_counts gives one (Device security's "Decisions past their review date"), beside its count
+    items = [{"key": key, "label": label, "icon": icon, "url": reverse(url_name), "count": counts.get(key), "hot": counts.get(f"{key}_hot", False),
+              "title": counts.get(f"{key}_title", "")}
              for key, label, icon, url_name, _module in nav_entries(user)]
     name = str(user)  # the full name, else the email: never a second facility's username (slice 22)
     initials = "".join(p[0] for p in name.split()[:2]).upper() or "?"

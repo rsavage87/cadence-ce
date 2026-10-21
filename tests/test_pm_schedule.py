@@ -152,6 +152,7 @@ def test_nav_badge_counts_overdue_devices(ctx, dept, pump_model, other_tenant):
         Asset.objects.create(tag="THEIRS", device_model=dm, department=Department.objects.create(name="ICU"), next_pm_on=now - timedelta(days=2))
     counts = nav_counts()
     assert counts["pm"] == 2 and counts["pm_hot"] is True
+    assert not [k for k in counts if k.startswith("cybersecurity")]  # slice 39: Device security's badge is a reader's only
 
 
 def test_nav_badge_is_absent_without_overdue_devices(ctx, vent):

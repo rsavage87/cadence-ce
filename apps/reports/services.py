@@ -256,7 +256,9 @@ def nav_counts(user=None) -> dict:
     """The nav's badges. For a scoped user (apps.workorders.scoping: a vendor's company, a requester's unit) only the screens they may
     open, counted over their own devices and work orders; Equipment and Work orders never hot (the portal requests waiting are a CE
     manager's to assign). Everyone else (and no user) gets the facility's. Slice 24: whoever has My work also gets its badge, what is
-    due today or late, hot when something is late (a vendor's company's work included)."""
+    due today or late, hot when something is late (a vendor's company's work included). Slice 28's Incidents and slice 39's Device
+    security badges only for their readers (_incidents_badge, _cyber_badge): nothing for them with no user. A badge may carry a title
+    for its count ("<key>_title": the nav's tooltip)."""
     mine = _my_work_badge(user)
     if user is not None and scoping.is_scoped(user):
         return {"equipment": scoping.assets(user, Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES)).count(),
@@ -267,6 +269,7 @@ def nav_counts(user=None) -> dict:
     pm_overdue = overdue_assets().count()
     return {
         **_incidents_badge(user),
+        **_cyber_badge(user),
         "equipment": Asset.objects.filter(status__in=Asset.ACTIVE_STATUSES).count(),
         "workorders": WorkOrder.objects.filter(status__in=OPEN_STATUSES).count(),
         "workorders_hot": unassigned_portal_requests().exists(),
@@ -290,6 +293,23 @@ def _incidents_badge(user) -> dict:
         return {}
     n, hot = badge(timezone.localdate())
     return {"incidents": n or None, "incidents_hot": hot}
+
+
+def _cyber_badge(user) -> dict:
+    """Slice 39: Device security's badge, live security decisions past their review date that still govern a device on site
+    (apps.cybersecurity.rules.badge, one aggregate query), hot while there are any; its title the rules' (BADGE_TITLE, "Decisions past
+    their review date"), shown only beside a count. Only for a reader of decisions (permissions.can_view_devices: Device security View
+    and Equipment View, never a scoped user), else nothing: no user, a scoped user (nav_counts answers one before), or a role without
+    those levels. Never in the Overview's attention list or any email."""
+    from apps.cybersecurity import permissions as cyber_perms
+    from apps.cybersecurity import rules as cyber_rules
+
+    if user is None or not cyber_perms.can_view_devices(user):
+        return {}
+    found = cyber_rules.badge(timezone.localdate())
+    if not found["count"]:
+        return {"cybersecurity": None, "cybersecurity_hot": False}
+    return {"cybersecurity": found["count"], "cybersecurity_hot": found["hot"], "cybersecurity_title": cyber_rules.BADGE_TITLE}
 
 
 def _my_work_badge(user) -> dict:
