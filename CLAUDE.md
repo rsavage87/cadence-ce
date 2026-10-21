@@ -374,12 +374,14 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   decision never network_removed: Record facts' "Not connected here" needs none) and `controls_reference` (with recorded_elsewhere only);
   `plan`, `plan_by` (a replacement's fiscal year worded at read time, never stored), `plan_owner`; `accepted_by` a role, never a name;
   `exception_reference` IT's number (IT's record stays the system of record); `decided_on`, `review_by` (default and cap product choices:
-  `review_default`, `review_cap`); `governed_ids` (joined since, by identity); `supersedes`; `ended_on` / `ended_by` / `end_reason`
+  `review_default`, `review_cap`); `governed_ids` (the devices it governed when recorded, never one under a more specific live decision:
+joined since, by identity); `supersedes`; `ended_on` / `ended_by` / `end_reason`
   (superseded, no_longer_needed, entered_in_error); immutable but its end; admin read only); `decisions.py` every write
   (`record_decision`, superseding the live one of its scope in one transaction (Review and renew), `end_decision` (no longer needed),
   `mark_entered_in_error`; levels inside, `permissions.can_decide` (Approve and Equipment View, never scoped; None is the system);
-  refusals keyed by field, every field problem at once before any lock; each token never a network identifier (`network_identifier`:
-  an address, a MAC, a VLAN, a port); the lock order: the register, the decision superseded or ended FOR UPDATE of its own row, the
+  refusals keyed by field, every field problem at once before any lock, worded as recorded; each token never a network identifier
+  (`network_identifier`: an address, with a port, range, or prefix too; a MAC in any layout; a VLAN; a port); `refusal_for` the same
+  scope checks read without locks, in the same order (the modal says why before it is tried; outside any transaction, so no FOR UPDATE); the lock order: the register, the decision superseded or ended FOR UPDATE of its own row, the
   release (release scope), the number, the device FOR KEY SHARE (device scope: its model, status, and ownership read there), the insert;
   an IntegrityError or a lock conflict answers RACE; history reasons fixed sentences with Cadence numbers only; equipment's writers never
   write here nor take the register lock: the readers re-derive); `rules.py`'s slice 39 section the one place for needs and words:
@@ -392,16 +394,19 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   ("<response>; <review>. <plan>. <who>.": "Review due since ..." read first once past review; "risk accepted until" only there),
   `scope_words`, `plan_words`, `who_words`, `control_words`, `reason_words`, `review_words`, `end_words`, `decision_state` (IN_FORCE,
   REVIEW_SOON within 30 days, REVIEW_DUE, ENDED; `DECISION_STATE_WORDS`), `scope_devices` / `decision_devices` (`DecisionDevice.words`)
-  and `decision_checks` (`Check`, CHECK_*: a reason ended since it does not name, the model's record now on no separate segment while
+  and `decision_checks` (`Check`, CHECK_*: a support or OS end that holds now on a decidable need and it does not name, worded as known, the model's record now on no separate segment while
   it relies on one, "Governs no device here now: end it", devices joined since, "The plan's date (...) has passed", take out of use still in service,
   the plan owner deactivated; information, never refusals), `needs_attention` (`Attention` of `Heading`s (`ATTENTION_HEADINGS`, empty
   `ATTENTION_EMPTY`) and `AttentionRow`s; links as data, `Link` by URL name: `URLS`, the doors reverse them; Record decision and End only
   for can_decide, a work order's link only with Work orders View) and `badge` (one aggregate query: live decisions past review whose
-  scope still holds a device on site; `BADGE_TITLE`); two readings named apart: in scope (the badge, past review, govern no device) and
+  scope still holds a device on site, `holds_device_q`, the review headings' condition and their list's `?here=1`; `BADGE_TITLE`; a
+  decision to review none of whose devices needs one offers End, never Review and renew); `decisions_now` / `in_scope` the API's page
+  readers; two readings named apart: in scope (the badge, past review, govern no device) and
   governed (responses, joined since, the other Checks); fixed queries as decisions and devices grow. Words: `DECISION_NEVER_WORDS`
   (NEVER_WORDS, which slice 39 gave exempt, waiver, hardened, and deadline, plus "overdue") on every decision door (pages, modals, the
   print, CSVs, toasts, API bodies), a whole device drawer with NEVER_WORDS (it carries Equipment's "overdue for PM"); never "requires" or
-  "must". Reading any decision (the Decisions tab, a decision's page, print, and CSVs, the API, Needs attention, the badge, the change
+  "must"; the who part says the day decided of the decision ("Accepted by ... on <day>, as recorded by <name>"). Release refusals
+(`removal_refusal(release, by=)`, `update_release`) name the decision only to its readers. Reading any decision (the Decisions tab, a decision's page, print, and CSVs, the API, Needs attention, the badge, the change
   log's Area `device_security_decisions`, also Equipment View) needs can_view_devices; recording, Review and renew, End, and Entered in
   error need can_decide. The nav badge (`reports.services._cyber_badge`, nav_counts' `cybersecurity` / `cybersecurity_hot`) never on the
   Overview's attention list or in an email. `services.removal_refusal` refuses a release with a live decision (`DECISION_LIVE`);

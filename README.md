@@ -463,8 +463,8 @@ Device security level.
 When a device stays in use after its manufacturer's security updates end, or after its operating system vendor's support does, HHS
 405(d)'s HICP 2023 recommends documenting mitigating controls and a timeline for resolving the risk, through the organization's risk
 acceptance or exception process; no rule requires it, and Cadence never says one does. A security decision records that for one device,
-for a model's devices of ours on one release, or for every device of ours of a model: the reasons (the manufacturer's security updates,
-the OS vendor's support: ended, or announced to end within 12 months), the decision (Keep in use with controls, Keep in use without
+for a model's devices of ours on one release, or for every device of ours of a model: the reasons (the manufacturer's security updates or
+support, the OS vendor's support: ended, or announced to end within 12 months), the decision (Keep in use with controls, Keep in use without
 added controls, or Take out of use), the controls it relies on from a list (a medical device network segment, traffic limited to the
 ports and hosts it needs, no internet access, a connectivity feature turned off, the manufacturer's published mitigation, vendor remote
 access off or attended only, a malware scan when serviced, application allowlisting, unused ports and services turned off, network
@@ -472,9 +472,10 @@ monitoring, physical access and removable media controlled, or controls recorded
 for the manufacturer; an update planned by a day; a replacement planned by a day, worded by the fiscal year it falls in; return it to its
 owner, for a rental, loaner, or demo unit; or none) with an optional owner, who accepted it (the CE leader, IT security or the CISO, a
 committee, department leadership, or the authorizing official), IT's exception number, the day decided, and a review date (by default
-12 months after the day decided, 3 to take out of use; for a rental, loaner, or demo unit its due back day when sooner, else 3 months; at
-most 36 months, 12 to take out of use: Cadence's choices, not a rule). IT's exception stays in IT's system of record: Cadence keeps its number, never its text, and a reference
-is never an address, a VLAN, or a port. A device recorded "Not connected here" (Record facts) needs no decision, so "taken off the
+12 months after the day decided, 3 to take out of use; for a rental, loaner, or demo unit its due back day when that comes first, else 3
+months; at most 36 months, 12 to take out of use: Cadence's choices, not a rule). IT's exception stays in IT's system of record: Cadence
+keeps its number, never its text, and a reference is never an address (an address with a port, range, or prefix too), a MAC in any
+layout, a VLAN, or a port. A device recorded "Not connected here" (Record facts) needs no decision, so "taken off the
 network" is not offered as a control, and the segment is refused as one while the model's record says its devices are on no separate
 segment. A decision is never changed: Review and renew records the next one and ends it as superseded; End (no longer needed: updated,
 replaced, retired, or returned) and Entered in error end one. Retiring, returning, or updating a device never touches a decision: the
@@ -485,23 +486,25 @@ only its own (a release or model decision describes where the facility put its o
 "Review due since ..." first and covers nothing, and a broader one never takes over. An open update to a release still supported, and
 an update done with the version not confirmed, are shown beside the decision as answers of their own. A decision reads as one sentence:
 "Keep in use with controls (2: traffic limited to the ports and hosts it needs; vendor remote access off, or attended only); review by
-Oct 21, 2027. Plan: replace, planned for FY2029. Accepted by IT security or the CISO, as recorded by Rob Feldman on Oct 21, 2026; IT
-exception DEMO-EX-1042." "Risk accepted until" appears only in the sentence for Keep in use without added controls, and never once past
+Oct 21, 2027. Plan: replace, planned for FY2029. Accepted by IT security or the CISO on Oct 21, 2026, as recorded by Rob Feldman; IT
+exception DEMO-EX-1042." (the day is the decision's: one recorded later, for an exception decided earlier, says so) "Risk accepted until" appears only in the sentence for Keep in use without added controls, and never once past
 its review.
 
 Device security's Decisions tab opens with Needs attention: devices of ours past their support, connected or able to connect, with no
-decision recorded (per model and release, with Record decision); rentals, loaners, and demo units past theirs (ask the owner to update it,
+decision recorded and no update to a supported release open (per model and release, with Record decision); rentals, loaners, and demo units past theirs (ask the owner to update it,
 or return it); updates done with the version not confirmed; ends announced within 12 months (information); decisions past their review
-date, to review within 30 days, or governing no device here now (End); and Check lines: a reason that ended since the decision, the
-model's record no longer giving the segment it relies on, devices joined since, the plan's date passed, a device still in service after a
+date or to review within 30 days, each still governing a device here (a decision none of whose devices needs one any more offers End,
+not Review and renew; the count opens the list narrowed the same way), or governing no device here now (End); and Check lines: a support
+or OS end that holds now and the decision does not name, the model's record no longer giving the segment it relies on, devices joined since, the plan's date passed, a device still in service after a
 decision to take it out of use, the plan owner's account deactivated. With nothing listed it reads "Nothing listed from what is recorded
 here." Below, the decisions by state (In force, Review within 30 days, Review due, Ended), filtered by scope, decision, or IT exception
 number, download as CSV. A decision's page shows its sentence, its reasons with their dates, controls, plan, who accepted and recorded it,
 its review, the devices it governs (tag, serial, model, department, connection, release, and what answers each), its Check lines, the
 decision it superseded or that superseded it, and its History; it prints for IT and the committee ("As recorded in Cadence; IT's
 exception record is the system of record") and its devices download as CSV. Record decision opens from a release's row in Models (that
-release's devices of ours), from a model's panel ("Record decision for every <model> of ours"), from a device's Security tab (that device), from Needs attention, and as Review and renew (prefilled,
-the exception number blank); the Security tab shows the device's need, what answers it, and the decision that governs it. Device
+release's devices of ours, offered while one of them has no decision governing it and no update answering it), from a model's panel ("Record decision for every <model> of ours"), from a device's Security tab (that device), from Needs attention, and as Review and renew (prefilled,
+the exception number blank, a plan no longer offered starting at No plan recorded, and the panel's filters kept); a review date already
+passed is said once, and only when the service would take the decision; the Security tab shows the device's need, what answers it, and the decision that governs it. Device
 security's nav item carries a badge counting the decisions past their review date that still govern a device here. Decisions never reach
 an email, a digest, the Overview's attention list, a custom report, the portal, labels, or Scan.
 
@@ -509,7 +512,7 @@ Who may do what: reading decisions (the tab, a decision's page, print, and CSVs,
 needs Device security View and Equipment View, since a decision can name a device; recording, Review and renew, End, and Entered in error
 need Device security Approve and Equipment View. A vendor's or a requester's account never sees them. A release a decision is in force for
 cannot be marked entered in error until the decision ends, and a release any decision names keeps its version (add the new version
-instead).
+instead); the refusal names the decision only to someone who may read decisions.
 
 ## Custom reports
 Reports' "+ Custom report" (Reports Edit: the director and Finance and quality by default) builds a report from work orders, devices,

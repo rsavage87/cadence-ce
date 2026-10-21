@@ -11,7 +11,7 @@
 <div class="modal-h"><h2>{% if scope.old %}Review and renew {{ scope.old.number }}{% else %}Record decision{% endif %} · {{ scope_words }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
 {% if blocker %}
 <div class="form"><div class="full note" role="alert">{{ blocker }}</div></div>
-<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button>{% if renew_url %}<button class="btn primary" type="button" hx-get="{{ renew_url }}" hx-target="#modal-card">Review and renew</button>{% endif %}</div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button>{% if renew_url %}<button class="btn primary" type="button" hx-get="{{ renew_url }}" hx-target="#modal-card">Review and renew</button>{% endif %}{% if end_url %}<button class="btn primary" type="button" hx-get="{{ end_url }}" hx-target="#modal-card">End {{ scope.old.number }}</button>{% endif %}</div>
 {% else %}
 <form id="sd-form" class="sd-form" hx-post="{{ action }}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
   <div class="form">

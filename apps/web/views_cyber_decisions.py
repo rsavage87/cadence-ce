@@ -102,6 +102,8 @@ RESPONSE_FILTERS = [("", "Any decision"), *DecisionResponse.choices]
 TONES = {rules.IN_FORCE: "ok", rules.REVIEW_SOON: "info", rules.REVIEW_DUE: "warn", rules.ENDED: "neutral"}
 # A heading's count links to the list it counts, where the list can show it
 HEADING_STATES = {"review_due": rules.REVIEW_DUE, "review_soon": rules.REVIEW_SOON}
+# The review headings count only decisions whose scope still holds a device here (rules.holds_device_q): their link narrows the same way
+HEADING_HERE = {"review_due": {"here": "1"}, "review_soon": {"here": "1"}}
 _RELATED = ("asset", "asset__device_model", "asset__department", "device_model", "release", "release__device_model", "plan_owner",
             "recorded_by", "ended_by", "supersedes", "superseded_by")
 
@@ -179,9 +181,11 @@ class ListFilters:
     scope: str = ""
     response: str = ""
     ref: str = ""
+    here: bool = False  # only decisions whose scope holds a device on site now (rules.holds_device_q: Needs attention's review counts)
 
     def params(self) -> dict:
-        return {k: v for k, v in (("state", self.state), ("scope", self.scope), ("response", self.response), ("ref", self.ref)) if v}
+        found = {k: v for k, v in (("state", self.state), ("scope", self.scope), ("response", self.response), ("ref", self.ref)) if v}
+        return {**found, "here": "1"} if self.here else found
 
     @property
     def any(self) -> bool:
@@ -197,7 +201,7 @@ def parse_filters(params) -> ListFilters:
 
     ref = " ".join(str(params.get("ref", "")).replace("\x00", "").split())[:EXCEPTION_REFERENCE_MAX]
     return ListFilters(state=one_of("state", {v for v, _ in STATE_FILTERS}), scope=one_of("scope", {v for v, _ in SCOPE_FILTERS}),
-                       response=one_of("response", set(DecisionResponse.values)), ref=ref)
+                       response=one_of("response", set(DecisionResponse.values)), ref=ref, here=params.get("here") == "1")
 
 
 def filtered(f: ListFilters, today: date):
@@ -217,6 +221,8 @@ def filtered(f: ListFilters, today: date):
         qs = qs.filter(response=f.response)
     if f.ref:
         qs = qs.filter(exception_reference__icontains=f.ref)
+    if f.here:
+        qs = qs.filter(rules.holds_device_q())
     return qs.order_by(F("ended_on").desc(nulls_first=True), "review_by", "number")
 
 
@@ -237,7 +243,7 @@ def _attention(request, today) -> dict:
         rows = [{"words": r.words, "count": r.count, "url": link_url(r.link), "record_url": link_url(r.record), "end_url": link_url(r.end),
                  "wo_url": link_url(r.work_order), "wo_number": r.work_order.args[0] if r.work_order is not None else ""} for r in h.rows]
         headings.append({"key": h.key, "words": h.words, "count": h.count, "info": h.info, "rows": rows,
-                         "url": f"{base}?{urlencode({'state': state})}" if state else ""})
+                         "url": f"{base}?{urlencode({'state': state, **HEADING_HERE.get(h.key, {})})}" if state else ""})
     return {"empty": data.empty, "empty_words": data.empty_words, "headings": headings}
 
 
@@ -297,6 +303,15 @@ def _device_row(dd, today, *, can_wo: bool) -> dict:
             "tail": _linked(tail, other.number, decision_url(other.number)) if other is not None else _linked(tail, "", "")}
 
 
+def _scope_kwargs(d) -> dict:
+    """The decision's scope as record_decision and refusal_for take it."""
+    if d.asset_id is not None:
+        return {"asset": d.asset}
+    if d.release_id is not None:
+        return {"release": d.release}
+    return {"device_model": d.device_model}
+
+
 def _page_context(request, d) -> dict:
     """The decision's page (and its print): everything in rules' words, its devices on site and Check lines read once (fixed queries
     however many devices), the actions for permissions.can_decide on a live one."""
@@ -308,6 +323,8 @@ def _page_context(request, d) -> dict:
     kind = rules.scope_kind(d)
     live = d.ended_on is None
     may = cyber_perms.can_decide(user) and live
+    # Review and renew only while its renewal would be taken (review 39 F15: a decision no device in its scope needs now offers End)
+    renewable = may and decisions.refusal_for(**_scope_kwargs(d), supersedes=d, today=today) is None
     can_wo = user.has_level(Module.WORKORDERS, Level.VIEW)
     url = decision_url(d.number)
     can_history = history_tabs.allowed(user, AREA)
@@ -327,7 +344,7 @@ def _page_context(request, d) -> dict:
         "accepted": AcceptedBy(d.accepted_by).label, "review": rules.review_words(d, today), "end": rules.end_words(d),
         "earlier": d.supersedes, "later": later, "sd_devices": rows, "governed_count": sum(1 for r in rows if r["governed"]),
         "checks": [{"words": c.words, "info": c.info, "end": may and c.action == "end"} for c in checks],
-        "can_decide": may, "renew_url": record_url(supersedes=d.number) if may else "",
+        "can_decide": may, "renew_url": record_url(supersedes=d.number) if renewable else "",
         "end_url": reverse("web:security_decision_end", args=[d.number]) if may else "",
         "in_error_url": reverse("web:security_decision_in_error", args=[d.number]) if may else "",
         "print_url": people.with_facility(reverse("web:security_decision_print", args=[d.number]), request.tenant),
@@ -517,17 +534,20 @@ def _now(scope: Scope, today: date) -> Now:
     return Now(read=read, needs=needs, reasons=reasons, lines=_unique(line for n in decidable for line in n.lines), today=today)
 
 
-def _blocker(request, scope: Scope, now: Now) -> tuple[str, str]:
+def _blocker(request, scope: Scope, now: Now) -> tuple[str, str, str]:
     """(why a decision cannot be recorded for the scope now, or ""; Review and renew's address for the live decision in force for it,
-    or ""), said before it is tried: decisions.refusal_for, the service's own checks in its order and words. Review and renew's address
-    keeps where the save answers and the rest of this address (_carried: a release row's panel filters, so the renewal saved answers
-    with the panel as it was opened)."""
+    or ""; End's address for the live decision being renewed when nothing in its scope needs one now (review 39 F15: renewing it is
+    refused, ending it is what is left), or ""), said before it is tried: decisions.refusal_for, the service's own checks in its order and
+    words. Review and renew's address keeps where the save answers and the rest of this address (_carried: a release row's panel filters,
+    so the renewal saved answers with the panel as it was opened)."""
     refusal = decisions.refusal_for(**scope.kwargs(), supersedes=scope.old, today=now.today)
     if refusal is None:
-        return "", ""
-    if refusal.live is None:
-        return refusal.words, ""
-    return refusal.words, record_url(supersedes=refusal.live.number, **{"from": scope.origin}, **_carried(request))
+        return "", "", ""
+    if refusal.live is not None:
+        return refusal.words, record_url(supersedes=refusal.live.number, **{"from": scope.origin}, **_carried(request)), ""
+    old = scope.old
+    end = reverse("web:security_decision_end", args=[old.number]) if old is not None and old.ended_on is None else ""
+    return refusal.words, "", end
 
 
 def owners(request) -> list:
@@ -572,12 +592,12 @@ def _dry_run(record: dict) -> None:
         pass
 
 
-def _record_modal(request, scope: Scope, now: Now, form, *, blocker: str = "", renew: str = "", note: str = ""):
+def _record_modal(request, scope: Scope, now: Now, form, *, blocker: str = "", renew: str = "", end: str = "", note: str = ""):
     if form is not None and form.is_bound:
         form.focus_first_error()
     return render(request, RECORD, {"scope": scope, "scope_words": scope.words(len(now.read) if scope.kind != rules.DEVICE_SCOPE else None),
                                     "now": now, "reason_words": [rules.REASONS[k] for k in now.reasons], "form": form,
-                                    "blocker": blocker, "renew_url": renew, "note": note, "action": request.get_full_path(),
+                                    "blocker": blocker, "renew_url": renew, "end_url": end, "note": note, "action": request.get_full_path(),
                                     "hint": rules.NETWORK_REMOVED_HINT})
 
 
@@ -596,10 +616,10 @@ def decision_new(request):
     people_ = owners(request)
     options = {"owners": people_, "today": today, "temporary": scope.temporary, "asset": scope.asset}
     if request.method != "POST":
-        blocker, renew = _blocker(request, scope, now)
+        blocker, renew, end = _blocker(request, scope, now)
         initial = renew_initial(scope.old, today) if scope.old is not None else {}
         return _record_modal(request, scope, now, None if blocker else RecordDecisionForm(initial=initial, **options),
-                             blocker=blocker, renew=renew)
+                             blocker=blocker, renew=renew, end=end)
     form = RecordDecisionForm(request.POST, **options)
     saved = None
     if form.is_valid():

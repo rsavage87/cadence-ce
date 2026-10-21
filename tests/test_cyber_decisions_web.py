@@ -253,7 +253,7 @@ def test_needs_attention_says_its_empty_words_and_its_decision_headings(client, 
     assert set(by_key) >= {"review_due", "review_soon"}
     assert by_key["review_due"]["rows"][0]["words"].startswith(f"{late.number} · P-1; review due since ")
     assert by_key["review_due"]["rows"][0]["record_url"] == f"/security/decisions/new/?supersedes={late.number}"
-    assert by_key["review_due"]["url"] == "/security/decisions/?state=review_due"
+    assert by_key["review_due"]["url"] == "/security/decisions/?state=review_due&here=1"  # the list it counts (review 39 F20)
     assert by_key["review_soon"]["rows"][0]["words"].startswith(f"{soon.number} · Every Alaris 8015 PCU of ours")
     assert "Review and renew</button>" in body
     eq.set_status(floor.d["P-1"], AssetStatus.RETIRED)

@@ -51,3 +51,40 @@ def test_the_model_panel_offers_a_decision_for_every_device_of_ours_of_the_model
     signed_in("technician")  # Device security Edit
     body = client.get(f"/security/models/{floor.model.pk}/", HTTP_HX_REQUEST="true").content.decode()
     assert "Record decision for every" not in body
+
+
+@pytest.mark.django_db
+def test_a_review_count_links_to_the_list_it_counts(client, signed_in, floor):  # noqa: F811
+    """Review F20: Needs attention's "past their review date" counts only decisions that still hold a device here; its link narrows the
+    list the same way (here=1), and the list says so, with the way to every one in that state."""
+    from datetime import timedelta
+
+    from apps.equipment.models import Asset, AssetStatus
+
+    days = timedelta(days=1)
+    held = decide(release=floor.r52, decided_on=floor.today - 400 * days, review_by=floor.today - 5 * days)
+    retired = decide(asset=floor.d["P-1"], decided_on=floor.today - 400 * days, review_by=floor.today - 5 * days)
+    Asset.objects.filter(pk=floor.d["P-1"].pk).update(status=AssetStatus.RETIRED)
+    signed_in("manager")
+    body = client.get("/security/decisions/").content.decode()
+    assert "?state=review_due&amp;here=1" in body or "?state=review_due&here=1" in body
+    listed = client.get("/security/decisions/?state=review_due&here=1").content.decode()
+    table = listed.split('class="cy-tbl"')[1]  # the list itself (Needs attention above names the other under "no device here now")
+    assert held.number in table and retired.number not in table and "Only the decisions whose scope still holds a device here" in listed
+    everyone = client.get("/security/decisions/?state=review_due").content.decode().split('class="cy-tbl"')[1]
+    assert held.number in everyone and retired.number in everyone
+
+
+@pytest.mark.django_db
+def test_renewing_a_decision_no_device_needs_offers_end(client, signed_in, floor):  # noqa: F811
+    """Review F15: a decision whose scope needs none now (its device updated to a supported release) offers End, never a Review and
+    renew that would be refused: on its page, and in the renew modal opened anyway."""
+    from cyber_fixtures import facts
+
+    old = decide(asset=floor.d["P-1"])
+    facts(floor.d["P-1"], floor.r56)  # updated since: supported
+    signed_in("manager")
+    page = client.get(f"/security/decisions/{old.number}/", HTTP_HX_REQUEST="true").content.decode()
+    assert f"/security/decisions/{old.number}/end/" in page and f"supersedes={old.number}" not in page
+    modal = client.get(f"/security/decisions/new/?supersedes={old.number}", HTTP_HX_REQUEST="true").content.decode()
+    assert f"End {old.number}" in modal and f"/security/decisions/{old.number}/end/" in modal

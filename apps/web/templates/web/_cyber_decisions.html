@@ -7,6 +7,7 @@
   <p class="hint cy-hicp">{{ hicp }}</p>
   {% include "web/_cyber_decision_attention.html" %}
   <div class="sec"><h3>Decisions <span>{{ page.paginator.count }} in this list</span></h3>
+  {% if f.here %}<p class="hint">Only the decisions whose scope still holds a device here, as Needs attention counts them. <a class="link" href="{{ list_url }}?state={{ f.state }}">Show every one in this state</a></p>{% endif %}
   <div class="tbl-wrap">
     <table class="cy-tbl">
       <thead><tr><th>Number</th><th>Scope</th><th>Decision</th><th>Review</th><th>Accepted by</th><th>IT exception</th><th>Recorded by</th></tr></thead>
