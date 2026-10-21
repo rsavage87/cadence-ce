@@ -709,11 +709,14 @@ def _outcome_words(update) -> str:
     after = release_name(update.release_after) if update.release_after_id else ""
     ref = f"; ref {update.reference}" if update.reference else ""
     if update.outcome == UpdateOutcome.INSTALLED:
-        before = release_name(update.release_before) if update.release_before_id else NOT_RECORDED
-        text = f"{after or 'A release'} installed {day} (recorded before: {before}){ref}"
+        # what was recorded before only when it is known (review round 2: taken once; never "recorded before: not recorded")
+        before = f" (recorded before: {release_name(update.release_before)})" if update.release_before_id else ""
+        text = f"{after or 'A release'} installed {day}{before}{ref}"
     elif update.outcome == UpdateOutcome.PATCHES:
         what = "Patches on the manufacturer's validated patch list" if update.basis == UpdateBasis.VALIDATED_LIST else "Patches"
-        text = f"{what} applied {day}, version unchanged ({after or 'version not recorded'}){ref}"
+        # no version: "version not recorded", unless a later record was kept (the version that day is then not stated)
+        version = f" ({after})" if after else ("" if update.later_kept else " (version not recorded)")
+        text = f"{what} applied {day}, version unchanged{version}{ref}"
     else:
         text = f"Checked {day}: already on {after or 'the update'}; nothing installed{ref}"
     source = _source_words(update)
@@ -729,8 +732,9 @@ def update_words(update, *, today=None) -> str:
     - open: "Open: to install 5.6 (demo)", or "Open: to apply the manufacturer's patches (ref ICAR-2026-09)";
     - not confirmed: "Completed Oct 20, 2026; version not confirmed" ("Completed by the vendor ..." only for vendor service);
     - cancelled: "Cancelled"; a hand row entered in error: "Entered in error";
-    - done: "5.6 (demo) installed Oct 20, 2026 (recorded before: 5.2 (demo))" ("not recorded" with none before); "Patches applied Oct
-      20, 2026, version unchanged (5.6 (demo)); ref ICAR-2026-09" ("(version not recorded)" with none; "Patches on the manufacturer's
+    - done: "5.6 (demo) installed Oct 20, 2026 (recorded before: 5.2 (demo))" (no "recorded before" when none is known: release_before
+      None); "Patches applied Oct 20, 2026, version unchanged (5.6 (demo)); ref ICAR-2026-09" ("(version not recorded)" with none, and
+      nothing there when a later record was kept; "Patches on the manufacturer's
       validated patch list applied ..." only for UpdateBasis.VALIDATED_LIST); "Checked Oct 20, 2026: already on 5.6 (demo); nothing
       installed"; a reference as "; ref <it>"; then where it came from ("; as the vendor's report <number> states" when recorded on
       vendor service (the record's own on_vendor_service and vendor_report), "; installed by information technology" by hand, nothing

@@ -158,13 +158,14 @@ def test_a_recording_completion_and_the_bulk_set_take_the_register_in_turn(tenan
     assert seen["waiting"] == [REGISTER], seen  # the second waited on the register, never on a device or the release
     if first_is == "completion":
         assert not errors and results == {"first": "installed", "second": 1}, (results, errors)  # CE-1 already ran 2.0: left as it was
-    else:  # the bulk set ran first: CE-1 already runs 2.0, so the completion's installed is refused in words, nothing saved
-        assert results == {"first": 2} and errors["second"].message_dict == {
-            "software_release": [updates.ALREADY_RAN.format(version="2.0")], "resolution": ["Say what was found and done."]}, (results, errors)
+    else:  # the bulk set ran first: CE-1 already runs 2.0, and the completion's installed is recorded all the same (the person states
+        # what was installed: review round 2), naming no before (the record named 2.0 already)
+        assert not errors and results == {"first": 2, "second": "installed"}, (results, errors)
     with tenant_context(tenant):
         assert set(DeviceSecurity.objects.values_list("release_id", flat=True)) == {s.rel2.pk}
         row = SoftwareUpdate.objects.get()
-        assert row.outcome == ("installed" if first_is == "completion" else "")
+        assert row.outcome == "installed"
+        assert row.release_before_id == (s.rel1.pk if first_is == "completion" else None)
 
 
 # --- 2. Confirm version and a reopen ---------------------------------------------------------------------------------------------

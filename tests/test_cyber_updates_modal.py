@@ -437,12 +437,12 @@ def test_a_release_gone_meanwhile_or_junk_is_refused_in_the_services_words(clien
     assert saved(r)  # the release is never read for not confirmed now
 
 
-@pytest.mark.parametrize("case", ["installed the release it ran", "patches with no reference", "already, not on the target",
+@pytest.mark.parametrize("case", ["already on another release", "patches with no reference", "already, not on the target",
                                   "installed on the validated list", "installed with nothing chosen", "patches that moved the version"])
 def test_the_services_refusals_come_back_on_their_fields(client, signed_in, r52, r56, on52, job, case):
     wo, row = job
     data, key, words = {
-        "installed the release it ran": (post(INSTALLED, r52, basis=MR), "software_release", updates.ALREADY_RAN.format(version="5.2 (demo)")),
+        "already on another release": (post(ALREADY, r56), "software_release", updates.RECORDED_AS.format(version="5.2 (demo)")),
         "patches with no reference": (post(PATCHES, basis=VL), "software_reference", updates.REFERENCE_NEEDED),
         "already, not on the target": (post(ALREADY, ""), "software_release",
                                        updates.NOT_THE_TARGET.format(version="5.2 (demo)", target="5.6 (demo)")),
@@ -620,7 +620,7 @@ def test_no_door_here_says_a_never_word(client, signed_in, make_user, pump, pump
     signed_in("technician")
     wo, _row = update_wo(pump, r56, assigned_to=tom)
     get(complete_url(wo), **HX)  # a choice needed
-    for data in (post(None), post(INSTALLED, r52, basis=MR), post(PATCHES, basis=VL), post(ALREADY, ""), post(INSTALLED, r56, basis=VL),
+    for data in (post(None), post(ALREADY, r56), post(PATCHES, basis=VL), post(ALREADY, ""), post(INSTALLED, r56, basis=VL),
                  post(PATCHES, r56, reference="ICAR 2026", basis=VL), post("updated"), post(NOT_CONFIRMED), post(INSTALLED, "x")):
         assert send(wo, data).status_code == 200
     lines(wo)  # open

@@ -577,7 +577,6 @@ def test_patches_by_hand_keep_the_version_whatever_release_was_left_chosen(clien
     ({"software_outcome": ""}, {"software_outcome": updates.HAND_OUTCOME}),
     ({"software_outcome": "already"}, {"software_outcome": updates.HAND_OUTCOME}),
     ({"software_release": ""}, {"software_release": updates.CHOOSE_RUNS_NOW}),
-    ({"software_release": "r52"}, {"software_release": updates.ALREADY_RAN_BY_HAND.format(version="5.2 (demo)")}),
     ({"software_release": "gone"}, {"software_release": updates.CHOOSE_RUNS_NOW}),
     ({"software_release": "not-an-id"}, {"software_release": updates.CHOOSE_RUNS_NOW}),
     ({"software_basis": VL}, {"software_basis": updates.VALIDATED_PATCHES_ONLY}),
@@ -671,7 +670,7 @@ def test_a_confirmation_dated_before_the_devices_facts_keeps_the_later_record(cl
     client.force_login(users["director"])
     r = client.post(confirm_url(row), confirm_data(world), **MODAL)
     saved_drawer(r, "CE-10002")
-    assert toast_of(r).endswith(f"(recorded before: 5.2 (demo)); {rules.LATER_KEPT_WORDS}")
+    assert toast_of(r) == f"{wo.number} confirmed: 5.6 (demo) installed {rules.day_words(wo.completed_on)}; {rules.LATER_KEPT_WORDS}"
     assert DeviceSecurity.objects.get(asset=world["pump"]).release == world["r52"]
 
 
@@ -691,12 +690,11 @@ def test_already_on_the_update_sends_no_basis_and_the_vendors_job_says_so(client
     ({"software_outcome": ""}, {"software_outcome": updates.CONFIRM_OUTCOME}),
     ({"software_outcome": "not_confirmed"}, {"software_outcome": updates.CONFIRM_OUTCOME}),
     ({"software_release": ""}, {"software_release": updates.CHOOSE_RUNS_NOW}),
-    ({"software_release": "r52"}, {"software_release": updates.ALREADY_RAN.format(version="5.2 (demo)")}),
     ({"software_basis": VL}, {"software_basis": updates.VALIDATED_PATCHES_ONLY}),
     ({"software_outcome": "patches"}, {"software_reference": updates.REFERENCE_NEEDED}),
     ({"software_outcome": "already"}, {"software_release": updates.RECORDED_AS.format(version="5.2 (demo)")}),  # never NO_BASIS
     ({"software_outcome": "already", "software_release": "r52"},
-     {"software_release": updates.NOT_THE_TARGET.format(version="5.2 (demo)", target="5.6 (demo)")}),
+     {"software_release": updates.NOT_THE_TARGET_DONE.format(version="5.2 (demo)", target="5.6 (demo)")}),
 ])
 def test_each_confirm_refusal_comes_back_on_its_field(client, world, users, unconfirmed, changes, expected):
     _wo, row = unconfirmed

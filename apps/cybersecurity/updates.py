@@ -18,11 +18,19 @@ calls a routine cybersecurity update an enhancement, "not considered a repair"; 
 - The device's facts follow what was recorded (installed: its release since the day; patches and already: the day checked; already
   also names the release when none was recorded), never backwards: a record dated before the device's facts (checked_on or
   release_since after it) is kept as a record only (later_kept), at a confirmation or a hand record dated in the past.
-- What the outcome is judged against, and the release it names as before (review fixes C1, C2): a completion, dated today, reads the
-  device's record as it is now; Confirm version and Record update, dated the work order's completed day or the day installed, read the
-  record for that day from its history (_release_then): never a record made since (a bulk set or Record facts after the update), nor,
-  for an install, the install's own result (its outcome entered in error and confirmed again, a bulk set dated its day). Patches
-  name that release after, too: the version that day.
+- What was recorded before (release_before) is taken once (review round 2; Cadence never rebuilds a past record from the device's
+  history: backdated days, corrections, and the install's own result make that read wrong): the device's recorded release at the row's
+  first recording (a first completion, a Confirm version of a row never recorded, a hand row's own), and only when the device's facts
+  are not dated after the update's day (_newer); else it is not known (None). before_taken marks it taken: Entered in error and a
+  re-completion keep both, and a later Confirm version or re-completion reuses them. An install of the release the record already named
+  claims no before (None): the record named it already.
+- What the outcome is checked against (_release_checks): "installed" never against the record (the person states what was installed: a
+  release of the device's model, not entered in error); "patches" and "already" against the device's record only when its facts will
+  be written (not newer than the update's day): patches name the recorded release, already the recorded one (or one chosen when none
+  is recorded). With a later record kept (later_kept), the release sent is the version that day, unchecked (patches may name none).
+  "Already" on a release target is always its target.
+- One install is recorded once by hand: record refuses an install equal to a live record of the device (a hand row, or a work order's
+  outcome on its completed or closed work order): DUPLICATE. A work order's outcome is never refused for a hand row's.
 - Where the outcome came from (review fix C15) is the work order as it was when the outcome was recorded (on_vendor_service,
   vendor_report), never as it is later.
 
@@ -61,12 +69,11 @@ system (the seed, tests). History reasons never carry a reference. No refusal sa
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime
 
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, OperationalError, transaction
 from django.db.models import Q
-from django.utils import timezone
 
 from . import permissions as perms
 from . import rules, services
@@ -125,13 +132,14 @@ ALREADY_RUNS = "{tag} already runs {version}."
 # check_choice, confirm, record
 ONLY_UPDATES = "Only a software update records what it did."
 NOT_FROM_REGISTER = "This work order was not opened from the Device security screen: nothing is recorded on it."
-ALREADY_RAN = "It already ran {version} before: choose Already on the update, or Patches applied."
-ALREADY_RAN_BY_HAND = "It already ran {version} before: choose Patches applied, or the release it runs now."
+DUPLICATE = "This install is already recorded on the device's Security tab: {words}."
 PATCHES_UNCHANGED = "Patches leave the version unchanged: choose installed if it changed."
 PATCHES_NONE_RECORDED = ("No release is recorded for this device: leave the release out (version not recorded), or record it with "
                          "Record facts.")
 RECORDED_AS = "Its record says it runs {version}: choose that release, or Installed if it changed."
 NOT_THE_TARGET = "The device runs {version}, not {target}: keep the work order open, or cancel it."
+# Confirm version's (its work order is completed: it cannot be kept open)
+NOT_THE_TARGET_DONE = "Already on the update means already on {target}, not {version}: choose Installed if it changed, or Patches applied."
 VALIDATED_PATCHES_ONLY = "The manufacturer's validated patch list is for patches applied: choose another basis."
 NO_BASIS = "Already on the update names no basis: leave it blank."
 REFERENCE_LENGTH = f"Keep the reference to {UPDATE_REFERENCE_MAX} characters."
@@ -328,33 +336,40 @@ def _release_locked(release_id):
     return services._locked_release(release_id, field="software_release", message=CHOOSE_RUNS_NOW)
 
 
-def _release_checks(outcome: str, *, release, recorded, target, errors: dict, by_hand: bool = False):
-    """The outcome against what the device's record says (`recorded`: its release, or None) and the record's `target` (a release, or
-    None for patches), given the release the choice names (`release`: None when none was sent). Returns the release it runs after:
-    - installed: the release named, other than the recorded one;
-    - patches: the recorded one (or none); a release named must be it;
-    - already: the recorded one, or the one named when none is recorded; the target when the target is a release.
+def _release_checks(outcome: str, *, release, recorded, target, written: bool, errors: dict, done: bool = False):
+    """The release the device runs after the outcome, given the release the choice names (`release`: None when none was sent), what the
+    device's record says (`recorded`: its release, or None), the record's `target` (a release, or None for patches), and whether the
+    device's facts will be written (`written`: they are not dated after the update's day; review round 2):
+    - installed: the release named, never checked against the record (the person states what was installed): CHOOSE_RUNS_NOW for none;
+    - patches: written, the recorded one (or none), a release named must be it (PATCHES_UNCHANGED, PATCHES_NONE_RECORDED); a later
+      record kept, the release named as the version that day, or none;
+    - already: written, the recorded one (RECORDED_AS for another named), or the one named when none is recorded (CHOOSE_RUNS_NOW when
+      neither); a later record kept, the release named, else the target; and the target when the target is a release (NOT_THE_TARGET,
+      or NOT_THE_TARGET_DONE for a work order completed already: `done`, Confirm version).
     Problems keyed software_release."""
     key = "software_release"
     if outcome == UpdateOutcome.INSTALLED:
         if release is None:
             errors[key] = CHOOSE_RUNS_NOW
-        elif recorded is not None and release.pk == recorded.pk:
-            errors[key] = (ALREADY_RAN_BY_HAND if by_hand else ALREADY_RAN).format(version=recorded.version)
         return release
     if outcome == UpdateOutcome.PATCHES:
+        if not written:
+            return release
         if release is not None and (recorded is None or release.pk != recorded.pk):
             errors[key] = PATCHES_UNCHANGED if recorded is not None else PATCHES_NONE_RECORDED
         return recorded
-    if release is None and recorded is None:
-        errors[key] = CHOOSE_RUNS_NOW
-        return None
-    if release is not None and recorded is not None and release.pk != recorded.pk:
-        errors[key] = RECORDED_AS.format(version=recorded.version)
-        return release
-    runs = release or recorded
+    if written:
+        if release is None and recorded is None:
+            errors[key] = CHOOSE_RUNS_NOW
+            return None
+        if release is not None and recorded is not None and release.pk != recorded.pk:
+            errors[key] = RECORDED_AS.format(version=recorded.version)
+            return release
+        runs = release or recorded
+    else:
+        runs = release or target
     if target is not None and runs.pk != target.pk:
-        errors[key] = NOT_THE_TARGET.format(version=runs.version, target=rules.release_name(target))
+        errors[key] = (NOT_THE_TARGET_DONE if done else NOT_THE_TARGET).format(version=runs.version, target=rules.release_name(target))
     return runs
 
 
@@ -408,41 +423,44 @@ def _write_security(device, by, apply):
     return sec
 
 
-def _set_outcome(row, *, outcome: str, before, after, reference: str, basis: str, day: date, by, later_kept: bool, wo=None) -> None:
-    """The outcome's fields on `row` (not saved), with where it came from (review fix C15): `wo`, the work order as it is at this
-    recording (a completion's, after its checks_reference is set; confirm's, read again under lock_work), on vendor service or not and
-    its vendor's report number then. A hand row (no `wo`) and a cleared outcome have neither. The words read these, never the work
-    order's flags later (a reopened job moved to a vendor and completed by them never takes credit for an outcome recorded in-house)."""
-    row.outcome, row.release_before, row.release_after = outcome, before, after
+def _set_outcome(row, *, outcome: str, after, reference: str, basis: str, day: date, by, later_kept: bool, wo=None) -> None:
+    """The outcome's fields on `row` (not saved; OUTCOME_FIELDS: release_before is _take_before's), with where it came from (review fix
+    C15): `wo`, the work order as it is at this recording (a completion's, after its checks_reference is set; confirm's, read again
+    under lock_work), on vendor service or not and its vendor's report number then. A hand row (no `wo`) and a cleared outcome have
+    neither. The words read these, never the work order's flags later (a reopened job moved to a vendor and completed by them never
+    takes credit for an outcome recorded in-house)."""
+    row.outcome, row.release_after = outcome, after
     row.reference, row.basis, row.applied_on = reference, basis, day
     row.recorded_by, row.later_kept = by, later_kept
     vendor = bool(outcome) and wo is not None and bool(wo.vendor_service)
     row.on_vendor_service, row.vendor_report = vendor, (wo.checks_reference or "") if vendor else ""
 
 
-def _release_then(device, day: date, *, installing=None):
-    """The release the device's record named for `day`, the day of an update recorded afterwards (review fixes C1 and C2: Confirm
-    version and Record update judge the outcome against it and take release_before, and patches and already their release after, from
-    it, never from a record made since): from its DeviceSecurity history (core.history._rows, this facility's rows only), the newest
-    version saved on or before `day`'s facility day (core.days.local_day of its history_date: its time zone is active inside the
-    facility), or saved later but naming its release since `day` or earlier (a record typed in after the fact, as Record facts and a bulk
-    set allow). A version naming a release only since after `day` (a bulk set or Record facts since) never counts; nor, for an install of
-    `installing`, one naming that release since `day` itself: the install's own result (its outcome entered in error and confirmed
-    again, or a bulk set dated the install's day), never what it ran before. A version from the same day naming another release counts
-    (an install or a rollback recorded first that day). None when no version counts, the one that does names none (or was the row's
-    deletion), or its release no longer names one the device may run (rules: versioned, not entered in error, of its model). One
-    query, one row: the history read once per writer call."""
-    from apps.core.history import _rows
+def _take_before(row, *, outcome: str, after, recorded, written: bool) -> None:
+    """What was recorded before, on `row` (not saved), taken once (review round 2): at the row's first recording (before_taken False)
+    the device's recorded release (`recorded`) when its facts are not dated after the update's day (`written`), else None (not known);
+    before_taken then True. A row that took it already (a re-completion, a Confirm version after its outcome was entered in error)
+    keeps it: the device's record is never read again for what it ran before. An install of the release the before names stores None
+    (the record named it already: Cadence claims no before)."""
+    if not row.before_taken:
+        row.release_before_id = recorded.pk if written and recorded is not None else None
+        row.before_taken = True
+    if outcome == UpdateOutcome.INSTALLED and after is not None and row.release_before_id == after.pk:
+        row.release_before_id = None
 
-    after_day = timezone.make_aware(datetime.combine(day + timedelta(days=1), time.min))  # the first moment after the facility's `day`
-    qs = (_rows(DeviceSecurity.history.model).filter(asset_id=device.pk)
-          .filter(Q(history_date__lt=after_day) | Q(release__isnull=False, release_since__lte=day)))
-    if installing is not None:
-        qs = qs.exclude(release_id=installing.pk, release_since=day)
-    version = qs.select_related("release").order_by("-history_date", "-history_id").first()
-    if version is None or version.history_type == "-" or not version.release_id:
-        return None
-    return version.release if _names(version.release, device.device_model_id) else None
+
+def _duplicate(device, *, outcome: str, after, reference: str, day: date):
+    """A live record of the same install on the device, or None (one query): a hand row not entered in error, or a work order's outcome
+    on its completed or closed work order (what its Security tab shows as done), with the same outcome, release after (None: none),
+    and day, and for patches the same reference (in any letter case). Read under the register lock (every writer of an outcome holds
+    it), with what its words read."""
+    from apps.workorders.models import WoStatus
+
+    qs = (SoftwareUpdate.objects.filter(asset_id=device.pk, outcome=outcome, release_after=after, applied_on=day)
+          .filter(Q(work_order__isnull=True, removed_on__isnull=True) | Q(work_order__status__in=(WoStatus.COMPLETED, WoStatus.CLOSED))))
+    if outcome == UpdateOutcome.PATCHES:
+        qs = qs.filter(reference__iexact=reference)
+    return qs.select_related("work_order", "target_release", "release_before", "release_after").order_by("created_at", "pk").first()
 
 
 def _update_row(update):
@@ -474,14 +492,15 @@ def check_choice(wo, choice, by, errors: dict, *, today: date):
     - KEEP from a user (None: the system) on an update with nothing recorded yet: CHOOSE_OUTCOME (KEEP with no offer, a vendor's account
       among them, records nothing and is never refused).
     Then the outcome (NOT_CONFIRMED records nothing: its release, reference, and basis are not read):
-    - installed: a versioned, not removed release of the device's model (software_release: CHOOSE_RUNS_NOW), other than the recorded one
-      (ALREADY_RAN), and a basis of BASES[installed] (software_basis);
+    - installed: a versioned, not removed release of the device's model (software_release: CHOOSE_RUNS_NOW), whatever the record names
+      (the person states what was installed: review round 2), and a basis of BASES[installed] (software_basis);
     - patches: a reference (software_reference: REFERENCE_NEEDED; a token), a basis of BASES[patches], and the release when sent equal to
       the recorded one (PATCHES_UNCHANGED, or PATCHES_NONE_RECORDED); not sent: the recorded one, or none;
     - already: the recorded release (RECORDED_AS for another), or one chosen when none is recorded (CHOOSE_RUNS_NOW when neither), the
       target when the target is a release (NOT_THE_TARGET), and no basis (NO_BASIS).
-    Returns a Checked for record_at_completion, or KEEP / the NOT_CONFIRMED choice as given (KEEP also after a refusal). No query for KEEP
-    on another type."""
+    A completion is dated today and the device's facts never after it, so they will be written: patches and already are checked against
+    the record (_release_checks' `written`; record_at_completion checks again under the lock). Returns a Checked for
+    record_at_completion, or KEEP / the NOT_CONFIRMED choice as given (KEEP also after a refusal). No query for KEEP on another type."""
     from apps.workorders.models import WoType
 
     if choice is KEEP:
@@ -509,7 +528,8 @@ def check_choice(wo, choice, by, errors: dict, *, today: date):
     release = _release_read(choice.release_id, wo.asset.device_model_id, mine) if choice.release_id else None
     after = None
     if "software_release" not in mine:
-        after = _release_checks(choice.outcome, release=release, recorded=offer.recorded, target=offer.target_release, errors=mine)
+        after = _release_checks(choice.outcome, release=release, recorded=offer.recorded, target=offer.target_release, written=True,
+                                errors=mine)
     if mine:
         errors.update(mine)
         return KEEP
@@ -520,9 +540,10 @@ def record_at_completion(wo, asset, checked, by, today: date):
     """Write what `checked` (check_choice's) says the update did on `wo`'s record, inside complete_work_order after it moved `wo` to
     completed (and applied its test equipment): that transaction holds the register, the device's work and `wo`, and the device FOR
     UPDATE. Takes the chosen release FOR UPDATE (of the device's model, read from the held row), the device's security row (got or
-    created, as services.record_facts), then the update row FOR UPDATE; writes outcome, applied_on (today), release_before (the
-    recorded release as it is now: the record as of today), release_after, reference, basis, recorded_by, later_kept (False: a
-    completion is dated today, after any fact), and where it came from (`wo` now: on vendor service, its checks_reference);
+    created, as services.record_facts), then the update row FOR UPDATE; writes outcome, applied_on (today), release_after, reference,
+    basis, recorded_by, later_kept (False: a completion is dated today, after any fact), where it came from (`wo` now: on vendor service,
+    its checks_reference), and release_before taken once (_take_before: at a first completion the recorded release as it is now; a
+    re-completion keeps the row's; none for an install of the release it names);
     then the facts (installed: the release since today, checked today; patches: checked today; already: checked today, and the release
     since today when none was recorded), history "Recorded at completion of <number>" on the update row and "Facts recorded at
     <number>" (": release set to <version>" when it changed) on the security row. A re-completion replaces the row's outcome (with
@@ -538,20 +559,23 @@ def record_at_completion(wo, asset, checked, by, today: date):
     state: dict = {}
 
     def apply(sec):
-        before = _recorded(sec, device)
+        recorded, written = _recorded(sec, device), not _newer(sec, today)
         problems: dict = {}
-        after = _release_checks(checked.outcome, release=release, recorded=before, target=checked.target_release, errors=problems)
+        after = _release_checks(checked.outcome, release=release, recorded=recorded, target=checked.target_release, written=written,
+                                errors=problems)
         if problems:  # the record moved since the check (the register is held, so never in practice): refused, never written over
             raise ValidationError(problems)
-        state.update(before=before, after=after)
-        reason = _facts(sec, outcome=checked.outcome, after=after, before=before, day=today, by=by, prefix=FACTS_AT.format(number=wo.number))
+        state.update(recorded=recorded, written=written, after=after)
+        reason = _facts(sec, outcome=checked.outcome, after=after, before=recorded, day=today, by=by,
+                        prefix=FACTS_AT.format(number=wo.number))
         state["later_kept"] = reason is None
         return reason
 
     _write_security(device, by, apply)
     row = SoftwareUpdate.objects.select_for_update().get(work_order_id=wo.pk)
-    _set_outcome(row, outcome=checked.outcome, before=state["before"], after=state["after"], reference=checked.reference,
-                 basis=checked.basis, day=today, by=by, later_kept=state["later_kept"], wo=wo)
+    _take_before(row, outcome=checked.outcome, after=state["after"], recorded=state["recorded"], written=state["written"])
+    _set_outcome(row, outcome=checked.outcome, after=state["after"], reference=checked.reference, basis=checked.basis, day=today, by=by,
+                 later_kept=state["later_kept"], wo=wo)
     services._save(row, by, RECORDED_AT.format(number=wo.number))
     return row
 
@@ -568,11 +592,13 @@ def confirm(update, choice, *, by, today: date | None = None):
     at permissions.can_edit_devices. Locks: the register, lock_work(asset, its work order), the work order read again (completed or
     closed: else REOPENED; its outcome still blank: else RECORDED_MEANWHILE), the release, the device FOR KEY SHARE (its model and
     status read again: a device no longer on site refused in services._gone's words), the security row, the update row. The choice is
-    checked as check_choice checks it (KEEP and NOT_CONFIRMED refused: CONFIRM_OUTCOME), against the release the device's record named
-    for the work order's completed_on, never a record made since (_release_then: review fixes C1/C2), which is release_before (and
-    patches' release after); applied_on is the work order's completed_on; the facts are written only when the device's checked_on and
-    release_since are null or on or before it, else the row alone, with later_kept (the toast: "a later record of the device is
-    kept"). Where it came from is the work order as it is now (_set_outcome: on vendor service, its report number: review fix C15).
+    checked as check_choice checks it (KEEP and NOT_CONFIRMED refused: CONFIRM_OUTCOME; installed never against the record; patches
+    and already against it only when the facts will be written, else the release sent is the version that day: _release_checks;
+    NOT_THE_TARGET_DONE, the work order being completed); applied_on is the work order's completed_on; the facts are written only when
+    the device's checked_on and release_since are null or on or before it, else the row alone, with later_kept (the toast: "a later
+    record of the device is kept"). release_before is taken once (_take_before: a row never recorded takes the recorded release when the
+    facts are not newer, else none; a row whose outcome was entered in error keeps its own). Where it came from is the work order as it
+    is now (_set_outcome: on vendor service, its report number: review fix C15).
     History "Confirmed" on the row, "Facts recorded when <number> was confirmed" on the security row. `today` is not read: the day is
     the work order's. A lock conflict answers services.RACE, keyed software_outcome. Returns the update row (the caller's copy follows
     it)."""
@@ -608,25 +634,26 @@ def confirm(update, choice, *, by, today: date | None = None):
             if release is not None and not _names(release, device.device_model_id):
                 raise ValidationError({"software_release": CHOOSE_RUNS_NOW})
             day = wo.completed_on
-            # Review fixes C1/C2: the record for the work order's day, never one made since (nor an install's own result)
-            then = _release_then(device, day, installing=release if choice.outcome == UpdateOutcome.INSTALLED else None)
             state: dict = {}
 
             def apply(sec):
+                recorded, written = _recorded(sec, device), not _newer(sec, day)
                 problems: dict = {}
-                after = _release_checks(choice.outcome, release=release, recorded=then, target=row.target_release, errors=problems)
+                after = _release_checks(choice.outcome, release=release, recorded=recorded, target=row.target_release, written=written,
+                                        errors=problems, done=True)
                 if problems:
                     raise ValidationError(problems)
-                state.update(before=then, after=after)
-                reason = _facts(sec, outcome=choice.outcome, after=after, before=_recorded(sec, device), day=day, by=by,
+                state.update(recorded=recorded, written=written, after=after)
+                reason = _facts(sec, outcome=choice.outcome, after=after, before=recorded, day=day, by=by,
                                 prefix=FACTS_CONFIRMED.format(number=wo.number))
                 state["later_kept"] = reason is None
                 return reason
 
             _write_security(device, by, apply)
             locked = SoftwareUpdate.objects.select_for_update().get(pk=row.pk)
-            _set_outcome(locked, outcome=choice.outcome, before=state["before"], after=state["after"], reference=reference, basis=basis,
-                         day=day, by=by, later_kept=state["later_kept"], wo=wo)
+            _take_before(locked, outcome=choice.outcome, after=state["after"], recorded=state["recorded"], written=state["written"])
+            _set_outcome(locked, outcome=choice.outcome, after=state["after"], reference=reference, basis=basis, day=day, by=by,
+                         later_kept=state["later_kept"], wo=wo)
             services._save(locked, by, CONFIRMED)
     except OperationalError as e:
         if not services._lock_conflict(e):
@@ -663,11 +690,14 @@ def _applied_day(value, device, errors: dict, *, today: date):
 def record(asset, choice, *, installed_by: str, applied_on, by, today: date | None = None):
     """An install recorded by hand, with no work order (installed or patches: HAND_OUTCOME otherwise), installed by `installed_by`
     (InstalledBy: INSTALLER_WORDS otherwise) on `applied_on` (a day or its ISO text, not after today, not before the device was
-    installed: BEFORE_INSTALL), at permissions.can_edit_devices. The choice is checked as check_choice checks it (with no target),
-    against the release the device's record named for applied_on, never a record made since (_release_then, as confirm). Locks: the
-    register, the release, the device FOR KEY SHARE (read again; a retired or returned device refused: services._gone, keyed asset),
-    the security row, the new row. The facts as confirm writes them, on applied_on (never backwards: later_kept). History "Recorded" on
-    the row, "Facts recorded with an update recorded by hand" on the security row. Returns the new row."""
+    installed: BEFORE_INSTALL), at permissions.can_edit_devices. The choice is checked as confirm checks it (with no target): installed
+    never against the record, patches against it only when the facts will be written. Refused, keyed software_outcome, when it is an
+    install already recorded on the device (DUPLICATE: a live hand row, or a work order's outcome on its completed or closed work order,
+    with the same outcome, release after, and day, and for patches the same reference: _duplicate). Locks: the register, the release,
+    the device FOR KEY SHARE (read again; a retired or returned device refused: services._gone, keyed asset), the security row, the new
+    row. The facts as confirm writes them, on applied_on (never backwards: later_kept); release_before taken at this recording
+    (_take_before: the recorded release when the facts are not newer than applied_on, else none; none for an install of it). History
+    "Recorded" on the row, "Facts recorded with an update recorded by hand" on the security row. Returns the new row."""
     services._check(by, perms.can_edit_devices, RECORD_PERMISSION)
     today = services._today(today)
     device = services._asset(asset)
@@ -698,25 +728,28 @@ def record(asset, choice, *, installed_by: str, applied_on, by, today: date | No
                 raise ValidationError(problems)
             if release is not None and not _names(release, device.device_model_id):
                 raise ValidationError({"software_release": CHOOSE_RUNS_NOW})
-            # Review fixes C1/C2: the record for applied_on, never one made since (nor the install's own result)
-            then = _release_then(device, day, installing=release if choice.outcome == UpdateOutcome.INSTALLED else None)
             state: dict = {}
 
             def apply(sec):
+                recorded, written = _recorded(sec, device), not _newer(sec, day)
                 found: dict = {}
-                after = _release_checks(choice.outcome, release=release, recorded=then, target=None, errors=found, by_hand=True)
+                after = _release_checks(choice.outcome, release=release, recorded=recorded, target=None, written=written, errors=found)
                 if found:
                     raise ValidationError(found)
-                state.update(before=then, after=after)
-                reason = _facts(sec, outcome=choice.outcome, after=after, before=_recorded(sec, device), day=day, by=by,
-                                prefix=FACTS_BY_HAND)
+                state.update(recorded=recorded, written=written, after=after)
+                reason = _facts(sec, outcome=choice.outcome, after=after, before=recorded, day=day, by=by, prefix=FACTS_BY_HAND)
                 state["later_kept"] = reason is None
                 return reason
 
             _write_security(device, by, apply)
+            # One install is recorded once (the register is held: every writer of an outcome holds it); a refusal rolls the facts back
+            same = _duplicate(device, outcome=choice.outcome, after=state["after"], reference=reference, day=day)
+            if same is not None:
+                raise ValidationError({"software_outcome": DUPLICATE.format(words=rules.update_words(same))})
             row = SoftwareUpdate(asset=device, installed_by=installed_by)
-            _set_outcome(row, outcome=choice.outcome, before=state["before"], after=state["after"], reference=reference, basis=basis,
-                         day=day, by=by, later_kept=state["later_kept"])
+            _take_before(row, outcome=choice.outcome, after=state["after"], recorded=state["recorded"], written=state["written"])
+            _set_outcome(row, outcome=choice.outcome, after=state["after"], reference=reference, basis=basis, day=day, by=by,
+                         later_kept=state["later_kept"])
             services._save(row, by, RECORDED)
     except OperationalError as e:
         if not services._lock_conflict(e):
@@ -727,10 +760,11 @@ def record(asset, choice, *, installed_by: str, applied_on, by, today: date | No
 
 def remove(update, *, by, today: date | None = None):
     """Entered in error, at permissions.can_correct_updates: a hand row is marked (removed_on, removed_by; history "Entered in error");
-    a work order's row has its outcome cleared (OUTCOME_FIELDS; history "Outcome entered in error"), and Confirm version is offered
-    again. Refused (NOTHING_RECORDED, keyed software_outcome) for a row with nothing recorded or already marked. Locks: the register,
-    lock_work(asset, its work order) for a work order's row, the update row. The device's facts are never touched (Record facts
-    corrects them). Returns the row (the caller's copy follows it)."""
+    a work order's row has its outcome cleared (OUTCOME_FIELDS; history "Outcome entered in error"; release_before and before_taken
+    stay: a Confirm version after it reuses them, review round 2), and Confirm version is offered again. Refused (NOTHING_RECORDED,
+    keyed software_outcome) for a row with nothing recorded or already marked. Locks: the register, lock_work(asset, its work order)
+    for a work order's row, the update row. The device's facts are never touched (Record facts corrects them). Returns the row (the
+    caller's copy follows it)."""
     services._check(by, perms.can_correct_updates, CORRECT_PERMISSION)
     today = services._today(today)
     row = _update_row(update)
@@ -748,7 +782,7 @@ def remove(update, *, by, today: date | None = None):
                 locked.removed_on, locked.removed_by = today, by
                 reason = ENTERED_IN_ERROR
             else:
-                _set_outcome(locked, outcome="", before=None, after=None, reference="", basis="", day=None, by=None, later_kept=False)
+                _set_outcome(locked, outcome="", after=None, reference="", basis="", day=None, by=None, later_kept=False)
                 reason = OUTCOME_IN_ERROR
             services._save(locked, by, reason)
     except OperationalError as e:

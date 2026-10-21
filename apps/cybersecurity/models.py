@@ -242,8 +242,10 @@ class InstalledBy(models.TextChoices):
 
 RECORDED_OUTCOMES = (UpdateOutcome.INSTALLED, UpdateOutcome.PATCHES, UpdateOutcome.ALREADY)
 INSTALL_OUTCOMES = (UpdateOutcome.INSTALLED, UpdateOutcome.PATCHES)  # counted as installs; "already" never is
-OUTCOME_FIELDS = ("outcome", "release_before", "release_after", "reference", "basis", "applied_on", "recorded_by", "later_kept",
-                  "on_vendor_service", "vendor_report")
+# What Entered in error clears on a work order's row (updates.remove). release_before and before_taken stay (review round 2: what was
+# recorded before is taken once, at the row's first recording, and a confirmation after the error reuses it).
+OUTCOME_FIELDS = ("outcome", "release_after", "reference", "basis", "applied_on", "recorded_by", "later_kept", "on_vendor_service",
+                  "vendor_report")
 
 
 def _update_rules():
@@ -280,6 +282,10 @@ class SoftwareUpdate(TenantModel):
     recorded_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, editable=False,
                                     related_name="+")
     later_kept = models.BooleanField(default=False, editable=False)  # the device's facts were newer than applied_on: kept, not written
+    # Whether release_before was taken (review round 2): at the row's first recording (a first completion, a Confirm version of a row never
+    # recorded, a hand row's own), the device's recorded release then, or none when its facts were newer than applied_on. Entered in error
+    # and a re-completion keep both; a later recording reuses them and never reads the device's record again for what it ran before.
+    before_taken = models.BooleanField(default=False, editable=False)
     # Where the outcome came from (review fix C15): the work order as it was when the outcome was recorded (a completion or Confirm
     # version), never as it is now: on vendor service then, and the vendor's report number then (its checks_reference). Cleared with the
     # outcome; never on a hand row.
