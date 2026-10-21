@@ -2,7 +2,7 @@ from django.contrib import admin
 
 from apps.core.admin import TenantModelAdmin
 
-from .models import DeviceSecurity, SoftwareRelease
+from .models import DeviceSecurity, DeviceSecurityDecision, SoftwareRelease
 
 
 class _ReadOnly(TenantModelAdmin):
@@ -27,3 +27,8 @@ class SoftwareReleaseAdmin(_ReadOnly):
 @admin.register(DeviceSecurity)
 class DeviceSecurityAdmin(_ReadOnly):
     list_display = ("asset", "release", "release_since", "checked_on")
+
+
+@admin.register(DeviceSecurityDecision)
+class DeviceSecurityDecisionAdmin(_ReadOnly):  # slice 39: every change through apps.cybersecurity.decisions
+    list_display = ("number", "applies_to", "asset", "device_model", "release", "response", "review_by", "ended_on")

@@ -238,6 +238,9 @@ AREAS = {a.key: a for a in (
     # order drawer's history (history_tabs.RELATED): its target and versions are Device security View's
     Area("software_updates", "Software updates", "cybersecurity.SoftwareUpdate", "cybersecurity", _safe(_update_name),
          _safe(lambda r: reverse("web:asset", args=[r.asset.tag]) + "?tab=security"), select=("asset", "work_order"), also=("equipment",)),
+    # Slice 39: security decisions for devices past support (Device security View and Equipment View: a decision can name a device)
+    Area("device_security_decisions", "Device security decisions", "cybersecurity.DeviceSecurityDecision", "cybersecurity",
+         _safe(lambda r: r.number), _safe(lambda r: reverse("web:security_decision", args=[r.number])), also=("equipment",)),
 )}
 ACCESS = Area("access", "Access", "accounts.AccessEvent", "users", _safe(lambda e: str(e.user) if e.user_id else ""))
 ALL_AREAS = {**AREAS, ACCESS.key: ACCESS}
@@ -324,6 +327,8 @@ HIDE = {
     "cybersecurity.devicesecurity": {"asset"},
     # slice 38: both in the record's name
     "cybersecurity.softwareupdate": {"asset", "work_order"},
+    # slice 39: the number is the record's name; the ids it governed when recorded are read by the rules ("joined since"), not history
+    "cybersecurity.devicesecuritydecision": {"number", "governed_ids"},
 }
 
 # Labels that read better than the verbose names, per model; `_label` falls back to the verbose name.

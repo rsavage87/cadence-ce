@@ -21,8 +21,14 @@ text of any kind. References are tokens and https links; answers are choices, bl
   completed or confirmed afterwards; or an install recorded by hand, with no work order (the manufacturer remotely, automatic, IT). The
   work order carries only the neutral type and a fixed problem: the target and the versions are here, behind Device security View.
 
+- DeviceSecurityDecision (slice 39): the facility's decision for devices past the manufacturer's or the OS vendor's support (one device, a
+  model's devices of ours on one release, or every device of ours of a model): keep in use with controls, keep in use without added
+  controls, or take out of use; a plan; who accepted it (a role) and IT's exception number (IT's record stays the system of record);
+  and the facility's own review date. Immutable once recorded: a change is a new decision that supersedes it. Slice 40 adds advisories
+  (applies_to "advisory", with its own constraints).
+
 Every rule is apps.cybersecurity.rules; every write is apps.cybersecurity.services (and equipment.services.update_asset's model change,
-through services.model_changed), and slice 38's updates are apps.cybersecurity.updates.
+through services.model_changed), slice 38's updates are apps.cybersecurity.updates, and slice 39's decisions apps.cybersecurity.decisions.
 """
 from django.conf import settings
 from django.db import models
@@ -41,7 +47,11 @@ UPDATE_REFERENCE_VALIDATOR = reference_token("Enter the manufacturer's patch lis
 # Slice 38 review fix C15: a software update's copy of its work order's vendor report number (workorders.WorkOrder.checks_reference)
 VENDOR_REPORT_VALIDATOR = reference_token("Enter the vendor's service report or field service order number as it is printed, without "
                                           "spaces.")
-VERSION_MAX, OS_NAME_MAX, DOCUMENT_MAX, UPDATE_REFERENCE_MAX = 60, 80, 40, 40
+# Slice 39: IT's exception or change number for a decision and its controls (a token; never an address, a VLAN, or a port:
+# decisions.py refuses those too)
+EXCEPTION_REFERENCE_VALIDATOR = reference_token("Enter IT's exception, ticket, or change number as it is written, without spaces, e.g. "
+                                                "EX-1042.")
+VERSION_MAX, OS_NAME_MAX, DOCUMENT_MAX, UPDATE_REFERENCE_MAX, EXCEPTION_REFERENCE_MAX = 60, 80, 40, 40, 40
 
 
 class OsFamily(models.TextChoices):
@@ -304,3 +314,116 @@ class SoftwareUpdate(TenantModel):
 
     def __str__(self):
         return f"{self.work_order.number} software update" if self.work_order_id else f"{self.asset} software update"
+
+
+# --- slice 39: security decisions ----------------------------------------------------------------------------------------------------
+
+class AppliesTo(models.TextChoices):
+    """Why a decision was recorded. Slice 40 adds "advisory" (with the advisory and its own constraints)."""
+
+    SUPPORT_ENDED = "support_ended", "Security updates or OS support ended"
+
+
+class DecisionResponse(models.TextChoices):
+    """What the facility decided (NIST SP 800-40r4's mitigate, accept, avoid, in plain words). Never "risk accepted" as a label: only a
+    decision's sentence says it, with its review date (rules.decision_words)."""
+
+    KEEP_WITH_CONTROLS = "keep_with_controls", "Keep in use with controls"
+    KEEP_WITHOUT_ADDED_CONTROLS = "keep_without_added_controls", "Keep in use without added controls"
+    TAKE_OUT_OF_USE = "take_out_of_use", "Take out of use"
+
+
+class DecisionPlan(models.TextChoices):
+    """How the decider says the risk will be resolved (HHS 405(d) HICP 2023's timeline), apart from the decision itself."""
+
+    WAIT_FOR_MANUFACTURER = "wait_for_manufacturer", "Wait for the manufacturer"
+    UPDATE_PLANNED = "update_planned", "Update planned, not opened yet"
+    REPLACE_PLANNED = "replace_planned", "Replacement planned"
+    RETURN_TO_OWNER = "return_to_owner", "Return it to its owner"
+    NONE = "none", "No plan recorded"
+
+
+class AcceptedBy(models.TextChoices):
+    """Who accepted the decision, as the person recording it states it (a role, never a typed name)."""
+
+    CE_LEADER = "ce_leader", "the CE leader"
+    IT_SECURITY = "it_security", "IT security or the CISO"
+    COMMITTEE = "committee", "a committee"
+    DEPARTMENT_LEADER = "department_leader", "department leadership"
+    AUTHORIZING_OFFICIAL = "authorizing_official", "the authorizing official"
+
+
+class DecisionEnd(models.TextChoices):
+    SUPERSEDED = "superseded", "Superseded by a new decision"
+    NO_LONGER_NEEDED = "no_longer_needed", "No longer needed: updated, replaced, retired, or returned"
+    ENTERED_IN_ERROR = "entered_in_error", "Entered in error"
+
+
+def _decision_scope():
+    """Exactly one scope (database constraint, SQLite and PostgreSQL): one device; a model's devices of ours on one release; or every
+    device of ours of a model."""
+    device = Q(asset__isnull=False, device_model__isnull=True, release__isnull=True)
+    release = Q(asset__isnull=True, device_model__isnull=False, release__isnull=False)
+    model = Q(asset__isnull=True, device_model__isnull=False, release__isnull=True)
+    return device | release | model
+
+
+class DeviceSecurityDecision(TenantModel):
+    """The facility's decision for devices past support (slice 39), written only by apps.cybersecurity.decisions; read through
+    apps.cybersecurity.rules (needs, the governing decision, coverage, Check lines, words). Immutable once recorded: its writers only end
+    it (superseded, no longer needed, entered in error). One live decision per scope and reason (the conditional constraints below)."""
+
+    number = models.CharField(max_length=20, editable=False)
+    applies_to = models.CharField(max_length=20, choices=AppliesTo.choices)
+    # The scope: exactly one shape (_decision_scope). Release and model scopes govern devices of ours only (rules).
+    asset = models.ForeignKey("equipment.Asset", null=True, blank=True, on_delete=models.PROTECT, related_name="security_decisions")
+    device_model = models.ForeignKey("equipment.DeviceModel", null=True, blank=True, on_delete=models.PROTECT,
+                                     related_name="security_decisions")
+    release = models.ForeignKey(SoftwareRelease, null=True, blank=True, on_delete=models.PROTECT, related_name="decisions")
+    # The reasons that held (ended or announced) when decided, as kinds: "security_updates", "os_support" (rules.REASONS)
+    reasons = models.JSONField(default=list)
+    response = models.CharField(max_length=30, choices=DecisionResponse.choices)
+    controls = models.JSONField(default=list)  # rules.CONTROLS slugs; non-empty exactly for keep_with_controls (decisions.py)
+    controls_reference = models.CharField(max_length=EXCEPTION_REFERENCE_MAX, blank=True, validators=[EXCEPTION_REFERENCE_VALIDATOR])
+    plan = models.CharField(max_length=24, choices=DecisionPlan.choices, default=DecisionPlan.NONE)
+    plan_by = models.DateField(null=True, blank=True)  # never a stored fiscal year: worded at read time (apps.facility.fiscal)
+    plan_owner = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    accepted_by = models.CharField(max_length=24, choices=AcceptedBy.choices)
+    exception_reference = models.CharField(max_length=EXCEPTION_REFERENCE_MAX, blank=True, validators=[EXCEPTION_REFERENCE_VALIDATOR])
+    recorded_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, editable=False,
+                                    related_name="+")
+    decided_on = models.DateField()
+    review_by = models.DateField()
+    governed_ids = models.JSONField(default=list, editable=False)  # the asset ids it governed when recorded ("joined since")
+    supersedes = models.OneToOneField("self", null=True, blank=True, on_delete=models.PROTECT, related_name="superseded_by",
+                                      editable=False)
+    ended_on = models.DateField(null=True, blank=True, editable=False)
+    ended_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, editable=False,
+                                 related_name="+")
+    end_reason = models.CharField(max_length=20, choices=DecisionEnd.choices, blank=True, editable=False)
+    history = HistoricalRecords()
+
+    class Meta:
+        ordering = ["review_by", "number"]
+        constraints = [
+            models.UniqueConstraint(fields=["tenant", "number"], name="uniq_security_decision_number"),
+            models.CheckConstraint(condition=_decision_scope(), name="security_decision_scope"),
+            models.CheckConstraint(condition=Q(ended_on__isnull=True, end_reason="") | (Q(ended_on__isnull=False) & ~Q(end_reason="")),
+                                   name="security_decision_end"),
+            models.CheckConstraint(condition=Q(review_by__gt=models.F("decided_on")), name="security_decision_review_after"),
+            # One live decision per scope for devices past support (slice 40 adds the advisory's three)
+            models.UniqueConstraint(fields=["asset"], condition=Q(applies_to=AppliesTo.SUPPORT_ENDED.value, ended_on__isnull=True,
+                                                                  asset__isnull=False),
+                                    name="uniq_live_support_decision_device"),
+            models.UniqueConstraint(fields=["release"], condition=Q(applies_to=AppliesTo.SUPPORT_ENDED.value, ended_on__isnull=True,
+                                                                    release__isnull=False),
+                                    name="uniq_live_support_decision_release"),
+            models.UniqueConstraint(fields=["device_model"], condition=Q(applies_to=AppliesTo.SUPPORT_ENDED.value, ended_on__isnull=True,
+                                                                        release__isnull=True, asset__isnull=True,
+                                                                        device_model__isnull=False),
+                                    name="uniq_live_support_decision_model"),
+        ]
+
+    def __str__(self):
+        return self.number
+

@@ -10,7 +10,10 @@ retires devices), and every existing custom role reads None for it until a direc
 - Slice 38, software updates (apps.cybersecurity.updates): what an update did is recorded (at a completion, by Confirm version, or by
   hand) at Edit and Equipment View (can_edit_devices); opening update work orders also needs Work orders Edit (can_open_updates), and
   assigning them Work orders Approve (workorders.permissions.can_assign: unassigned otherwise); Approve marks a hand-recorded update
-  entered in error and clears a work order's recorded outcome (can_correct_updates). Slice 39's decisions will be Approve too.
+  entered in error and clears a work order's recorded outcome (can_correct_updates).
+- Slice 39, security decisions (apps.cybersecurity.decisions): reading any decision needs View AND Equipment View (can_view_devices: a
+  decision can name a device); recording, superseding, ending, and marking one entered in error need Approve AND Equipment View
+  (can_decide).
 
 Scoped users (a vendor's company, a requester's unit) are refused everywhere, whatever their levels: the register is never theirs.
 The suggested IT security role (README) is a custom role with Device security Edit and Equipment View.
@@ -56,4 +59,9 @@ def can_open_updates(user) -> bool:
 
 def can_correct_updates(user) -> bool:
     """Mark a hand-recorded software update entered in error, or clear a work order's recorded outcome (slice 38)."""
+    return user.has_level(MODULE, APPROVE_LEVEL) and not scoping.is_scoped(user) and user.has_level(Module.EQUIPMENT, Level.VIEW)
+
+
+def can_decide(user) -> bool:
+    """Record, supersede, or end a security decision, or mark one entered in error (slice 39): Approve and Equipment View."""
     return user.has_level(MODULE, APPROVE_LEVEL) and not scoping.is_scoped(user) and user.has_level(Module.EQUIPMENT, Level.VIEW)
