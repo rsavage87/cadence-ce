@@ -68,7 +68,7 @@ def never(text: str) -> list:
 
 def words(row) -> str:
     """update_words of the row as stored now (its work order and releases read again), kept for the never-words scan."""
-    fresh = SoftwareUpdate.objects.select_related("work_order", "target_release", "release_before", "release_after").get(pk=row.pk)
+    fresh = SoftwareUpdate.objects.select_related("work_order", "target_release", "release_after").get(pk=row.pk)
     text = rules.update_words(fresh)
     WORDS_SEEN.append(text)
     return text
@@ -243,15 +243,14 @@ OUTCOME_CASES = [
     ("patches with a spaced reference", lambda r: choice(PATCHES, reference="ICAR 2026", basis=VL), {"software_reference": VALIDATOR}),
     ("patches with a long reference", lambda r: choice(PATCHES, reference="X" * 41, basis=VL),
      {"software_reference": updates.REFERENCE_LENGTH}),
-    ("patches that changed the version", lambda r: choice(PATCHES, r["56"], reference="ICAR-2026-09", basis=VL),
-     {"software_release": updates.PATCHES_UNCHANGED}),
+    ("patches naming a release", lambda r: choice(PATCHES, r["56"], reference="ICAR-2026-09", basis=VL),
+     {"software_release": updates.PATCHES_NO_RELEASE}),
+    ("patches naming the recorded release", lambda r: choice(PATCHES, r["52"], reference="ICAR-2026-09", basis=VL),
+     {"software_release": updates.PATCHES_NO_RELEASE}),
     ("patches with no basis", lambda r: choice(PATCHES, reference="ICAR-2026-09"), {"software_basis": updates.BASIS_WORDS}),
-    ("already on another release than recorded", lambda r: choice(ALREADY, r["56"]),
-     {"software_release": updates.RECORDED_AS.format(version="5.2 (demo)")}),
-    ("already, but not on the target", lambda r: choice(ALREADY),
+    ("already, but not on the target", lambda r: choice(ALREADY, r["52"]),
      {"software_release": updates.NOT_THE_TARGET.format(version="5.2 (demo)", target="5.6 (demo)")}),
-    ("already with a basis", lambda r: choice(ALREADY, basis=MR),
-     {"software_basis": updates.NO_BASIS, "software_release": updates.NOT_THE_TARGET.format(version="5.2 (demo)", target="5.6 (demo)")}),
+    ("already with a basis", lambda r: choice(ALREADY, basis=MR), {"software_basis": updates.NO_BASIS}),
     ("an outcome that is not one", lambda r: UpdateChoice(outcome="updated"), {"software_outcome": updates.OUTCOME_WORDS}),
 ]
 
@@ -280,13 +279,14 @@ def test_each_outcome_is_checked_keyed_by_field(on52, job, tech, every_release, 
     assert wo.status == WoStatus.OPEN and row.outcome == "" and reasons(DeviceSecurity.objects.get())[-1] is None  # nothing written
 
 
-def test_with_no_release_recorded_patches_name_none_and_already_needs_one(pump, r52, job, tech):
+def test_with_no_release_recorded_patches_name_none_and_already_needs_one_on_a_patches_target(pump, r52, job, techs, tech):
     wo, _row = job
     assert refused(complete, wo, tech, choice(PATCHES, r52, reference="ICAR-2026-09", basis=VL), "Done") == {
-        "software_release": updates.PATCHES_NONE_RECORDED}
-    assert refused(complete, wo, tech, choice(ALREADY), "Done") == {"software_release": updates.CHOOSE_RUNS_NOW}
+        "software_release": updates.PATCHES_NO_RELEASE}
     assert refused(complete, wo, tech, choice(ALREADY, r52), "Done") == {
         "software_release": updates.NOT_THE_TARGET.format(version="5.2 (demo)", target="5.6 (demo)")}
+    patches, _prow = update_wo(pump, reference="ICAR-2026-09", assigned_to=techs["tom"])
+    assert refused(complete, patches, tech, choice(ALREADY), "Done") == {"software_release": updates.CHOOSE_RUNS_NOW}
 
 
 # --- the completion's choice: what it records ---------------------------------------------------------------------------------------
@@ -296,8 +296,8 @@ def test_installed_records_the_release_since_today_with_the_default_resolution(p
     done = complete(wo, tech, choice(INSTALLED, r56, reference="FCO-2026-11", basis=MR))
     row.refresh_from_db()
     assert done.software == row
-    assert (row.outcome, row.release_before, row.release_after, row.reference, row.basis, row.applied_on, row.recorded_by,
-            row.later_kept) == (INSTALLED, r52, r56, "FCO-2026-11", MR, today, tech, False)
+    assert (row.outcome, row.release_after, row.reference, row.basis, row.applied_on, row.recorded_by,
+            row.later_kept) == (INSTALLED, r56, "FCO-2026-11", MR, today, tech, False)
     sec = DeviceSecurity.objects.get(asset=pump)
     assert (sec.release, sec.release_since, sec.checked_on, sec.checked_by) == (r56, today, today, tech)
     assert wo.status == WoStatus.COMPLETED and wo.resolution == updates.DEFAULT_RESOLUTION[INSTALLED]
@@ -305,16 +305,16 @@ def test_installed_records_the_release_since_today_with_the_default_resolution(p
     assert "5.6" not in wo.resolution + notes and "5.2" not in wo.resolution + notes and "FCO" not in notes  # never a version
     assert reasons(row)[-1] == f"Recorded at completion of {wo.number}"
     assert reasons(sec)[-1] == f"Facts recorded at {wo.number}: release set to 5.6 (demo)"
-    assert words(row) == f"5.6 (demo) installed {rules.day_words(today)} (recorded before: 5.2 (demo)); ref FCO-2026-11"
+    assert words(row) == f"5.6 (demo) installed {rules.day_words(today)}; ref FCO-2026-11"
     assert rules.release_offer(wo, tech) is not None and not rules.release_offer(wo, tech).needed
 
 
-def test_installed_on_a_device_with_none_recorded_names_no_before(pump, r56, job, tech, today):
+def test_installed_on_a_device_with_none_recorded(pump, r56, job, tech, today):
     wo, row = job
     complete(wo, tech, choice(INSTALLED, r56, basis=NS), "Flashed the main board")
     row.refresh_from_db()
-    assert row.release_before is None and row.before_taken and wo.resolution == "Flashed the main board"  # a typed resolution stays
-    assert words(row) == f"5.6 (demo) installed {rules.day_words(today)}"  # review round 2: never "(recorded before: not recorded)"
+    assert row.release_after == r56 and wo.resolution == "Flashed the main board"  # a typed resolution stays
+    assert words(row) == f"5.6 (demo) installed {rules.day_words(today)}"
     assert DeviceSecurity.objects.get().release == r56
 
 
@@ -322,7 +322,7 @@ def test_patches_keep_the_version_and_record_the_day_checked(pump, r52, on52, te
     wo, row = update_wo(pump, reference="ICAR-2026-09", assigned_to=techs["tom"])
     complete(wo, tech, choice(PATCHES, reference="ICAR-2026-09", basis=VL))
     row.refresh_from_db()
-    assert (row.outcome, row.release_before, row.release_after, row.reference) == (PATCHES, r52, r52, "ICAR-2026-09")
+    assert (row.outcome, row.release_after, row.reference) == (PATCHES, r52, "ICAR-2026-09")
     sec = DeviceSecurity.objects.get()
     assert (sec.release, sec.release_since, sec.checked_on, sec.checked_by) == (r52, today - 30 * DAY, today, tech)
     assert wo.resolution == updates.DEFAULT_RESOLUTION[PATCHES]
@@ -347,7 +347,7 @@ def test_already_keeps_the_release_and_names_one_when_none_was_recorded(pump, r5
     complete(wo, tech, choice(ALREADY))
     row.refresh_from_db()
     sec = DeviceSecurity.objects.get()
-    assert (row.outcome, row.release_before, row.release_after, row.basis) == (ALREADY, r56, r56, "")
+    assert (row.outcome, row.release_after, row.basis) == (ALREADY, r56, "")
     assert (sec.release, sec.release_since, sec.checked_on) == (r56, today - 9 * DAY, today)
     assert wo.resolution == updates.DEFAULT_RESOLUTION[ALREADY]
     assert words(row) == f"Checked {rules.day_words(today)}: already on 5.6 (demo); nothing installed"
@@ -380,12 +380,12 @@ def test_a_re_completion_keeps_or_replaces_the_outcome_with_history(pump, r52, r
     row.refresh_from_db()
     assert row.outcome == INSTALLED
     wo_services.change_status(wo, WoStatus.IN_PROGRESS, by=kim)
-    # review round 3: already is judged against what was taken before (5.2), never the record now (this row's own install of 5.6)
-    assert refused(complete, wo, tech, choice(ALREADY), "Checked again") == {
+    assert refused(complete, wo, tech, choice(ALREADY, r52), "Checked again") == {  # already on a release target: the target
         "software_release": updates.NOT_THE_TARGET.format(version="5.2 (demo)", target="5.6 (demo)")}
     complete(wo, tech, choice(PATCHES, reference="ICAR-2026-09", basis=NS), "Patched instead")
     row.refresh_from_db()
-    assert (row.outcome, row.release_before, row.release_after) == (PATCHES, r52, r52)  # what it ran before: taken once (round 2)
+    # review round 4: patches run the device's recorded release (5.6 since the first completion), never a before
+    assert (row.outcome, row.release_after) == (PATCHES, r56)
     assert outcomes(row) == ["", INSTALLED, PATCHES]
     assert reasons(row) == [None, f"Recorded at completion of {wo.number}", f"Recorded at completion of {wo.number}"]
 
@@ -405,14 +405,13 @@ def test_confirm_records_the_vendors_job_on_its_completed_day(pump, r52, r56, on
     assert words(row) == f"Completed by the vendor {rules.day_words(today - 3 * DAY)}; version not confirmed"
     done = confirm(row, choice(INSTALLED, r56, basis=MR), by=tech)
     row.refresh_from_db()
-    assert done.pk == row.pk and (row.outcome, row.release_before, row.release_after, row.applied_on, row.recorded_by,
-                                  row.later_kept) == (INSTALLED, r52, r56, today - 3 * DAY, tech, False)
+    assert done.pk == row.pk and (row.outcome, row.release_after, row.applied_on, row.recorded_by,
+                                  row.later_kept) == (INSTALLED, r56, today - 3 * DAY, tech, False)
     sec = DeviceSecurity.objects.get()
     assert (sec.release, sec.release_since, sec.checked_on, sec.checked_by) == (r56, today - 3 * DAY, today - 3 * DAY, tech)
     assert reasons(row)[-1] == "Confirmed"
     assert reasons(sec)[-1] == f"Facts recorded when {wo.number} was confirmed: release set to 5.6 (demo)"
-    assert words(row) == (f"5.6 (demo) installed {rules.day_words(today - 3 * DAY)} (recorded before: 5.2 (demo)); as the vendor's "
-                          "report VR-2026-77 states")
+    assert words(row) == f"5.6 (demo) installed {rules.day_words(today - 3 * DAY)}; as the vendor's report VR-2026-77 states"
     assert refused(confirm, row, choice(INSTALLED, r56, basis=MR), by=tech) == {"software_outcome": updates.RECORDED_MEANWHILE}
 
 
@@ -423,7 +422,7 @@ def test_confirm_never_moves_the_facts_backwards(pump, r52, r56, vendor_job, tec
     confirm(row, choice(INSTALLED, r56, basis=MR), by=tech)
     row.refresh_from_db()
     sec.refresh_from_db()
-    assert row.later_kept and (row.outcome, row.release_before, row.release_after) == (INSTALLED, None, r56)  # before not known
+    assert row.later_kept and (row.outcome, row.release_after) == (INSTALLED, r56)
     assert (sec.release, sec.checked_on) == (r52, today - DAY) and len(reasons(sec)) == history  # kept, not written
     assert words(row).endswith("; a later record of the device is kept")
 
@@ -456,13 +455,12 @@ def test_confirm_on_a_retired_device_is_refused(pump, r56, vendor_job, tech):
 
 def test_record_an_install_by_hand(pump, r52, r56, on52, tech, today):
     row = record(pump, choice(INSTALLED, r56, basis=MR), installed_by=InstalledBy.IT, applied_on=str(today - DAY), by=tech)
-    assert (row.work_order, row.outcome, row.release_before, row.release_after, row.installed_by, row.applied_on, row.later_kept,
-            row.target) == (None, INSTALLED, r52, r56, InstalledBy.IT, today - DAY, False, "")
+    assert (row.work_order, row.outcome, row.release_after, row.installed_by, row.applied_on, row.later_kept,
+            row.target) == (None, INSTALLED, r56, InstalledBy.IT, today - DAY, False, "")
     sec = DeviceSecurity.objects.get()
     assert (sec.release, sec.release_since, sec.checked_on, sec.checked_by) == (r56, today - DAY, today - DAY, tech)
     assert reasons(row) == ["Recorded"] and reasons(sec)[-1] == "Facts recorded with an update recorded by hand: release set to 5.6 (demo)"
-    assert words(row) == (f"5.6 (demo) installed {rules.day_words(today - DAY)} (recorded before: 5.2 (demo)); installed by information "
-                          "technology")
+    assert words(row) == f"5.6 (demo) installed {rules.day_words(today - DAY)}; installed by information technology"
     assert refused(record, pump, choice(INSTALLED, r56, basis=MR), installed_by=InstalledBy.CE, applied_on=today - DAY, by=tech) == {
         "software_outcome": updates.DUPLICATE.format(words=words(row))}  # the same install again (review round 2)
 
@@ -470,7 +468,7 @@ def test_record_an_install_by_hand(pump, r52, r56, on52, tech, today):
 def test_record_patches_by_the_manufacturer_remotely(pump, r52, on52, tech, today):
     row = record(pump, choice(PATCHES, reference="DEMO-PATCH-2026-09", basis=VL), installed_by=InstalledBy.MANUFACTURER,
                  applied_on=today, by=tech)
-    assert (row.release_before, row.release_after, row.reference) == (r52, r52, "DEMO-PATCH-2026-09")
+    assert (row.release_after, row.reference) == (r52, "DEMO-PATCH-2026-09")
     assert words(row) == (f"Patches on the manufacturer's validated patch list applied {rules.day_words(today)}, version unchanged "
                           "(5.2 (demo)); ref DEMO-PATCH-2026-09; installed by the manufacturer remotely")
     assert rules.update_state(row) == rules.DONE
@@ -507,9 +505,9 @@ def test_record_in_the_past_keeps_a_later_record(pump, r52, r56, tech, today):
     sec = facts(pump, r52, release_since=today - 30 * DAY, checked_on=today - DAY)
     row = record(pump, choice(INSTALLED, r56, basis=NS), installed_by=InstalledBy.AUTOMATIC, applied_on=today - 5 * DAY, by=tech)
     sec.refresh_from_db()
-    assert row.later_kept and row.release_before is None and (sec.release, sec.checked_on) == (r52, today - DAY)
+    assert row.later_kept and (sec.release, sec.checked_on) == (r52, today - DAY)
     assert words(row) == (f"5.6 (demo) installed {rules.day_words(today - 5 * DAY)}; installed automatically; a later record of the "
-                          "device is kept")  # what it ran before is not known (review round 2): the facts are newer than the day
+                          "device is kept")
 
 
 def test_record_needs_device_security_edit_and_equipment_view(tenant, pump, r56, today):
@@ -542,15 +540,13 @@ def test_a_work_orders_outcome_entered_in_error_is_cleared_and_confirm_is_offere
     remove(row, by=manager)
     row.refresh_from_db()
     assert all(getattr(row, f) in ("", None, False) for f in OUTCOME_FIELDS) and row.removed_on is None
-    assert (row.release_before, row.before_taken) == (r52, True)  # what it ran before stays (review round 2: taken once)
     assert reasons(row)[-1] == "Outcome entered in error" and state(row) == rules.NOT_CONFIRMED
     assert rules.release_offer(wo, tech).needed and DeviceSecurity.objects.get().release == r56
-    # review round 3: already is judged against what was taken before (5.2), never the record now (the outcome entered in error's 5.6)
-    assert refused(confirm, row, choice(ALREADY), by=tech) == {
+    assert refused(confirm, row, choice(ALREADY, r52), by=tech) == {
         "software_release": updates.NOT_THE_TARGET_DONE.format(target="5.6 (demo)", version="5.2 (demo)")}
     confirm(row, choice(INSTALLED, r56, basis=MR), by=tech)  # recorded again
     row.refresh_from_db()
-    assert (row.outcome, row.applied_on, row.release_before) == (INSTALLED, today, r52)
+    assert (row.outcome, row.applied_on, row.release_after) == (INSTALLED, today, r56)
 
 
 def test_a_release_with_an_open_update_to_install_it_stays(pump, r56, job, kim):
@@ -865,8 +861,8 @@ def test_updates_of_is_one_query_newest_first_and_words_need_none(pump, r52, r56
     assert [r.pk for r in rows] == [open_row.pk, done_row.pk, hand.pk, cancelled_row.pk]
     assert states == [rules.OPEN, rules.DONE, rules.DONE, rules.CANCELLED]
     assert said[0] == "Open: to apply the manufacturer's patches (ref ICAR-2026-09)" and said[3] == "Cancelled"
-    # The completion's record (5.6 (demo) since 10 days ago) is newer and kept; the patches name no version, none being sent (round 2:
-    # never the record now, nor "version not recorded")
+    # The completion's record (5.6 (demo) since 10 days ago) is newer and kept: the patches name no version (never the record now, nor
+    # "version not recorded")
     assert said[2] == (f"Patches applied {rules.day_words(today - 15 * DAY)}, version unchanged; ref ICAR-2026-08; "
                        "installed by the department that uses it; a later record of the device is kept")
 
@@ -924,12 +920,11 @@ def every_sentence(pump_model, today) -> list:
                                      target_release=target, target_reference=ref)
                 out.append(rules.update_words(row))
     sources = [wo(WoStatus.COMPLETED), wo(WoStatus.CLOSED, True), wo(WoStatus.COMPLETED, True, "VR-2026-77")] + list(InstalledBy.values)
-    for outcome, source, reference, after, before, kept in product(RECORDED_OUTCOMES_ALL, sources, ("", "FCO-2026-11"),
-                                                                    (None, rel("5.6 (demo)"), rel("5.6 (demo)", True)),
-                                                                    (None, rel("5.2 (demo)")), (False, True)):
+    for outcome, source, reference, after, kept in product(RECORDED_OUTCOMES_ALL, sources, ("", "FCO-2026-11"),
+                                                            (None, rel("5.6 (demo)"), rel("5.6 (demo)", True)), (False, True)):
         for basis in updates.BASES[outcome] or ("",):
             row = SoftwareUpdate(outcome=outcome, reference=reference, basis=basis, applied_on=today, release_after=after,
-                                 release_before=before, later_kept=kept)
+                                 later_kept=kept)
             if isinstance(source, WorkOrder):
                 row.work_order = source
             else:

@@ -242,8 +242,7 @@ class InstalledBy(models.TextChoices):
 
 RECORDED_OUTCOMES = (UpdateOutcome.INSTALLED, UpdateOutcome.PATCHES, UpdateOutcome.ALREADY)
 INSTALL_OUTCOMES = (UpdateOutcome.INSTALLED, UpdateOutcome.PATCHES)  # counted as installs; "already" never is
-# What Entered in error clears on a work order's row (updates.remove). release_before and before_taken stay (review round 2: what was
-# recorded before is taken once, at the row's first recording, and a confirmation after the error reuses it).
+# What Entered in error clears on a work order's row (updates.remove).
 OUTCOME_FIELDS = ("outcome", "release_after", "reference", "basis", "applied_on", "recorded_by", "later_kept", "on_vendor_service",
                   "vendor_report")
 
@@ -273,7 +272,9 @@ class SoftwareUpdate(TenantModel):
                                   related_name="+")
     # What was done (blank while not recorded)
     outcome = models.CharField(max_length=10, choices=UpdateOutcome.choices, blank=True)
-    release_before = models.ForeignKey(SoftwareRelease, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    # What it runs after (review round 4: only what the person recording it says the update did): installed and already, the release
+    # they name; patches, the device's recorded release when the facts were written, else none. Never what it ran before: the device's
+    # own History (DeviceSecurity's) shows every change of its release with its reason.
     release_after = models.ForeignKey(SoftwareRelease, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
     reference = models.CharField(max_length=UPDATE_REFERENCE_MAX, blank=True, validators=[UPDATE_REFERENCE_VALIDATOR])
     basis = models.CharField(max_length=24, choices=UpdateBasis.choices, blank=True)
@@ -282,10 +283,6 @@ class SoftwareUpdate(TenantModel):
     recorded_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, editable=False,
                                     related_name="+")
     later_kept = models.BooleanField(default=False, editable=False)  # the device's facts were newer than applied_on: kept, not written
-    # Whether release_before was taken (review round 2): at the row's first recording (a first completion, a Confirm version of a row never
-    # recorded, a hand row's own), the device's recorded release then, or none when its facts were newer than applied_on. Entered in error
-    # and a re-completion keep both; a later recording reuses them and never reads the device's record again for what it ran before.
-    before_taken = models.BooleanField(default=False, editable=False)
     # Where the outcome came from (review fix C15): the work order as it was when the outcome was recorded (a completion or Confirm
     # version), never as it is now: on vendor service then, and the vendor's report number then (its checks_reference). Cleared with the
     # outcome; never on a hand row.

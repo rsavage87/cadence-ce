@@ -322,8 +322,8 @@ HIDE = {
     # Slice 37 (the model and the device are in each record's name; the stored key is the version's)
     "cybersecurity.softwarerelease": {"device_model", "version_key"},
     "cybersecurity.devicesecurity": {"asset"},
-    # slice 38: both in the record's name; before_taken is bookkeeping (review round 3: "Recorded before" is the fact shown)
-    "cybersecurity.softwareupdate": {"asset", "work_order", "before_taken"},
+    # slice 38: both in the record's name
+    "cybersecurity.softwareupdate": {"asset", "work_order"},
 }
 
 # Labels that read better than the verbose names, per model; `_label` falls back to the verbose name.
@@ -405,7 +405,7 @@ LABELS = {
     # Slice 38
     "cybersecurity.softwareupdate": {"target": "To install", "target_release": "Release to install", "target_reference": "Patches to apply",
                                      "opened_on": "Opened", "opened_by": "Opened by", "outcome": "What it did",
-                                     "release_before": "Recorded before", "release_after": "Runs after", "reference": "Manufacturer's reference",
+                                     "release_after": "Runs after", "reference": "Manufacturer's reference",
                                      "basis": "Basis", "installed_by": "Installed by", "applied_on": "Done on", "recorded_by": "Recorded by",
                                      "later_kept": "A later record kept", "removed_on": "Entered in error", "removed_by": "Marked by"},
     "testequipment.testequipment": {"tag": "Tag", "kind": "Kind", "serial": "Serial number", "program": "Certificates",
@@ -803,8 +803,8 @@ EMPTY_WORDS = {
         "mds2_document", "mds2_released_on", "mds2_requested_on", "mds2_url", "patient_data", "connects", "remote_service", "patching",
         "sbom", "updates_by", "segmented")},
     # Slice 38: an update's outcome is not recorded while its work order is open, or once it was completed with the version not confirmed
-    "cybersecurity.softwareupdate": {"outcome": "Not recorded", "release_before": "Not recorded", "release_after": "Not recorded",
-                                     "basis": "Not recorded", "applied_on": "Not recorded"},
+    "cybersecurity.softwareupdate": {"outcome": "Not recorded", "release_after": "Not recorded", "basis": "Not recorded",
+                                     "applied_on": "Not recorded"},
 }
 
 

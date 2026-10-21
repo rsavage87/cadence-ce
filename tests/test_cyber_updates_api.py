@@ -45,7 +45,7 @@ UPDATES = "/api/v1/software-updates/"
 WORK_ORDERS = "/api/v1/work-orders/"
 DAY = timedelta(days=1)
 UPDATE_FIELDS = {"id", "device", "work_order", "target", "target_release", "target_reference", "state", "state_label", "outcome",
-                 "outcome_label", "words", "applied_on", "release_before", "release_after", "reference", "basis", "basis_label",
+                 "outcome_label", "words", "applied_on", "release_after", "reference", "basis", "basis_label",
                  "installed_by", "installed_by_label", "recorded_by", "later_kept", "opened_on"}
 WO_UPDATE_FIELDS = {"target", "target_release", "target_reference", "state", "outcome", "outcome_label", "words", "applied_on",
                     "release_after"}
@@ -123,7 +123,7 @@ def test_the_work_orders_software_update_in_the_rules_words(client, make_user, w
     done = ok(client.get(f"{WORK_ORDERS}{wos['CE-10003'].pk}/"))["software_update"]
     assert (done["state"], done["outcome"], done["outcome_label"], done["applied_on"], done["release_after"]) == (
         "done", "installed", UpdateOutcome.INSTALLED.label, today.isoformat(), {"id": str(r56.pk), "version": "5.6-DEMO"})
-    assert done["words"] == f"5.6-DEMO installed {day(today)} (recorded before: 5.2-DEMO)"
+    assert done["words"] == f"5.6-DEMO installed {day(today)}"
     unconfirmed = ok(client.get(f"{WORK_ORDERS}{wos['CE-10004'].pk}/"))["software_update"]
     assert (unconfirmed["state"], unconfirmed["words"]) == ("not_confirmed", f"Completed {day(today)}; version not confirmed")
     cancelled = ok(client.get(f"{WORK_ORDERS}{wos['CE-10005'].pk}/"))["software_update"]
@@ -260,7 +260,7 @@ def test_the_transition_records_what_the_update_did(client, world, today):
     data = ok(done)
     assert data["status"] == "completed" and data["resolution"] == updates.DEFAULT_RESOLUTION[UpdateOutcome.INSTALLED]
     assert data["software_update"]["state"] == "done"
-    assert data["software_update"]["words"] == f"5.6-DEMO installed {day(today)} (recorded before: 5.2-DEMO)"
+    assert data["software_update"]["words"] == f"5.6-DEMO installed {day(today)}"
     assert rules.release_of(Asset.objects.get(pk=wo.asset_id)) == r56
     assert data["software_choices"] is None  # completed: nothing to send now
 
@@ -319,13 +319,13 @@ def test_the_updates_read_as_the_security_tab_shows_them(client, make_user, worl
     assert all(set(r) == UPDATE_FIELDS for r in rows)
     by_tag = {r["device"]["tag"]: r for r in rows}
     assert set(by_tag) == {"CE-10002", "CE-10003", "CE-10004", "CE-10005", "CE-10006", "CE-10008"}  # the one entered in error left out
-    wo, r52, r56, tech = world["wos"]["CE-10003"], world["r52"], world["r56"], world["tech"]
+    wo, r56, tech = world["wos"]["CE-10003"], world["r56"], world["tech"]
     assert by_tag["CE-10003"] == {
         "id": str(SoftwareUpdate.objects.get(work_order=wo).pk), "device": {"id": str(wo.asset_id), "tag": "CE-10003"},
         "work_order": {"id": str(wo.pk), "number": wo.number}, "target": "release",
         "target_release": {"id": str(r56.pk), "version": "5.6-DEMO"}, "target_reference": "", "state": "done", "state_label": "Done",
-        "outcome": "installed", "outcome_label": "Release installed", "words": f"5.6-DEMO installed {day(today)} (recorded before: 5.2-DEMO)",
-        "applied_on": today.isoformat(), "release_before": {"id": str(r52.pk), "version": "5.2-DEMO"},
+        "outcome": "installed", "outcome_label": "Release installed", "words": f"5.6-DEMO installed {day(today)}",
+        "applied_on": today.isoformat(),
         "release_after": {"id": str(r56.pk), "version": "5.6-DEMO"}, "reference": "", "basis": "manufacturer_release",
         "basis_label": UpdateBasis.MANUFACTURER_RELEASE.label, "installed_by": "", "installed_by_label": "", "recorded_by": str(tech),
         "later_kept": False, "opened_on": today.isoformat()}

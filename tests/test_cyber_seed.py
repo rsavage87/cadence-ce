@@ -240,7 +240,7 @@ def test_the_seeded_software_updates(seeded):
         today = timezone.localdate()
         kim = User.objects.get(username="kim@riverside.example")
         rows = list(SoftwareUpdate.objects.select_related("asset", "asset__department", "work_order", "work_order__assigned_to",
-                                                         "target_release", "release_before", "release_after", "recorded_by", "opened_by"))
+                                                         "target_release", "release_after", "recorded_by", "opened_by"))
         batch = sorted((r for r in rows if r.work_order_id), key=lambda r: r.asset.tag)
         pumps = [r.asset for r in batch]
         assert len(batch) in seed_demo.UPDATE_DEPARTMENT_PUMPS and len({p.department_id for p in pumps}) == 1
@@ -262,9 +262,8 @@ def test_the_seeded_software_updates(seeded):
         installed, unconfirmed, *still_open = batch
         assert (installed.work_order.status, installed.outcome, installed.basis, installed.applied_on, installed.recorded_by) == (
             WoStatus.COMPLETED, UpdateOutcome.INSTALLED, UpdateBasis.MANUFACTURER_RELEASE, today, technician.user)
-        assert (installed.release_before.version, installed.release_after.version) == (seed_demo.PUMP_OLDER, seed_demo.PUMP_NEWER)
-        assert rules.update_words(installed) == (f"{seed_demo.PUMP_NEWER} installed {rules.day_words(today)} (recorded before: "
-                                                 f"{seed_demo.PUMP_OLDER})")
+        assert installed.release_after.version == seed_demo.PUMP_NEWER
+        assert rules.update_words(installed) == f"{seed_demo.PUMP_NEWER} installed {rules.day_words(today)}"
         assert installed.work_order.resolution == "Software update installed; version recorded."
         assert rules.release_of(installed.asset).version == seed_demo.PUMP_NEWER and installed.asset.cyber.release_since == today
         assert (unconfirmed.work_order.status, unconfirmed.outcome, unconfirmed.work_order.resolution) == (

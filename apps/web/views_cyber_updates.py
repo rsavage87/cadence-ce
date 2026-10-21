@@ -107,7 +107,7 @@ def _update(request, pk):
     """An update of this facility with its work order, releases, and device read (rules.update_words reads them): another facility's,
     an unknown id, or an install recorded by hand that was entered in error (hidden from the tab, kept in history) is a 404; so is one
     on a device this user may not see. Returns (update, its device as the drawer reads it)."""
-    found = (SoftwareUpdate.objects.select_related("asset", "work_order", "target_release", "release_before", "release_after")
+    found = (SoftwareUpdate.objects.select_related("asset", "work_order", "target_release", "release_after")
              .filter(pk=pk).first())
     if found is None or (found.work_order_id is None and found.removed_on is not None):
         raise Http404
@@ -168,7 +168,7 @@ def _modal(request, template: str, ctx: dict):
 
 def _fresh(**lookup) -> SoftwareUpdate:
     """The row as stored now (by pk, or by its work order), with what rules.update_words reads."""
-    return SoftwareUpdate.objects.select_related("work_order", "target_release", "release_before", "release_after").get(**lookup)
+    return SoftwareUpdate.objects.select_related("work_order", "target_release", "release_after").get(**lookup)
 
 
 def _with_later(words: str, row) -> str:

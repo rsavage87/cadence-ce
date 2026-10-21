@@ -127,7 +127,7 @@ def drawer_line(wo, user, today=None) -> dict | None:
     permissions.can_view_devices (never scoped). One query (the record with its releases); the work order is `wo` itself."""
     if wo.type != WoType.SOFTWARE_UPDATE or not cyber_perms.can_view_devices(user):
         return None
-    row = (SoftwareUpdate.objects.filter(work_order_id=wo.pk).select_related("target_release", "release_before", "release_after")
+    row = (SoftwareUpdate.objects.filter(work_order_id=wo.pk).select_related("target_release", "release_after")
            .order_by("pk").first())
     if row is None:
         return None

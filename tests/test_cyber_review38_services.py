@@ -1,13 +1,11 @@
 """
 Slice 38 review fixes, the services and rules (F1), on SQLite and PostgreSQL:
 
-- C1, C2, as round 2 settled them (no history read: Cadence never rebuilds a past record):
-  - what was recorded before is taken once, at the row's first recording, from the device's record then, and only when its facts are not
-    dated after the update's day; else it is not known. Entered in error and a re-completion keep it; a later Confirm version reuses it.
-    An install of the release the record already names claims no before;
-  - "installed" is never refused for naming the release the record names, at any door; "patches" and "already" are checked against the
-    record only when the facts will be written; with a later record kept, the release sent is the version that day;
-  - the words: "(recorded before: X)" only when X is known; patches with no version and a later record kept name none;
+- C1, C2, as round 4 settled them (no history read, and no reading of the device's record for what it ran before: an update's record
+  states only what the person recording it says the update did):
+  - "installed" is never refused for naming the release the record names, at any door; nothing is judged against the device's record;
+    patches name no release and run the recorded one when the facts are written, none when a later record is kept;
+  - the words never say what it ran before; patches with no version and a later record kept name none;
   - one install is recorded once by hand (updates.DUPLICATE); a work order's outcome is never refused for a hand row's;
   - Confirm version never tells the user to keep a completed work order open (NOT_THE_TARGET_DONE).
 - C9: an update imported from another system and reopened is an open update: open_update refuses another (naming it), the batch skips
@@ -58,7 +56,7 @@ def complete(wo, by, software=KEEP, resolution="", *, today=None, **kwargs):
 
 
 def words(row) -> str:
-    fresh = SoftwareUpdate.objects.select_related("work_order", "target_release", "release_before", "release_after").get(pk=row.pk)
+    fresh = SoftwareUpdate.objects.select_related("work_order", "target_release", "release_after").get(pk=row.pk)
     text = rules.update_words(fresh)
     assert not [w for w in rules.NEVER_WORDS if w in text.lower()], text
     return text
@@ -131,71 +129,69 @@ def vendor_job(pump, r56, vendor, today):
     return wo, row
 
 
-# --- C1, C2 (round 2): what was recorded before is taken once --------------------------------------------------------------------------
+# --- C1, C2: Confirm version, a re-completion, and a hand record --------------------------------------------------------------------
 
 def test_c1_entered_in_error_then_confirm_records_the_install(pump, r52, r56, on52, job, tech, manager, today):
     """Completed as installed with the wrong basis, entered in error (the facts stay at 5.6 since today), then confirmed as installed
-    with the right one: what it ran before is the one taken at the completion, never the record now (5.6, the install's own result)."""
+    with the right one: accepted, never refused for the record naming 5.6 (the install's own result)."""
     wo, row = job
     complete(wo, tech, choice(INSTALLED, r56, basis=NS))
     remove(row, by=manager)
     row.refresh_from_db()
-    assert (row.outcome, row.release_before, row.before_taken) == ("", r52, True)  # kept through Entered in error
+    assert (row.outcome, row.release_after) == ("", None)
     confirm(row, choice(INSTALLED, r56, basis=MR), by=tech)
     row.refresh_from_db()
-    assert (row.outcome, row.release_before, row.release_after, row.basis, row.applied_on, row.later_kept) == (
-        INSTALLED, r52, r56, MR, today, False)
-    assert words(row) == f"5.6 (demo) installed {day(today)} (recorded before: 5.2 (demo))"
+    assert (row.outcome, row.release_after, row.basis, row.applied_on, row.later_kept) == (INSTALLED, r56, MR, today, False)
+    assert words(row) == f"5.6 (demo) installed {day(today)}"
     sec = DeviceSecurity.objects.get(asset=pump)
     assert (sec.release, sec.release_since) == (r56, today)
 
 
-def test_c1_remove_then_confirm_another_release_keeps_the_true_before(pump, r52, r56, r57, on52, techs, tech, manager, today):
+def test_c1_remove_then_confirm_another_release(pump, r52, r56, r57, on52, techs, tech, manager, today):
     """Completed three days ago as installed 5.6, the wrong release picked (the device runs 5.7): entered in error, then confirmed as
-    installed 5.7: recorded before 5.2, never 5.6 (the outcome entered in error)."""
+    installed 5.7: the record says 5.7 installed that day."""
     wo, row = update_wo(pump, r57, assigned_to=techs["tom"], opened_on=today - 5 * DAY)
     complete(wo, tech, choice(INSTALLED, r56, basis=MR), today=today - 3 * DAY)
     remove(row, by=manager)
     confirm(row, choice(INSTALLED, r57, basis=MR), by=tech)
     row.refresh_from_db()
-    assert (row.release_before, row.release_after, row.applied_on, row.later_kept) == (r52, r57, today - 3 * DAY, False)
-    assert words(row) == f"5.7 (demo) installed {day(today - 3 * DAY)} (recorded before: 5.2 (demo))"
+    assert (row.release_after, row.applied_on, row.later_kept) == (r57, today - 3 * DAY, False)
+    assert words(row) == f"5.7 (demo) installed {day(today - 3 * DAY)}"
     assert DeviceSecurity.objects.get(asset=pump).release == r57  # the facts follow the corrected install
 
 
-def test_c1_remove_then_confirm_patches_keeps_the_true_before(pump, r52, r56, on52, techs, tech, manager, today):
+def test_c1_remove_then_confirm_patches(pump, r52, r56, on52, techs, tech, manager, today):
     """A patches job completed three days ago as installed 5.6 by mistake; entered in error; the release corrected with Record facts as
-    the toast says (5.2, since today); then confirmed as patches on 5.2: accepted (a later record is kept, so the release sent is the
-    version that day), recorded before 5.2 still."""
+    the toast says (5.2, since today); then confirmed as patches: accepted, a later record kept (the version that day not stated)."""
     wo, row = update_wo(pump, reference="ICAR-2026-09", assigned_to=techs["tom"], opened_on=today - 5 * DAY)
     complete(wo, tech, choice(INSTALLED, r56, basis=MR), today=today - 3 * DAY)
     remove(row, by=manager)
     record_facts(pump, by=None, release=r52)  # since today
-    confirm(row, choice(PATCHES, r52, reference="ICAR-2026-09", basis=VL), by=tech)
+    confirm(row, choice(PATCHES, reference="ICAR-2026-09", basis=VL), by=tech)
     row.refresh_from_db()
-    assert (row.outcome, row.release_before, row.release_after, row.later_kept) == (PATCHES, r52, r52, True)
-    assert words(row) == (f"Patches on the manufacturer's validated patch list applied {day(today - 3 * DAY)}, version unchanged "
-                          f"(5.2 (demo)); ref ICAR-2026-09{LATER}")
+    assert (row.outcome, row.release_after, row.later_kept) == (PATCHES, None, True)
+    assert words(row) == (f"Patches on the manufacturer's validated patch list applied {day(today - 3 * DAY)}, version unchanged; "
+                          f"ref ICAR-2026-09{LATER}")
 
 
-def test_c1_a_re_completion_with_a_corrected_basis_keeps_the_before(pump, r52, r56, on52, job, tech, kim, today):
+def test_c1_a_re_completion_with_a_corrected_basis(pump, r52, r56, on52, job, tech, kim, today):
     """Completed as installed 5.6 (basis not stated), reopened, and completed again as installed 5.6 on the manufacturer's release: the
-    same row, accepted (never "It already ran 5.6 before"), recorded before 5.2 as taken at the first completion."""
+    same row, accepted (never "It already ran 5.6 before")."""
     wo, row = job
     complete(wo, tech, choice(INSTALLED, r56, basis=NS))
     wo_services.change_status(wo, WoStatus.IN_PROGRESS, by=kim)
     complete(wo, tech, choice(INSTALLED, r56, basis=MR), "Done again")
     row.refresh_from_db()
-    assert (row.outcome, row.release_before, row.release_after, row.basis) == (INSTALLED, r52, r56, MR)
-    assert words(row) == f"5.6 (demo) installed {day(today)} (recorded before: 5.2 (demo))"
+    assert (row.outcome, row.release_after, row.basis) == (INSTALLED, r56, MR)
+    assert words(row) == f"5.6 (demo) installed {day(today)}"
     assert SoftwareUpdate.objects.count() == 1
 
 
 @pytest.mark.parametrize("door", ["bulk set", "record facts"])
 def test_c1_a_vendor_closing_its_job_the_day_after_the_visit(pump, pump_model, r52, r56, on52, vendor_job, tech, today, door):
     """BD installed 5.6 the day before it closed its job (five days ago); IT records the pump on 5.6 since the visit, as the vendor's
-    report says. Confirm installed 5.6 is accepted: the facts are newer than the job's day, so what it ran before is not known (never the
-    false "already on 5.6; nothing installed")."""
+    report says. Confirm installed 5.6 is accepted: the facts are newer than the job's day, so they are kept (never the false "already
+    on 5.6; nothing installed")."""
     _wo, row = vendor_job
     if door == "bulk set":
         record_facts_for(pump_model, [pump], by=None, release=r56, release_since=today - 6 * DAY, today=today)
@@ -203,8 +199,7 @@ def test_c1_a_vendor_closing_its_job_the_day_after_the_visit(pump, pump_model, r
         record_facts(pump, by=None, release=r56, release_since=today - 6 * DAY)
     confirm(row, choice(INSTALLED, r56, basis=MR), by=tech)
     row.refresh_from_db()
-    assert (row.outcome, row.release_before, row.release_after, row.applied_on, row.later_kept) == (
-        INSTALLED, None, r56, today - 5 * DAY, True)
+    assert (row.outcome, row.release_after, row.applied_on, row.later_kept) == (INSTALLED, r56, today - 5 * DAY, True)
     assert words(row) == f"5.6 (demo) installed {day(today - 5 * DAY)}; as the vendor's report VR-2026-77 states{LATER}"
 
 
@@ -213,19 +208,18 @@ def test_c1_the_vendors_job_confirmed_after_a_bulk_set(pump, pump_model, r52, r5
     record_facts_for(pump_model, [pump], by=None, release=r56, today=today)  # 5.6 since today
     confirm(row, choice(INSTALLED, r56, basis=MR), by=tech)
     row.refresh_from_db()
-    assert (row.release_before, row.release_after, row.later_kept) == (None, r56, True)
+    assert (row.release_after, row.later_kept) == (r56, True)
     assert words(row) == f"5.6 (demo) installed {day(today - 5 * DAY)}; as the vendor's report VR-2026-77 states{LATER}"
 
 
 def test_c1_the_record_facts_first_then_completion_as_installed(pump, r52, r56, on52, job, tech, techs, kim, today):
-    """The technician records 5.6 with Record facts, then completes as installed 5.6: accepted, with no false before (the record named
-    5.6 already: stored as taken, round 3, the claim left out of the words). The same over two days: started and recorded the day
-    before, completed the next: the since stays the day recorded (round 3)."""
+    """The technician records 5.6 with Record facts, then completes as installed 5.6: accepted. The same over two days: started and
+    recorded the day before, completed the next: the since is the completion's day (review round 4: installed sets it, always)."""
     wo, row = job
     record_facts(pump, by=None, release=r56)
     complete(wo, tech, choice(INSTALLED, r56, basis=MR))
     row.refresh_from_db()
-    assert (row.outcome, row.release_before, row.release_after, row.later_kept) == (INSTALLED, r56, r56, False)
+    assert (row.outcome, row.release_after, row.later_kept) == (INSTALLED, r56, False)
     assert words(row) == f"5.6 (demo) installed {day(today)}"
 
     other = Asset.objects.create(tag="CE-10009", device_model=pump.device_model, department=pump.department)
@@ -235,10 +229,10 @@ def test_c1_the_record_facts_first_then_completion_as_installed(pump, r52, r56, 
     record_facts(other, by=None, release=r56, release_since=today - 2 * DAY, checked_on=today - 2 * DAY)
     complete(wo2, tech, choice(INSTALLED, r56, basis=MR), today=today - DAY)
     row2.refresh_from_db()
-    assert (row2.release_before, row2.release_after, row2.applied_on, row2.later_kept) == (r56, r56, today - DAY, False)
+    assert (row2.release_after, row2.applied_on, row2.later_kept) == (r56, today - DAY, False)
     assert words(row2) == f"5.6 (demo) installed {day(today - DAY)}"
     sec = DeviceSecurity.objects.get(asset=other)
-    assert (sec.release, sec.release_since, sec.checked_on) == (r56, today - 2 * DAY, today - DAY)  # the since never moves forward
+    assert (sec.release, sec.release_since, sec.checked_on) == (r56, today - DAY, today - DAY)
 
 
 def test_c1_installed_is_never_refused_for_the_release_the_record_names(pump, r56, vendor_job, tech, today):
@@ -248,19 +242,20 @@ def test_c1_installed_is_never_refused_for_the_release_the_record_names(pump, r5
     facts(pump, r56, release_since=today - 10 * DAY, checked_on=today - 10 * DAY)
     confirm(row, choice(INSTALLED, r56, basis=MR), by=tech)
     row.refresh_from_db()
-    assert (row.release_before, row.later_kept) == (r56, False)  # stored as taken (round 3); the words claim none
+    assert (row.release_after, row.later_kept) == (r56, False)
     assert words(row) == f"5.6 (demo) installed {day(today - 5 * DAY)}; as the vendor's report VR-2026-77 states"
     hand = record(pump, choice(INSTALLED, r56, basis=MR), installed_by=InstalledBy.IT, applied_on=today - 4 * DAY, by=tech)
-    assert (hand.release_before, hand.release_after) == (r56, r56)
+    assert (hand.release_after, hand.later_kept) == (r56, False)
     assert words(hand) == f"5.6 (demo) installed {day(today - 4 * DAY)}; installed by information technology"
 
 
-def test_a_same_day_record_of_another_release_comes_before(pump, r52, r56, on52, job, tech, today):
-    """Installed 5.6 today at a completion, then rolled back to 5.2 the same day by hand: it ran 5.6 before the rollback."""
+def test_a_same_day_record_of_another_release_is_written(pump, r52, r56, on52, job, tech, today):
+    """Installed 5.6 today at a completion, then rolled back to 5.2 the same day by hand: the facts follow the rollback."""
     wo, _row = job
     complete(wo, tech, choice(INSTALLED, r56, basis=MR))
     row = record(pump, choice(INSTALLED, r52, basis=NS), installed_by=InstalledBy.MANUFACTURER, applied_on=today, by=tech)
-    assert (row.release_before, row.release_after, row.later_kept) == (r56, r52, False)
+    assert (row.release_after, row.later_kept) == (r52, False)
+    assert DeviceSecurity.objects.get(asset=pump).release == r52
 
 
 def test_c1_the_present_tense_refusals_are_gone(pump, pump_model, r52, r56, on52, vendor, tech, today):
@@ -281,7 +276,7 @@ def test_c1_the_present_tense_refusals_are_gone(pump, pump_model, r52, r56, on52
     assert words(row) == (f"Checked {day(today - 5 * DAY)}: already on 5.6 (demo); nothing installed; as the vendor's report VR-2026-77 "
                           f"states{LATER}")
 
-    found = refused(confirm, row2, choice(ALREADY), by=tech)
+    found = refused(confirm, row2, choice(ALREADY, r52), by=tech)
     assert found == {"software_release": updates.NOT_THE_TARGET_DONE.format(version="5.2 (demo)", target="5.6 (demo)")}
     assert "keep the work order open" not in found["software_release"]
 
@@ -293,58 +288,62 @@ def test_c2_a_later_record_never_names_what_it_ran_before(pump, r52, r56, r57, o
     record_facts(pump, by=None, release=r57)  # IT records 5.7 today, five days after the vendor's visit
     confirm(row, choice(INSTALLED, r56, basis=MR), by=tech)
     row.refresh_from_db()
-    assert (row.release_before, row.release_after, row.later_kept) == (None, r56, True)  # never 5.7, recorded after
+    assert (row.release_after, row.later_kept) == (r56, True)
     assert words(row) == f"5.6 (demo) installed {day(today - 5 * DAY)}; as the vendor's report VR-2026-77 states{LATER}"
     assert DeviceSecurity.objects.get(asset=pump).release == r57  # the later record is kept
 
 
 def test_c2_a_since_corrected_later(pump, r52, r56, r57, on52, vendor_job, vendor, tech, today):
     """Record facts set 5.7 since a day before the vendor's visit (a typo), then corrected the since to today: the corrected record is
-    newer than the vendor's day, so Confirm names no before, and patches confirmed the same way take the version sent (5.2)."""
+    newer than the vendor's day, so Confirm keeps it, and patches confirmed the same way name no version."""
     _wo, row = vendor_job
     record_facts(pump, by=None, release=r57, release_since=today - 19 * DAY)
     record_facts(pump, by=None, release=r57, release_since=today)
     confirm(row, choice(INSTALLED, r56, basis=MR), by=tech)
     row.refresh_from_db()
-    assert (row.release_before, row.later_kept) == (None, True)
+    assert row.later_kept
     assert words(row) == f"5.6 (demo) installed {day(today - 5 * DAY)}; as the vendor's report VR-2026-77 states{LATER}"
     wo2, patches = update_wo(pump, reference="ICAR-2026-09", vendor_service=True, vendor_name="BD field service", opened_on=today - 10 * DAY)
     complete(wo2, vendor, resolution="Patched per our visit", checks_reference="VR-2026-78", today=today - 5 * DAY)
-    confirm(patches, choice(PATCHES, r52, reference="ICAR-2026-09", basis=VL), by=tech)
+    confirm(patches, choice(PATCHES, reference="ICAR-2026-09", basis=VL), by=tech)
     patches.refresh_from_db()
-    assert (patches.release_before, patches.release_after, patches.later_kept) == (None, r52, True)
+    assert (patches.release_after, patches.later_kept) == (None, True)
 
 
-def test_c2_patches_confirmed_after_a_later_record_take_the_version_sent(pump, r52, r57, on52, vendor, tech, today):
+def test_c2_patches_confirmed_after_a_later_record_name_no_version(pump, r52, r57, on52, vendor, tech, today):
     wo, row = update_wo(pump, reference="ICAR-2026-09", vendor_service=True, vendor_name="BD field service", opened_on=today - 10 * DAY)
     complete(wo, vendor, resolution="Patched per our visit", checks_reference="VR-2026-78", today=today - 5 * DAY)
     record_facts(pump, by=None, release=r57)
-    confirm(row, choice(PATCHES, r52, reference="ICAR-2026-09", basis=VL), by=tech)  # the version it ran that day, as the person states
+    assert refused(confirm, row, choice(PATCHES, r52, reference="ICAR-2026-09", basis=VL), by=tech) == {
+        "software_release": updates.PATCHES_NO_RELEASE}  # review round 4: patches never take a release from the person
+    confirm(row, choice(PATCHES, reference="ICAR-2026-09", basis=VL), by=tech)
     row.refresh_from_db()
-    assert (row.release_before, row.release_after, row.later_kept) == (None, r52, True)
-    assert words(row) == (f"Patches on the manufacturer's validated patch list applied {day(today - 5 * DAY)}, version unchanged "
-                          f"(5.2 (demo)); ref ICAR-2026-09; as the vendor's report VR-2026-78 states{LATER}")
+    assert (row.release_after, row.later_kept) == (None, True)
+    assert words(row) == (f"Patches on the manufacturer's validated patch list applied {day(today - 5 * DAY)}, version unchanged; "
+                          f"ref ICAR-2026-09; as the vendor's report VR-2026-78 states{LATER}")
 
 
 def test_c2_a_hand_record_in_the_past_names_no_versions_of_a_later_record(pump, r52, r56, r57, on52, tech, today):
     record_facts(pump, by=None, release=r57, release_since=today - 8 * DAY, checked_on=today - 8 * DAY)
     row = record(pump, choice(INSTALLED, r56, basis=NS), installed_by=InstalledBy.AUTOMATIC, applied_on=today - 10 * DAY, by=tech)
-    assert (row.release_before, row.later_kept) == (None, True)
+    assert row.later_kept
     assert words(row) == f"5.6 (demo) installed {day(today - 10 * DAY)}; installed automatically{LATER}"
     patched = record(pump, choice(PATCHES, reference="ICAR-2026-07", basis=NS), installed_by=InstalledBy.CE, applied_on=today - 12 * DAY,
                      by=tech)
-    assert (patched.release_before, patched.release_after, patched.later_kept) == (None, None, True)
+    assert (patched.release_after, patched.later_kept) == (None, True)
     # no version sent and a later record kept: the version part is left out, never "version not recorded"
     assert words(patched) == (f"Patches applied {day(today - 12 * DAY)}, version unchanged; ref ICAR-2026-07; installed by clinical "
                               f"engineering{LATER}")
 
 
-def test_c2_a_record_with_no_day_names_what_it_ran_before(pump, r52, r56, tech, today):
-    """A record with no since and no day checked is not newer than any day: it is what the device ran before."""
+def test_c2_a_record_with_no_day_is_not_newer(pump, r52, r56, tech, today):
+    """A record with no since and no day checked is not newer than any day: the facts are written."""
     facts(pump, r52)
     row = record(pump, choice(INSTALLED, r56, basis=NS), installed_by=InstalledBy.IT, applied_on=today - 10 * DAY, by=tech)
-    assert (row.release_before, row.later_kept) == (r52, False)
-    assert words(row) == f"5.6 (demo) installed {day(today - 10 * DAY)} (recorded before: 5.2 (demo)); installed by information technology"
+    assert row.later_kept is False
+    assert words(row) == f"5.6 (demo) installed {day(today - 10 * DAY)}; installed by information technology"
+    sec = DeviceSecurity.objects.get(asset=pump)
+    assert (sec.release, sec.release_since) == (r56, today - 10 * DAY)
 
 
 # --- round 2: one install is recorded once by hand ------------------------------------------------------------------------------------
@@ -368,7 +367,7 @@ def test_a_completion_then_a_hand_record_of_the_same_install_is_refused(pump, r5
     wo, row = job
     complete(wo, tech, choice(INSTALLED, r56, basis=MR))
     assert refused(record, pump, choice(INSTALLED, r56, basis=MR), installed_by=InstalledBy.IT, applied_on=today, by=tech) == {
-        "software_outcome": updates.DUPLICATE.format(words=f"5.6 (demo) installed {day(today)} (recorded before: 5.2 (demo))")}
+        "software_outcome": updates.DUPLICATE.format(words=f"5.6 (demo) installed {day(today)}")}
     assert SoftwareUpdate.objects.count() == 1
 
 
@@ -378,7 +377,7 @@ def test_a_work_orders_outcome_is_never_refused_for_a_hand_rows(pump, r52, r56, 
     record(pump, choice(INSTALLED, r56, basis=MR), installed_by=InstalledBy.IT, applied_on=today, by=tech)
     complete(wo, tech, choice(INSTALLED, r56, basis=MR))
     row.refresh_from_db()
-    assert (row.outcome, row.release_before) == (INSTALLED, r56)  # the record named 5.6 already (stored as taken, round 3)
+    assert (row.outcome, row.release_after) == (INSTALLED, r56)
     assert words(row) == f"5.6 (demo) installed {day(today)}"
     _vwo, vrow = vendor_job
     record(pump, choice(INSTALLED, r56, basis=MR), installed_by=InstalledBy.IT, applied_on=today - 5 * DAY, by=tech)
@@ -432,7 +431,7 @@ def test_c15_an_in_house_outcome_is_never_credited_to_a_later_vendor(pump, r52, 
     complete(wo, vendor, resolution="Checked per our visit", checks_reference="SR-777")  # KEEP: the outcome stays
     wo.refresh_from_db()
     assert wo.vendor_service and wo.checks_reference == "SR-777"
-    assert words(row) == f"5.6 (demo) installed {day(today)} (recorded before: 5.2 (demo))"
+    assert words(row) == f"5.6 (demo) installed {day(today)}"
 
 
 def test_c15_a_vendors_outcome_stays_the_vendors_after_moving_in_house(pump, r52, r56, on52, vendor_job, tech, kim, techs, manager,
@@ -446,7 +445,7 @@ def test_c15_a_vendors_outcome_stays_the_vendors_after_moving_in_house(pump, r52
     complete(wo, tech, KEEP, "Checked again")
     wo.refresh_from_db()
     assert not wo.vendor_service and wo.checks_reference == ""
-    assert words(row) == f"5.6 (demo) installed {day(today - 5 * DAY)} (recorded before: 5.2 (demo)); as the vendor's report VR-2026-77 states"
+    assert words(row) == f"5.6 (demo) installed {day(today - 5 * DAY)}; as the vendor's report VR-2026-77 states"
     remove(row, by=manager)
     row.refresh_from_db()
     assert (row.outcome, row.on_vendor_service, row.vendor_report) == ("", False, "")  # cleared with the outcome

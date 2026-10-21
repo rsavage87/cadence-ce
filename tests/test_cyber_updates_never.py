@@ -31,7 +31,7 @@ MODAL = {"HTTP_HX_REQUEST": "true", "HTTP_HX_TARGET": "modal-card"}
 OLDER, NEWER, LISTED, TARGET_LIST = "5.2-NEVER", "5.6-NEVER", "ICAR-NEVER-09", "ICAR-NEVER-10"
 # Distinctive values of the updates' records and the rules' words for them: none may show on a door that is not the register's
 UPDATE_VALUES = (OLDER, NEWER, LISTED, TARGET_LIST, "software release", "Open: to install", "to apply the manufacturer's patches",
-                 "version not confirmed", "Version not confirmed", "recorded before", "validated patch list", "installed by information",
+                 "version not confirmed", "Version not confirmed", "validated patch list", "installed by information",
                  "Release installed", "nothing installed")
 
 
@@ -113,7 +113,7 @@ def test_the_values_are_real_for_a_reader_of_the_register(client, world):
     seen = "".join(body(client.get(f"/api/v1/work-orders/{wo.pk}/")) for wo in world["wos"].values())
     seen += body(client.get("/api/v1/software-updates/"))
     assert set(shown(seen)) >= {OLDER, NEWER, LISTED, TARGET_LIST, "Open: to install", "to apply the manufacturer's patches",
-                                "version not confirmed", "recorded before", "validated patch list", "installed by information"}
+                                "version not confirmed", "validated patch list", "installed by information"}
 
 
 @pytest.mark.parametrize("who", ["custom", "analyst", "vendor"])

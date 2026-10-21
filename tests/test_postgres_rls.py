@@ -182,7 +182,7 @@ def test_every_screen_renders_under_the_policies(client, seeded):
         from apps.cybersecurity import rules
         from apps.web.views_wo_release import LEGEND
 
-        with_words = SoftwareUpdate.objects.select_related("asset", "work_order", "target_release", "release_before", "release_after")
+        with_words = SoftwareUpdate.objects.select_related("asset", "work_order", "target_release", "release_after")
         open_row = with_words.filter(work_order__status="open").order_by("work_order__number").first()
         installed = with_words.get(outcome="installed", work_order__isnull=False)
         hand_row = with_words.get(pk=hand.pk)

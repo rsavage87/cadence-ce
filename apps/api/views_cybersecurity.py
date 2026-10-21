@@ -36,7 +36,7 @@ GET software-updates/               Slice 38. Device security View AND Equipment
                                     device {id, tag}, work_order {id, number} (null for one recorded by hand; never a link), target,
                                     target_release {id, version}, target_reference, state (open, done, not_confirmed, cancelled) and
                                     state_label, outcome and outcome_label, words (apps.cybersecurity.rules.update_words, the sentence
-                                    the tab shows), applied_on, release_before and release_after {id, version}, reference, basis and
+                                    the tab shows), applied_on, release_after {id, version}, reference, basis and
                                     basis_label, installed_by and installed_by_label, recorded_by (a name), later_kept, opened_on.
                                     ?device= a device's id, or its tag in any letter case (a retired one's too); ?release= a release's id
                                     (the release an update was to install, or the one the device runs after it); ?state= one of open,
@@ -296,7 +296,7 @@ class SoftwareUpdateViewSet(_ReadOnly):
 
     def get_queryset(self):
         qs = (SoftwareUpdate.objects.filter(removed_on__isnull=True)
-              .select_related("asset", "work_order", "target_release", "release_before", "release_after", "recorded_by"))
+              .select_related("asset", "work_order", "target_release", "release_after", "recorded_by"))
         if self.action == "list":
             params, errors = self.request.query_params, {}
             device = params.get("device") or ""

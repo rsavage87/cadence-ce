@@ -413,8 +413,8 @@ class WorkOrderSerializer(serializers.ModelSerializer):
         """Slice 38: a software update work order's record, for a reader with Device security View and Equipment View
         (serializers_cybersecurity.work_order_update): {"target", "target_release" ({"id", "version"} or null), "target_reference",
         "state" (open, done, not_confirmed, cancelled: rules.update_state), "outcome" and "outcome_label" ("" while nothing is
-        recorded), "words" (rules.update_words: "Open: to install 5.6 (demo)", "5.6 (demo) installed Oct 20, 2026 (recorded before: 5.2
-        (demo))", "Completed Oct 20, 2026; version not confirmed", ...), "applied_on", "release_after" ({"id", "version"} or null)}.
+        recorded), "words" (rules.update_words: "Open: to install 5.6 (demo)", "5.6 (demo) installed Oct 20, 2026", "Completed Oct 20,
+        2026; version not confirmed", ...), "applied_on", "release_after" ({"id", "version"} or null)}.
         Null on any other type, on an update imported from another system (no record), and for every other reader (a scoped user, one
         without Device security View or Equipment View): the type and the neutral problem are all they read. A list's page is read at
         once (WorkOrderListSerializer: one query), else this work order alone (one query, none for another type)."""
