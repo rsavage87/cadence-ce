@@ -380,8 +380,11 @@ joined since, by identity); `supersedes`; `ended_on` / `ended_by` / `end_reason`
   (`record_decision`, superseding the live one of its scope in one transaction (Review and renew), `end_decision` (no longer needed),
   `mark_entered_in_error`; levels inside, `permissions.can_decide` (Approve and Equipment View, never scoped; None is the system);
   refusals keyed by field, every field problem at once before any lock, worded as recorded; each token never a network identifier
-  (`network_identifier`: an address, with a port, range, or prefix too; a MAC in any layout; a VLAN; a port); `refusal_for` the same
-  scope checks read without locks, in the same order (the modal says why before it is tried; outside any transaction, so no FOR UPDATE); the lock order: the register, the decision superseded or ended FOR UPDATE of its own row, the
+  (`network_identifier`: an address, with a port, range, or prefix too; a MAC in any layout, within a token too, the digit-friendly
+  layouts needing a hex letter and a digit, a UUID's layout exempt; a VLAN; a port); `refusal_for` the same scope checks read without
+  locks, in the same order (the modal says why before it is tried; outside any transaction, so no FOR UPDATE), a `Refusal(words, kind,
+  live)` (KIND_* in_force, ended, gone, not_needed, unknown; `ends_it`: End is offered only for gone and not_needed, never for a fact to
+  record first: `rules.need_unknown`, SCOPE_NOT_RECORDED; a release's or model's updates continuing in EXTENDED's words); the lock order: the register, the decision superseded or ended FOR UPDATE of its own row, the
   release (release scope), the number, the device FOR KEY SHARE (device scope: its model, status, and ownership read there), the insert;
   an IntegrityError or a lock conflict answers RACE; history reasons fixed sentences with Cadence numbers only; equipment's writers never
   write here nor take the register lock: the readers re-derive); `rules.py`'s slice 39 section the one place for needs and words:
@@ -400,13 +403,15 @@ joined since, by identity); `supersedes`; `ended_on` / `ended_by` / `end_reason`
   `ATTENTION_EMPTY`) and `AttentionRow`s; links as data, `Link` by URL name: `URLS`, the doors reverse them; Record decision and End only
   for can_decide, a work order's link only with Work orders View) and `badge` (one aggregate query: live decisions past review whose
   scope still holds a device on site, `holds_device_q`, the review headings' condition and their list's `?here=1`; `BADGE_TITLE`; a
-  decision to review none of whose devices needs one offers End, never Review and renew); `decisions_now` / `in_scope` the API's page
+  decision to review offers Review and renew while a device in its scope has a decidable need, End only when none does and no device's
+  need is unknown, else neither; a row links to the model panel only where it lists just the row's devices (`_group_link`)); `decisions_now` / `in_scope` the API's page
   readers; two readings named apart: in scope (the badge, past review, govern no device) and
   governed (responses, joined since, the other Checks); fixed queries as decisions and devices grow. Words: `DECISION_NEVER_WORDS`
   (NEVER_WORDS, which slice 39 gave exempt, waiver, hardened, and deadline, plus "overdue") on every decision door (pages, modals, the
   print, CSVs, toasts, API bodies), a whole device drawer with NEVER_WORDS (it carries Equipment's "overdue for PM"); never "requires" or
   "must"; the who part says the day decided of the decision ("Accepted by ... on <day>, as recorded by <name>"). Release refusals
-(`removal_refusal(release, by=)`, `update_release`) name the decision only to its readers. Reading any decision (the Decisions tab, a decision's page, print, and CSVs, the API, Needs attention, the badge, the change
+(`removal_refusal(release, by=)`, `update_release`) name the decision only to its readers, and say "end it first" only to who may end
+it (DECISION_LIVE_READ otherwise). Reading any decision (the Decisions tab, a decision's page, print, and CSVs, the API, Needs attention, the badge, the change
   log's Area `device_security_decisions`, also Equipment View) needs can_view_devices; recording, Review and renew, End, and Entered in
   error need can_decide. The nav badge (`reports.services._cyber_badge`, nav_counts' `cybersecurity` / `cybersecurity_hot`) never on the
   Overview's attention list or in an email. `services.removal_refusal` refuses a release with a live decision (`DECISION_LIVE`);
@@ -499,7 +504,9 @@ joined since, by identity); `supersedes`; `ended_on` / `ended_by` / `end_reason`
   devices it governs with their responses, Check lines, supersedes / superseded by, History; Review and renew, End
   (`web:security_decision_end`), Entered in error for can_decide), its print (`web/print_base.html`) and devices CSV, Record decision
   (`web:security_decision_new`, a modal: the scope fixed by the door, `?asset=<tag>` from the Security tab or a rentals row,
-  `?release=<id>` from a release row, `?model=<id>` from a model's panel footer or Needs attention, `?supersedes=<number>` for Review and renew; fields set in
+  `?release=<id>` from a release row, `?model=<id>` from a model's panel footer (offered only while a device of ours of the model on site waits for a decision:
+  `cyber_release_actions._waiting`, the release rows' read on the panel's standings; its address carries the panel's filters) or Needs
+  attention; the decision page's `renew_refusal` and `end_answers`, `?supersedes=<number>` for Review and renew; fields set in
   `__init__`; never network_removed: rules.NETWORK_REMOVED_HINT), the Security tab's need, responses, and governing decision
   (rules.device_lines), a release row's live decision or Record decision (`_cyber_release_actions.html`), and the nav item's badge
   (rules.BADGE_TITLE);

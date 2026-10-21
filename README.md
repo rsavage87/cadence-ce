@@ -463,8 +463,8 @@ Device security level.
 When a device stays in use after its manufacturer's security updates end, or after its operating system vendor's support does, HHS
 405(d)'s HICP 2023 recommends documenting mitigating controls and a timeline for resolving the risk, through the organization's risk
 acceptance or exception process; no rule requires it, and Cadence never says one does. A security decision records that for one device,
-for a model's devices of ours on one release, or for every device of ours of a model: the reasons (the manufacturer's security updates or
-support, the OS vendor's support: ended, or announced to end within 12 months), the decision (Keep in use with controls, Keep in use without
+for a model's devices of ours on one release, or for every device of ours of a model: the reasons (the manufacturer's security updates,
+support, or parts, the OS vendor's support: ended, or announced to end within 12 months), the decision (Keep in use with controls, Keep in use without
 added controls, or Take out of use), the controls it relies on from a list (a medical device network segment, traffic limited to the
 ports and hosts it needs, no internet access, a connectivity feature turned off, the manufacturer's published mitigation, vendor remote
 access off or attended only, a malware scan when serviced, application allowlisting, unused ports and services turned off, network
@@ -475,7 +475,7 @@ committee, department leadership, or the authorizing official), IT's exception n
 12 months after the day decided, 3 to take out of use; for a rental, loaner, or demo unit its due back day when that comes first, else 3
 months; at most 36 months, 12 to take out of use: Cadence's choices, not a rule). IT's exception stays in IT's system of record: Cadence
 keeps its number, never its text, and a reference is never an address (an address with a port, range, or prefix too), a MAC in any
-layout, a VLAN, or a port. A device recorded "Not connected here" (Record facts) needs no decision, so "taken off the
+layout, alone or within a reference (a ticket number of digits in a MAC's layout, or a UUID, is taken), a VLAN, or a port. A device recorded "Not connected here" (Record facts) needs no decision, so "taken off the
 network" is not offered as a control, and the segment is refused as one while the model's record says its devices are on no separate
 segment. A decision is never changed: Review and renew records the next one and ends it as superseded; End (no longer needed: updated,
 replaced, retired, or returned) and Entered in error end one. Retiring, returning, or updating a device never touches a decision: the
@@ -494,15 +494,18 @@ Device security's Decisions tab opens with Needs attention: devices of ours past
 decision recorded and no update to a supported release open (per model and release, with Record decision); rentals, loaners, and demo units past theirs (ask the owner to update it,
 or return it); updates done with the version not confirmed; ends announced within 12 months (information); decisions past their review
 date or to review within 30 days, each whose scope still holds a device here (a decision none of whose devices needs one any more offers End,
-not Review and renew; the count opens the list narrowed the same way), or governing no device here now (End); and Check lines: a support
+not Review and renew; while a device's connection or support is not recorded, neither: its page says what to record first; the count
+opens the list narrowed the same way), or governing no device here now (End); and Check lines: a support
 or OS end that holds now and the decision does not name, the model's record no longer giving the segment it relies on, devices joined since, the plan's date passed, a device still in service after a
 decision to take it out of use, the plan owner's account deactivated. With nothing listed it reads "Nothing listed from what is recorded
 here." Below, the decisions by state (In force, Review within 30 days, Review due, Ended), filtered by scope, decision, or IT exception
 number, download as CSV. A decision's page shows its sentence, its reasons with their dates, controls, plan, who accepted and recorded it,
 its review, the devices it governs (tag, serial, model, department, connection, release, and what answers each), its Check lines, the
-decision it superseded or that superseded it, and its History; it prints for IT and the committee ("As recorded in Cadence; IT's
+decision it superseded or that superseded it, and its History; Review and renew only while it would be taken (else why not), End the main
+action when nothing in its scope needs a decision; it prints for IT and the committee ("As recorded in Cadence; IT's
 exception record is the system of record") and its devices download as CSV. Record decision opens from a release's row in Models (that
-release's devices of ours, offered while one of them has no decision governing it and no update answering it), from a model's panel ("Record decision for every <model> of ours"), from a device's Security tab (that device), from Needs attention, and as Review and renew (prefilled,
+release's devices of ours, offered while one of them has no decision governing it and no update answering it), from a model's panel ("Record decision for every <model> of ours", offered while a device of ours of the model on site has a need, no
+decision governing it, and no update answering it, whatever its release, and keeping the panel's filters), from a device's Security tab (that device), from Needs attention, and as Review and renew (prefilled,
 the exception number blank, a plan no longer offered starting at No plan recorded, and the panel's filters kept); a review date already
 passed is said once, and only when the service would take the decision; the Security tab shows the device's need, what answers it, and the decision that governs it. Device
 security's nav item carries a badge counting the decisions past their review date whose scope still holds a device here. Decisions never reach
@@ -512,7 +515,9 @@ Who may do what: reading decisions (the tab, a decision's page, print, and CSVs,
 needs Device security View and Equipment View, since a decision can name a device; recording, Review and renew, End, and Entered in error
 need Device security Approve and Equipment View. A vendor's or a requester's account never sees them. A release a decision is in force for
 cannot be marked entered in error until the decision ends, and a release any decision names keeps its version (add the new version
-instead); the refusal names the decision only to someone who may read decisions.
+instead); the refusal names the decision only to someone who may read decisions, and tells only someone who may end it to end it first.
+Each row of Needs attention links to the model's panel only where the panel lists just the row's devices (else to the device, or not at
+all).
 
 ## Custom reports
 Reports' "+ Custom report" (Reports Edit: the director and Finance and quality by default) builds a report from work orders, devices,
