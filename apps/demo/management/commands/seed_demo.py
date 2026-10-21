@@ -130,8 +130,9 @@ apps.cybersecurity.decisions as Record decision records them, each accepted by I
 segment the pumps' profile records, traffic limited), decided a week after their security updates ended (recorded with that day as
 today), an update planned by the last day of last month with Kim as its owner and reviewed on that day, so it reads "Review due since
 ...", the nav badge is hot, its Check says the plan's date has passed, and its pumps with an open update show it beside the decision;
-and the next number for the other C-arm (device scope: the first by tag is kept off the network), its OS vendor's support ended, kept in
-use with controls its profile allows (no separate segment: traffic limited; the manufacturer installs remotely: remote access off or
+and a number of its own year for the other C-arm (SD-<yy>-0001 when the pumps' decision falls in the year before; device scope: the first
+by tag is kept off the network), its OS vendor's support ended, kept in use with controls its profile allows (no separate segment: traffic
+limited; the manufacturer installs remotely: remote access off or
 attended only), a replacement planned in the fiscal year after next, in force for 12 months. And the rental bed on a release of the
 beds' own ("2.0 (demo)") whose security updates ended last month, recorded connected here (wireless) today, with no decision: Needs
 attention's rentals row. Every device of ours past its support is governed by one of the two (the pumps' listed under decisions past

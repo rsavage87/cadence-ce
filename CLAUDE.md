@@ -594,6 +594,6 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   CE manager after the updates: SD-<yy>-0001 for the pumps of ours on the older release (release scope, kept in use on the segment their
   profile records with traffic limited, decided a week after their security updates ended, recorded with that day as today; an update
   planned by the last day of last month, Kim its owner, reviewed that day: past review, the badge hot, its Check that the plan's date
-  passed, its pumps' open updates beside it) and the next number for the other C-arm (device scope, OS support ended, controls its profile
+  passed, its pumps' open updates beside it) and a number of its own year for the other C-arm (device scope, OS support ended, controls its profile
   allows, a replacement planned in the fiscal year after next, in force); the rental bed T-0101 on the beds' "2.0 (demo)" (security
   updates ended last month), connected (wireless), no decision: Needs attention's rentals row; DEMO-EX- numbers, no link, no CVE)

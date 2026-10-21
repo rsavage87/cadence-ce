@@ -601,7 +601,7 @@ its module's docstring under `apps/api/`, and the browsable API (open `/api/v1/`
   reasons, the decision and its label, the controls and their words, the controls' reference, the plan with its day, words, and owner,
   who accepted it (with its words), IT's exception number, who recorded it, the days decided, to review, and ended, why it ended, the
   decision it supersedes, its sentence, the devices it governed when recorded, and its Check lines; `?scope=device|release|model`,
-  `?state=in_force|review_due|ended`, `?device=` (an id, or a tag in any letter case). Recording them is the Device security screen's. A
+  `?state=in_force|review_soon|review_due|ended` (in_force: a review more than 30 days away; review_soon: within 30 days), `?device=` (an id, or a tag in any letter case). Recording them is the Device security screen's. A
   device or model a decision names is never deleted (the refusal names the decision for a Device security reader; retire the device).
 - the signed-in person's facilities and All facilities (`views_facilities.py`, `views_all_facilities.py`; session only).
 
