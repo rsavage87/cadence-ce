@@ -1033,9 +1033,6 @@ def set_status(asset: Asset, to_status: str, *, by=None, note: str = "", today: 
     refusal = temporary_status_refusal(asset, to_status)  # slice 29: before the general refusal, whose words say "retired"
     if refusal:
         raise ValidationError(refusal)
-    # The caller checked the level on an older copy; after the refusals every level gets, whose words are the true reason
-    if level is not None and level < permissions.status_level(asset.status, to_status):
-        raise PermissionDenied(STATUS_PERMISSION)
     if to_status not in STATUS_CHANGES.get(asset.status, set()):
         raise ValidationError(f"{asset.tag} cannot go from {asset.get_status_display().lower()} to {AssetStatus(to_status).label.lower()}.")
     if asset.awaiting_inspection and to_status in HOLD:
@@ -1044,6 +1041,9 @@ def set_status(asset: Asset, to_status: str, *, by=None, note: str = "", today: 
         held_by_repair = repair_hold_message(asset)
         if held_by_repair:
             raise ValidationError(held_by_repair)
+    # The caller checked the level on an older copy; after every refusal every level gets, whose words are the true reason
+    if level is not None and level < permissions.status_level(asset.status, to_status):
+        raise PermissionDenied(STATUS_PERMISSION)
     if changed_on is not None and changed_on > today:
         raise ValidationError({"changed_on": "The status cannot change on a day after today."})
     if changed_on is not None and asset.installed_on and changed_on < asset.installed_on:

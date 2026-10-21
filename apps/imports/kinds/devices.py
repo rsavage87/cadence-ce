@@ -388,7 +388,6 @@ class DevicesImporter(Importer):
         if not self._may(ctx, eq_perms.status_level(asset.status, status)):
             result.warn(LEVEL_NOTE)
             return False
-        was = asset.get_status_display().lower()
         try:
             # The level again on the device's row as it is now (set_status): one retired or reinstated since the chunk read it
             eq.set_status(asset, status, by=ctx.user, note="Imported", today=ctx.today, may_number=ctx.cache["numbering"],
@@ -403,20 +402,21 @@ class DevicesImporter(Importer):
                 result.warn(HELD_NOTE)
             elif eq.temporary_status_refusal(asset, status):  # slice 29: as read now, whatever the level
                 result.warn(_temporary_kept(asset))
-            elif not self._may(ctx, eq_perms.status_level(asset.status, status)):  # retired since the chunk read it: the level
-                result.warn(LEVEL_NOTE)
-            elif e.messages and e.messages[0] == eq.CHANGED_MEANWHILE.format(tag=asset.tag):  # the device changed meanwhile: its words
-                result.warn(f"Status kept: {e.messages[0]}")
+            elif status not in eq.STATUS_CHANGES.get(asset.status, ()):  # from its status now (it may have changed since the chunk read it)
+                now = asset.get_status_display().lower()
+                result.warn(f"Status kept: Cadence does not move a device from {now} to {AssetStatus(status).label.lower()}")
             elif asset.awaiting_inspection and status in eq.HOLD:
                 # Slice 26: a new device waiting for its incoming inspection goes in use when it passes; set_status says which one.
                 result.warn(f"Status kept: {e.messages[0]}")
             elif status in eq.HOLD and eq.holding_repair(asset) is not None:
                 # Slice 30: an open repair holds it out of use; completing that repair with its checks after repair returns it
                 result.warn(f"Status kept: {eq.repair_hold_message(asset)}")
-            elif status in eq.STATUS_CHANGES.get(asset.status, ()):
-                result.warn("Status kept: the device has open work orders; complete or cancel them, then retire it")
+            elif not self._may(ctx, eq_perms.status_level(asset.status, status)):  # retired since the chunk read it: the level
+                result.warn(LEVEL_NOTE)
+            elif e.messages and e.messages[0] == eq.CHANGED_MEANWHILE.format(tag=asset.tag):  # the device changed meanwhile: its words
+                result.warn(f"Status kept: {e.messages[0]}")
             else:
-                result.warn(f"Status kept: Cadence does not move a device from {was} to {AssetStatus(status).label.lower()}")
+                result.warn("Status kept: the device has open work orders; complete or cancel them, then retire it")
             return False
         return True
 

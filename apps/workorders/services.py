@@ -128,7 +128,9 @@ def _tag_out_row(asset, opened_on) -> Asset:
 
     lock_work(asset.pk)
     lock_numbering(opened_on.year)
-    fresh = Asset.objects.select_for_update().get(pk=asset.pk)  # the device's row only (a join would lock its model's row too)
+    # The device's row only (a join would lock its model's row too); FOR NO KEY UPDATE, as the UPDATE it replaced took: a register
+    # reader taking devices FOR KEY SHARE (a tag-out never retires one) and a deferred foreign key's check never wait for it
+    fresh = Asset.objects.select_for_update(no_key=True).get(pk=asset.pk)
     if fresh.status == AssetStatus.RETIRED:
         state = "returned to its owner" if owner_maintains(fresh) else "retired"
         raise ValidationError({"asset": TAG_OUT_REFUSED.format(tag=fresh.tag, state=state)})

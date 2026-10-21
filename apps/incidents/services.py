@@ -383,13 +383,16 @@ def _open_work_order(asset, *, by, today: date, held: bool) -> WorkOrder:
     """Open the investigation: a tagged-out REPAIR, priority high, unassigned, opened today, through create_work_order. For a device
     the incident holds (or is about to), create_work_order's own tag-out is left off and the work order is marked tagged out after:
     the hold takes the device out of service on its row, locked in order (set_incident_hold), once the hold has read the status it
-    had (IncidentHold.status_before); the tag-out would write that row before the device's inspections were locked."""
+    had (IncidentHold.status_before); the tag-out would write that row before the device's inspections were locked. So it is for a
+    device already retired: an incident may concern one, and create_work_order's tag-out refuses a retired device (a door's refusal,
+    for a tag-out a person asked for; this one is the investigation's own)."""
     from apps.workorders.services import create_work_order
 
-    fresh = Asset.objects.get(pk=asset.pk)  # create_work_order's tag-out reads the status on the copy it is given
+    fresh = Asset.objects.get(pk=asset.pk)
+    tag_out = not held and fresh.status != AssetStatus.RETIRED  # create_work_order moves the row as it is then (_tag_out_row)
     wo = create_work_order(asset=fresh, type=WoType.REPAIR, priority=Priority.HIGH, problem=INVESTIGATION_PROBLEM if held else NOT_HELD_PROBLEM,
-                           created_by=by, opened_on=today, tag_out=not held)
-    if held:
+                           created_by=by, opened_on=today, tag_out=tag_out)
+    if not tag_out:
         wo.tagged_out = True
         wo.save(update_fields=["tagged_out", "updated_at"])
     return wo
@@ -575,12 +578,16 @@ def hold_device(incident, asset, *, by=None, today=None) -> IncidentHold:
     current = _locked(incident)
     _check_open(current)
     if _live_investigation(current) is None:
-        from apps.workorders.services import lock_devices_work
+        from apps.workorders.services import lock_devices_work, lock_numbering
 
         _check(by, perms.can_open_work_order, OPEN_WORK_ORDER_PERMISSION)
         # the suspect's and the held device's work, in one number order, before the numbering and either device's row (review fix: lock
-        # order; one device's work after the other's waited in a circle with AEM's pull-in, which takes several devices' work at once)
+        # order; one device's work after the other's waited in a circle with AEM's pull-in, which takes several devices' work at once);
+        # then both rows in tag order, before the investigation's tag-out takes the suspect's and the hold the held one's (one row after
+        # the other, in another order, waited in a circle with the pull-in's devices and the register's bulk set, both in tag order)
         lock_devices_work([current.asset_id, asset.pk])
+        lock_numbering(today.year)
+        list(Asset.objects.select_for_update().filter(pk__in=[current.asset_id, asset.pk]).order_by("tag").values_list("pk", flat=True))
         suspect_held = asset.pk == current.asset_id or current.holds.filter(asset_id=current.asset_id, released_on__isnull=True).exists()
         _set_investigation(current, _open_work_order(current.asset, by=by, today=today, held=suspect_held), by)
     hold = _hold(current, asset, by=by, today=today)

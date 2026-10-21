@@ -14,7 +14,7 @@ from pg_helpers import needs_postgres
 from test_incidents_review import pause_at, race
 
 from apps.equipment import services as eq
-from apps.equipment.models import Asset, DeviceModel
+from apps.equipment.models import Asset, AssetStatus, DeviceModel
 from apps.incidents import services as inc
 from apps.incidents.models import Affected, Incident, Outcome, Status
 from apps.pm import aem
@@ -263,3 +263,45 @@ def test_a_rename_waiting_for_an_import_that_adds_its_new_name_is_refused_in_wor
     assert errors["second"].message_dict == {"model": ["BD Alaris 9000 is already in the catalog; choose it from the list."]}
     assert sorted(DeviceModel.objects.values_list("model", flat=True)) == ["Alaris 8015 PCU", "Alaris 9000"]
     assert Asset.objects.get(tag="CE-NEW").device_model.model == "Alaris 9000"
+
+
+# --- Hold device takes both devices' rows in tag order (a review fix of the tag-out on the locked row) ---------------------------------
+
+@needs_postgres
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("suspect_status", [AssetStatus.OUT_OF_SERVICE, AssetStatus.MISSING, AssetStatus.IN_SERVICE])
+def test_holding_a_device_while_its_investigation_opens_and_end_aem_take_turns(tenant, ctx, dept, pump_model, monkeypatch, suspect_status):
+    """An incident on CE-2 with no hold and no investigation; no open work orders. Hold device (CE-1) takes both devices' rows in tag
+    order before the investigation's tag-out and the hold, and stops after opening the investigation; End AEM waits for CE-1, never
+    holding it while Hold device wants it. Both finish."""
+    today = timezone.localdate()
+    one, two = _pumps_on_aem(dept, pump_model, today)
+    Asset.objects.filter(pk=two.pk).update(status=suspect_status)
+    incident = inc.record_incident(asset=Asset.objects.get(pk=two.pk), outcome=Outcome.UNKNOWN, affected=Affected.PATIENT, hold=False,
+                                   open_work_order=False)
+    pause = pause_at(monkeypatch, inc, "_open_work_order", after=True)
+    errors = race(tenant, pause, lambda: inc.hold_device(Incident.objects.get(pk=incident.pk), Asset.objects.get(pk=one.pk)),
+                  lambda: aem.end(pump_model, reason="Back to the OEM interval"))
+    assert not errors, errors
+    assert Asset.objects.get(pk=one.pk).incident_hold
+
+
+@needs_postgres
+@pytest.mark.django_db(transaction=True)
+def test_holding_a_device_while_its_investigation_opens_and_the_registers_bulk_set_take_turns(tenant, ctx, dept, pump_model, monkeypatch):
+    """The suspect CE-2 in service: the investigation's tag-out (FOR NO KEY UPDATE) and the hold never wait in a circle with Set devices
+    to this release (devices FOR KEY SHARE in tag order). Both finish: no "try again"."""
+    from cyber_fixtures import release
+
+    from apps.cybersecurity import services as cyber
+
+    today = timezone.localdate()
+    one, two = _pumps_on_aem(dept, pump_model, today)
+    five_six = release(pump_model, "5.6")
+    incident = inc.record_incident(asset=Asset.objects.get(pk=two.pk), outcome=Outcome.UNKNOWN, affected=Affected.PATIENT, hold=False,
+                                   open_work_order=False)
+    pause = pause_at(monkeypatch, inc, "_open_work_order", after=True)
+    errors = race(tenant, pause, lambda: inc.hold_device(Incident.objects.get(pk=incident.pk), Asset.objects.get(pk=one.pk)),
+                  lambda: cyber.record_facts_for(pump_model, list(Asset.objects.filter(pk__in=[one.pk, two.pk])), by=None, release=five_six),
+                  must_wait=False)
+    assert not errors, errors

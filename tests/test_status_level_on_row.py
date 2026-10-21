@@ -255,3 +255,60 @@ def test_the_portal_tagging_out_a_device_retired_since_the_form_read_it(client, 
                                            "callback": "x2210", "problem": "Alarm will not clear", "urgency": "high", "tagged_out": "on"})
     assert r.status_code == 200 and "CE-9 is retired, so no work order tags it out." in r.content.decode()
     assert Asset.objects.get(tag="CE-9").status == AssetStatus.RETIRED and not ServiceRequest.objects.exists()
+
+
+# --- review fixes: an incident's own tag-out, and the refusals every level gets before the level --------------------------------------
+
+@pytest.mark.django_db
+def test_an_investigation_opens_on_a_device_already_retired(ctx, dept, pump_model):
+    """An incident may concern a retired device: its investigation opens, marked tagged out, the device left retired (the investigation's
+    own tag-out is never a door's refusal); another device can then be held for it."""
+    from apps.incidents import services as inc
+    from apps.incidents.models import Affected, Outcome
+
+    retired = Asset.objects.create(tag="CE-9", device_model=pump_model, department=dept, status=AssetStatus.RETIRED)
+    incident = inc.record_incident(asset=retired, outcome=Outcome.UNKNOWN, affected=Affected.PATIENT, hold=False, open_work_order=True)
+    assert incident.work_order.tagged_out and Asset.objects.get(pk=retired.pk).status == AssetStatus.RETIRED
+    other = Asset.objects.create(tag="CE-8", device_model=pump_model, department=dept, status=AssetStatus.RETIRED)
+    later = inc.record_incident(asset=other, outcome=Outcome.UNKNOWN, affected=Affected.PATIENT, hold=False, open_work_order=False)
+    held = Asset.objects.create(tag="CE-1", device_model=pump_model, department=dept)
+    inc.hold_device(later, held)  # opens the investigation on the retired suspect first
+    assert Asset.objects.get(pk=held.pk).incident_hold and type(later).objects.get(pk=later.pk).work_order.tagged_out
+
+
+@pytest.mark.django_db
+def test_a_move_no_level_makes_keeps_its_own_words_for_edit(client, make_user, ctx, dept, pump_model, monkeypatch):
+    """In service when read, retired since: Mark missing cannot be made at any level, so the drawer says so, never "needs Approve"."""
+    from django.core.exceptions import ValidationError
+
+    from apps.accounts.models import Level
+
+    seen = Asset.objects.create(tag="CE-2", device_model=pump_model, department=dept)
+    Asset.objects.filter(pk=seen.pk).update(status=AssetStatus.RETIRED, next_pm_on=None)
+    with pytest.raises(ValidationError) as e:
+        eq.set_status(seen, AssetStatus.MISSING, level=Level.EDIT)
+    assert e.value.messages == ["CE-2 cannot go from retired to missing."]
+    Asset.objects.filter(pk=seen.pk).update(status=AssetStatus.IN_SERVICE)
+    client.force_login(make_user("manager"))
+    _retire_after_the_check(monkeypatch)
+    r = client.post("/equipment/CE-2/status/", {"to": AssetStatus.MISSING}, **HX)
+    assert r.status_code == 200 and json.loads(r["HX-Trigger"])["toast"] == {"value": "CE-2 cannot go from retired to missing."}
+
+
+@pytest.mark.django_db
+def test_a_devices_import_words_a_move_no_level_makes_from_the_status_now(ctx, dept, pump_model, make_user, monkeypatch):
+    from test_numbering_lock_order import _import
+
+    from apps.imports.kinds import devices as kind
+
+    Asset.objects.create(tag="CE-2", device_model=pump_model, department=dept)
+    real = kind.lock_devices_work
+
+    def then_retired(ids, *also):
+        real(ids, *also)
+        Asset.objects.filter(tag="CE-2").update(status=AssetStatus.RETIRED, next_pm_on=None)
+
+    monkeypatch.setattr(kind, "lock_devices_work", then_retired)
+    run = _import(make_user("manager"), b"Tag,Manufacturer,Model,Room,Status\r\nCE-2,,,B2,Missing\r\n")
+    notes = [note for row in run.results for note in row[3]]
+    assert "Status kept: Cadence does not move a device from retired to missing" in notes, run.results
