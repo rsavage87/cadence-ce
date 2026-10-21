@@ -7,7 +7,12 @@ keys are these fields' names; one about the device, the update, or the release a
 
 Choices are set in __init__ from what the view read (the model's releases, the device's recorded release, the technicians), never a
 class-level queryset. Only what the chosen outcome or target uses is sent: a release target names no patch list and a patches target no
-release; patches leave the version as recorded (no release sent); "already" names no basis (updates.NO_BASIS otherwise).
+release; patches applied send no release from Record update or Confirm version (the version is left to the service, which names the
+release recorded before, or says the version is not recorded); "already" names no basis (updates.NO_BASIS otherwise).
+
+The release is a statement, never a default left in place (review round 3): Record update's "Release it runs now" starts on "Choose…"
+(the recorded release is marked, never chosen), and Confirm version's starts on the target release of a release target, else on
+"Choose…". A Release installed sent with the select untouched names no release, and the service refuses it (CHOOSE_RUNS_NOW).
 
 Never "required" (a field the service needs says so in its refusal: "Choose ...", "Enter ..."), never "Critical" (the priority is normal
 or high: updates.OPEN_PRIORITIES), never a never word (rules.NEVER_WORDS).
@@ -166,6 +171,8 @@ class _UpdateForm(ServiceForm):
     outcomes: tuple = ()
 
     def _setup(self, *, releases, recorded, model_name: str, initial_release=None):
+        """The release choices (the recorded one marked), the bases the outcomes allow, and the release to begin with: `initial_release`,
+        or none ("Choose…")."""
         self.fields["software_release"].widget.choices = [CHOOSE, *_release_choices(releases, recorded)]
         if not releases:
             self.fields["software_release"].help_text = NO_RELEASE_ON_FILE.format(model=model_name)
@@ -174,7 +181,8 @@ class _UpdateForm(ServiceForm):
             self.initial.setdefault("software_release", str(initial_release.pk))
 
     def choice(self) -> UpdateChoice:
-        """What was chosen, as the service reads it: patches send no release (the version stays as recorded), already no basis."""
+        """What was chosen, as the service reads it: patches send no release (the version is left to the service: the release recorded
+        before, or "version not recorded"), already no basis."""
         outcome = _value(self, "software_outcome")
         release = _value(self, "software_release") or None
         basis = _value(self, "software_basis")
@@ -187,7 +195,8 @@ class _UpdateForm(ServiceForm):
 
 class RecordUpdateForm(_UpdateForm):
     """Record update (updates.record): an install with no work order: installed or patches applied, the release it runs now, the
-    reference, the basis, who installed it, and the day."""
+    reference, the basis, who installed it, and the day. No release is chosen to begin with (the recorded one is only marked): a
+    Release installed names the one installed, or is refused (CHOOSE_RUNS_NOW)."""
 
     outcomes = RECORD_OUTCOMES
     software_outcome = _radios("What was done", ((o.value, o.label) for o in RECORD_OUTCOMES))
@@ -202,7 +211,7 @@ class RecordUpdateForm(_UpdateForm):
         kwargs.setdefault("auto_id", "cu-%s")
         kwargs.setdefault("initial", {"applied_on": today.isoformat()})
         super().__init__(*args, **kwargs)
-        self._setup(releases=releases, recorded=recorded, model_name=model_name, initial_release=recorded)
+        self._setup(releases=releases, recorded=recorded, model_name=model_name)
         self.fields["installed_by"].widget.choices = [CHOOSE, *InstalledBy.choices]
 
     def service_kwargs(self) -> dict:
@@ -211,7 +220,8 @@ class RecordUpdateForm(_UpdateForm):
 
 class ConfirmForm(_UpdateForm):
     """Confirm version (updates.confirm): what a completed update work order did, when its completion did not record it: installed,
-    patches applied, or already on the update, with the release, the reference, and the basis."""
+    patches applied, or already on the update, with the release, the reference, and the basis. The release to begin with is the target
+    release of a release target (a release of the model on file), else none: never the recorded one."""
 
     outcomes = CONFIRM_OUTCOMES
     software_outcome = _radios("What this update did", ((o.value, o.label) for o in CONFIRM_OUTCOMES))
@@ -223,7 +233,7 @@ class ConfirmForm(_UpdateForm):
     def __init__(self, *args, releases, recorded, target_release, model_name: str, **kwargs):
         kwargs.setdefault("auto_id", "cu-%s")
         super().__init__(*args, **kwargs)
-        shown = target_release if target_release is not None and target_release in releases else recorded
+        shown = target_release if target_release is not None and target_release in releases else None
         self._setup(releases=releases, recorded=recorded, model_name=model_name, initial_release=shown)
 
 

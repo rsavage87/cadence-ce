@@ -39,7 +39,7 @@ KEEP_LABEL = "Keep as recorded"
 KEEP_HINT = "Recorded when it was last completed: {label}"
 NOT_CONFIRMED_LABEL = "Not confirmed now"
 OUTCOME_HINTS = {
-    UpdateOutcome.INSTALLED: "It runs another release now, chosen below; the device's record moves to it from today",
+    UpdateOutcome.INSTALLED: "The release installed, chosen below; the device's record moves to it from today",
     UpdateOutcome.PATCHES: "The version is unchanged; enter the manufacturer's patch list below",
     UpdateOutcome.ALREADY: "Checked today: it already runs the update",
     NOT_CONFIRMED: "Nothing is recorded now; Confirm version on the device's Security tab records it later. Say why in the resolution",

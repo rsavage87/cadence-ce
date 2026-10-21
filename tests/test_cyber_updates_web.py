@@ -550,7 +550,8 @@ def test_the_record_modal_and_an_install_by_it(client, world, users, today):
     assert [v for v, _l in form.fields["software_outcome"].widget.choices] == ["installed", "patches"]  # never "already" by hand
     assert form.fields["software_release"].widget.choices == [("", "Choose…"), (str(world["r52"].pk), "5.2 (demo) (the device's record now)"),
                                                               (str(world["r56"].pk), "5.6 (demo)")]
-    assert form["software_release"].value() == str(world["r52"].pk) and form["applied_on"].value() == today.isoformat()
+    # review round 3: no release to begin with (the recorded one is only marked): a release installed is a statement
+    assert form["software_release"].value() is None and form["applied_on"].value() == today.isoformat()
     assert [v for v, _l in form.fields["installed_by"].widget.choices] == ["", *InstalledBy.values]
     assert [v for v, _l in form.fields["software_basis"].widget.choices] == ["", *UpdateBasis.values]
     assert 'hx-post="/security/devices/CE-10002/updates/record/"' in body
