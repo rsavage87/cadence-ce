@@ -148,6 +148,8 @@ def completion(body: str, outcome: str, *, reference: str = "", basis: str = "",
 
 
 def reopen(wo, by):
+    """Reopen `wo` (in progress) as stored now (a completion through a view leaves the caller's copy behind)."""
+    wo.refresh_from_db()
     wo_services.change_status(wo, WoStatus.IN_PROGRESS, by=by)
 
 
