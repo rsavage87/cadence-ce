@@ -2,8 +2,10 @@
 {% comment %}Slice 37: a model's panel (views_cybersecurity._panel_context), in the drawer. The profile's card; the releases, each with its
    two standing lines (never merged) and, behind Details, its groups merged with the profile by group; and (Device security View and
    Equipment View) the devices on site, narrowed by the Fleet's filters it was opened with, each tag opening the device's Security tab.
-   Edit (Device security Edit) records the profile and the releases; Set devices to a release needs Equipment View too. The actions'
-   addresses carry the filters, so the panel comes back as it was.{% endcomment %}
+   Edit (Device security Edit) records the profile and the releases; Set devices to a release needs Equipment View too. Slice 39:
+   Record decision for every device of ours of the model (decide_model_url, permissions.can_decide), only while a device of ours of the
+   model on site waits for one (cyber_release_actions._waiting: a decidable need, no decision governing it, no update answering it).
+   The actions' addresses carry the filters, so the panel comes back as it was.{% endcomment %}
 <div class="dr-h cy-panel-h">
   <div>
     <h2>{{ dm.manufacturer }} {{ dm.model }}</h2>
@@ -57,7 +59,7 @@
   </div>
   {% endif %}
 </div>
-{% if can_edit_devices and releases and on_site or can_decide and on_site %}<div class="dr-f">
-  {% if can_edit_devices and releases %}<button class="btn primary" type="button" hx-get="{{ set_url }}" hx-target="#modal-card">Set devices to a release</button>{% endif %}
-  {% if can_decide %}<button class="btn" type="button" hx-get="{{ decide_model_url }}" hx-target="#modal-card">Record decision for every {{ dm.model }} of ours</button>{% endif %}
+{% if can_edit_devices and releases and on_site or decide_model_url %}<div class="dr-f">
+  {% if can_edit_devices and releases and on_site %}<button class="btn primary" type="button" hx-get="{{ set_url }}" hx-target="#modal-card">Set devices to a release</button>{% endif %}
+  {% if decide_model_url %}<button class="btn" type="button" hx-get="{{ decide_model_url }}" hx-target="#modal-card">Record decision for every {{ dm.model }} of ours</button>{% endif %}
 </div>{% endif %}
