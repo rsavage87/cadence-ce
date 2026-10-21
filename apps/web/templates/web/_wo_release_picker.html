@@ -1,10 +1,11 @@
 {% comment %}The completion modal's "Software on the device" (slice 38, views_wo_release.picked, under "release"), after the test
    equipment picker and before the late reason and the resolution, only where cybersecurity.rules.release_offer holds. The target in
    rules' words above the outcome radios (each with what it does; none chosen while a choice is needed, "Keep as recorded" chosen on a
-   re-completion with an outcome recorded); the release it runs now (the model's releases, the recorded one marked), the reference (the
-   manufacturer's patch list and its month or revision), the basis, and the help line. The hidden marker says the section was on screen
-   (absent: nothing sent). Every field is shown whatever the outcome: the form sends what each outcome reads (already without a basis;
-   not confirmed now its outcome alone). Existing classes only (the repair's radio cards, .fld's column).{% endcomment %}
+   re-completion with an outcome recorded); the release it runs now (the model's releases, the recorded one marked as information), for
+   Release installed and Already on the update only (its hint says so), the reference (the manufacturer's patch list and its month or
+   revision), the basis, and the help line. The hidden marker says the section was on screen (absent: nothing sent). Every field is
+   shown whatever the outcome: the form sends what each outcome reads (patches applied without a release, already without a basis; not
+   confirmed now its outcome alone). Existing classes only (the repair's radio cards, .fld's column).{% endcomment %}
 {% with r=release %}
 <div class="full fld wc-sw" id="wc-sw" role="group" aria-labelledby="wc-sw-label" style="gap:8px">
   <input type="hidden" name="shown_software_outcome" value="1">

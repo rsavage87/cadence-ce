@@ -7,7 +7,7 @@ Slice 38 review fixes, round 3, the web forms and hints (H2), on SQLite and Post
 - Confirm version starts on the target release of a release target only (ConfirmForm), else on "Choose…": a patches target, or a
   target release entered in error since, preselects nothing, and Release installed posted as rendered is refused the same way.
 - The completion modal's "Release installed" hint says what the service records (views_wo_release.OUTCOME_HINTS), never "another
-  release": the record already naming the release installed is accepted, as the hint now allows.
+  release": the record already naming the release installed is accepted, as the hint now allows (review round 4: "from that day").
 - Patches applied send no release from Record update and Confirm version, whatever was chosen (the version is left to the service).
 """
 import json
@@ -32,7 +32,7 @@ HX = {"HTTP_HX_REQUEST": "true"}
 MODAL = {"HTTP_HX_REQUEST": "true", "HTTP_HX_TARGET": "modal-card"}
 MR, VL = UpdateBasis.MANUFACTURER_RELEASE, UpdateBasis.VALIDATED_LIST
 INSTALLED, PATCHES = UpdateOutcome.INSTALLED, UpdateOutcome.PATCHES
-INSTALLED_HINT = "The release installed, chosen below; the device's record moves to it from today"
+INSTALLED_HINT = "The release installed, chosen below; the device's record moves to it from that day."  # review round 4
 
 
 # --- helpers -----------------------------------------------------------------------------------------------------------------------
@@ -204,20 +204,28 @@ def test_confirm_on_a_patches_target_starts_on_choose_and_installed_left_untouch
 def test_confirm_already_with_a_later_record_left_untouched_names_no_later_version(client, world, it_user, today):
     """The skeptics' later-kept case: a patches update completed five days ago with the version not confirmed while the pump ran 5.2
     (demo); its record set to 5.6 (demo) since two days ago. Already on the update, the select left as rendered, never claims the later
-    record's 5.6 (demo) as the version on the completed day."""
-    pump, r56 = world["pump"], world["r56"]
-    _wo, row = unconfirmed(world, today, reference="ICAR-2026-09")
+    record's 5.6 (demo) as the version on the completed day. Review round 4: already on a patches target names a release (the service's
+    CHOOSE_RUNS_NOW: nothing written); the release it ran, chosen, is recorded and the later record kept."""
+    pump, r52, r56 = world["pump"], world["r52"], world["r56"]
+    wo, row = unconfirmed(world, today, reference="ICAR-2026-09")
     facts(pump, r56, release_since=today - 2 * DAY, checked_on=today - 2 * DAY)
     client.force_login(it_user)
     body = body_of(client.get(confirm_url(row), **MODAL))
     assert (str(r56.pk), "5.6 (demo) (the device's record now)", False) in options(body, "software_release")
     assert as_posted(body, "software_release") == ""
-    r = client.post(confirm_url(row), {"software_outcome": UpdateOutcome.ALREADY, "software_release": as_posted(body, "software_release"),
-                                       "software_reference": "", "software_basis": ""}, **MODAL)
+    data = {"software_outcome": UpdateOutcome.ALREADY, "software_release": as_posted(body, "software_release"), "software_reference": "",
+            "software_basis": ""}
+    r = client.post(confirm_url(row), data, **MODAL)
+    assert r.status_code == 200 and "HX-Retarget" not in r
+    assert errors(body_of(r)) == {"software_release": updates.CHOOSE_RUNS_NOW}
+    row.refresh_from_db()
+    assert row.outcome == "" and facts_now(pump) == (r56.pk, today - 2 * DAY, today - 2 * DAY)
+    r = client.post(confirm_url(row), {**data, "software_release": str(r52.pk)}, **MODAL)
     assert saved(r), r.content.decode()[:600]
     row.refresh_from_db()
-    assert (row.outcome, row.release_after_id, row.later_kept) == (UpdateOutcome.ALREADY, None, True)
-    assert "5.6 (demo)" not in toast_of(r) and rules.LATER_KEPT_WORDS in toast_of(r)
+    assert (row.outcome, row.release_after_id, row.later_kept) == (UpdateOutcome.ALREADY, r52.pk, True)
+    assert toast_of(r) == (f"{wo.number} confirmed: Checked {rules.day_words(wo.completed_on)}: already on 5.2 (demo); nothing installed; "
+                           f"{rules.LATER_KEPT_WORDS}")
     assert facts_now(pump) == (r56.pk, today - 2 * DAY, today - 2 * DAY)
 
 

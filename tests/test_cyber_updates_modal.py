@@ -359,10 +359,10 @@ def test_installed_through_the_view_records_it_and_says_so(client, signed_in, r5
     signed_in("technician")
     r = client.post(complete_url(wo), post(INSTALLED, r56, basis=MR), **HX)
     assert saved(r)
-    assert toast(r) == f"{wo.number} completed; 5.6 (demo) installed {rules.day_words(today)} (recorded before: 5.2 (demo))"
+    assert toast(r) == f"{wo.number} completed; 5.6 (demo) installed {rules.day_words(today)}"  # review round 4: no "recorded before"
     row.refresh_from_db()
     wo.refresh_from_db()
-    assert state(row) == rules.DONE and (row.outcome, row.release_before, row.release_after, row.basis) == (INSTALLED, r52, r56, MR)
+    assert state(row) == rules.DONE and (row.outcome, row.release_after, row.basis) == (INSTALLED, r56, MR)
     assert wo.status == WoStatus.COMPLETED and wo.resolution == updates.DEFAULT_RESOLUTION[INSTALLED]
     assert DeviceSecurity.objects.get(asset=wo.asset).release == r56
 
@@ -437,19 +437,16 @@ def test_a_release_gone_meanwhile_or_junk_is_refused_in_the_services_words(clien
     assert saved(r)  # the release is never read for not confirmed now
 
 
-@pytest.mark.parametrize("case", ["already on another release", "patches with no reference", "already, not on the target",
-                                  "installed on the validated list", "installed with nothing chosen", "patches that moved the version"])
+@pytest.mark.parametrize("case", ["patches with no reference", "already, not on the target", "installed on the validated list",
+                                  "installed with nothing chosen"])
 def test_the_services_refusals_come_back_on_their_fields(client, signed_in, r52, r56, on52, job, case):
     wo, row = job
     data, key, words = {
-        "already on another release": (post(ALREADY, r56), "software_release", updates.RECORDED_AS.format(version="5.2 (demo)")),
         "patches with no reference": (post(PATCHES, basis=VL), "software_reference", updates.REFERENCE_NEEDED),
-        "already, not on the target": (post(ALREADY, ""), "software_release",
+        "already, not on the target": (post(ALREADY, r52), "software_release",
                                        updates.NOT_THE_TARGET.format(version="5.2 (demo)", target="5.6 (demo)")),
         "installed on the validated list": (post(INSTALLED, r56, basis=VL), "software_basis", updates.VALIDATED_PATCHES_ONLY),
         "installed with nothing chosen": (post(INSTALLED, "", basis=MR), "software_release", updates.CHOOSE_RUNS_NOW),
-        "patches that moved the version": (post(PATCHES, r56, reference="ICAR-2026-09", basis=VL), "software_release",
-                                           updates.PATCHES_UNCHANGED),
     }[case]
     signed_in("technician")
     r = client.post(complete_url(wo), data, **HX)
@@ -488,7 +485,7 @@ def test_the_drawer_and_print_line_follow_the_record(client, signed_in, pump, r5
     assert "Confirm version" not in line and "Entered in error" not in line  # the Security tab's, not here
     assert "<b>Software update:</b> Open: to install 5.6 (demo)" in read(client, print_url(wo))
     complete_work_order(wo, software=UpdateChoice(INSTALLED, str(r56.pk), basis=MR), by=None, today=today)
-    words = f"5.6 (demo) installed {rules.day_words(today)} (recorded before: 5.2 (demo))"
+    words = f"5.6 (demo) installed {rules.day_words(today)}"  # review round 4: never "(recorded before: …)"
     assert f"<b>Software update:</b> {words}" in drawer_line(read(client, drawer_url(wo), **HX))
     assert f"<b>Software update:</b> {words}" in read(client, print_url(wo))
 
@@ -620,7 +617,7 @@ def test_no_door_here_says_a_never_word(client, signed_in, make_user, pump, pump
     signed_in("technician")
     wo, _row = update_wo(pump, r56, assigned_to=tom)
     get(complete_url(wo), **HX)  # a choice needed
-    for data in (post(None), post(ALREADY, r56), post(PATCHES, basis=VL), post(ALREADY, ""), post(INSTALLED, r56, basis=VL),
+    for data in (post(None), post(ALREADY, r52), post(PATCHES, basis=VL), post(INSTALLED, r56, basis=VL),
                  post(PATCHES, r56, reference="ICAR 2026", basis=VL), post("updated"), post(NOT_CONFIRMED), post(INSTALLED, "x")):
         assert send(wo, data).status_code == 200
     lines(wo)  # open

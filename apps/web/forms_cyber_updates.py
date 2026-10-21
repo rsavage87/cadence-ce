@@ -7,12 +7,15 @@ keys are these fields' names; one about the device, the update, or the release a
 
 Choices are set in __init__ from what the view read (the model's releases, the device's recorded release, the technicians), never a
 class-level queryset. Only what the chosen outcome or target uses is sent: a release target names no patch list and a patches target no
-release; patches applied send no release from Record update or Confirm version (the version is left to the service, which names the
-release recorded before, or says the version is not recorded); "already" names no basis (updates.NO_BASIS otherwise).
+release; the release is for Release installed and Already on the update only, so patches applied send none, whatever the select shows
+(review round 4: every door, the completion modal's too, forms_wo_complete; the service keeps the version as the device's record names
+it, or says the version is not recorded, and refuses patches that name a release); "already" names no basis (updates.NO_BASIS
+otherwise). The release's help says so (RELEASE_HELP; RECORD_RELEASE_HELP on Record update, which offers no Already).
 
 The release is a statement, never a default left in place (review round 3): Record update's "Release it runs now" starts on "Choose…"
-(the recorded release is marked, never chosen), and Confirm version's starts on the target release of a release target, else on
-"Choose…". A Release installed sent with the select untouched names no release, and the service refuses it (CHOOSE_RUNS_NOW).
+(the recorded release is marked, never chosen), and Confirm version's "Release it ran" (on the day the work order was completed, review
+round 4) starts on the target release of a release target, else on "Choose…". A Release installed sent with the select untouched names
+no release, and the service refuses it (CHOOSE_RUNS_NOW). The marks "(the device's record now)" are information, never a constraint.
 
 Never "required" (a field the service needs says so in its refusal: "Choose ...", "Enter ..."), never "Critical" (the priority is normal
 or high: updates.OPEN_PRIORITIES), never a never word (rules.NEVER_WORDS).
@@ -54,7 +57,12 @@ NO_OTHER_RELEASE = ("No other release of {model} is on file: add it on the Devic
 TARGET_REFERENCE_HELP = "For the manufacturer's patches: its patch list and its month or revision, as written, e.g. ICAR-2026-09."
 DUE_HELP = "From today. The work order's due day."
 RECORDED_MARK = " (the device's record now)"
-RELEASE_HELP = "The release the device runs now. For patches applied, the version stays as recorded."
+# The release is read for Release installed and Already on the update only (review round 4): patches applied send none
+RELEASE_HELP = "For Release installed or Already on the update. Patches applied keep the version as recorded."
+RECORD_RELEASE_HELP = "For Release installed. Patches applied keep the version as recorded."  # Record update offers no Already
+# Confirm version: the release on the day the work order was completed (its record may have moved on since)
+CONFIRM_RELEASE_LABEL = "Release it ran"
+CONFIRM_RELEASE_HELP = "On the day the work order was completed. " + RELEASE_HELP
 NO_RELEASE_ON_FILE = "No release of {model} is on file yet: add it on the Device security screen's Models tab."
 REFERENCE_HELP = ("For patches applied: the manufacturer's patch list and its month or revision (e.g. ICAR-2026-09). Otherwise a service "
                   "notice or field change number, if any.")
@@ -181,8 +189,9 @@ class _UpdateForm(ServiceForm):
             self.initial.setdefault("software_release", str(initial_release.pk))
 
     def choice(self) -> UpdateChoice:
-        """What was chosen, as the service reads it: patches send no release (the version is left to the service: the release recorded
-        before, or "version not recorded"), already no basis."""
+        """What was chosen, as the service reads it: patches send no release, whatever the select shows (the release is for Release
+        installed and Already on the update only: the version stays as the device's record names it, or is not recorded), already no
+        basis."""
         outcome = _value(self, "software_outcome")
         release = _value(self, "software_release") or None
         basis = _value(self, "software_basis")
@@ -200,7 +209,7 @@ class RecordUpdateForm(_UpdateForm):
 
     outcomes = RECORD_OUTCOMES
     software_outcome = _radios("What was done", ((o.value, o.label) for o in RECORD_OUTCOMES))
-    software_release = _select("Release it runs now", RELEASE_HELP)
+    software_release = _select("Release it runs now", RECORD_RELEASE_HELP)
     software_reference = _text("Reference", REFERENCE_HELP, placeholder="e.g. ICAR-2026-09")
     software_basis = _select("Basis for this update", BASIS_HELP)
     installed_by = _select("Installed by", INSTALLED_BY_HELP)
@@ -220,12 +229,13 @@ class RecordUpdateForm(_UpdateForm):
 
 class ConfirmForm(_UpdateForm):
     """Confirm version (updates.confirm): what a completed update work order did, when its completion did not record it: installed,
-    patches applied, or already on the update, with the release, the reference, and the basis. The release to begin with is the target
-    release of a release target (a release of the model on file), else none: never the recorded one."""
+    patches applied, or already on the update, with the release it ran on the day the work order was completed (CONFIRM_RELEASE_LABEL),
+    the reference, and the basis. The release to begin with is the target release of a release target (a release of the model on
+    file), else none: never the recorded one."""
 
     outcomes = CONFIRM_OUTCOMES
     software_outcome = _radios("What this update did", ((o.value, o.label) for o in CONFIRM_OUTCOMES))
-    software_release = _select("Release it runs now", RELEASE_HELP)
+    software_release = _select(CONFIRM_RELEASE_LABEL, CONFIRM_RELEASE_HELP)
     software_reference = _text("Reference", REFERENCE_HELP, placeholder="e.g. ICAR-2026-09")
     software_basis = _select("Basis for this update", BASIS_HELP)
     layout = ("software_outcome", "software_release", "software_reference", "software_basis")
