@@ -757,7 +757,9 @@ class WorkOrderViewSet(TenantViewSet):
                 test_equipment = _test_equipment_ids(d.get("test_equipment"))
                 if test_equipment is None:
                     not_text["test_equipment"] = [TEST_EQUIPMENT_IDS + TEST_EQUIPMENT_KEPT]
-            software = cyber_updates.choice_from(d, not_text)  # slice 38: left out, nothing recorded (KEEP)
+            parsed: dict = {}
+            software = cyber_updates.choice_from(d, parsed)  # slice 38: left out, nothing recorded (KEEP)
+            not_text.update({field: [words] for field, words in parsed.items()})  # a list per field, as every 400 here
             if not_text:
                 raise DRFValidationError(not_text)
             kwargs = {"resolution": d.get("resolution") or "", "pm_result": d.get("pm_result") or "", "results": d.get("results"),

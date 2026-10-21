@@ -29,13 +29,31 @@ GET device-security/                Device security View AND Equipment View (it 
                                     security_not_recorded | os_ended | os_end_announced; ?norelease=1 (no release recorded). An unknown
                                     value is a 400 naming the parameter. Through rules.standings: a fixed number of queries.
 GET device-security/<id or tag>/    One device on site, by id or by tag in any letter case.
+GET software-updates/               Slice 38. Device security View AND Equipment View (it names devices). Every update work order's
+                                    record and every install recorded by hand (one entered in error is left out), newest first as the
+                                    device's Security tab lists them (by the record's day: the day it was applied, else its work order's
+                                    completion, else the day it was opened), 50 a page (serializers_cybersecurity.update_data): id,
+                                    device {id, tag}, work_order {id, number} (null for one recorded by hand; never a link), target,
+                                    target_release {id, version}, target_reference, state (open, done, not_confirmed, cancelled) and
+                                    state_label, outcome and outcome_label, words (apps.cybersecurity.rules.update_words, the sentence
+                                    the tab shows), applied_on, release_before and release_after {id, version}, reference, basis and
+                                    basis_label, installed_by and installed_by_label, recorded_by (a name), later_kept, opened_on.
+                                    ?device= a device's id, or its tag in any letter case (a retired one's too); ?release= a release's id
+                                    (the release an update was to install, or the one the device runs after it); ?state= one of open,
+                                    done, not_confirmed, cancelled. An unknown value is a 400 naming the parameter. One query for a page
+                                    (and its count).
+GET software-updates/<id>/          One of them, by id.
 
-Another facility's row is a 404 (as an unknown one), a retired device too; a level missing a 403 in plain words; any write a 405 naming
-the Device security screen (with Device security Edit) or a 403 (without it).
+Another facility's row is a 404 (as an unknown one), a retired device too (but on software-updates/, which keeps a retired device's
+updates); a level missing a 403 in plain words; any write a 405 naming the Device security screen (with Device security Edit) or a 403
+(without it). What an update work order did is recorded by its transition to completed (POST work-orders/{id}/transition/ with
+software_outcome, software_release, software_reference, software_basis: the work order's software_choices says what this user may send);
+the work order itself reads it in software_update (serializers.WorkOrderSerializer), behind the same two levels.
 """
 import uuid
 
-from django.db.models import Count, F
+from django.db.models import Count, F, Q
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.exceptions import MethodNotAllowed, NotFound
@@ -47,8 +65,9 @@ from rest_framework.response import Response
 from apps.accounts.models import Level, Module
 from apps.cybersecurity import filters, rules
 from apps.cybersecurity import permissions as perms
-from apps.cybersecurity.models import DeviceSecurity, SoftwareRelease, SoftwareUpdate
+from apps.cybersecurity.models import RECORDED_OUTCOMES, DeviceSecurity, SoftwareRelease, SoftwareUpdate
 from apps.equipment.models import Asset, AssetStatus
+from apps.workorders.models import OPEN_STATUSES, WoStatus
 
 from . import serializers_cybersecurity as scs
 from .permissions import ModulePermission
@@ -90,12 +109,13 @@ class _ReadOnly(TenantAPIMixin, viewsets.ReadOnlyModelViewSet):
     scoped_actions = frozenset()  # never a scoped user's, whatever their levels
     filter_backends = [SearchFilter]
     view_refusal = RELEASES_REFUSAL
+    write_refusal = WRITE_REFUSAL
 
     def permission_denied(self, request, message=None, code=None):
         """ModulePermission's level refusal in plain words (a write: Edit, the default write_level, kept so that a write added later is
         closed until its level is set); the scoped refusal and EquipmentView's keep their own. With the level, a write is a 405."""
         if message is None and request.user and request.user.is_authenticated:
-            message = self.view_refusal if request.method in SAFE_METHODS else WRITE_REFUSAL
+            message = self.view_refusal if request.method in SAFE_METHODS else self.write_refusal
         super().permission_denied(request, message=message, code=code)
 
     def http_method_not_allowed(self, request, *args, **kwargs):
@@ -174,13 +194,14 @@ class SoftwareReleaseViewSet(_ReadOnly):
 
 
 class EquipmentView(BasePermission):
-    """The device list's second door: Equipment View (permissions.can_view_devices), checked after ModulePermission, so a scoped user
-    keeps its own refusal."""
+    """The device lists' second door: Equipment View (permissions.can_view_devices), checked after ModulePermission, so a scoped user
+    keeps its own refusal; refused in the view's own words (its view_refusal, or its write_refusal for a write)."""
 
     def has_permission(self, request, view):
         if request.user.has_level(Module.EQUIPMENT, Level.VIEW):
             return True
-        self.message = DEVICES_REFUSAL if request.method in SAFE_METHODS else WRITE_REFUSAL
+        self.message = (getattr(view, "view_refusal", DEVICES_REFUSAL) if request.method in SAFE_METHODS
+                        else getattr(view, "write_refusal", WRITE_REFUSAL))
         return False
 
 
@@ -241,22 +262,68 @@ class DeviceSecurityViewSet(_ReadOnly):
 
 
 UPDATES_REFUSAL = "Reading software updates needs Device security View and Equipment View."
+UPDATES_READ_ONLY = ("The API reads software updates only: open one, record an install, confirm a version, or mark one entered in error "
+                     "on the Device security screen and the device's Security tab, and record what an update work order did by "
+                     "completing it (POST /api/v1/work-orders/{id}/transition/ with software_outcome).")
+UPDATES_WRITE_REFUSAL = ("The API reads software updates only. Opening and recording them is done on the Device security screen and the "
+                         "device's Security tab, and needs Device security Edit.")
+UPDATE_NOT_FOUND = "No software update with that id in this facility."
+STATE_WORDS = f"One of {', '.join(rules.STATES)}."
+
+
+def state_q(state: str) -> Q:
+    """The rows in `state` (one of rules.STATES), positive conditions only, as rules.update_state reads a row (a test holds every row
+    to it): open, a work order open, in progress, or awaiting parts; not_confirmed, completed or closed with nothing recorded; done, an
+    install recorded by hand (one entered in error is never listed), or completed or closed with an outcome; cancelled."""
+    finished = (WoStatus.COMPLETED, WoStatus.CLOSED)
+    return {rules.OPEN: Q(work_order__status__in=OPEN_STATUSES),
+            rules.NOT_CONFIRMED: Q(work_order__status__in=finished, outcome=""),
+            rules.DONE: Q(work_order__isnull=True, removed_on__isnull=True) | Q(work_order__status__in=finished, outcome__in=RECORDED_OUTCOMES),
+            rules.CANCELLED: Q(work_order__status=WoStatus.CANCELLED)}[state]
 
 
 class SoftwareUpdateViewSet(_ReadOnly):
-    """Slice 38: the software updates (update work orders' records and installs recorded by hand), read only, as the device's Security
-    tab shows them (rules' words). Device security View and Equipment View (they name devices); never a scoped user. Filters: ?device=
-    (an id or tag), ?release= (a release's id: the target or what it runs after), ?state= (rules.update_state's keys). Recorded on the
-    Device security screen and by completing an update work order (POST work-orders/{id}/transition/ with software_outcome). Wave 2
-    fills in the fields and filters."""
+    """Slice 38: the software updates (the module docstring), read only, as the device's Security tab shows them (rules' words). Device
+    security View and Equipment View (they name devices); never a scoped user."""
 
     permission_classes = [IsAuthenticated, ModulePermission, EquipmentView]
     serializer_class = scs.SoftwareUpdateSerializer
     view_refusal = UPDATES_REFUSAL
+    write_refusal = UPDATES_WRITE_REFUSAL
+
+    def http_method_not_allowed(self, request, *args, **kwargs):
+        raise MethodNotAllowed(request.method, detail=UPDATES_READ_ONLY)
 
     def get_queryset(self):
-        qs = SoftwareUpdate.objects.select_related("asset", "work_order", "target_release", "release_before", "release_after")
-        return qs.filter(removed_on__isnull=True).order_by("-created_at", "pk")
+        qs = (SoftwareUpdate.objects.filter(removed_on__isnull=True)
+              .select_related("asset", "work_order", "target_release", "release_before", "release_after", "recorded_by"))
+        if self.action == "list":
+            params, errors = self.request.query_params, {}
+            device = params.get("device") or ""
+            release = _id_filter(params, "release", "A software release's id.", errors)
+            state = params.get("state") or ""
+            if state and state not in rules.STATES:
+                errors["state"] = [STATE_WORDS]
+            if errors:
+                raise DRFValidationError(errors)
+            if device:
+                pk = _uuid(device)
+                qs = qs.filter(asset_id=pk) if pk is not None else qs.filter(asset__tag__iexact=device)
+            if release is not None:
+                qs = qs.filter(Q(target_release_id=release) | Q(release_after_id=release))
+            if state:
+                qs = qs.filter(state_q(state))
+        # newest first, as the Security tab lists them (rules.updates_of): by the record's day, then the newest row
+        day = Coalesce(F("applied_on"), F("work_order__completed_on"), F("opened_on"))
+        return qs.order_by(day.desc(), "-created_at", "-pk")
+
+    def get_object(self):
+        pk = _uuid(self.kwargs.get(self.lookup_url_kwarg or self.lookup_field))
+        found = self.get_queryset().filter(pk=pk).first() if pk is not None else None
+        if found is None:
+            raise NotFound(UPDATE_NOT_FOUND)
+        self.check_object_permissions(self.request, found)
+        return found
 
 
 def register(router) -> None:

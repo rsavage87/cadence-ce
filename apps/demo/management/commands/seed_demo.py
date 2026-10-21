@@ -112,6 +112,17 @@ Cadence the day before its work begins (_fleet_in_cadence dates each device's "A
 devices, the rentals and the loaner, and the bed retired after its repair, never the whole fleet as added on the seed's day. Fictional
 throughout (every version "(demo)", every MDS2 document DEMO-, no link): nothing describes a real product's software or disclosure.
 Constants only: nothing is drawn, no device moves. The North Campus has none.
+
+Slice 38: software updates (_software_updates), after the register, through apps.cybersecurity.updates as the Device security screen and
+the completion modal record them: Kim opens updates to the pumps' newer release from the older one, narrowed to one department's 3 or 4
+pumps (Open updates to this release), each due on its pump's next PM and assigned to a credentialed in-house technician (CE installs the
+pumps' updates here); today the technician completes one as installed (its record moves to the newer release: one pump fewer on the
+older release, past its security updates) and one with the version not confirmed (Confirm version is offered on it), and the rest stay
+open. And the second C-arm by tag (the first is kept off the network): CE found it on a release added for its model ("7.2 (demo)") at the
+last round of checks, then the manufacturer applied the patches on its validated patch list remotely, recorded by hand (DEMO-PATCH-, the
+list of the month before). The work orders' problems and resolutions name no version and no reference. Today's work: every period the
+program evaluation and the vendor review count is as before; no vendor job, nothing on the ventilators. Constants only: nothing is drawn.
+The North Campus has none.
 """
 import random
 from datetime import date, datetime, time, timedelta
@@ -129,9 +140,11 @@ from apps.core.workdays import is_work_day
 from apps.credentials.models import Credential, Scope, Technician
 from apps.credentials.services import qualified_technicians, renew_credential
 from apps.cybersecurity import services as cyber
+from apps.cybersecurity import updates as cyber_updates
 from apps.cybersecurity.models import (
     Connects,
     Disclosed,
+    InstalledBy,
     Mds2Edition,
     Mds2Status,
     Network,
@@ -140,6 +153,9 @@ from apps.cybersecurity.models import (
     PatientData,
     Sbom,
     Segmented,
+    SoftwareRelease,
+    UpdateBasis,
+    UpdateOutcome,
     UpdatesBy,
 )
 from apps.equipment import services as equipment
@@ -540,6 +556,22 @@ SECURITY_BULK = [
 SECURITY_LOANER = ("T-0102", PUMP_NEWER, Network.WIRELESS)  # the vendor loaner pump, recorded the day it came (its incoming inspection)
 SECURITY_OFF_NETWORK = ("Cios Spin", 20)  # the first C-arm by tag is kept off the network: recorded so, checked days ago, no release
 
+# Slice 38, software updates (_software_updates), after the register: Kim (the director: she may open and assign them) opens updates
+# to the pumps' newer release from the older one in one department, the first in DEPTS order whose pumps of ours on the older release
+# number UPDATE_DEPARTMENT_PUMPS (none held, none with an open update), due on each pump's next PM (else UPDATE_DUE_DAYS from today),
+# assigned to the first in-house technician credentialed for every one of them (the pumps' updates are installed here by CE). Today:
+# the first pump's update completed by that technician as installed (UPDATE_BASIS), the second's with the version not confirmed and
+# UPDATE_NOT_CONFIRMED_RESOLUTION, the rest open. No version or reference in a problem or a resolution.
+UPDATE_DEPARTMENT_PUMPS = (3, 4)
+UPDATE_DUE_DAYS = 30
+UPDATE_BASIS = UpdateBasis.MANUFACTURER_RELEASE
+UPDATE_NOT_CONFIRMED_RESOLUTION = "Update installed and the pump restarted; the version on the device is still to be checked."
+# The other C-arm (the first by tag is kept off the network): CE found it on a release of its own at the last round of checks (days
+# ago, the profile's support check's day), added for the model then; the manufacturer applied the patches on its validated patch list
+# remotely days ago (recorded by hand: no work order), the list named by the month before the day they were applied.
+C_ARM_RELEASE, C_ARM_FOUND_DAYS_AGO, C_ARM_PATCHED_DAYS_AGO = "7.2 (demo)", 20, 6
+C_ARM_PATCHES = "DEMO-PATCH-{year}-{month:02d}"
+
 
 def _noon(day: date) -> datetime:
     """Noon of `day` in the current time zone (the facility's, inside tenant_context): a backdated timestamp's moment."""
@@ -711,6 +743,7 @@ class Command(BaseCommand):
             self._replacement_planning(today, domain)  # slice 36: draws nothing, after every draw (no install date moves)
             self._fleet_in_cadence(today, assets)  # slice 37: the fleet's "Added" rows dated the day before the demo's work begins
             self._device_security(today, domain)  # slice 37: draws nothing, after every draw
+            self._software_updates(today, domain)  # slice 38: draws nothing, after the register (today's work: outside every period)
             self._vendor_review(today, domain)  # slice 34: before the program evaluation, which stays made last
             self._program_evaluation(today, domain)  # slice 32: last, so its figures count everything above
         devices = len(assets) + len(NEW_DEVICES) + len(TEMPORARY_DEVICES)
@@ -1004,6 +1037,58 @@ class Command(BaseCommand):
         model, checked = SECURITY_OFF_NETWORK
         cyber.record_facts(ours(models[model])[0], by=manager, today=today, network=Network.NOT_CONNECTED,
                            checked_on=today - timedelta(days=checked))
+
+    @staticmethod
+    def _software_updates(today: date, domain: str) -> None:
+        """Slice 38: software updates through apps.cybersecurity.updates, as the Device security screen and the completion modal record
+        them (each row's history says who). Kim opens updates to the pumps' newer release (PUMP_NEWER) from the older one in one
+        department (_update_department), each due on its pump's next PM (else UPDATE_DUE_DAYS from today) and assigned to the first
+        technician credentialed for all of them (the pumps' profile: CE installs their updates here); the technician completes the first
+        as installed (the device's record moves to the newer release today) and the second with the version not confirmed (Confirm
+        version is offered on it); the rest stay open. And the other C-arm: CE found it on C_ARM_RELEASE at the last round of checks (the
+        release added for its model, its facts recorded), then the manufacturer applied the patches on its validated patch list remotely,
+        recorded by hand. No vendor job (the vendors binder's figures stay as they were), nothing on the ventilators. Today's work, so
+        every period the evaluations and the vendor review count stays as it was. Constants only: nothing is drawn."""
+        kim = User.objects.get(username=f"kim@{domain}")  # the director: Device security, Equipment, and Work orders, assigning too
+        manager = User.objects.get(username=f"{SECURITY_RECORDED_BY}@{domain}")
+        pump_model = DeviceModel.objects.get(model="Alaris 8015 PCU")
+        older, newer = (SoftwareRelease.objects.get(device_model=pump_model, version=v) for v in (PUMP_OLDER, PUMP_NEWER))
+        department, pumps = Command._update_department(pump_model, older)
+        qualified = [{t.pk for t, _q in qualified_technicians(p, today)} for p in pumps]
+        technician = next(t for t, _q in qualified_technicians(pumps[0], today) if all(t.pk in q for q in qualified))
+        batch = cyber_updates.open_updates(newer, from_releases=[older.pk], department=department.pk,
+                                           due_on=today + timedelta(days=UPDATE_DUE_DAYS), due_at_next_pm=True, priority=Priority.NORMAL,
+                                           assign_to=technician.pk, by=kim, today=today)
+        installed, not_confirmed = batch.work_orders[0], batch.work_orders[1]
+        complete_work_order(installed, software=cyber_updates.UpdateChoice(UpdateOutcome.INSTALLED, release_id=str(newer.pk),
+                                                                           basis=UPDATE_BASIS), by=technician.user, today=today)
+        complete_work_order(not_confirmed, resolution=UPDATE_NOT_CONFIRMED_RESOLUTION,
+                            software=cyber_updates.UpdateChoice(cyber_updates.NOT_CONFIRMED), by=technician.user, today=today)
+
+        c_arm_model = DeviceModel.objects.get(model="Cios Spin")
+        c_arm = Asset.objects.filter(device_model=c_arm_model, ownership=Ownership.OWNED).exclude(status=AssetStatus.RETIRED).order_by("tag")[1]
+        found, patched = today - timedelta(days=C_ARM_FOUND_DAYS_AGO), today - timedelta(days=C_ARM_PATCHED_DAYS_AGO)
+        release = cyber.add_release(c_arm_model, by=manager, today=today, version=C_ARM_RELEASE)
+        cyber.record_facts(c_arm, by=manager, today=today, release=release, release_since=found, checked_on=found)
+        listed = add_months(patched.replace(day=1), -1)  # the patch list of the month before
+        patches = cyber_updates.UpdateChoice(UpdateOutcome.PATCHES, reference=C_ARM_PATCHES.format(year=listed.year, month=listed.month),
+                                             basis=UpdateBasis.VALIDATED_LIST)
+        cyber_updates.record(c_arm, patches, installed_by=InstalledBy.MANUFACTURER, applied_on=patched, by=manager, today=today)
+
+    @staticmethod
+    def _update_department(pump_model, older) -> tuple:
+        """The department the update batch is narrowed to, and the pumps it opens updates on (as open_updates selects them: on site,
+        recorded on `older`, in tag order): the first department in DEPTS order where they number one of UPDATE_DEPARTMENT_PUMPS, none
+        held as evidence (open_updates would skip it)."""
+        from apps.cybersecurity import rules as cyber_rules
+
+        pumps = list(cyber_rules.on_site().filter(device_model=pump_model).select_related("cyber__release").order_by("tag"))
+        on_older = [p for p in pumps if (runs := cyber_rules.release_of(p)) is not None and runs.pk == older.pk]
+        for name in DEPTS:
+            here = [p for p in on_older if p.department.name == name]
+            if len(here) in UPDATE_DEPARTMENT_PUMPS and not any(p.incident_hold for p in here):
+                return here[0].department, here
+        raise RuntimeError("No department has 3 or 4 pumps on the older release: the demo's update batch has nowhere to go.")
 
     @staticmethod
     def _credential_lapse(today: date) -> None:
