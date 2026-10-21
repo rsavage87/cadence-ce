@@ -43,6 +43,26 @@ GET software-updates/               Slice 38. Device security View AND Equipment
                                     done, not_confirmed, cancelled. An unknown value is a 400 naming the parameter. One query for a page
                                     (and its count).
 GET software-updates/<id>/          One of them, by id.
+GET security-decisions/             Slice 39. Device security View AND Equipment View (a decision can name a device). The facility's
+                                    decisions for devices past support (security updates or the OS vendor's support ended), live and
+                                    ended (never deleted: an ended one stays as recorded), by number, 50 a page
+                                    (serializers_cybersecurity.decision_data): id, number, applies_to and its label, scope {kind (device,
+                                    release, model), label, words, asset {id, tag}, device_model {id, manufacturer, model}, release {id,
+                                    version}} (the stored shape: null where the scope names none), reasons (kinds) and reason_words,
+                                    response and response_label, controls (slugs) and control_words, controls_reference, plan,
+                                    plan_label, plan_by, plan_words, plan_owner (a name), accepted_by and accepted_by_label,
+                                    exception_reference (IT's number; IT's record is the system of record), recorded_by (a name),
+                                    decided_on, review_by, state (in_force, review_soon, review_due, ended) and state_label, review_words,
+                                    ended_on, end_reason and end_reason_label, supersedes and superseded_by (numbers), sentence (the
+                                    decision in the rules' words), governed_ids (the devices it governed when recorded), governs [{id,
+                                    tag}] (the devices on site it governs now), checks [{key, words, info, action, tags}] (information,
+                                    never a refusal). ?scope= device | release | model; ?state= in_force | review_soon | review_due |
+                                    ended (as the row's state reads, on the facility's today); ?device= a device's id, or its tag in any
+                                    letter case (its own decisions, a retired one's too, and those of a release or a model whose scope
+                                    holds it now). An unknown scope or state is a 400 naming the parameter. A fixed number of queries
+                                    for a page. Recording, renewing, ending, and entered in error are the Decisions tab's (Device security
+                                    Approve): below Approve a write is a 403 in those words, at it a 405.
+GET security-decisions/<id or number>/  One of them, by id or by number in any letter case.
 
 Another facility's row is a 404 (as an unknown one), a retired device too (but on software-updates/, which keeps a retired device's
 updates); a level missing a 403 in plain words; any write a 405 naming the Device security screen (with Device security Edit) or a 403
@@ -52,6 +72,7 @@ order's software_choices says what this user may send);
 the work order itself reads it in software_update (serializers.WorkOrderSerializer), behind the same two levels.
 """
 import uuid
+from datetime import timedelta
 
 from django.db.models import Count, F, Q
 from django.db.models.functions import Coalesce
@@ -66,8 +87,16 @@ from rest_framework.response import Response
 from apps.accounts.models import Level, Module
 from apps.cybersecurity import filters, rules
 from apps.cybersecurity import permissions as perms
-from apps.cybersecurity.models import RECORDED_OUTCOMES, DeviceSecurity, SoftwareRelease, SoftwareUpdate
+from apps.cybersecurity.models import (
+    RECORDED_OUTCOMES,
+    DecisionPlan,
+    DeviceSecurity,
+    DeviceSecurityDecision,
+    SoftwareRelease,
+    SoftwareUpdate,
+)
 from apps.equipment.models import Asset, AssetStatus
+from apps.facility import fiscal
 from apps.workorders.models import OPEN_STATUSES, WoStatus
 
 from . import serializers_cybersecurity as scs
@@ -327,7 +356,125 @@ class SoftwareUpdateViewSet(_ReadOnly):
         return found
 
 
+DECISIONS_REFUSAL = "Reading security decisions needs Device security View and Equipment View."
+DECISIONS_READ_ONLY = ("The API reads security decisions only: record one, review and renew it, end it, or mark it entered in error on the "
+                       "Device security screen's Decisions tab.")
+DECISIONS_WRITE_REFUSAL = ("The API reads security decisions only. Recording, renewing, and ending them is done on the Device security "
+                           "screen's Decisions tab, and needs Device security Approve and Equipment View.")
+DECISION_NOT_FOUND = "No security decision with that id or number in this facility."
+SCOPES = (rules.DEVICE_SCOPE, rules.RELEASE_SCOPE, rules.MODEL_SCOPE)
+SCOPE_WORDS = f"One of {', '.join(SCOPES)}."
+DECISION_STATE_WORDS = f"One of {', '.join(rules.DECISION_STATES)}."
+
+
+def scope_q(kind: str) -> Q:
+    """The decisions of a scope kind, positive conditions only, as rules.scope_kind reads a row (the database's one shape): a device's
+    own; a model's devices of ours on one release; every device of ours of a model."""
+    return {rules.DEVICE_SCOPE: Q(asset__isnull=False),
+            rules.RELEASE_SCOPE: Q(asset__isnull=True, release__isnull=False),
+            rules.MODEL_SCOPE: Q(asset__isnull=True, release__isnull=True)}[kind]
+
+
+def decision_state_q(state: str, today) -> Q:
+    """The decisions in `state` on `today` (one of rules.DECISION_STATES), positive conditions only, as rules.decision_state reads a row
+    (a test holds every row to it): ended; review due (live, its review before today); review within 30 days (live, its review from today
+    through REVIEW_SOON_DAYS days on); in force (live, its review later)."""
+    soon = today + timedelta(days=rules.REVIEW_SOON_DAYS)
+    return {rules.ENDED: Q(ended_on__isnull=False),
+            rules.REVIEW_DUE: Q(ended_on__isnull=True, review_by__lt=today),
+            rules.REVIEW_SOON: Q(ended_on__isnull=True, review_by__gte=today, review_by__lte=soon),
+            rules.IN_FORCE: Q(ended_on__isnull=True, review_by__gt=soon)}[state]
+
+
+class SecurityDecisionViewSet(_ReadOnly):
+    """Slice 39: the facility's security decisions for devices past support (the module docstring), read only, in the rules' words.
+    Device security View and Equipment View (permissions.can_view_devices: a decision can name a device); never a scoped user. Every
+    write is the Decisions tab's, at Device security Approve (permissions.can_decide): below it a write is a 403 naming that level, at it
+    a 405 naming the screen."""
+
+    permission_classes = [IsAuthenticated, ModulePermission, EquipmentView]
+    serializer_class = scs.SecurityDecisionSerializer
+    view_refusal = DECISIONS_REFUSAL
+    write_refusal = DECISIONS_WRITE_REFUSAL
+    write_level = perms.APPROVE_LEVEL  # recording and ending are Approve's (can_decide): Edit reads that, never a 405
+    delete_level = perms.APPROVE_LEVEL
+    lookup_value_regex = "[^/]+"  # an id or a number (SD-26-0004)
+
+    def http_method_not_allowed(self, request, *args, **kwargs):
+        raise MethodNotAllowed(request.method, detail=DECISIONS_READ_ONLY)
+
+    def get_queryset(self):
+        qs = DeviceSecurityDecision.objects.select_related("asset", "device_model", "release", "plan_owner", "recorded_by", "supersedes",
+                                                           "superseded_by")
+        if self.action == "list":
+            params, errors = self.request.query_params, {}
+            scope = params.get("scope") or ""
+            state = params.get("state") or ""
+            device = params.get("device") or ""
+            if scope and scope not in SCOPES:
+                errors["scope"] = [SCOPE_WORDS]
+            if state and state not in rules.DECISION_STATES:
+                errors["state"] = [DECISION_STATE_WORDS]
+            if errors:
+                raise DRFValidationError(errors)
+            if scope:
+                qs = qs.filter(scope_q(scope))
+            if state:
+                qs = qs.filter(decision_state_q(state, self._today()))
+            if device:
+                qs = qs.filter(pk__in=self._for_device(device))
+        return qs.order_by("number", "pk")
+
+    @staticmethod
+    def _for_device(value: str) -> list:
+        """The ids of the decisions for one device (by id, or by tag in any letter case; a retired one's too): its own (device scope,
+        whatever its status), and those of a release or a model whose scope holds it now (rules' scope: a device of ours on site, on that
+        release or of that model). Two queries: the device with its row, the decisions of its model and its own."""
+        pk = _uuid(value)
+        devices = Asset.objects.select_related("device_model", "cyber__release")
+        device = (devices.filter(pk=pk) if pk is not None else devices.filter(tag__iexact=value)).first()
+        if device is None:
+            return []
+        candidates = (DeviceSecurityDecision.objects.filter(Q(asset_id=device.pk) | Q(asset__isnull=True, device_model_id=device.device_model_id))
+                      .only("pk", "asset_id", "device_model_id", "release_id"))
+        return [d.pk for d in candidates if d.asset_id == device.pk or rules._in_scope(d, device)]
+
+    def _context(self, rows) -> dict:
+        """What the page's rows read: the facility's today (read once), its fiscal year start (one query, only when a row plans a
+        replacement), and the devices each live decision governs now with its Check lines (serializers_cybersecurity.decisions_now: a
+        fixed number of queries)."""
+        today = self._today()
+        replacing = any(d.plan == DecisionPlan.REPLACE_PLANNED and d.plan_by is not None for d in rows)
+        return {**self.get_serializer_context(), "today": today, "fy_start": fiscal.start_month() if replacing else None,
+                "now": scs.decisions_now(rows, today)}
+
+    def list(self, request, *args, **kwargs):
+        qs = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(qs)
+        rows = list(page if page is not None else qs)
+        data = scs.SecurityDecisionSerializer(rows, many=True, context=self._context(rows)).data
+        return self.get_paginated_response(data) if page is not None else Response(data)
+
+    def get_object(self):
+        """By id, or by number in any letter case. Another facility's is a 404, as an unknown one."""
+        value = str(self.kwargs.get(self.lookup_url_kwarg or self.lookup_field) or "").strip()
+        qs = self.get_queryset()
+        pk = _uuid(value)
+        found = qs.filter(pk=pk).first() if pk is not None else None
+        if found is None and value:
+            found = qs.filter(number__iexact=value).first()
+        if found is None:
+            raise NotFound(DECISION_NOT_FOUND)
+        self.check_object_permissions(self.request, found)
+        return found
+
+    def retrieve(self, request, *args, **kwargs):
+        decision = self.get_object()
+        return Response(scs.SecurityDecisionSerializer(decision, context=self._context([decision])).data)
+
+
 def register(router) -> None:
     router.register("software-releases", SoftwareReleaseViewSet, basename="software-release")
     router.register("device-security", DeviceSecurityViewSet, basename="device-security")
     router.register("software-updates", SoftwareUpdateViewSet, basename="software-update")  # slice 38
+    router.register("security-decisions", SecurityDecisionViewSet, basename="security-decision")  # slice 39

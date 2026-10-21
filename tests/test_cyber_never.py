@@ -4,10 +4,11 @@ Slice 37 wave 2 B: the never paths of the device security register (build37 "Nev
 - Nothing reaches the device's or the model's existing doors: AssetSerializer and DeviceModelSerializer keep their slice 36 field sets
   (the register is never nested into them), the Equipment table's and CSV's columns are unchanged, and custom reports keep their sources
   and the devices source its columns and filters.
-- Never a scoped user's: every Device security URL and both API routes refuse a custom role with a scope and Full everywhere (a vendor's
-  company or a requester's unit), every method; the device drawer never offers them the Security tab.
-- The history areas (software_releases, device_security) need Device security View (and Equipment View for a device's facts), and are
-  never in a scoped user's change log.
+- Never a scoped user's: every Device security URL and the register's API routes (slice 39: security decisions too) refuse a custom
+  role with a scope and Full everywhere (a vendor's company or a requester's unit), every method; the device drawer never offers them
+  the Security tab.
+- The history areas (software_releases, device_security, and slice 39's device_security_decisions) need Device security View (and
+  Equipment View for a device's facts and decisions), and are never in a scoped user's change log.
 - No email path imports apps.cybersecurity (apps/notifications, apps/reports/subscriptions.py, apps/portal: their source scanned), and the
   portal, the labels, and Scan render no register field.
 - The never-words (rules.NEVER_WORDS) over the drawer's Security tab and Record facts in every state, and over both API bodies.
@@ -27,9 +28,11 @@ from apps.api import urls as api_urls
 from apps.api import views_cybersecurity as api_cyber
 from apps.api.serializers import AssetSerializer, DeviceModelSerializer
 from apps.core import history
-from apps.cybersecurity import rules, services
+from apps.cybersecurity import decisions, rules, services
 from apps.cybersecurity.models import (
+    AcceptedBy,
     Connects,
+    DecisionResponse,
     DeviceSecurity,
     Disclosed,
     Mds2Edition,
@@ -178,13 +181,17 @@ def _web_urls(world) -> list[str]:
 
 
 def _api_urls(world) -> list[str]:
+    """The register's API routes, list and one row each: software releases, device security, and (slice 39) security decisions (a
+    number: a scoped user is refused before any lookup)."""
+    bases = {api_cyber.SoftwareReleaseViewSet: ("software-releases", world["release"].pk),
+             api_cyber.DeviceSecurityViewSet: ("device-security", world["pump"].tag),
+             api_cyber.SecurityDecisionViewSet: ("security-decisions", "SD-26-0001")}
     out = set()
     for p in api_urls.urlpatterns:
         cls = getattr(p.callback, "cls", None)
-        if cls not in (api_cyber.SoftwareReleaseViewSet, api_cyber.DeviceSecurityViewSet):
+        if cls not in bases:
             continue
-        base = "software-releases" if cls is api_cyber.SoftwareReleaseViewSet else "device-security"
-        key = world["release"].pk if base == "software-releases" else world["pump"].tag
+        base, key = bases[cls]
         out.add(f"/api/v1/{base}/{key}/" if "pk" in str(p.pattern) else f"/api/v1/{base}/")
     return sorted(out)
 
@@ -201,7 +208,7 @@ def test_every_door_refuses_a_scoped_user_with_device_security_full(client, tena
             assert client.get(url, **headers).status_code == 403, url
         assert client.post(url, {"version": "9.99", "release": str(world["release"].pk), "network": "not_connected"}, **MODAL).status_code == 403
     apis = _api_urls(world)
-    assert len(apis) == 4
+    assert len(apis) == 6  # three viewsets, a list and one row each (slice 39: security-decisions)
     for url in apis:
         for method in ("get", "post", "put", "patch", "delete"):
             r = getattr(client, method)(url, {}, content_type="application/json") if method != "get" else client.get(url)
@@ -227,28 +234,33 @@ def test_the_default_scoped_roles_are_refused_too(client, make_user, world, slug
 
 # --- the history areas ------------------------------------------------------------------------------------------------------------
 
+CYBER_AREAS = {"software_releases", "device_security", "device_security_decisions"}  # slice 39: decisions, as a device's facts
+
+
 def test_the_history_areas_need_the_module_and_equipment_for_a_device(tenant, make_user, world):
     def areas(user):
-        return {a.key for a in history.readable_areas(user)} & {"software_releases", "device_security"}
+        return {a.key for a in history.readable_areas(user)} & CYBER_AREAS
 
-    assert areas(make_user("technician")) == {"software_releases", "device_security"}
+    assert areas(make_user("technician")) == CYBER_AREAS
     assert areas(make_user("analyst")) == set()  # Device security None
     assert areas(custom_user(tenant, "models", {Module.CYBERSECURITY: Level.VIEW})) == {"software_releases"}
-    assert areas(custom_user(tenant, "itsec", {Module.CYBERSECURITY: Level.VIEW, Module.EQUIPMENT: Level.VIEW})) == {"software_releases",
-                                                                                                                  "device_security"}
+    assert areas(custom_user(tenant, "itsec", {Module.CYBERSECURITY: Level.VIEW, Module.EQUIPMENT: Level.VIEW})) == CYBER_AREAS
     full = {m: Level.FULL for m in Module.values}
     for scope in (DataScope.COMPANY, DataScope.DEPARTMENT):
         scoped = custom_user(tenant, f"scoped{scope}", full, scope=scope, company="BD", department="ICU")
         assert history.readable_areas(scoped) == [] and not history.can_read(scoped, "device_security")
-        assert not history.can_read(scoped, "software_releases")
+        assert not history.can_read(scoped, "software_releases") and not history.can_read(scoped, "device_security_decisions")
 
 
 def test_the_change_log_shows_each_area_to_its_readers_only(tenant, make_user, world):
     def logged(user) -> set:
         entries, _ = history.change_log(user, limit=200)
-        return {e.area for e in entries} & {"software_releases", "device_security"}
+        return {e.area for e in entries} & CYBER_AREAS
 
-    assert logged(make_user("director")) == {"software_releases", "device_security"}
+    # slice 39: a decision for CE-10002 (past its security updates and its OS's support, connected wireless)
+    decisions.record_decision(asset=world["pump"], reasons=["security_updates", "os_support"],
+                              response=DecisionResponse.KEEP_WITHOUT_ADDED_CONTROLS, accepted_by=AcceptedBy.CE_LEADER, by=None)
+    assert logged(make_user("director")) == CYBER_AREAS
     assert logged(custom_user(tenant, "models", {Module.CYBERSECURITY: Level.VIEW, Module.USERS: Level.VIEW})) == {"software_releases"}
     assert logged(custom_user(tenant, "noview", {Module.EQUIPMENT: Level.FULL, Module.USERS: Level.FULL})) == set()
     scoped = custom_user(tenant, "scopedfull", {m: Level.FULL for m in Module.values}, scope=DataScope.COMPANY, company="BD")

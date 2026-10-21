@@ -19,6 +19,8 @@ are their own endpoint, behind Device security View and Equipment View, never a 
 - updates_of(...), work_order_update(...), software_choices(...): a work order's software_update and software_choices
   (serializers.WorkOrderSerializer, slice 38), only for Device security View and Equipment View (shows_updates) and only where
   rules.release_offer offers a choice: never a version, a reference, or a target to anyone else.
+- decisions_now(decisions, today), decision_data(decision, ...): one row of GET security-decisions/ (slice 39), every word the rules'
+  (decision_words, scope_words, plan_words, control_words, reason_words, review_words, decision_state, the Check lines).
 """
 from django.urls import reverse
 from rest_framework import serializers
@@ -237,3 +239,102 @@ def software_choices(offer) -> dict:
                          {"value": NOT_CONFIRMED, "label": NOT_CONFIRMED_LABEL}],
             "releases": [{"id": str(r.pk), "version": r.version, "recorded": r.pk == recorded} for r in offer.releases],
             "bases": {str(o): [{"value": str(b), "label": UpdateBasis(b).label} for b in offer.bases.get(o, ())] for o in offer.outcomes}}
+
+
+# --- slice 39: security decisions (GET security-decisions/) ------------------------------------------------------------------------
+
+def decisions_now(decisions, today) -> dict:
+    """{decision id: (governs, checks)} for a page of decisions, as rules.decision_devices and rules.decision_checks read one: `governs`
+    the devices on site it governs now (in its scope, and it the most specific live decision there: rules' governing), in tag order;
+    `checks` its Check lines (rules.Check). An ended decision governs nothing and has no Check line: ((), ()). Composed of the rules' own
+    pieces as rules.needs_attention composes them (the scope, the governing decision, the standings, the Check lines; the update
+    responses are not read: neither answer reads them), so a page reads a fixed number of queries however many decisions and devices:
+    the devices on site of the live decisions' models with their rows (one), the models' profiles (one), the live decisions that may
+    govern those devices (one); none when no decision on the page is live. A test holds every row to decision_devices and
+    decision_checks."""
+    out = {d.pk: ((), ()) for d in decisions}
+    live = [d for d in decisions if d.ended_on is None]
+    if not live:
+        return out
+    model_ids = {rules._model_of(d) for d in live}
+    devices = rules._devices_with_records(rules.on_site().filter(device_model_id__in=model_ids).order_by("tag", "pk"))
+    profiles = rules._profiles(model_ids)
+    governing = rules._governing(devices, rules._decisions_for(devices)) if devices else {}
+    by_model: dict = {}
+    for a in devices:
+        by_model.setdefault(a.device_model_id, []).append(a)
+    for d in live:
+        model_id = rules._model_of(d)
+        held = [a for a in by_model.get(model_id, ()) if rules._in_scope(d, a)]
+        found = [rules._decision_device(a, rules._standing(a, rules._cached_record(a), profiles.get(a.device_model_id), today), today,
+                                        governing, d, {}) for a in held]
+        out[d.pk] = (tuple(dd.asset for dd in found if dd.governed), tuple(rules._checks(d, found, profiles.get(model_id), today)))
+    return out
+
+
+def _superseded_by(decision):
+    """The decision that superseded this one (the reverse one-to-one, read with the row), or None."""
+    from django.core.exceptions import ObjectDoesNotExist
+
+    try:
+        return decision.superseded_by
+    except ObjectDoesNotExist:
+        return None
+
+
+def decision_data(decision, *, today, fy_start=None, governs=(), checks=()) -> dict:
+    """GET security-decisions/ (slice 39): one decision for devices past support, read with its device, model, release, plan owner,
+    recorder, and the decisions it supersedes and was superseded by (the viewset's select_related: no query), every word the rules':
+    id, number; applies_to and its label; scope {kind (device, release, model), label, words (rules.scope_words), asset {id, tag} or
+    null, device_model {id, manufacturer, model} or null, release {id, version} or null} (the stored shape: a device's own decision names
+    no model); reasons (kinds, rules.REASONS) and reason_words; response and response_label; controls (slugs, rules.CONTROLS) and
+    control_words (IT's reference beside recorded_elsewhere); controls_reference; plan, plan_label, plan_by, plan_words ("Plan: replace,
+    planned for FY2028": the fiscal year read now, never stored); plan_owner (a name, null when none); accepted_by and accepted_by_label;
+    exception_reference (IT's number: IT's record is the system of record); recorded_by (a name, null for none or the system); decided_on,
+    review_by; state (rules.decision_state: in_force, review_soon, review_due, ended) and state_label; review_words ("Review due since
+    ...", or how it ended); ended_on, end_reason and end_reason_label; supersedes and superseded_by (numbers, or null); sentence
+    (rules.decision_words); governed_ids (the devices it governed when recorded, ids); governs [{id, tag}] (the devices on site it
+    governs now); checks [{key, words, info, action, tags}] (rules.decision_checks: information, never a refusal). `fy_start`: the
+    facility's fiscal year start, read once for a page (else read here for a replacement planned); `governs` and `checks` from
+    decisions_now."""
+    from apps.cybersecurity.models import AcceptedBy, AppliesTo, DecisionEnd, DecisionPlan, DecisionResponse
+
+    kind = rules.scope_kind(decision)
+    dm = decision.device_model if decision.device_model_id else None
+    state = rules.decision_state(decision, today)
+    later = _superseded_by(decision)
+    return {"id": str(decision.pk), "number": decision.number,
+            "applies_to": decision.applies_to, "applies_to_label": label(AppliesTo, decision.applies_to),
+            "scope": {"kind": kind, "label": rules.SCOPE_LABELS[kind], "words": rules.scope_words(decision),
+                      "asset": {"id": str(decision.asset_id), "tag": decision.asset.tag} if decision.asset_id else None,
+                      "device_model": {"id": str(dm.pk), "manufacturer": dm.manufacturer, "model": dm.model} if dm is not None else None,
+                      "release": release_ref(decision.release if decision.release_id else None)},
+            "reasons": [k for k in rules.REASONS if k in (decision.reasons or ())], "reason_words": rules.reason_words(decision),
+            "response": decision.response, "response_label": label(DecisionResponse, decision.response),
+            "controls": list(decision.controls or ()), "control_words": rules.control_words(decision),
+            "controls_reference": decision.controls_reference,
+            "plan": decision.plan, "plan_label": label(DecisionPlan, decision.plan), "plan_by": _day(decision.plan_by),
+            "plan_words": rules.plan_words(decision, fy_start=fy_start),
+            "plan_owner": str(decision.plan_owner) if decision.plan_owner_id else None,
+            "accepted_by": decision.accepted_by, "accepted_by_label": label(AcceptedBy, decision.accepted_by),
+            "exception_reference": decision.exception_reference,
+            "recorded_by": str(decision.recorded_by) if decision.recorded_by_id else None,
+            "decided_on": _day(decision.decided_on), "review_by": _day(decision.review_by),
+            "state": state, "state_label": rules.DECISION_STATE_WORDS[state], "review_words": rules.review_words(decision, today),
+            "ended_on": _day(decision.ended_on), "end_reason": decision.end_reason,
+            "end_reason_label": label(DecisionEnd, decision.end_reason),
+            "supersedes": decision.supersedes.number if decision.supersedes_id else None,
+            "superseded_by": later.number if later is not None else None,
+            "sentence": rules.decision_words(decision, today, fy_start=fy_start),
+            "governed_ids": [str(pk) for pk in decision.governed_ids or ()],
+            "governs": [{"id": str(a.pk), "tag": a.tag} for a in governs],
+            "checks": [{"key": c.key, "words": c.words, "info": c.info, "action": c.action, "tags": list(c.tags)} for c in checks]}
+
+
+class SecurityDecisionSerializer(serializers.BaseSerializer):
+    """GET security-decisions/: context holds "today", "fy_start", and "now" (decisions_now's result for the page)."""
+
+    def to_representation(self, decision):
+        ctx = self.context
+        governs, checks = ctx["now"].get(decision.pk, ((), ()))
+        return decision_data(decision, today=ctx["today"], fy_start=ctx.get("fy_start"), governs=governs, checks=checks)

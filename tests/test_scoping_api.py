@@ -7,6 +7,7 @@ narrow every row to the share, so a record outside it is a 404 as another facili
 from datetime import date, timedelta
 
 import pytest
+from cyber_fixtures import facts, release
 from django.utils import timezone
 from evaluation_fixtures import draft as evaluation_draft
 from vendor_review_days import ended
@@ -16,6 +17,7 @@ from apps.api import urls as api_urls
 from apps.api.permissions import ModulePermission, PersonPermission
 from apps.api.views import AssetViewSet, WorkOrderViewSet
 from apps.api.views_all_facilities import AllFacilitiesViewSet
+from apps.api.views_cybersecurity import SecurityDecisionViewSet
 from apps.api.views_evaluations import ProgramEvaluationViewSet
 from apps.api.views_facilities import FacilityViewSet
 from apps.api.views_incidents import IncidentViewSet
@@ -24,6 +26,8 @@ from apps.api.views_testequipment import TestEquipmentViewSet
 from apps.api.views_vendor_reviews import VendorReviewViewSet
 from apps.api.views_work import WorkOrderLaborViewSet, WorkOrderNoteViewSet, WorkOrderPartViewSet
 from apps.contracts.models import Contract, ContractType
+from apps.cybersecurity import decisions as cyber_decisions
+from apps.cybersecurity.models import AcceptedBy, DecisionResponse, DeviceSecurityDecision, Network
 from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, RiskClass
 from apps.evaluations import vendor_reviews
 from apps.evaluations.models import ProgramEvaluation, VendorReview
@@ -91,9 +95,15 @@ def world(ctx, dept, vent, pump, pump_model, techs):
     Contract.objects.create(reference="SC-ACME-0", vendor="Acme Biomedical", type=ContractType.OEM, start_on=TODAY - timedelta(days=400),
                             end_on=TODAY - timedelta(days=1))
     vendor_review = vendor_reviews.create_review(vendor_names=["Acme Biomedical"], period_end=ended(timezone.localdate() - timedelta(days=1)), by=None)
+    # Slice 39: a security decision for the ICU pump (past its security updates, connected wireless), in the requester's unit
+    pump_release = release(pump_model, "5.2 (demo)", security_updates_end_on=timezone.localdate() - timedelta(days=30))
+    facts(pump, pump_release, network=Network.WIRELESS)
+    security_decision = cyber_decisions.record_decision(asset=pump, reasons=["security_updates"],
+                                                        response=DecisionResponse.KEEP_WITHOUT_ADDED_CONTROLS,
+                                                        accepted_by=AcceptedBy.CE_LEADER, by=None)
     return {"assets": {"vent": vent, "pump": pump, "card_mon": card_mon, "card_pump": card_pump}, "wos": wos, "cardio": cardio,
             "icu": dept, "monitor": monitor, "contract": contract, "incident": incident, "evaluation": evaluation,
-            "vendor_review": vendor_review}
+            "vendor_review": vendor_review, "security_decision": security_decision}
 
 
 @pytest.fixture
@@ -400,7 +410,18 @@ def closed_endpoints(world, pump_recall, techs):
         ("post", wo_url(w, "repair-finding/"), {"repair_finding": "wear"}),  # slice 33: what a repair found is the facility's record
         *evaluation_endpoints(world),
         *vendor_review_endpoints(world),
+        *security_decision_endpoints(world),
     ]
+
+
+def security_decision_endpoints(world):
+    """Slice 39: the security decision endpoints (apps/api/views_cybersecurity.py), read-only and never a scoped user's, even for a
+    device in the share (a decision names devices of the whole facility)."""
+    d, pump = world["security_decision"], world["assets"]["pump"]
+    return [("get", f"{API}security-decisions/", None), ("get", f"{API}security-decisions/{d.id}/", None),
+            ("get", f"{API}security-decisions/{d.number}/", None), ("get", f"{API}security-decisions/?device={pump.tag}", None),
+            ("post", f"{API}security-decisions/", {"asset": pump.tag, "response": "take_out_of_use"}),
+            ("delete", f"{API}security-decisions/{d.id}/", None)]
 
 
 def vendor_review_endpoints(world):
@@ -464,6 +485,7 @@ def test_every_other_endpoint_refuses_a_scoped_role_with_full_levels(client, per
     assert (incident.status, incident.event_log, incident.finding, incident.reportable, incident.holds.count()) == ("open", "", "", None, 0)
     assert ProgramEvaluation.objects.get(pk=world["evaluation"].pk).summary == "" and ProgramEvaluation.objects.count() == 1  # slice 32
     assert VendorReview.objects.get(pk=world["vendor_review"].pk).summary == "" and VendorReview.objects.count() == 1  # slice 34
+    assert list(DeviceSecurityDecision.objects.values_list("pk", "ended_on")) == [(world["security_decision"].pk, None)]  # slice 39
 
 
 @pytest.mark.parametrize("who", ["vendor", "requester"])
@@ -517,3 +539,5 @@ def test_only_work_orders_and_devices_opt_in():
     assert VendorReviewViewSet.scoped_actions == frozenset()
     # Slice 35: nor the CE department's test equipment
     assert TestEquipmentViewSet.scoped_actions == frozenset()
+    # Slice 39: nor a security decision (it names devices of the whole facility)
+    assert SecurityDecisionViewSet.scoped_actions == frozenset()
