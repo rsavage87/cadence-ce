@@ -4,7 +4,9 @@
    controls, plan, who accepted it, IT's exception number, who recorded it, the days, its end, supersedes and superseded by), the devices
    on site in its scope (tag, serial, model, department, connection, release, and its response: update lines with their work orders, then
    this decision or the one governing it instead), and History. Review and renew, End, and Entered in error for permissions.can_decide on
-   a live one; Print (a new tab) and the devices' CSV for every reader. Device security View and Equipment View only.{% endcomment %}
+   a live one: Review and renew only while its renewal would be taken, else the refusal's words (decisions.refusal_for: a fact to record
+   first, or nothing in its scope needing one, End then the primary action); Print (a new tab) and the devices' CSV for every reader.
+   Device security View and Equipment View only.{% endcomment %}
 <div class="dr-h cy-panel-h">
   <div>
     <h2>{{ d.number }} · {{ scope_words }}</h2>
@@ -15,6 +17,7 @@
 </div>
 <div class="dr-b cy-panel">
   <div class="sec"><p class="cy-line">{{ sentence }}</p></div>
+  {% if renew_refusal %}<div class="sec"><p class="note" role="status" data-renew-refusal>Review and renew is not offered now: {{ renew_refusal }}</p></div>{% endif %}
 
   {% if checks %}<div class="sec"><h3>Checks <span>information from what is recorded here</span></h3>
     <ul class="cy-up-list">{% for c in checks %}<li class="cy-up"><div class="cy-up-s">{{ c.words }}</div>{% if c.end %}<div class="cy-up-f"><button class="link" type="button" hx-get="{{ end_url }}" hx-target="#modal-card">End it</button></div>{% endif %}</li>{% endfor %}</ul>
@@ -57,8 +60,8 @@
   {% if can_history %}{% include "web/_history_section.html" %}{% endif %}
 </div>
 <div class="dr-f">
-  {% if can_decide %}<button class="btn primary" type="button" hx-get="{{ renew_url }}" hx-target="#modal-card">Review and renew</button>
-  <button class="btn" type="button" hx-get="{{ end_url }}" hx-target="#modal-card">End</button>
+  {% if can_decide %}{% if renew_url %}<button class="btn primary" type="button" hx-get="{{ renew_url }}" hx-target="#modal-card">Review and renew</button>{% endif %}
+  <button class="btn{% if end_answers %} primary{% endif %}" type="button" hx-get="{{ end_url }}" hx-target="#modal-card">End</button>
   <button class="btn danger" type="button" hx-get="{{ in_error_url }}" hx-target="#modal-card">Entered in error</button>{% endif %}
   <a class="btn" href="{{ print_url }}" target="_blank" rel="noopener" title="The decision for IT's file or the committee, for paper or saved as a PDF">{% icon "print" %} Print</a>
 </div>

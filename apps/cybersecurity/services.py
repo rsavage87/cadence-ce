@@ -488,6 +488,9 @@ def _running_words(named: int) -> str:
 
 OPEN_TO_INSTALL = "{number} is open to install this release: complete or cancel it first."  # slice 38
 DECISION_LIVE = "{number} is decided for this release: end it first."  # slice 39
+# A reader of decisions who may not end one (permissions.can_decide: the README's IT security role, Device security Edit with Equipment
+# View) reads its number, and who may end it (review 39 skeptics S9)
+DECISION_LIVE_READ = "{number} is decided for this release: ending it needs Device security Approve and Equipment View."
 DECISION_NAMES = "{number} names this version: add the new version instead."  # slice 39
 # The same two refusals for a user who may not read decisions (permissions.can_view_devices: Device security View and Equipment View),
 # without the decision's number, as the API's destroy refusals word them (review 39 F7)
@@ -525,9 +528,9 @@ def _decision_number(release, *, live: bool = False) -> str:
 def removal_refusal(release, *, by=None) -> str:
     """Why Entered in error is refused for `release` now, in remove_release's words (a screen says it before it is tried), or "": already
     removed, the profile, devices on site naming it, (slice 38) an open software update work order to install it (OPEN_TO_INSTALL), or
-    (slice 39) a live security decision for it (DECISION_LIVE, its number only when `by` reads decisions, else DECISION_LIVE_UNREAD; None
-    is the system). A cancelled, completed, or recorded update naming it never stops it, nor an ended decision: those read the release as
-    it was ("(entered in error since)")."""
+    (slice 39) a live security decision for it (DECISION_LIVE, its number only when `by` reads decisions, else DECISION_LIVE_UNREAD; and
+    "end it first" only when `by` may end it, else DECISION_LIVE_READ; None is the system). A cancelled, completed, or recorded update
+    naming it never stops it, nor an ended decision: those read the release as it was ("(entered in error since)")."""
     if release.removed_on is not None:
         return ALREADY_REMOVED
     if release.is_profile:
@@ -541,7 +544,9 @@ def removal_refusal(release, *, by=None) -> str:
     decided = _decision_number(release, live=True)
     if not decided:
         return ""
-    return DECISION_LIVE.format(number=decided) if _reads_decisions(by) else DECISION_LIVE_UNREAD
+    if not _reads_decisions(by):
+        return DECISION_LIVE_UNREAD
+    return DECISION_LIVE.format(number=decided) if by is None or perms.can_decide(by) else DECISION_LIVE_READ.format(number=decided)
 
 
 def remove_release(release, *, by, today: date | None = None):

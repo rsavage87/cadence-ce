@@ -120,6 +120,8 @@ NO_DEVICE_OURS = "No device of ours on site runs {version}."
 NO_MODEL_DEVICE = "No {model} of ours is on site."
 NONE_NEEDED = ("No device of ours on site in this scope is both connected (or able to connect) and past its support or within 12 months "
                "of an announced end, as recorded.")
+# A release's or a model's scope with more than one device whose need is not recorded (rules.need_unknown): the first one's words follow
+SCOPE_NOT_RECORDED = "{count} of ours in this scope are not recorded enough to tell whether they need a decision ({tags}). {words}"
 IN_FORCE = "{number} is in force for this scope: review and renew it instead."
 SUPERSEDES_OTHER = "{number} is for another scope: renew a decision for this one."
 ALREADY_ENDED = "{number} ended on {day}: it stays as recorded."
@@ -133,11 +135,26 @@ SUPERSEDED_BY = "Superseded by {number}"
 ENDED_NO_LONGER_NEEDED = "Ended: no longer needed"
 ENTERED_IN_ERROR = "Entered in error"
 
-# A MAC in the layouts switches and tools print (review 39 F5): six pairs joined by - . _ or :, three groups of four joined by - . or _
-# (Cisco's dotted, H3C's and HPE Comware's hyphenated), two groups of six joined by - . _ or : (HP ProCurve's), or twelve bare hex digits
-# with a letter and a digit (a plain twelve-digit number is a ticket number's shape)
-_MAC = re.compile(r"^(?:[0-9a-f]{2}[-._:]){5}[0-9a-f]{2}$|^(?:[0-9a-f]{4}[-._]){2}[0-9a-f]{4}$|^[0-9a-f]{6}[-._:][0-9a-f]{6}$"
-                  r"|^(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{12}$", re.IGNORECASE)
+def _letter_and_digit(span: int) -> str:
+    """Lookaheads: the next `span` characters (hex digits and separators) hold a hex letter and a decimal digit."""
+    return rf"(?=[\d_.:-]{{0,{span - 1}}}[a-f])(?=[a-f_.:-]{{0,{span - 1}}}\d)"
+
+
+# A MAC in the layouts switches and tools print (review 39 F5): six pairs joined by - . or :, three groups of four joined by - . or _
+# (Cisco's dotted, H3C's and HPE Comware's hyphenated), two groups of six joined by - . _ or : (HP ProCurve's), or twelve bare hex
+# digits. The layouts a ticket number of decimal digits also takes (twelve bare, four-four-four, six-six, pairs joined by _: a dated
+# sequence such as 2026-1021-0042) need a hex letter and a digit, as a MAC written only in decimal digits is rare (skeptics S6). Found
+# anywhere in the token, alone or joined on by a token's joiner (- # _ / . :) on either side, never within a longer run of hex digits:
+# "EX-001A-2B3C-4D5E", "FW-00-1A-2B-3C-4D-5E", "001A2B3C4D5E#1" (skeptics S5)
+_HEX_JOINED = r"(?:^|(?<=[-#_/.:]))(?:{})(?=$|[-#_/.:])"
+_MAC = re.compile(_HEX_JOINED.format("|".join((
+    r"(?:[0-9a-f]{2}[-.:]){5}[0-9a-f]{2}",
+    _letter_and_digit(17) + r"(?:[0-9a-f]{2}[-._:]){5}[0-9a-f]{2}",
+    _letter_and_digit(14) + r"(?:[0-9a-f]{4}[-._]){2}[0-9a-f]{4}",
+    _letter_and_digit(13) + r"[0-9a-f]{6}[-._:][0-9a-f]{6}",
+    _letter_and_digit(12) + r"[0-9a-f]{12}"))), re.IGNORECASE)
+# A UUID in its own layout (8-4-4-4-12 hex digits) is a record's identifier, never read as holding a MAC (its groups take the MAC's layouts)
+_UUID = re.compile(_HEX_JOINED.format(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"), re.IGNORECASE)
 _DOTTED = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}(?:/\d{1,3})?$")
 # Four dotted numbers anywhere in the token, ending it or followed by a token's joiner (an address with a port, a range, or a prefix:
 # "10.20.30.40#443", "10.20.30.0-24", "FW-10.20.30.40"); never inside a longer run of digits and dots on its left
@@ -148,7 +165,8 @@ _PORT = re.compile(r"^(?:port(?![a-z])|(?:tcp|udp)[-/_.#]?\d+$|\d+[-/_.#](?:tcp|
 def network_identifier(text: str) -> bool:
     """A token that reads as a network identifier (build39 section 2), refused in every cyber token field this slice adds: an address or
     a block (ipaddress.ip_network(strict=False) parses it, or four dotted numbers, alone or within the token with a port, a range, or a
-    prefix joined on), a MAC (_MAC's layouts), one starting "VLAN" in any case, or a port ("port...", "tcp-443", "443/udp")."""
+    prefix joined on), a MAC (_MAC's layouts, alone or within the token, outside a UUID's own layout), one starting "VLAN" in any case,
+    or a port ("port...", "tcp-443", "443/udp")."""
     text = (text or "").strip()
     if not text:
         return False
@@ -157,7 +175,7 @@ def network_identifier(text: str) -> bool:
         return True
     except ValueError:
         pass
-    return bool(_DOTTED.match(text) or _DOTTED_IN.search(text) or _MAC.match(text) or text.casefold().startswith("vlan")
+    return bool(_DOTTED.match(text) or _DOTTED_IN.search(text) or _MAC.search(_UUID.sub("u", text)) or text.casefold().startswith("vlan")
                 or _PORT.match(text))
 
 
@@ -428,31 +446,46 @@ def record_decision(*, asset=None, device_model=None, release=None, reasons, res
     return row
 
 
+# What a refusal of the scope means (Refusal.kind; review 39 skeptics S3): KIND_IN_FORCE a live decision is in force for it (the doors
+# offer Review and renew for that one); KIND_ENDED the decision to renew has ended; KIND_GONE no device of the scope is on site (retired,
+# returned, none of ours); KIND_NOT_NEEDED none in it needs a decision as recorded (not connected here, the manufacturer's updates
+# continuing, not past its support); KIND_UNKNOWN what a device's need turns on is not recorded (rules.need_unknown: record it first).
+# End answers a decision being renewed only for GONE and NOT_NEEDED (END_ANSWERS), never for a fact not recorded.
+KIND_IN_FORCE, KIND_ENDED, KIND_GONE, KIND_NOT_NEEDED, KIND_UNKNOWN = "in_force", "ended", "gone", "not_needed", "unknown"
+END_ANSWERS = (KIND_GONE, KIND_NOT_NEEDED)
+
+
 class Refusal(NamedTuple):
-    """Why record_decision would refuse a scope now (refusal_for): its words, and the live decision in force for the scope when that is
-    why (the door offers Review and renew for it)."""
+    """Why record_decision would refuse a scope now (refusal_for): its words, what it means (`kind`: KIND_*), and the live decision in
+    force for the scope when that is why (the door offers Review and renew for it)."""
 
     words: str
+    kind: str
     live: object = None
+
+    @property
+    def ends_it(self) -> bool:
+        """End answers it (for the decision being renewed): nothing in the scope needs a decision now, as recorded."""
+        return self.kind in END_ANSWERS
 
 
 def refusal_for(*, asset=None, device_model=None, release=None, supersedes=None, today: date | None = None) -> Refusal | None:
     """Why record_decision would refuse this scope now, in its words and its order, read before the person tries (the Record decision
-    modal), without its locks: the decision to renew already ended; a device retired or returned; a live decision in force for the
-    scope; a release or model with no device of ours on site; nothing past its support or announced within 12 months (a device not
-    connected here, its connection not recorded, the manufacturer's updates continuing, nothing recording its security updates' end).
-    None when the scope itself would not be refused (the fields are the service's to check). record_decision decides again under its
-    locks."""
+    modal, a decision's page), without its locks: the decision to renew already ended; a device retired or returned; a live decision in
+    force for the scope; a release or model with no device of ours on site; nothing past its support or announced within 12 months (a
+    device not connected here, its connection not recorded, the manufacturer's updates continuing, nothing recording its security
+    updates' end). Each with its kind (Refusal.kind). None when the scope itself would not be refused (the fields are the service's to
+    check). record_decision decides again under its locks."""
     today = services._today(today)
     old = _decision_row(supersedes, "supersedes", lock=False) if supersedes is not None else None
     if old is not None and old.ended_on is not None:
-        return Refusal(ALREADY_ENDED.format(number=old.number, day=rules.day_words(old.ended_on)))
+        return Refusal(ALREADY_ENDED.format(number=old.number, day=rules.day_words(old.ended_on)), KIND_ENDED)
     device = release_row = None
     model_id = services._model(device_model).pk if device_model is not None else None
     if asset is not None:
         kind, device = rules.DEVICE_SCOPE, Asset.objects.get(pk=services._pk(asset, Asset))
         if device.status == AssetStatus.RETIRED:
-            return Refusal((RETURNED if device.ownership != Ownership.OWNED else RETIRED).format(tag=device.tag))
+            return Refusal((RETURNED if device.ownership != Ownership.OWNED else RETIRED).format(tag=device.tag), KIND_GONE)
     elif release is not None:
         kind, release_row = rules.RELEASE_SCOPE, SoftwareRelease.objects.get(pk=services._pk(release, SoftwareRelease))
         model_id = release_row.device_model_id
@@ -461,13 +494,9 @@ def refusal_for(*, asset=None, device_model=None, release=None, supersedes=None,
     live = _live_for(asset_id=device.pk if device is not None else None, model_id=model_id,
                      release_id=release_row.pk if release_row is not None else None)
     if live is not None and (old is None or live.pk != old.pk):
-        return Refusal(IN_FORCE.format(number=live.number), live)
+        return Refusal(IN_FORCE.format(number=live.number), KIND_IN_FORCE, live)
     members = _scope_members(kind, device=device, model_id=model_id, release=release_row)
-    try:
-        _scope_needs(kind, members, device=device, model_id=model_id, release=release_row, today=today)
-    except ValidationError as e:
-        return Refusal(e.messages[0])
-    return None
+    return _scope_read(kind, members, device=device, model_id=model_id, release=release_row, today=today)[1]
 
 
 def _scope_members(kind: str, *, device, model_id, release) -> list:
@@ -494,33 +523,61 @@ def _governed(kind: str, members: list, *, model_id, release, old) -> list:
 
 
 def _scope_needs(kind: str, members: list, *, device, model_id, release, today: date) -> list:
-    """The decidable needs of the scope's devices (rules.support_need), refused in words when it has none: a device not connected here,
-    its connection not recorded, the manufacturer's updates continuing (EXTENDED), nothing recording the end of its security updates
-    (its release's, or with no release recorded), nothing past support or announced within 12 months as recorded (NOT_NEEDED); a release
-    or model with no device of ours on site, or none there both connected (or able to connect) and past support or announced (NONE_NEEDED)."""
+    """The decidable needs of the scope's devices (rules.support_need), refused in words, keyed by the scope's field, when it has none
+    (_scope_read's)."""
+    needs, refusal = _scope_read(kind, members, device=device, model_id=model_id, release=release, today=today)
+    if refusal is not None:
+        raise ValidationError({_scope_field(kind): refusal.words})
+    return needs
+
+
+def _device_refusal(a, s, need) -> Refusal:
+    """Why one device on site with no decidable need has none, in words with its kind: its connection not recorded (UNKNOWN), not
+    connected here (NOT_NEEDED), the manufacturer's updates continuing (EXTENDED: NOT_NEEDED), nothing recording the end of its security
+    updates (its release's, or with no release recorded: UNKNOWN; rules.need_unknown), nothing past support or announced within 12
+    months as recorded (NOT_NEEDED)."""
+    if s.connection.key == rules.CONNECTION_NOT_RECORDED:
+        return Refusal(CONNECTION_UNKNOWN.format(tag=a.tag), KIND_UNKNOWN)
+    if s.connection.key not in rules.ON_SITE_KEYS:
+        return Refusal(NOT_CONNECTED.format(tag=a.tag), KIND_NOT_NEEDED)
+    if need is not None and need.key == rules.EXTENDED:
+        return Refusal(EXTENDED.format(name=a.tag, day=rules.day_words(need.day)), KIND_NOT_NEEDED)
+    if rules.need_unknown(s):  # connected or able to: nothing known of its security updates' end or its OS support
+        words = SECURITY_END_NOT_RECORDED if s.release is not None else NO_RELEASE_RECORDED
+        return Refusal(words.format(tag=a.tag, version=getattr(s.release, "version", "")), KIND_UNKNOWN)
+    return Refusal(NOT_NEEDED.format(name=a.tag), KIND_NOT_NEEDED)
+
+
+def _scope_read(kind: str, members: list, *, device, model_id, release, today: date) -> tuple[list, Refusal | None]:
+    """(the decidable needs of the scope's devices (rules.support_need), in member order; why it has none, or None): a release or model
+    with no device of ours on site (GONE); a device's own (_device_refusal); a release's or a model's devices, when one's need is not
+    recorded (UNKNOWN: the first such one's words, in tag order, after how many and which when there are more: SCOPE_NOT_RECORDED), else
+    when the manufacturer's updates for some continue (EXTENDED, worded for those with the earliest announced end: skeptics S7), else
+    none both connected (or able to connect) and past support or announced (NONE_NEEDED). Fixed queries (rules.standings)."""
     if not members:
         if kind == rules.RELEASE_SCOPE:
-            raise ValidationError({"release": NO_DEVICE_OURS.format(version=release.version)})
+            return [], Refusal(NO_DEVICE_OURS.format(version=release.version), KIND_GONE)
         model = DeviceModel.objects.filter(pk=model_id).first()
-        raise ValidationError({"device_model": NO_MODEL_DEVICE.format(model=model.model if model else "device of this model")})
+        return [], Refusal(NO_MODEL_DEVICE.format(model=model.model if model else "device of this model"), KIND_GONE)
     standings = rules.standings(members, today)
-    needs = [rules.support_need(standings[a.pk], today) for a in members]
-    decidable = [n for n in needs if n is not None and n.decidable]
+    needs = {a.pk: rules.support_need(standings[a.pk], today) for a in members}
+    decidable = [needs[a.pk] for a in members if needs[a.pk] is not None and needs[a.pk].decidable]
     if decidable:
-        return decidable
+        return decidable, None
     if kind == rules.DEVICE_SCOPE:
-        s, need = standings[device.pk], needs[0]
-        if s.connection.key == rules.CONNECTION_NOT_RECORDED:
-            raise ValidationError({"asset": CONNECTION_UNKNOWN.format(tag=device.tag)})
-        if s.connection.key not in rules.ON_SITE_KEYS:
-            raise ValidationError({"asset": NOT_CONNECTED.format(tag=device.tag)})
-        if need is not None and need.key == rules.EXTENDED:
-            raise ValidationError({"asset": EXTENDED.format(name=device.tag, day=rules.day_words(need.day))})
-        if s.security.key == rules.SECURITY_NOT_RECORDED and s.os.key in (rules.OS_NOT_RECORDED, rules.NO_OS):  # nothing known
-            words = SECURITY_END_NOT_RECORDED if s.release is not None else NO_RELEASE_RECORDED
-            raise ValidationError({"asset": words.format(tag=device.tag, version=getattr(s.release, "version", ""))})
-        raise ValidationError({"asset": NOT_NEEDED.format(name=device.tag)})
-    raise ValidationError({_scope_field(kind): NONE_NEEDED})
+        return [], _device_refusal(device, standings[device.pk], needs[device.pk])
+    unknown = [a for a in members if rules.need_unknown(standings[a.pk])]
+    if unknown:
+        words = _device_refusal(unknown[0], standings[unknown[0].pk], needs[unknown[0].pk]).words
+        if len(unknown) > 1:
+            words = SCOPE_NOT_RECORDED.format(count=f"{len(unknown)} devices", tags=rules._tags(a.tag for a in unknown), words=words)
+        return [], Refusal(words, KIND_UNKNOWN)
+    extended = [a for a in members if needs[a.pk] is not None and needs[a.pk].key == rules.EXTENDED]
+    if extended:
+        day = min(needs[a.pk].day for a in extended)
+        first = [a.tag for a in extended if needs[a.pk].day == day]
+        return [], Refusal(EXTENDED.format(name=rules._tags(first), day=rules.day_words(day)), KIND_NOT_NEEDED)
+    return [], Refusal(NONE_NEEDED, KIND_NOT_NEEDED)
 
 
 def _check_reasons(needs: list, given: list) -> None:

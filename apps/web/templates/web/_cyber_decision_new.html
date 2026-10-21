@@ -7,7 +7,8 @@
    (blank for the default, each response's rule in words). A review day already passed is said once before it is saved, only when
    nothing else would be refused (the view's dry run). Each refusal comes back under its field, one about the scope at the top. What
    cannot be recorded now gets the modal saying why (and Review and renew for a decision already in force, its address keeping the
-   panel's filters).{% endcomment %}
+   panel's filters; End for the decision being renewed only when nothing in its scope needs one now, never when a fact is to be
+   recorded first: decisions.Refusal.ends_it).{% endcomment %}
 <div class="modal-h"><h2>{% if scope.old %}Review and renew {{ scope.old.number }}{% else %}Record decision{% endif %} · {{ scope_words }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
 {% if blocker %}
 <div class="form"><div class="full note" role="alert">{{ blocker }}</div></div>

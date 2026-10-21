@@ -845,15 +845,16 @@ CONTROLS_REFERENCE_HELP = "The change or exception number in IT's system (e.g. C
 
 # Why a decision was recorded, as kinds (never states: an announced end that passes is the same reason). SECURITY_UPDATES is the
 # release standing's kind: the manufacturer's security updates for the release, or (with no date of the release's own) the model's
-# manufacturer support from slice 36 (MODEL_SUPPORT_ENDED: its support or its parts ended), so its words name both (review 39 F11)
+# manufacturer support from slice 36 (MODEL_SUPPORT_ENDED: its support, or only its parts, ended), so its words name all three (review 39
+# F11, skeptics S8: a model whose parts ended while its support continues is never said to be past its support)
 SECURITY_UPDATES, OS_SUPPORT = "security_updates", "os_support"
 REASONS = {
-    SECURITY_UPDATES: "The manufacturer's security updates or support ended, or their end is announced",
+    SECURITY_UPDATES: "The manufacturer's security updates, support, or parts ended, or their end is announced",
     OS_SUPPORT: "The OS vendor's published support ended, or its end is announced",
 }
 # A reason that has ended for a device the decision governs and that the decision does not name: what is known, never when it ended
 # against the decision (an end entered after the decision may be dated before it, and a device joining may have been past it for years)
-ALSO_ENDED = {SECURITY_UPDATES: "The manufacturer's security updates or support have ended, and this decision does not name them",
+ALSO_ENDED = {SECURITY_UPDATES: "The manufacturer's security updates, support, or parts have ended, and this decision does not name them",
               OS_SUPPORT: "The OS vendor's support has ended, and this decision does not name it"}
 
 # The Decisions tab's sentence (never "requires", never "must")
@@ -898,7 +899,8 @@ OWNER_INACTIVE_WORDS = "The plan owner's account is deactivated"
 
 # Needs attention (build39 section 7): each heading's words, in the panel's order
 ATTENTION_HEADINGS = {
-    "no_decision": "Security updates, manufacturer support, or OS support ended, connected or able to connect: no decision recorded",
+    "no_decision": ("Security updates, manufacturer support or parts, or OS support ended, connected or able to connect: no decision "
+                    "recorded"),
     "temporary": "Rentals, loaners, and demo units past their support, connected or able to connect: no decision recorded",
     "not_confirmed": "Updates done, version not confirmed",
     "ending": "Ending within 12 months, no decision recorded",
@@ -996,6 +998,19 @@ def support_need(asset_standing, today: date) -> Need | None:
         words = f"The OS vendor's support ended; the manufacturer's security updates{version} end {day_words(sec.day)} (announced)"
         return Need(EXTENDED, (), ended, (os_.words, sec.words), words, sec.day)
     return None
+
+
+def need_unknown(asset_standing) -> bool:
+    """Whether what a device's support need turns on is not recorded (review 39 skeptics S3): its connection (neither its own fact nor its
+    model's disclosure), or, connected or able to connect, both the end of the manufacturer's security updates (nor the model's support)
+    and the OS vendor's support (or no OS). Such a device has no need as recorded, yet nothing says it needs no decision: Record
+    decision says to record it first (decisions.refusal_for's UNKNOWN), and Needs attention never offers End for a decision because of
+    it. No query."""
+    connection = asset_standing.connection.key
+    if connection == CONNECTION_NOT_RECORDED:
+        return True
+    return (connection in ON_SITE_KEYS and asset_standing.security.key == SECURITY_NOT_RECORDED
+            and asset_standing.os.key in (OS_NOT_RECORDED, NO_OS))
 
 
 # --- the governing decision ----------------------------------------------------------------------------------------------------------
@@ -1664,10 +1679,28 @@ def _release_sort(a) -> str:
     return _cached_record(a).release.version_key if _recorded_release_id(a) is not None else "￿"
 
 
-def _group_rows(groups: dict, needs: dict, *, may_decide: bool) -> list:
+def _group_link(model_id, release_id, members: list, need: Need, *, standings: dict, by_model: dict) -> Link | None:
+    """A group row's link: the model's panel narrowed by the Fleet's filters (_model_link) when the devices it lists of the row's release
+    (or, with no release recorded, with none: the norelease filter) are the row's own; else the device's Security tab when the row
+    counts one device; else none (review 39 skeptics S9). The Fleet has no filter for "no decision governing it, no update answering
+    it", so a device of that release with the same standing under its own decision, or answered by an update, would be listed though
+    the row does not count it. Devices of the model's other releases with the same standing are listed too, each counted in its own row
+    or governed. No query (the standings already read)."""
+    from .filters import parse
+
+    link = _model_link(model_id, need, norelease=release_id is None)
+    shown = parse(dict(link.query))
+    listed = {a.pk for a in by_model.get(model_id, ()) if _recorded_release_id(a) == release_id and shown.keeps(standings[a.pk])}
+    if listed == {a.pk for a in members}:
+        return link
+    return _device_link(members[0]) if len(members) == 1 else None
+
+
+def _group_rows(groups: dict, needs: dict, *, may_decide: bool, standings: dict, by_model: dict) -> list:
     """Rows per model and release (devices of ours): "Alaris 8015 PCU on 5.2 (demo): 4 devices of ours; security updates ended after
-    ...", linked to the model's panel narrowed to them (by standing; with no release recorded, also to the devices with none),
-    Record decision for the release (or, with no release recorded, the model)."""
+    ...", linked to the model's panel narrowed by standing (with no release recorded, also to the devices with none) where it lists
+    the row's devices of that release and no other (_group_link), Record decision for the release (or, with no release recorded, the
+    model)."""
     rows = []
     for (model_id, release_id), members in sorted(groups.items(), key=lambda kv: (kv[1][0].device_model.manufacturer.casefold(),
                                                                                     kv[1][0].device_model.model.casefold(),
@@ -1680,8 +1713,8 @@ def _group_rows(groups: dict, needs: dict, *, may_decide: bool) -> list:
         if may_decide:
             record = Link(URLS["record"], (), (("release", release_id),) if release_id is not None else (("model", model_id),))
         rows.append(AttentionRow(f"{where}: {_plural(len(members), 'device', 'devices')} of ours; {_lower_first(need.words)}",
-                                 count=len(members), link=_model_link(model_id, need, norelease=release_id is None), record=record,
-                                 tags=tuple(a.tag for a in members)))
+                                 count=len(members), record=record, tags=tuple(a.tag for a in members),
+                                 link=_group_link(model_id, release_id, members, need, standings=standings, by_model=by_model)))
     return rows
 
 
@@ -1705,9 +1738,10 @@ def needs_attention(today: date, *, user) -> Attention:
       per model and release, temporary devices each).
     - review_due: live decisions past review whose scope holds a device on site (the badge's count), Review and renew; End instead when
       no device in its scope has a decidable need now (updated to a supported release, not connected here, ...: Record decision would
-      refuse to renew it, decisions.refusal_for; review 39 F15).
-    - review_soon: live decisions to review within 30 days whose scope holds a device on site, Review and renew (End instead, as
-      review_due).
+      refuse to renew it, decisions.refusal_for; review 39 F15), and neither while a device in it has no need only because what it
+      turns on is not recorded (need_unknown: the decision's page says what to record first; skeptics S3).
+    - review_soon: live decisions to review within 30 days whose scope holds a device on site, Review and renew (End instead, or
+      neither, as review_due).
     - no_device: live decisions whose scope holds no device on site, End.
     - checks: the other Check lines of live decisions whose scope holds a device on site (decision_checks', not the information ones).
     A device with a need and a decision past review is listed under its decision (review_due), never as "no decision recorded".
@@ -1730,6 +1764,9 @@ def needs_attention(today: date, *, user) -> Attention:
     governing = _governing(devices, decisions)
     responses = update_responses(devices, today) if devices else {}
 
+    by_pk, by_model = {a.pk: a for a in devices}, {}
+    for a in devices:
+        by_model.setdefault(a.device_model_id, []).append(a)
     rows: dict = {key: [] for key in ATTENTION_HEADINGS}
     groups: dict = {"no_decision": {}, "ending": {}}
     for a in devices:  # tag order (Asset's ordering)
@@ -1751,11 +1788,8 @@ def needs_attention(today: date, *, user) -> Attention:
             continue
         groups[key].setdefault((a.device_model_id, _recorded_release_id(a)), []).append(a)
     for key in ("no_decision", "ending"):
-        rows[key] = _group_rows(groups[key], needs, may_decide=may_decide) + rows[key]
+        rows[key] = _group_rows(groups[key], needs, may_decide=may_decide, standings=standings, by_model=by_model) + rows[key]
 
-    by_pk, by_model = {a.pk: a for a in devices}, {}
-    for a in devices:
-        by_model.setdefault(a.device_model_id, []).append(a)
     for d in decisions:
         if d.asset_id:
             held = [by_pk[d.asset_id]] if d.asset_id in by_pk else []
@@ -1765,10 +1799,14 @@ def needs_attention(today: date, *, user) -> Attention:
             rows["no_device"].append(_decision_row(d, review_words(d, today), held=0, may_decide=may_decide, end=True))
             continue
         state = decision_state(d, today)
-        if state in (REVIEW_DUE, REVIEW_SOON):  # renewing needs a device in its scope with a decidable need (decisions.refusal_for)
+        if state in (REVIEW_DUE, REVIEW_SOON):
+            # Review and renew while a device in its scope has a decidable need; End only when none needs one as recorded; neither
+            # while one has no need only because what it turns on is not recorded (need_unknown: its page says what to record
+            # first). decisions.refusal_for's kinds, in the same order (skeptics S3).
             renewable = any(needs[a.pk] is not None and needs[a.pk].decidable for a in held)
+            unknown = not renewable and any(need_unknown(standings[a.pk]) for a in held)
             rows[state].append(_decision_row(d, review_words(d, today), held=len(held), may_decide=may_decide, renew=renewable,
-                                             end=not renewable))
+                                             end=not renewable and not unknown))
         dds = [_decision_device(a, standings[a.pk], today, governing, d, responses) for a in held]
         for check in _checks(d, dds, profiles.get(_model_of(d)), today):
             if not check.info and check.key != CHECK_NO_DEVICE:

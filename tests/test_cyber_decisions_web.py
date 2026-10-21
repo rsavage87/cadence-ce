@@ -454,7 +454,8 @@ def test_what_cannot_be_recorded_is_said_before_it_is_tried(client, signed_in, f
     assert decisions.NO_DEVICE_OURS.format(version="4.0 (demo)") in said(f"release={empty.pk}")
     unused = DeviceModel.objects.create(manufacturer="Acme", model="Unused 1", description="Monitor", category="Monitors")
     assert decisions.NO_MODEL_DEVICE.format(model="Unused 1") in said(f"model={unused.pk}")
-    assert decisions.NONE_NEEDED in said(f"release={floor.r56.pk}") and decisions.NONE_NEEDED in said(f"model={vent_model.pk}")
+    assert decisions.NONE_NEEDED in said(f"release={floor.r56.pk}")
+    assert decisions.CONNECTION_UNKNOWN.format(tag="V-1") in said(f"model={vent_model.pk}")  # its fact to record first (skeptics S3)
     for query in ("asset=NOPE", f"release={vent.pk}", "model=nope", "supersedes=SD-00-0000"):
         assert client.get(f"/security/decisions/new/?{query}", **MODAL).status_code == 404, query
 
