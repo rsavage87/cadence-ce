@@ -32,6 +32,10 @@ scoped reader's print).
 
 Slice 35: the test equipment used (views_wo_test_equipment.print_context, for a reader who sees the whole facility only): lines to write
 it on while the work is open, and once done each item in apps.testequipment.rules' words on the day of the work, or none recorded.
+
+Slice 38: a software update prints one line, "Software update: <words>" (views_wo_release.print_line: cybersecurity.rules.update_words,
+its target while open, what was recorded once done), for a reader with Device security View and Equipment View only, never a scoped
+reader; one query, none for another type.
 """
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -51,6 +55,7 @@ from apps.workorders.repair_checks import NEVER_NA, POST_REPAIR, checked_by
 from .decorators import web_view
 from .forms import asset_filter_options, equipment_assets, parse_asset_filters
 from .qr import qr_svg
+from .views_wo_release import print_line as software_print_line
 
 # --- asset labels ---------------------------------------------------------------------------------
 
@@ -228,6 +233,7 @@ def wo_print(request, number):
         "finding": finding_print(wo, user),  # slice 33: what the repair found
         "field_engineer": engineer_shown(wo, user) if wo.vendor_service else "",  # slice 31: names only, as this reader may read them
         "test_equipment": _test_equipment_print(wo, user),  # slice 35: never a scoped reader's (views_wo_test_equipment.print_context)
+        "software_update": software_print_line(wo, user),  # slice 38: "" for another type, or a reader without Device security View
         "past_due_days": (today - wo.due_on).days if is_open and wo.due_on < today else 0,
         # The procedure on file (never the incoming checklist, which is no procedure: no code, source, or revision to print)
         "procedure": None if incoming else procedure, "steps": checklist_steps(procedure),

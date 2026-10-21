@@ -27,7 +27,9 @@
    (web/_wo_finding_select.html, views_wo_finding); required when none is stored, so a missing one is focused first.
    Slice 35: "Test equipment used (optional)" right after the steps, also when there are none (web/_wo_test_equipment_picker.html,
    views_wo_test_equipment), where it may be recorded and the facility has test equipment to offer; on a repair it hides with Checked
-   by the vendor.{% endcomment %}
+   by the vendor.
+   Slice 38: a software update's "Software on the device" right after the test equipment picker (web/_wo_release_picker.html,
+   views_wo_release), only where cybersecurity.rules.release_offer holds: never for a scoped user or one without Device security Edit.{% endcomment %}
 <div class="modal-h wc-h"><h2>Complete {{ wo.number }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
 {% if blocker %}
 <div class="form"><div class="full note">{{ blocker }}</div></div>
@@ -92,6 +94,7 @@
   {% endif %}
   <div class="form">
     {% if te %}{% include "web/_wo_test_equipment_picker.html" %}{% endif %}{# slice 35: the test equipment used #}
+    {% if release %}{% include "web/_wo_release_picker.html" %}{% endif %}{# slice 38: what the software update did #}
     {% if late_offer.prominent %}
     <div class="full wc-late flag">
       <label class="wc-label" for="wc-late_reason">Why was it late?</label>

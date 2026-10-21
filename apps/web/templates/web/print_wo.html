@@ -13,7 +13,9 @@
    Slice 33: a repair's "What was found" (views_print.finding_print): a box per finding the reader may record while it is open, the
    finding once done (a reader who sees the whole facility only).
    Slice 35: the test equipment used (views_wo_test_equipment.print_context, never a scoped reader's): lines to write it on while open,
-   once done each item in apps.testequipment.rules' words on the day of the work, or none recorded.{% endcomment %}
+   once done each item in apps.testequipment.rules' words on the day of the work, or none recorded.
+   Slice 38: a software update's line under its request, "Software update: <words>" (views_wo_release.print_line), for a reader with
+   Device security View and Equipment View only, never a scoped reader.{% endcomment %}
 {% block title %}{{ wo.number }}{% endblock %}
 {% block page_style %}<style>
 @page{size:letter;margin:.5in;@bottom-right{content:"{{ wo.number }} · page " counter(page) " of " counter(pages);font:9px sans-serif;color:#6a7280}}
@@ -47,6 +49,7 @@ table.rc-steps td.meas{width:1.9in}
 .rf-pick .rf-grp{display:flex;flex-wrap:wrap;gap:4px 16px;align-items:center}
 .rf-pick .rf-grp>i{font-style:normal;color:var(--ink-2);min-width:1.2in}
 .rf-done{margin:6px 0 0}
+.sw-print{margin:0 0 8px}
 .te-print{margin-top:12px}
 .te-print .te-line{margin:0 0 2px}
 .te-print .te-uses{margin:2px 0 0;padding-left:18px}
@@ -95,6 +98,7 @@ table.rc-steps td.meas{width:1.9in}
 
 <h2>Request</h2>
 <div class="wo-problem">{% shown_text wo.problem %}</div>
+{% if software_update %}<p class="sw-print"><b>Software update:</b> {{ software_update }}</p>{% endif %}{# slice 38 #}
 <dl class="kv">
   <div><dt>Requested by</dt><dd>{{ wo.requester|default:"—" }}</dd></div>
   <div><dt>Callback</dt><dd>{{ wo.callback|default:"Not given" }}</dd></div>

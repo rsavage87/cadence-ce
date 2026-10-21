@@ -1,1 +1,22 @@
-{% comment %}Slice 38: the completion modal's "Software on the device" section (apps.web.views_wo_release.offer). Wave 2 builds it.{% endcomment %}
+{% comment %}The completion modal's "Software on the device" (slice 38, views_wo_release.picked, under "release"), after the test
+   equipment picker and before the late reason and the resolution, only where cybersecurity.rules.release_offer holds. The target in
+   rules' words above the outcome radios (each with what it does; none chosen while a choice is needed, "Keep as recorded" chosen on a
+   re-completion with an outcome recorded); the release it runs now (the model's releases, the recorded one marked), the reference (the
+   manufacturer's patch list and its month or revision), the basis, and the help line. The hidden marker says the section was on screen
+   (absent: nothing sent). Every field is shown whatever the outcome: the form sends what each outcome reads (already without a basis;
+   not confirmed now its outcome alone). Existing classes only (the repair's radio cards, .fld's column).{% endcomment %}
+{% with r=release %}
+<div class="full fld wc-sw" id="wc-sw" role="group" aria-labelledby="wc-sw-label" style="gap:8px">
+  <input type="hidden" name="shown_software_outcome" value="1">
+  <div class="wc-label" id="wc-sw-label">{{ r.legend }}</div>
+  <div class="hint" id="wc-sw-target">{{ r.target }}{% if not r.recorded %} · {{ r.not_recorded }}{% endif %}</div>
+  <div class="radio wc-results wc-results-2" role="radiogroup" aria-labelledby="wc-sw-label" aria-describedby="wc-sw-target{% if r.errors.software_outcome %} wc-software_outcome-error{% endif %}">
+    {% for o in r.outcomes %}<label><input type="radio" name="software_outcome" value="{{ o.value }}"{% if o.checked %} checked{% endif %}{% if r.focus and forloop.first %} autofocus{% endif %}><span>{{ o.label }}<small>{{ o.hint }}</small></span></label>{% endfor %}
+  </div>
+  {% if r.errors.software_outcome %}<span class="err" id="wc-software_outcome-error" role="alert">{{ r.errors.software_outcome }}</span>{% endif %}
+  {% if r.has_releases %}<label>{{ r.release_label }}{{ form.software_release }}<span class="hint" id="wc-software_release-hint">{{ r.release_hint }}</span>{% if r.errors.software_release %}<span class="err">{{ r.errors.software_release }}</span>{% endif %}</label>{% elif r.errors.software_release %}<span class="err">{{ r.errors.software_release }}</span>{% endif %}
+  <label>{{ r.reference_label }}{{ form.software_reference }}<span class="hint" id="wc-software_reference-hint">{{ r.reference_hint }}</span>{% if r.errors.software_reference %}<span class="err">{{ r.errors.software_reference }}</span>{% endif %}</label>
+  <label>{{ r.basis_label }}{{ form.software_basis }}{% if r.errors.software_basis %}<span class="err">{{ r.errors.software_basis }}</span>{% endif %}</label>
+  <p class="hint wc-sw-help" style="margin:0">{{ r.help }}</p>
+</div>
+{% endwith %}

@@ -4,6 +4,7 @@
 {# Slice 30: a repair's "Checks after repair": how it ended, who checked and when, the steps and readings, or the vendor's report number, or not returned to use; a reopened repair says what was recorded, and one completed with no outcome says none was. #}
 {# Slice 33: a reopened repair's note names the finding it keeps (r.finding: a user who sees the whole facility only); a completed one's is the drawer's "What was found" row (web/_wo_finding_row.html). #}
 {# Slice 35: the "Test equipment" section after the results or checks (web/_wo_test_equipment_row.html, any type: views_wo_test_equipment.drawer_context). #}
+{# Slice 38: a software update's "Software update" section before it (web/_wo_release_row.html: views_wo_release.drawer_context, Device security View and Equipment View only). #}
 {% with r=pm_record %}
   {% if r.kind == "repair" %}
   {% if r.show %}
@@ -48,6 +49,7 @@
   {% elif r.reopened %}
   <div class="sec"><div class="note">Reopened. When last completed this PM was recorded as {{ r.label }}; completing it again records its results anew.</div></div>
   {% endif %}
+  {% include "web/_wo_release_row.html" %}{# slice 38: what the software update did, in rules' words #}
   {% include "web/_wo_test_equipment_row.html" %}{# slice 35: the test equipment it recorded, on the day of the work #}
   {% if r.follow_ups %}
   <div class="sec"><h3>{% if r.kind == "inspection" %}Re-inspection <span>opened when this inspection failed</span>{% else %}Repair <span>opened from this PM</span>{% endif %}</h3>

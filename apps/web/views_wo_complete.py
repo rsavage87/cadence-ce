@@ -92,6 +92,17 @@ inputs); the hidden marker shown_test_equipment (forms_wo_complete: absent keeps
 with Checked by the vendor, and the ticks are dropped then. A refusal comes back keyed test_equipment with the rest, the ticks kept and
 the first box focused when it is the first error; Mark the rest pass keeps every tick. Keep open records none (completion.keep_open).
 results_context carries the drawer's "Test equipment" section (views_wo_test_equipment.drawer_context, under "test_equipment_row").
+
+Slice 38, what a software update did (apps.cybersecurity.updates; views_wo_release): "Software on the device" after the steps and the test
+equipment picker, before the late reason and the resolution, only where cybersecurity.rules.release_offer holds (views_wo_release.offer,
+read once in _setup, under "release_picker"; the form's offer_software): the target in rules' words, the outcome radios (none chosen
+while a choice is needed; "Keep as recorded" chosen on a re-completion with an outcome recorded), the release it runs now, the reference,
+the basis, the help line, and the shown_software_outcome marker (absent: nothing sent). The modal is scoped=True: a scoped user (or one
+without the offer) never sees the section, and the form takes nothing from their post. A refusal comes back keyed software_outcome,
+software_release, software_reference, or software_basis with the rest, the choices kept and the first one focused. The toast adds what
+was recorded in rules.update_words for a user with Device security View and Equipment View (views_wo_release.toast_words); an update
+completed with nothing recorded says "<number> completed". results_context carries the drawer's "Software update" section
+(views_wo_release.drawer_context, under "software_row").
 """
 import copy
 
@@ -110,7 +121,7 @@ from apps.workorders import permissions as wo_perms
 from apps.workorders import services as wo_services
 from apps.workorders.models import OPEN_STATUSES, InspectionResult, PmResult, RepairCheck, ServiceRequest, Source, WoStatus, WoType
 
-from . import views_wo_engineer, views_wo_finding, views_wo_late, views_wo_test_equipment
+from . import views_wo_engineer, views_wo_finding, views_wo_late, views_wo_release, views_wo_test_equipment
 from .decorators import web_view
 from .forms_wo_complete import STEP_CHOICES, CompleteForm
 from .htmx import toast
@@ -153,7 +164,8 @@ def results_context(request, wo) -> dict:
     service, else the technician assigned) and when, the steps as recorded or the vendor's report number; `unrecorded` words a repair
     completed with no outcome (before slice 30, or imported). Slice 33: the drawer's "What was found" row (views_wo_finding, under
     "what_found"), and a reopened repair's finding (`finding`) for a user who sees the whole facility. Slice 35: the "Test equipment"
-    section (views_wo_test_equipment.drawer_context, under "test_equipment_row")."""
+    section (views_wo_test_equipment.drawer_context, under "test_equipment_row"). Slice 38: the "Software update" section
+    (views_wo_release.drawer_context, under "software_row")."""
     is_pm, is_inspection, is_repair = wo.type == WoType.PM, wo.type == WoType.INSPECTION, wo.type == WoType.REPAIR
     follow_up_of = wo.follow_up_of if wo.follow_up_of_id else None
     result = wo.inspection_result if is_inspection else wo.pm_result if is_pm else wo.repair_check if is_repair else ""
@@ -190,7 +202,8 @@ def results_context(request, wo) -> dict:
         "follow_up_of_kind": "incoming inspection" if follow_up_of is not None and follow_up_of.type == WoType.INSPECTION else "PM",
     }, **views_wo_late.late_context(request, wo),  # slice 25: the "Why late" row (web/_wo_late.html), under "why_late"
         **views_wo_finding.drawer_context(request, wo),  # slice 33: the "What was found" row (web/_wo_finding_row.html), under "what_found"
-        **views_wo_test_equipment.drawer_context(request, wo)}  # slice 35: web/_wo_test_equipment_row.html, under "test_equipment_row"
+        **views_wo_test_equipment.drawer_context(request, wo),  # slice 35: web/_wo_test_equipment_row.html, under "test_equipment_row"
+        **views_wo_release.drawer_context(request, wo)}  # slice 38: web/_wo_release_row.html, under "software_row"
 
 
 # --- the modal -----------------------------------------------------------------------------------------------------------------
@@ -412,7 +425,8 @@ def _form_kwargs(wo, steps, offers, hours, late) -> dict:
             "offer_engineer": offers.get("engineer_select") is not None, "engineer_initial": offers.get("engineer_initial", ""),  # slice 31
             "offer_reference": offers.get("offer_reference", False), "reference_initial": offers.get("reference_initial", ""),
             "finding_initial": (offers.get("finding_select") or {}).get("initial", ""),  # slice 33
-            "offer_test_equipment": offers.get("te_picker") is not None}  # slice 35
+            "offer_test_equipment": offers.get("te_picker") is not None,  # slice 35
+            "offer_software": offers.get("release_picker")}  # slice 38: None where nothing is offered
 
 
 def _late(request, wo, today) -> dict:
@@ -489,6 +503,8 @@ def _modal(request, wo, form=None, *, steps=(), offers=None, hours=None, late=No
         "te": (views_wo_test_equipment.picked((offers or {})["te_picker"], form, prefix="wc",
                                               vendor_report=(offers or {}).get("offer_vendor_report", False))
                if form is not None and (offers or {}).get("te_picker") is not None and "test_equipment" in form.fields else None),
+        # Slice 38: what the software update did, as the form holds it
+        "release": views_wo_release.picked((offers or {}).get("release_picker"), form),
     })
     if reason and from_my_work(request):  # review fix: a card offered a move the work order no longer allows; the list is behind
         trigger_client_event(response, "wo-changed", {})
@@ -548,6 +564,9 @@ def _message(request, wo, done, late_given: bool = False) -> str:
         if wo.repair_check == RepairCheck.NOT_RETURNED and done.tagged_out:  # it was in use: say what moved
             note = f"{wo.get_repair_check_display()}: {wo.asset.tag} tagged out of service"
         return f"{wo.number} completed: {note}{logged}"
+    if wo.type == WoType.SOFTWARE_UPDATE:  # slice 38: what it recorded, for a user who may see it ("" when it recorded nothing)
+        words = views_wo_release.toast_words(wo, done, request.user)
+        return f"{wo.number} completed{f'; {words}' if words else ''}{logged}"
     if wo.type != WoType.PM:
         return f"{wo.number} completed{logged}"
     note = completion.result_note(wo.pm_result, done)
@@ -602,7 +621,8 @@ def _setup(request, wo, today) -> tuple:
     """The modal's parts for `wo` today: its checklist's steps, the offers, the hours box, the late reason, and the form's kwargs."""
     steps = completion.checklist_of(completion.procedure_for(wo))
     offers = {**_offers(wo, request.user, today), **_vendor_offers(wo, request.user, today),  # slice 31: who did the vendor's work
-              "te_picker": views_wo_test_equipment.offer(wo, request.user, today)}  # slice 35: None where it records none
+              "te_picker": views_wo_test_equipment.offer(wo, request.user, today),  # slice 35: None where it records none
+              "release_picker": views_wo_release.offer(wo, request.user, today)}  # slice 38: None where nothing is offered
     hours = _hours(request, wo)
     late = _late(request, wo, today)  # slice 25
     return steps, offers, hours, late, _form_kwargs(wo, steps, offers, hours, late)

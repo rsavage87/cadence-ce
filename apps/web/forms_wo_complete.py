@@ -50,12 +50,26 @@ completed as checked by the vendor sends nothing either (the vendor's report nam
 choice). The picker comes after the steps, so "test_equipment" follows them in the focus order (LAYOUT_PICKER). "Mark the rest pass"
 carries the ticks (filled() reads the list with getlist). TestEquipmentForm is the drawer's Change (views_wo_test_equipment), for
 workorders.services.set_test_equipment.
+
+Slice 38, what a software update did (apps.cybersecurity.updates; the section is web/_wo_release_picker.html, views_wo_release):
+software_outcome (the radios: installed, patches, already, not_confirmed, and on a re-completion with an outcome recorded "keep", chosen to
+begin with), software_release (a ChoiceField whose choices are the offer's releases, set in __init__: never a queryset at class level; one
+gone meanwhile is refused in the service's words, CHOOSE_RUNS_NOW), software_reference, software_basis (text: the service checks it), and
+shown_software_outcome, the section's marker. Fields only where views_wo_release.offer offers the section (offer_software: its context),
+and taken from the post only when the marker came back (clean: self.software, for complete_work_order's `software`): no marker, no
+outcome, or "keep" sends nothing (KEEP: the service asks for a choice where one is needed, with every other problem at once); "not
+confirmed now" sends its outcome alone; installed, patches, and already go through updates.choice_from, already with the basis blanked
+(the service refuses one there: NO_BASIS). The section comes after the steps and the test equipment picker, before the late reason and
+the resolution, in the focus order (LAYOUT_SOFTWARE). Not offered: no fields, nothing sent, and a software_* refusal shows at the top.
 """
 import re
 
 from django import forms
 from django.core.exceptions import ValidationError
 
+from apps.cybersecurity import updates as cyber_updates
+from apps.cybersecurity.models import UPDATE_REFERENCE_MAX, UpdateOutcome
+from apps.cybersecurity.services import KEEP as SOFTWARE_KEEP
 from apps.vendors import services as vendor_services
 from apps.workorders import completion, repair_checks
 from apps.workorders.models import InspectionResult, LateReason, PmResult, RepairCheck
@@ -77,6 +91,10 @@ LAYOUT_TAIL = ("pm_result", "inspection_result", "repair_finding", "resolution",
 LAYOUT_REPAIR = ("repair_check",)  # slice 30: a repair's outcome comes before its checklist
 LAYOUT_VENDOR = ("vendor_engineer", "engineer_name", "checks_reference")  # slice 31: then who did the vendor's work, and their report
 LAYOUT_PICKER = ("test_equipment",)  # slice 35: the test equipment used, right after the steps (before a prominent late reason)
+# Slice 38: what a software update did, after the test equipment picker (before a prominent late reason and the resolution)
+LAYOUT_SOFTWARE = ("software_outcome", "software_release", "software_reference", "software_basis")
+SOFTWARE_FIELDS = (*LAYOUT_SOFTWARE, "shown_software_outcome")
+SOFTWARE_KEEP_CHOICE = "keep"  # slice 38: a re-completion's "Keep as recorded" (views_wo_release.KEEP): nothing sent
 OTHER = "other"  # slice 31: the select's "Someone else" (the name typed in engineer_name)
 KEEP_CHOICE = "keep"  # slice 31: a scoped vendor account's "Another company's engineer": the engineer stored stays
 LATE_BLANK = "Not recorded"
@@ -230,11 +248,20 @@ class CompleteForm(forms.Form):
     # Slice 35: the test equipment ticked, and the picker's marker (absent: nothing sent, the work order keeps what it recorded)
     test_equipment = TestEquipmentField(required=False)
     shown_test_equipment = forms.CharField(required=False)
+    # Slice 38: what a software update did (choices in __init__, from views_wo_release.offer; the service checks every value)
+    software_outcome = forms.CharField(required=False)
+    software_release = forms.ChoiceField(required=False, choices=(), error_messages={"invalid_choice": cyber_updates.CHOOSE_RUNS_NOW},
+                                         widget=forms.Select(attrs={"aria-describedby": "wc-software_release-hint"}))
+    software_reference = forms.CharField(required=False, widget=forms.TextInput(attrs={
+        "maxlength": UPDATE_REFERENCE_MAX, "autocomplete": "off", "placeholder": "e.g. ICAR-2026-09",
+        "aria-describedby": "wc-software_reference-hint"}))
+    software_basis = forms.CharField(required=False, widget=forms.Select())
+    shown_software_outcome = forms.CharField(required=False)
 
     def __init__(self, *args, steps=(), is_pm=False, is_inspection=False, kept_pass=False, offer_open_repair=False, offer_tag_out=False,
                  offer_hours=False, offer_late_reason=False, late_first=False, late_recorded="", is_repair=False, repair_default="",
                  offer_engineer=False, engineer_initial="", offer_reference=False, reference_initial="", finding_initial="",
-                 offer_test_equipment=False, **kwargs):
+                 offer_test_equipment=False, offer_software=None, **kwargs):
         """`steps`: the checklist the modal shows, as completion.checklist_of gives it. The two offers say whether the failed-PM
         options are on screen: an option that is not offered is not taken from the post (a new repair is opened; no tag-out).
         `offer_hours`: the Hours box is on screen; without it no hours are taken from the post. `offer_late_reason` (slice 25): the
@@ -247,7 +274,9 @@ class CompleteForm(forms.Form):
         (any vendor job, for a user who sees the whole facility), with the number stored as `reference_initial` (a reopened job).
         Slice 33: `finding_initial`, a repair's finding to begin with (views_wo_finding.select_context's: the one stored, never a scoped
         user's). Slice 35: `offer_test_equipment`, the work order may record test equipment (views_wo_test_equipment.offer:
-        rules.offered); without it nothing is taken from the post, and with it only when the picker's marker came back."""
+        rules.offered); without it nothing is taken from the post, and with it only when the picker's marker came back. Slice 38:
+        `offer_software`, the section's context (views_wo_release.offer: its releases, and the outcome, release, and reference to begin
+        with), or None (no section: the software_* fields are dropped, and nothing is taken from the post)."""
         kwargs.setdefault("auto_id", "wc-%s")
         super().__init__(*args, **kwargs)
         self.steps, self.is_pm, self.is_inspection = list(steps), is_pm, is_inspection and not is_pm
@@ -271,6 +300,16 @@ class CompleteForm(forms.Form):
         self.offer_test_equipment = offer_test_equipment  # slice 35
         if not offer_test_equipment:
             del self.fields["test_equipment"], self.fields["shown_test_equipment"]
+        self.offer_software, self.software = offer_software, SOFTWARE_KEEP  # slice 38
+        if offer_software is None:
+            for name in SOFTWARE_FIELDS:
+                del self.fields[name]
+        else:
+            self.fields["software_outcome"].initial = offer_software["outcome_initial"]
+            self.fields["software_release"].choices = offer_software["release_choices"]
+            self.fields["software_release"].initial = offer_software["release_initial"]
+            self.fields["software_reference"].initial = offer_software["reference_initial"]
+            self.fields["software_basis"].widget.choices = offer_software["basis_choices"]
         if not self.is_inspection:
             del self.fields["inspection_result"]
         elif kept_pass:
@@ -326,7 +365,31 @@ class CompleteForm(forms.Form):
                 self.engineer = engineer_kwargs(data.get("vendor_engineer"), data.get("engineer_name"))
             except ValidationError as e:
                 self.add_error(None, e)
+        if self.offer_software is not None:  # slice 38
+            self.software = self._software(data)
         return data
+
+    def _software(self, data):
+        """complete_work_order's `software` (slice 38): KEEP unless the section's marker came back with an outcome that records, or
+        "not confirmed now" (its outcome alone: the rest is never read); a release its field refused (one gone meanwhile) matters only
+        to an outcome that reads it. Already goes with its basis blanked (the service refuses one there); a value that is no outcome is
+        refused in choice_from's words."""
+        outcome = str(data.get("software_outcome") or "").strip() if data.get("shown_software_outcome") else ""
+        if outcome in ("", SOFTWARE_KEEP_CHOICE):
+            self._errors.pop("software_release", None)
+            return SOFTWARE_KEEP  # nothing sent: the record stays, and the service asks for a choice where one is needed
+        if outcome not in UpdateOutcome.values:
+            self._errors.pop("software_release", None)
+            fields = {"software_outcome": outcome}  # not confirmed now, or no outcome at all (choice_from refuses it)
+        else:
+            fields = {"software_outcome": outcome, "software_release": data.get("software_release") or "",
+                      "software_reference": data.get("software_reference") or "",
+                      "software_basis": "" if outcome == UpdateOutcome.ALREADY else (data.get("software_basis") or "")}
+        errors: dict = {}
+        choice = cyber_updates.choice_from(fields, errors)
+        for name, message in errors.items():
+            self.add_error(name, message)
+        return choice
 
     # --- what the template shows -----------------------------------------------------------------------------------------
 
@@ -400,6 +463,8 @@ class CompleteForm(forms.Form):
         chosen = ticked(self)  # slice 35: None without the picker's marker (nothing sent: kept as recorded)
         if chosen is not None and not (self.is_repair and kwargs.get("repair_check") == RepairCheck.VENDOR_REPORT):
             kwargs["test_equipment"] = chosen  # the vendor's report names its own: ticks left under that choice are dropped
+        if self.software is not SOFTWARE_KEEP:  # slice 38: what the update did (clean: updates.choice_from over the section)
+            kwargs["software"] = self.software
         return kwargs
 
     def keep_open_kwargs(self) -> dict:
@@ -411,7 +476,17 @@ class CompleteForm(forms.Form):
                 "hold": d["hold"] if d["shown_hold"] else True}
 
     def add_service_errors(self, error):
-        """Show a service's ValidationError on the fields it names; the checklist's and anything else at the top of its section."""
+        """Show a service's ValidationError on the fields it names; the checklist's and anything else at the top of its section. Slice 38:
+        a software_* refusal on a form without the section (not offered) shows at the top, never lost."""
+        if hasattr(error, "error_dict"):
+            messages = error.message_dict
+            unseen = [k for k in messages if k.startswith("software_") and k not in self.fields]
+            if unseen:
+                self.add_error(None, [m for k in unseen for m in messages[k]])
+                rest = {k: v for k, v in messages.items() if k not in unseen}
+                if not rest:
+                    return
+                error = ValidationError(rest)
         service_errors(self, error)
 
     def focus_first_error(self):
@@ -419,7 +494,7 @@ class CompleteForm(forms.Form):
         late = ("late_reason",)
         names = [*(LAYOUT_REPAIR if self.is_repair else ()), *LAYOUT_VENDOR, "checklist",
                  *(f"{kind}_{n}" for n in range(1, len(self.steps) + 1) for kind in ("step", "reading")), *LAYOUT_PICKER,
-                 *(late if self.late_first else ()), *LAYOUT_TAIL, *(() if self.late_first else late)]
+                 *LAYOUT_SOFTWARE, *(late if self.late_first else ()), *LAYOUT_TAIL, *(() if self.late_first else late)]
         self.first_error = next((name for name in names if name in self.errors), "")
         if self.first_error in self.fields:
             for field in self.fields.values():

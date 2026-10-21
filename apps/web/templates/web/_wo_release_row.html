@@ -1,0 +1,10 @@
+{% comment %}The work order drawer's "Software update" line (slice 38, views_wo_release.drawer_context, under "software_row"): on an update
+   work order with its record, for a reader with Device security View and Equipment View only (never scoped). The record in
+   cybersecurity.rules' words (open: its target; completed: what was recorded, or the version not confirmed; cancelled), and a link to the
+   device's Security tab, where Confirm version and Entered in error are. Included by web/_wo_results.html.{% endcomment %}
+{% with s=software_row %}{% if s %}
+<div class="sec wo-sw" id="wo-sw">
+  <p class="wo-sw-words" style="margin:0 0 6px"><b>{{ s.label }}:</b> {{ s.words }}</p>
+  <a class="link" href="{{ s.url }}" hx-get="{{ s.url }}" hx-target="#drawer">{{ s.link }}</a>
+</div>
+{% endif %}{% endwith %}
