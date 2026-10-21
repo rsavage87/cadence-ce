@@ -431,6 +431,36 @@ def test_seed_demo_keeps_the_ce_departments_test_equipment(db):
         assert TestEquipment.objects.count() == len(items) and Calibration.objects.count() == len(cals)
 
 
+def test_seed_demo_records_two_security_decisions(db):
+    """Slice 39: the pumps' decision (past its review) and the C-arm's (in force), recorded by the CE manager through
+    apps.cybersecurity.decisions after the software updates and before the vendor review and the program evaluation (which stays made
+    last, so neither counts anything new); Riverside only; a second run adds nothing. tests/test_cyber_seed.py reads them in full."""
+    from django.utils import timezone
+
+    from apps.cybersecurity import rules
+    from apps.cybersecurity.models import DeviceSecurityDecision, SoftwareUpdate
+    from apps.evaluations.models import ProgramEvaluation, VendorReview
+
+    call_command("seed_demo", stdout=StringIO())
+    with tenant_context(Tenant.objects.get(slug="riverside")):
+        today = timezone.localdate()
+        manager = User.objects.get(username=f"{seed_demo.SECURITY_RECORDED_BY}@riverside.example")
+        rows = list(DeviceSecurityDecision.objects.order_by("created_at"))
+        assert [(d.exception_reference, rules.scope_kind(d), rules.decision_state(d, today)) for d in rows] == [
+            ("DEMO-EX-1037", rules.RELEASE_SCOPE, rules.REVIEW_DUE), ("DEMO-EX-1042", rules.DEVICE_SCOPE, rules.IN_FORCE)]
+        assert {d.recorded_by for d in rows} == {manager} and manager.role.slug == "manager"
+        assert not [d for d in rows if d.ended_on or d.supersedes_id]
+        last_update = SoftwareUpdate.objects.order_by("-created_at").first()
+        review, evaluation = VendorReview.objects.get(), ProgramEvaluation.objects.get()
+        assert last_update.created_at < rows[0].created_at and rows[-1].created_at < review.created_at < evaluation.created_at
+        assert rules.badge(today) == {"count": 1, "hot": True}
+    with tenant_context(Tenant.objects.get(slug="riverside-north")):
+        assert not DeviceSecurityDecision.objects.exists()
+    call_command("seed_demo", stdout=StringIO())  # a second run adds nothing
+    with tenant_context(Tenant.objects.get(slug="riverside")):
+        assert DeviceSecurityDecision.objects.count() == 2
+
+
 def rows_of_table(section, key) -> list:
     return [list(r) for r in section.table(key).rows()]
 

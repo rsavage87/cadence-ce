@@ -32,7 +32,7 @@ security tests, `tests/test_postgres_rls.py`).
    `apps/accounts/services.py`, `apps/credentials/services.py`, `apps/recalls/services.py`, `apps/facility/services.py`, `apps/equipment/services.py`,
    `apps/pm/aem.py`, `apps/pm/procedures.py`, `apps/workorders/costs.py`, `apps/workorders/completion.py`, `apps/workorders/legacy.py`, `apps/reports/custom.py`,
    `apps/imports/services.py`, `apps/incidents/services.py`, `apps/vendors/services.py`, `apps/evaluations/services.py`,
-   `apps/testequipment/services.py`, `apps/cybersecurity/services.py`, `apps/cybersecurity/updates.py`; slice 36's model support through `apps/equipment/services.py`), never by setting fields in a
+   `apps/testequipment/services.py`, `apps/cybersecurity/services.py`, `apps/cybersecurity/updates.py`, `apps/cybersecurity/decisions.py`; slice 36's model support through `apps/equipment/services.py`), never by setting fields in a
    view or calling model helpers like
    `Contract.add_assets` directly. Services validate, write status history, and keep the asset in sync.
 6. **No PHI by design.** The portal never asks for patient identifiers. Don't add free-text fields that invite them, and never offer
@@ -330,8 +330,9 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   security rows; `model_changed` from equipment.update_asset, never taking the register lock,
   clears a release of the old model); `filters.py` the Fleet's filters (`FleetFilters`, `parse`, `parse_strict` for the API's 400s, `within` for a head figure's link) shared by the screen and the API; `services.running` / `removal_refusal` count devices on site only (a retired device keeps naming a release entered in error). Never kept: credentials, network
   identifiers, SBOM contents, the MDS2 file, advisory text, free text; never in an email, a custom report, the device's own CSV or API
-  record, the portal, labels, or Scan. Slice 39: advisories, decisions and controls; slice 40: the version at every
-  completion, the import, hardening facts, the binder section, evaluation indicators; slice 41: the CISA CSAF feed.
+  record, the portal, labels, or Scan. Slice 40: advisories (advisory decisions, the advisory batch, the multi-need Record decision);
+  slice 41: register upkeep and readers (the version at every completion, the import, hardening facts, the binder section, evaluation
+  indicators, the capital line); slice 42: the CISA CSAF feed.
   Slice 38, software updates (FDA 2016: a routine update is "not considered a repair"; no rule requires any of it): `SoftwareUpdate`
   (one per update work order, made when it is opened, holding its target: a release of the model (`target_release`) or the
   manufacturer's patches (`target_reference`, a token); or an install recorded by hand (no work order, `installed_by`); `outcome`
@@ -362,7 +363,50 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   "updated from X to Y"), `release_name` ("(entered in error since)"), `updates_of` and `campaigns` / `campaign_words` (one query each);
   `permissions.can_open_updates` (Edit, Equipment View, Work orders Edit) and `can_correct_updates` (Approve, Equipment View); the
   history Area `software_updates` (Device security View and Equipment View; never in a work order drawer's History); `remove_release`
-  refused while an open update is to install the release. Never a version, reference, target, or sentence outside can_view_devices
+  refused while an open update is to install the release. Never a version, reference, target, or sentence outside can_view_devices.
+  Slice 39, security decisions for devices past support (HHS 405(d) HICP 2023 recommends documenting mitigating controls and a timeline
+  through the organization's risk acceptance or exception process when a system past its support stays in use; no rule requires any of
+  it): `DeviceSecurityDecision` (SD-<yy>-<nnnn> by the year decided, `Sequence` "decision-<yy>"; `applies_to` support_ended, keyed on by
+  every constraint and rule (slice 40 adds advisory); one scope (CheckConstraint): a device, a model's devices of ours on one release, or
+  every device of ours of a model, FKs PROTECT; one live (not ended) decision per scope, three conditional UniqueConstraints (never one over
+  a nullable column); `reasons` kinds (security_updates, os_support: ended or announced, never states); `response` keep_with_controls /
+  keep_without_added_controls / take_out_of_use; `controls` slugs (`rules.CONTROLS`; some exactly to keep with controls; a support
+  decision never network_removed: Record facts' "Not connected here" needs none) and `controls_reference` (with recorded_elsewhere only);
+  `plan`, `plan_by` (a replacement's fiscal year worded at read time, never stored), `plan_owner`; `accepted_by` a role, never a name;
+  `exception_reference` IT's number (IT's record stays the system of record); `decided_on`, `review_by` (default and cap product choices:
+  `review_default`, `review_cap`); `governed_ids` (joined since, by identity); `supersedes`; `ended_on` / `ended_by` / `end_reason`
+  (superseded, no_longer_needed, entered_in_error); immutable but its end; admin read only); `decisions.py` every write
+  (`record_decision`, superseding the live one of its scope in one transaction (Review and renew), `end_decision` (no longer needed),
+  `mark_entered_in_error`; levels inside, `permissions.can_decide` (Approve and Equipment View, never scoped; None is the system);
+  refusals keyed by field, every field problem at once before any lock; each token never a network identifier (`network_identifier`:
+  an address, a MAC, a VLAN, a port); the lock order: the register, the decision superseded or ended FOR UPDATE of its own row, the
+  release (release scope), the number, the device FOR KEY SHARE (device scope: its model, status, and ownership read there), the insert;
+  an IntegrityError or a lock conflict answers RACE; history reasons fixed sentences with Cadence numbers only; equipment's writers never
+  write here nor take the register lock: the readers re-derive); `rules.py`'s slice 39 section the one place for needs and words:
+  `support_need` (`Need`: NEEDS, on site and connected or able to, the release's security updates or the model's support ended, or the
+  OS's while the release's updates are not announced to continue; ENDING, an end announced within 12 months, decidable; EXTENDED,
+  information only), `governing_decisions` (the most specific live one: its own, else, for a device of ours, its recorded release's,
+  else its model's; a temporary device only its own; past review it still governs and covers nothing: never a fallback) and `covers`,
+  `update_responses` (an open update to a supported release (`supported_target`), an update done with the version not confirmed: its
+  own state; never updates.open_number alone; read with .get(pk, [])), `device_lines` (`DeviceLines`: the Security tab's), `decision_words`
+  ("<response>; <review>. <plan>. <who>.": "Review due since ..." read first once past review; "risk accepted until" only there),
+  `scope_words`, `plan_words`, `who_words`, `control_words`, `reason_words`, `review_words`, `end_words`, `decision_state` (IN_FORCE,
+  REVIEW_SOON within 30 days, REVIEW_DUE, ENDED; `DECISION_STATE_WORDS`), `scope_devices` / `decision_devices` (`DecisionDevice.words`)
+  and `decision_checks` (`Check`, CHECK_*: a reason ended since it does not name, the model's record now on no separate segment while
+  it relies on one, "Governs no device here now: end it", devices joined since, "The plan's date (...) has passed", take out of use still in service,
+  the plan owner deactivated; information, never refusals), `needs_attention` (`Attention` of `Heading`s (`ATTENTION_HEADINGS`, empty
+  `ATTENTION_EMPTY`) and `AttentionRow`s; links as data, `Link` by URL name: `URLS`, the doors reverse them; Record decision and End only
+  for can_decide, a work order's link only with Work orders View) and `badge` (one aggregate query: live decisions past review whose
+  scope still holds a device on site; `BADGE_TITLE`); two readings named apart: in scope (the badge, past review, govern no device) and
+  governed (responses, joined since, the other Checks); fixed queries as decisions and devices grow. Words: `DECISION_NEVER_WORDS`
+  (NEVER_WORDS, which slice 39 gave exempt, waiver, hardened, and deadline, plus "overdue") on every decision door (pages, modals, the
+  print, CSVs, toasts, API bodies), a whole device drawer with NEVER_WORDS (it carries Equipment's "overdue for PM"); never "requires" or
+  "must". Reading any decision (the Decisions tab, a decision's page, print, and CSVs, the API, Needs attention, the badge, the change
+  log's Area `device_security_decisions`, also Equipment View) needs can_view_devices; recording, Review and renew, End, and Entered in
+  error need can_decide. The nav badge (`reports.services._cyber_badge`, nav_counts' `cybersecurity` / `cybersecurity_hot`) never on the
+  Overview's attention list or in an email. `services.removal_refusal` refuses a release with a live decision (`DECISION_LIVE`);
+  `update_release` refuses a version change while any decision names it, live or ended (`DECISION_NAMES`). Never in an email, a digest, a
+  custom report, the portal, labels, or Scan
 - `apps/recalls` Alert (global), AlertMatch (per tenant), matching, openFDA importer; `services.py` dispositions and recall work-order batches,
   `permissions.py` (review at Edit, close/reopen at Approve); `feeds.py` the openFDA fetch shared by `import_openfda` and the Recalls
   screen's Check FDA feed (one fetch per 15 minutes for everyone, kept in apps.jobs' `JobRun`; a check matches only its own facility).
@@ -441,6 +485,17 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `_cyber_release_actions.html` (a release row's campaign counts), `views_wo_release.py` (the completion modal's "Software on the
   device", `_wo_release_picker.html`, offered only where rules.release_offer holds, the `shown_software_outcome` marker; the drawer's and
   print's "Software update" line for can_view_devices only);
+  slice 39 (routes in `urls_cybersecurity.py`): the Device security screen's Decisions tab (`/security/decisions/`, can_view_devices:
+  Needs attention from rules.needs_attention with the HICP sentence, the list by state (In force, Review within 30 days, Review due,
+  Ended) filtered by scope, response, and exception number, its CSV), a decision's page (`web:security_decision`,
+  `/security/decisions/<number>/` in any letter case; drawer partial and full page: the sentence, reasons, controls, plan, who, the
+  devices it governs with their responses, Check lines, supersedes / superseded by, History; Review and renew, End
+  (`web:security_decision_end`), Entered in error for can_decide), its print (`web/print_base.html`) and devices CSV, Record decision
+  (`web:security_decision_new`, a modal: the scope fixed by the door, `?asset=<tag>` from the Security tab or a rentals row,
+  `?release=<id>` or `?model=<id>` from a release row or Needs attention, `?supersedes=<number>` for Review and renew; fields set in
+  `__init__`; never network_removed: rules.NETWORK_REMOVED_HINT), the Security tab's need, responses, and governing decision
+  (rules.device_lines), a release row's live decision or Record decision (`_cyber_release_actions.html`), and the nav item's badge
+  (rules.BADGE_TITLE);
   `views_temporary.py` loaners and rentals (slice 29, with `forms_temporary.py`: Add rental or
   loaner, the drawer's temporary section (`asset_tabs.temporary_box`), Change details, Return to owner, Keep it, Vendor loaner arrived,
   Return the loaner; the Equipment "Whose" filter through `forms.equipment_assets`), `views_incidents.py` Incidents (slice 28, with
@@ -489,7 +544,11 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `software_reference` / `software_basis` (refused on every other move and on create; a missing one names what to send), an update
   work order keeps its device, type, and problem and is cancelled, never deleted; `views_cybersecurity.SoftwareUpdateViewSet`
   `/api/v1/software-updates/`, read only (Device security View and Equipment View; ?device= id or tag, ?release=, ?state=; entered in
-  error left out; the work order's number, never a link); serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
+  error left out; the work order's number, never a link); slice 39: `/api/v1/security-decisions/` (`views_cybersecurity.py` /
+  `serializers_cybersecurity.py`), read only, by id or number (can_view_devices; no scoped actions; ?scope=device|release|model,
+  ?state=in_force|review_due|ended, ?device= id or tag; each decision's fields with their words, the sentence, plan words, governed
+  device ids, and Check lines; fixed queries a page), and a device's or a model's destroy refused while a decision names it, in words for
+  the reader (a Device security reader reads the decision's number); serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
   same thing and calls the same service; the API never imports apps.web. `tenancy.py` (`TenantAPIMixin`: the tenant from the session or
   token user, set after authentication and restored once the response is rendered), `authentication.py` (DRF's token check plus the
   deactivated-facility refusal sign-in has)
@@ -529,4 +588,10 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   work so Changes for IT lists only the recent devices; slice 38: Kim's update batch to the pumps' newer release in one department (3 or 4 pumps, due at each next PM, assigned to a
   credentialed technician), one completed as installed and one with the version not confirmed today, the rest open, and the other
   C-arm's patches by the manufacturer remotely recorded by hand on a release added for its model ("7.2 (demo)"); no vendor job, nothing
-  on the ventilators, today's work only (no evaluation or vendor review figure moves))
+  on the ventilators, today's work only (no evaluation or vendor review figure moves); slice 39, through decisions.record_decision by the
+  CE manager after the updates: SD-<yy>-0001 for the pumps of ours on the older release (release scope, kept in use on the segment their
+  profile records with traffic limited, decided a week after their security updates ended, recorded with that day as today; an update
+  planned by the last day of last month, Kim its owner, reviewed that day: past review, the badge hot, its Check that the plan's date
+  passed, its pumps' open updates beside it) and the next number for the other C-arm (device scope, OS support ended, controls its profile
+  allows, a replacement planned in the fiscal year after next, in force); the rental bed T-0101 on the beds' "2.0 (demo)" (security
+  updates ended last month), connected (wireless), no decision: Needs attention's rentals row; DEMO-EX- numbers, no link, no CVE)
