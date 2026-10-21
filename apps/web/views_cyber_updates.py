@@ -37,7 +37,6 @@ from apps.cybersecurity import services as cyber
 from apps.cybersecurity.models import SoftwareRelease, SoftwareUpdate
 from apps.equipment.models import Department
 from apps.equipment.services import owner_maintains, service_vendor
-from apps.workorders.models import OPEN_STATUSES
 
 from . import asset_cyber, views_cybersecurity
 from .decorators import web_view
@@ -81,7 +80,7 @@ THEN_ONE = "{why}, so a manager assigns it or a technician takes it."
 THEN_MANY = "{why}, so a manager assigns them or technicians take them."
 SKIPS = (("held", "Skipped, held as evidence for an incident: {tags}."),
          ("already_open", "Skipped, with an open software update already: {tags}."),
-         ("changed", "Skipped, its model changed or it was retired meanwhile: {tags}."))
+         ("changed", "Skipped, its model changed, or it was retired or deleted, meanwhile: {tags}."))
 # The batch's modal when there is nothing to open
 NO_DEVICES = "No device of this model is on site."
 ALL_ON_IT = "Every device of this model on site already runs {version}: there is nothing to open."
@@ -130,9 +129,9 @@ def _drawer_url(asset) -> str:
 
 
 def _open_number(asset) -> str:
-    """The number of the device's open software update (open, in progress, or awaiting parts), the lowest, or ""."""
-    return (SoftwareUpdate.objects.filter(asset_id=asset.pk, work_order__status__in=OPEN_STATUSES).order_by("work_order__number")
-            .values_list("work_order__number", flat=True).first() or "")
+    """The number of the device's open software update (open, in progress, or awaiting parts), or "": the service's own reading
+    (updates.open_number: a reopened imported one, with no record, counts too: review fix C9)."""
+    return updates.open_number(asset)
 
 
 # --- answers ------------------------------------------------------------------------------------------------------------------------
