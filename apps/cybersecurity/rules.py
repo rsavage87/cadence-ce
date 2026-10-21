@@ -684,12 +684,13 @@ def release_name(release) -> str:
 
 def _source_words(update) -> str:
     """Where the record came from, as its sentence ends: the vendor's job ("as the vendor's report <number> states"), an install recorded
-    by hand (by whom), else "" (in-house work)."""
+    by hand (by whom), else "" (in-house work). Read from the record itself (review fix C15: on_vendor_service and vendor_report, the
+    work order as it was when the outcome was recorded), never from the work order's flags now: a job reopened and moved to a vendor (or
+    back in-house) never changes who an outcome already recorded came from."""
     if update.work_order_id is None:
         return INSTALLER_WORDS.get(update.installed_by, "")
-    wo = update.work_order
-    if wo.vendor_service:
-        return f"as the vendor's report {wo.checks_reference} states" if wo.checks_reference else "as the vendor's report states"
+    if update.on_vendor_service:
+        return f"as the vendor's report {update.vendor_report} states" if update.vendor_report else "as the vendor's report states"
     return ""
 
 
@@ -731,9 +732,9 @@ def update_words(update, *, today=None) -> str:
     - done: "5.6 (demo) installed Oct 20, 2026 (recorded before: 5.2 (demo))" ("not recorded" with none before); "Patches applied Oct
       20, 2026, version unchanged (5.6 (demo)); ref ICAR-2026-09" ("(version not recorded)" with none; "Patches on the manufacturer's
       validated patch list applied ..." only for UpdateBasis.VALIDATED_LIST); "Checked Oct 20, 2026: already on 5.6 (demo); nothing
-      installed"; a reference as "; ref <it>"; then where it came from ("; as the vendor's report <number> states" on vendor service,
-      "; installed by information technology" by hand, nothing for in-house work), and "; a later record of the device is kept" when
-      later_kept.
+      installed"; a reference as "; ref <it>"; then where it came from ("; as the vendor's report <number> states" when recorded on
+      vendor service (the record's own on_vendor_service and vendor_report), "; installed by information technology" by hand, nothing
+      for in-house work), and "; a later record of the device is kept" when later_kept.
     Never "updated from X to Y" (Cadence cannot order versions; the before is the record, not a reading), never a never word. A release
     entered in error since reads "<version> (entered in error since)". `today` is unused: every day named is the record's own."""
     state = update_state(update)

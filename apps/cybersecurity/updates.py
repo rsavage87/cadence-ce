@@ -18,6 +18,13 @@ calls a routine cybersecurity update an enhancement, "not considered a repair"; 
 - The device's facts follow what was recorded (installed: its release since the day; patches and already: the day checked; already
   also names the release when none was recorded), never backwards: a record dated before the device's facts (checked_on or
   release_since after it) is kept as a record only (later_kept), at a confirmation or a hand record dated in the past.
+- What the outcome is judged against, and the release it names as before (review fixes C1, C2): a completion, dated today, reads the
+  device's record as it is now; Confirm version and Record update, dated the work order's completed day or the day installed, read the
+  record for that day from its history (_release_then): never a record made since (a bulk set or Record facts after the update), nor,
+  for an install, the install's own result (its outcome entered in error and confirmed again, a bulk set dated its day). Patches
+  name that release after, too: the version that day.
+- Where the outcome came from (review fix C15) is the work order as it was when the outcome was recorded (on_vendor_service,
+  vendor_report), never as it is later.
 
 Lock order (every writer here and every register writer in services.py; review of design38, critique38_rules C):
   1. the facility's register lock (services.lock_register)
@@ -30,9 +37,12 @@ Lock order (every writer here and every register writer in services.py; review o
 Nothing takes the register lock after a work order's or a device's row. complete_work_order takes it first exactly when its `software`
 choice records an outcome (UpdateChoice.records), before lock_work; KEEP and "not confirmed now" take none. equipment.services.update_asset
 -> services.model_changed never takes it and never writes an update row. The batch never locks devices before numbering (a failed PM's
-completion holds the numbering and waits for its device): each device is held by its work order's insert (KEY SHARE), then its model is
-read again. A transaction PostgreSQL ends for a lock conflict (services._lock_conflict: equipment's reinstate and use-before-inspection take
-a device's row and then numbering, the known meeting) answers services.RACE in words, never a 500.
+completion holds the numbering and waits for its device): each device is taken FOR KEY SHARE (services._locked_devices) right after its
+work order's insert, and its model, status, and hold are read from that row. The insert itself holds nothing (review fixes C3, C4): Django
+creates PostgreSQL's foreign keys DEFERRABLE INITIALLY DEFERRED, so a row an insert names is checked, and taken KEY SHARE, only at COMMIT.
+A transaction PostgreSQL ends for a lock conflict (services._lock_conflict: equipment's reinstate and use-before-inspection take a device's
+row and then numbering, the known meeting) answers services.RACE in words, never a 500, and so does a deferred key failing at COMMIT (an
+IntegrityError: a device deleted meanwhile, the openers' backstop).
 
 As each writer takes them:
 - complete_work_order recording (record_at_completion): register, lock_work, the work order, (its test equipment, a failed PM's numbering
@@ -40,8 +50,9 @@ As each writer takes them:
 - confirm: register, lock_work (the work order read again there), the release, the device FOR KEY SHARE, the security row, the update row.
 - record: register, the release, the device FOR KEY SHARE, the security row, the new row.
 - remove: register, lock_work for a work order's row, the update row.
-- open_update / open_updates: register, the target release, then per device (tag order) numbering and the insert (the device KEY SHARE),
-  the device's model, status, and hold read again, the new row, the assignment (the new work order's own row).
+- open_update / open_updates: register, the target release, then per device (tag order) numbering and the insert, the device FOR KEY
+  SHARE (its model, status, and hold read from it; a device deleted meanwhile is refused or skipped), the new row, the assignment (the
+  new work order's own row).
 
 Every function here checks its level itself (permissions.py) and refuses in words keyed by field (a ValidationError); `by` None is the
 system (the seed, tests). History reasons never carry a reference. No refusal says "required" (rules.NEVER_WORDS): "Choose ..." or
@@ -50,10 +61,12 @@ system (the seed, tests). History reasons never carry a reference. No refusal sa
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, OperationalError, transaction
+from django.db.models import Q
+from django.utils import timezone
 
 from . import permissions as perms
 from . import rules, services
@@ -395,10 +408,41 @@ def _write_security(device, by, apply):
     return sec
 
 
-def _set_outcome(row, *, outcome: str, before, after, reference: str, basis: str, day: date, by, later_kept: bool) -> None:
+def _set_outcome(row, *, outcome: str, before, after, reference: str, basis: str, day: date, by, later_kept: bool, wo=None) -> None:
+    """The outcome's fields on `row` (not saved), with where it came from (review fix C15): `wo`, the work order as it is at this
+    recording (a completion's, after its checks_reference is set; confirm's, read again under lock_work), on vendor service or not and
+    its vendor's report number then. A hand row (no `wo`) and a cleared outcome have neither. The words read these, never the work
+    order's flags later (a reopened job moved to a vendor and completed by them never takes credit for an outcome recorded in-house)."""
     row.outcome, row.release_before, row.release_after = outcome, before, after
     row.reference, row.basis, row.applied_on = reference, basis, day
     row.recorded_by, row.later_kept = by, later_kept
+    vendor = bool(outcome) and wo is not None and bool(wo.vendor_service)
+    row.on_vendor_service, row.vendor_report = vendor, (wo.checks_reference or "") if vendor else ""
+
+
+def _release_then(device, day: date, *, installing=None):
+    """The release the device's record named for `day`, the day of an update recorded afterwards (review fixes C1 and C2: Confirm
+    version and Record update judge the outcome against it and take release_before, and patches and already their release after, from
+    it, never from a record made since): from its DeviceSecurity history (core.history._rows, this facility's rows only), the newest
+    version saved on or before `day`'s facility day (core.days.local_day of its history_date: its time zone is active inside the
+    facility), or saved later but naming its release since `day` or earlier (a record typed in after the fact, as Record facts and a bulk
+    set allow). A version naming a release only since after `day` (a bulk set or Record facts since) never counts; nor, for an install of
+    `installing`, one naming that release since `day` itself: the install's own result (its outcome entered in error and confirmed
+    again, or a bulk set dated the install's day), never what it ran before. A version from the same day naming another release counts
+    (an install or a rollback recorded first that day). None when no version counts, the one that does names none (or was the row's
+    deletion), or its release no longer names one the device may run (rules: versioned, not entered in error, of its model). One
+    query, one row: the history read once per writer call."""
+    from apps.core.history import _rows
+
+    after_day = timezone.make_aware(datetime.combine(day + timedelta(days=1), time.min))  # the first moment after the facility's `day`
+    qs = (_rows(DeviceSecurity.history.model).filter(asset_id=device.pk)
+          .filter(Q(history_date__lt=after_day) | Q(release__isnull=False, release_since__lte=day)))
+    if installing is not None:
+        qs = qs.exclude(release_id=installing.pk, release_since=day)
+    version = qs.select_related("release").order_by("-history_date", "-history_id").first()
+    if version is None or version.history_type == "-" or not version.release_id:
+        return None
+    return version.release if _names(version.release, device.device_model_id) else None
 
 
 def _update_row(update):
@@ -477,7 +521,8 @@ def record_at_completion(wo, asset, checked, by, today: date):
     completed (and applied its test equipment): that transaction holds the register, the device's work and `wo`, and the device FOR
     UPDATE. Takes the chosen release FOR UPDATE (of the device's model, read from the held row), the device's security row (got or
     created, as services.record_facts), then the update row FOR UPDATE; writes outcome, applied_on (today), release_before (the
-    recorded release), release_after, reference, basis, recorded_by, later_kept (False: a completion is dated today, after any fact);
+    recorded release as it is now: the record as of today), release_after, reference, basis, recorded_by, later_kept (False: a
+    completion is dated today, after any fact), and where it came from (`wo` now: on vendor service, its checks_reference);
     then the facts (installed: the release since today, checked today; patches: checked today; already: checked today, and the release
     since today when none was recorded), history "Recorded at completion of <number>" on the update row and "Facts recorded at
     <number>" (": release set to <version>" when it changed) on the security row. A re-completion replaces the row's outcome (with
@@ -506,7 +551,7 @@ def record_at_completion(wo, asset, checked, by, today: date):
     _write_security(device, by, apply)
     row = SoftwareUpdate.objects.select_for_update().get(work_order_id=wo.pk)
     _set_outcome(row, outcome=checked.outcome, before=state["before"], after=state["after"], reference=checked.reference,
-                 basis=checked.basis, day=today, by=by, later_kept=state["later_kept"])
+                 basis=checked.basis, day=today, by=by, later_kept=state["later_kept"], wo=wo)
     services._save(row, by, RECORDED_AT.format(number=wo.number))
     return row
 
@@ -523,11 +568,14 @@ def confirm(update, choice, *, by, today: date | None = None):
     at permissions.can_edit_devices. Locks: the register, lock_work(asset, its work order), the work order read again (completed or
     closed: else REOPENED; its outcome still blank: else RECORDED_MEANWHILE), the release, the device FOR KEY SHARE (its model and
     status read again: a device no longer on site refused in services._gone's words), the security row, the update row. The choice is
-    checked as check_choice checks it (KEEP and NOT_CONFIRMED refused: CONFIRM_OUTCOME); applied_on is the work order's completed_on;
-    the facts are written only when the device's checked_on and release_since are null or on or before it, else the row alone, with
-    later_kept (the toast: "a later record of the device is kept"). History "Confirmed" on the row, "Facts recorded when <number> was
-    confirmed" on the security row. `today` is not read: the day is the work order's. A lock conflict answers services.RACE, keyed
-    software_outcome. Returns the update row (the caller's copy follows it)."""
+    checked as check_choice checks it (KEEP and NOT_CONFIRMED refused: CONFIRM_OUTCOME), against the release the device's record named
+    for the work order's completed_on, never a record made since (_release_then: review fixes C1/C2), which is release_before (and
+    patches' release after); applied_on is the work order's completed_on; the facts are written only when the device's checked_on and
+    release_since are null or on or before it, else the row alone, with later_kept (the toast: "a later record of the device is
+    kept"). Where it came from is the work order as it is now (_set_outcome: on vendor service, its report number: review fix C15).
+    History "Confirmed" on the row, "Facts recorded when <number> was confirmed" on the security row. `today` is not read: the day is
+    the work order's. A lock conflict answers services.RACE, keyed software_outcome. Returns the update row (the caller's copy follows
+    it)."""
     from apps.workorders import services as wo_services
     from apps.workorders.models import WorkOrder, WoStatus, WoType
 
@@ -560,16 +608,17 @@ def confirm(update, choice, *, by, today: date | None = None):
             if release is not None and not _names(release, device.device_model_id):
                 raise ValidationError({"software_release": CHOOSE_RUNS_NOW})
             day = wo.completed_on
+            # Review fixes C1/C2: the record for the work order's day, never one made since (nor an install's own result)
+            then = _release_then(device, day, installing=release if choice.outcome == UpdateOutcome.INSTALLED else None)
             state: dict = {}
 
             def apply(sec):
-                before = _recorded(sec, device)
                 problems: dict = {}
-                after = _release_checks(choice.outcome, release=release, recorded=before, target=row.target_release, errors=problems)
+                after = _release_checks(choice.outcome, release=release, recorded=then, target=row.target_release, errors=problems)
                 if problems:
                     raise ValidationError(problems)
-                state.update(before=before, after=after)
-                reason = _facts(sec, outcome=choice.outcome, after=after, before=before, day=day, by=by,
+                state.update(before=then, after=after)
+                reason = _facts(sec, outcome=choice.outcome, after=after, before=_recorded(sec, device), day=day, by=by,
                                 prefix=FACTS_CONFIRMED.format(number=wo.number))
                 state["later_kept"] = reason is None
                 return reason
@@ -577,7 +626,7 @@ def confirm(update, choice, *, by, today: date | None = None):
             _write_security(device, by, apply)
             locked = SoftwareUpdate.objects.select_for_update().get(pk=row.pk)
             _set_outcome(locked, outcome=choice.outcome, before=state["before"], after=state["after"], reference=reference, basis=basis,
-                         day=day, by=by, later_kept=state["later_kept"])
+                         day=day, by=by, later_kept=state["later_kept"], wo=wo)
             services._save(locked, by, CONFIRMED)
     except OperationalError as e:
         if not services._lock_conflict(e):
@@ -614,10 +663,11 @@ def _applied_day(value, device, errors: dict, *, today: date):
 def record(asset, choice, *, installed_by: str, applied_on, by, today: date | None = None):
     """An install recorded by hand, with no work order (installed or patches: HAND_OUTCOME otherwise), installed by `installed_by`
     (InstalledBy: INSTALLER_WORDS otherwise) on `applied_on` (a day or its ISO text, not after today, not before the device was
-    installed: BEFORE_INSTALL), at permissions.can_edit_devices. The choice is checked as check_choice checks it (with no target).
-    Locks: the register, the release, the device FOR KEY SHARE (read again; a retired or returned device refused: services._gone, keyed
-    asset), the security row, the new row. The facts as confirm writes them, on applied_on (never backwards: later_kept). History
-    "Recorded" on the row, "Facts recorded with an update recorded by hand" on the security row. Returns the new row."""
+    installed: BEFORE_INSTALL), at permissions.can_edit_devices. The choice is checked as check_choice checks it (with no target),
+    against the release the device's record named for applied_on, never a record made since (_release_then, as confirm). Locks: the
+    register, the release, the device FOR KEY SHARE (read again; a retired or returned device refused: services._gone, keyed asset),
+    the security row, the new row. The facts as confirm writes them, on applied_on (never backwards: later_kept). History "Recorded" on
+    the row, "Facts recorded with an update recorded by hand" on the security row. Returns the new row."""
     services._check(by, perms.can_edit_devices, RECORD_PERMISSION)
     today = services._today(today)
     device = services._asset(asset)
@@ -648,16 +698,18 @@ def record(asset, choice, *, installed_by: str, applied_on, by, today: date | No
                 raise ValidationError(problems)
             if release is not None and not _names(release, device.device_model_id):
                 raise ValidationError({"software_release": CHOOSE_RUNS_NOW})
+            # Review fixes C1/C2: the record for applied_on, never one made since (nor the install's own result)
+            then = _release_then(device, day, installing=release if choice.outcome == UpdateOutcome.INSTALLED else None)
             state: dict = {}
 
             def apply(sec):
-                before = _recorded(sec, device)
                 found: dict = {}
-                after = _release_checks(choice.outcome, release=release, recorded=before, target=None, errors=found, by_hand=True)
+                after = _release_checks(choice.outcome, release=release, recorded=then, target=None, errors=found, by_hand=True)
                 if found:
                     raise ValidationError(found)
-                state.update(before=before, after=after)
-                reason = _facts(sec, outcome=choice.outcome, after=after, before=before, day=day, by=by, prefix=FACTS_BY_HAND)
+                state.update(before=then, after=after)
+                reason = _facts(sec, outcome=choice.outcome, after=after, before=_recorded(sec, device), day=day, by=by,
+                                prefix=FACTS_BY_HAND)
                 state["later_kept"] = reason is None
                 return reason
 
@@ -710,8 +762,8 @@ def remove(update, *, by, today: date | None = None):
 # --- opening updates ------------------------------------------------------------------------------------------------------------------
 
 class _Skip(Exception):
-    """A device the insert's lock found changed (its model or status) or held as evidence: open_update refuses it (`field`, `words`),
-    the batch skips it (`kind`: "changed" or "held")."""
+    """A device found, once taken FOR KEY SHARE after its work order's insert, deleted, retired, on another model, or held as evidence:
+    open_update refuses it (`field`, `words`), the batch skips it (`kind`: "changed" or "held")."""
 
     def __init__(self, kind: str, field: str, words: str):
         super().__init__(words)
@@ -777,14 +829,23 @@ def _updates_by(model_id) -> str:
 
 
 def _open_numbers(asset_ids) -> dict:
-    """{device id: the number of its open software update (open, in progress, or awaiting parts), the lowest} (one query)."""
-    from apps.workorders.models import OPEN_STATUSES
+    """{device id: the number of its open software update (open, in progress, or awaiting parts), the lowest} (one query). Every open
+    software update work order counts, its record or not (review fix C9: one imported from another system has none, and reopened it
+    is an open update all the same): the work orders of the type, and any with a record."""
+    from apps.workorders.models import OPEN_STATUSES, WorkOrder, WoType
 
     out: dict = {}
-    for asset_id, number in (SoftwareUpdate.objects.filter(asset_id__in=list(asset_ids), work_order__status__in=OPEN_STATUSES)
-                             .order_by("work_order__number").values_list("asset_id", "work_order__number")):
+    for asset_id, number in (WorkOrder.objects.filter(Q(type=WoType.SOFTWARE_UPDATE) | Q(software_update__isnull=False),
+                                                      asset_id__in=list(asset_ids), status__in=OPEN_STATUSES)
+                             .order_by("number").values_list("asset_id", "number")):
         out.setdefault(asset_id, number)
     return out
+
+
+def open_number(asset) -> str:
+    """The number of the device's open software update (open, in progress, or awaiting parts; its record or not: _open_numbers), the
+    lowest, or "": what refuses opening another (ALREADY_OPEN). One query."""
+    return _open_numbers([asset.pk]).get(asset.pk, "")
 
 
 def _assign(wo, device, *, may: bool, updates_by: str, technician, by) -> str:
@@ -811,10 +872,10 @@ def _assign(wo, device, *, may: bool, updates_by: str, technician, by) -> str:
 
 def _open_one(device, *, model_id, target: str, release, reference: str, due: date, priority: str, may: bool, updates_by: str,
               technician, by, today: date):
-    """One update work order and its record on `device` (the register and the release held): its number and insert (the device held
-    FOR KEY SHARE by the insert), the device's model, status, and hold read again (_Skip when changed or held), the record (history
-    "Opened with <number>"), the assignment. Returns (work order, why unassigned or "")."""
-    from apps.equipment.models import Asset, AssetStatus
+    """One update work order and its record on `device` (the register and the release held): its number and insert, then the device
+    taken FOR KEY SHARE (services._locked_devices: numbering first, the lock order) and its model, status, and hold read from that row
+    (_Skip when it is gone, retired, on another model, or held), the record (history "Opened with <number>"), the assignment. Returns
+    (work order, why unassigned or "")."""
     from apps.workorders import services as wo_services
     from apps.workorders.models import Source, WoType
 
@@ -822,13 +883,20 @@ def _open_one(device, *, model_id, target: str, release, reference: str, due: da
                                        problem=UPDATE_PROBLEM if target == UpdateTarget.RELEASE else PATCHES_PROBLEM,
                                        requester=_requester(by), source=Source.MANUAL, opened_on=today, due_on=due, created_by=by,
                                        _register_opener=True)
-    now = Asset.objects.filter(pk=device.pk).values("device_model_id", "status", "incident_hold").get()  # held by the insert
-    if now["status"] == AssetStatus.RETIRED:
-        device.status = now["status"]
-        raise _Skip("changed", "asset", services._gone(device))
-    if now["device_model_id"] != model_id:
+    # Review fixes C3/C4: the insert holds nothing (Django makes PostgreSQL's foreign keys DEFERRABLE INITIALLY DEFERRED: the device is
+    # checked only at COMMIT), so the device is taken here, FOR KEY SHARE. A retire, model change, hold, or delete in flight is waited
+    # for and then read; one that comes after waits for this transaction, and then sees the update (a retire cancels it, a delete is
+    # refused: the device has work).
+    held = services._locked_devices([device.pk])
+    if not held:  # deleted meanwhile
+        raise _Skip("changed", "asset", services.CHOOSE_DEVICE)
+    now = held[0]
+    gone = services._gone(now)
+    if gone:
+        raise _Skip("changed", "asset", gone)
+    if now.device_model_id != model_id:
         raise _Skip("changed", "target_release", MODEL_CHANGED.format(tag=device.tag))
-    if now["incident_hold"]:
+    if now.incident_hold:
         raise _Skip("held", "asset", HELD.format(tag=device.tag))
     row = SoftwareUpdate(asset=device, work_order=wo, target=target, target_release=release, target_reference=reference, opened_on=today,
                          opened_by=by)
@@ -852,13 +920,15 @@ def open_update(asset, *, target: str, target_release=None, target_reference: st
     (ALREADY_OPEN); a device waiting for its incoming inspection is allowed. Priority normal or high (PRIORITY_WORDS); due_on from today,
     at most services.HORIZON_YEARS ahead. Locks: the register, the release, create_work_order (type SOFTWARE_UPDATE, source manual, the
     requester the opener's name (CLINICAL_ENGINEERING for the system), the problem UPDATE_PROBLEM or PATCHES_PROBLEM, _register_opener=True:
-    its number, then the device held by the insert), the device's model, status, and hold read again (a model changed meanwhile:
-    MODEL_CHANGED keyed target_release; all rolled back, the number included), the update row (history "Opened with <number>"), the
+    its number, then the insert, which holds nothing: review fixes C3/C4), the device FOR KEY SHARE and its model, status, and hold read
+    from it (a model changed meanwhile: MODEL_CHANGED keyed target_release; retired: services._gone's words, held: HELD, deleted:
+    services.CHOOSE_DEVICE, each keyed asset; all rolled back, the number included), the update row (history "Opened with <number>"), the
     assignment: only when workorders.permissions.can_assign(by) (else unassigned: ASSIGN_NEEDS; `assign_to` then refused,
     ASSIGN_PERMISSION), a temporary device or a model whose updates_by is the manufacturer to vendor service
     (equipment.services.service_vendor), updates_by CE or blank to `assign_to` (an active technician, or nobody: NOBODY_CHOSEN), IT or
     the department to nobody (INSTALLED_HERE); `assign_to` is refused where it would not be used (OWNER_INSTALLS, INSTALLER_NOT_CE).
-    A lock conflict answers services.RACE, keyed asset. Returns an UpdateBatch of one."""
+    A lock conflict, or a deferred key failing at COMMIT (a device deleted meanwhile: the backstop), answers services.RACE, keyed asset.
+    Returns an UpdateBatch of one."""
     from apps.equipment.services import owner_maintains
     from apps.workorders import permissions as wo_perms
 
@@ -912,6 +982,8 @@ def open_update(asset, *, target: str, target_release=None, target_reference: st
         if not services._lock_conflict(e):
             raise
         raise _race("asset") from None
+    except IntegrityError:  # review fix C4's backstop: a device deleted meanwhile fails the work order's deferred key at COMMIT
+        raise _race("asset") from None
     return UpdateBatch(created=1, unassigned=1 if why else 0, unassigned_reason=why, work_orders=(wo,))
 
 
@@ -937,11 +1009,12 @@ def open_updates(release, *, from_releases=(), include_not_recorded: bool = Fals
     recorded, with `include_not_recorded` (FROM_NEEDED with neither), optionally in `department`, in tag order, at most UPDATE_BATCH_MAX
     (TOO_MANY / TOO_MANY_IN_ONE, keyed release; none: NONE_SELECTED, keyed from_releases): at permissions.can_open_updates. Due on
     `due_on` (always given: the day, and the fallback), or with `due_at_next_pm` on each device's next PM date (never before today), else
-    `due_on`. Skipped, each counted with its tag: held as evidence, an open update already, a model changed (or the device retired)
-    meanwhile. Locks: the register, the release, then per device (tag order, each in a savepoint) numbering, the insert (the device
-    held), its model read again, the update row, the assignment (open_update's rule; `assign_to` for every device assigned in-house),
-    inside assignments.batch() (each technician one email). A lock conflict answers services.RACE (keyed release), nothing opened.
-    Returns the UpdateBatch."""
+    `due_on`. Skipped, each counted with its tag: held as evidence, an open update already (its record or not: _open_numbers), a model
+    changed (or the device retired or deleted) meanwhile. Locks: the register, the release, then per device (tag order, each in a
+    savepoint) numbering, the insert (holding nothing: review fixes C3/C4), the device FOR KEY SHARE with its model, status, and hold read
+    from it, the update row, the assignment (open_update's rule; `assign_to` for every device assigned in-house), inside
+    assignments.batch() (each technician one email). A lock conflict, or a deferred key failing at COMMIT (the backstop), answers
+    services.RACE (keyed release), nothing opened. Returns the UpdateBatch."""
     from apps.equipment.models import Department
     from apps.notifications import assignments
     from apps.workorders import permissions as wo_perms
@@ -1019,6 +1092,8 @@ def open_updates(release, *, from_releases=(), include_not_recorded: bool = Fals
     except OperationalError as e:  # a deadlock with a writer of these devices against the lock order: nothing opened
         if not services._lock_conflict(e):
             raise
+        raise _race("release") from None
+    except IntegrityError:  # review fix C4's backstop: a device deleted meanwhile fails a work order's deferred key at COMMIT
         raise _race("release") from None
     return UpdateBatch(created=created, unassigned=len(reasons), unassigned_reason=reasons[0] if reasons else "", held=tuple(held),
                        already_open=tuple(already_open), changed=tuple(changed), work_orders=tuple(opened))

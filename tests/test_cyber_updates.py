@@ -859,8 +859,9 @@ def test_updates_of_is_one_query_newest_first_and_words_need_none(pump, r52, r56
     assert [r.pk for r in rows] == [open_row.pk, done_row.pk, hand.pk, cancelled_row.pk]
     assert states == [rules.OPEN, rules.DONE, rules.DONE, rules.CANCELLED]
     assert said[0] == "Open: to apply the manufacturer's patches (ref ICAR-2026-09)" and said[3] == "Cancelled"
-    assert said[2] == (f"Patches applied {rules.day_words(today - 15 * DAY)}, version unchanged (5.6 (demo)); ref ICAR-2026-08; "
-                       "installed by the department that uses it; a later record of the device is kept")  # the completion's is newer
+    # The completion's record (5.6 (demo) since 10 days ago) is newer and kept; the patches name the version that day (review fix C2)
+    assert said[2] == (f"Patches applied {rules.day_words(today - 15 * DAY)}, version unchanged (5.2 (demo)); ref ICAR-2026-08; "
+                       "installed by the department that uses it; a later record of the device is kept")
 
 
 def test_campaigns_count_each_releases_updates_by_state_in_one_query(fleet, pump_model, r52, r56, kim, tech, techs, today,
@@ -1008,11 +1009,11 @@ def test_every_writer_takes_the_register_lock_first(pump, r52, r56, on52, techs,
 
     spy.reset()
     opened = open_update(pump, target=UpdateTarget.RELEASE, target_release=r56, due_on=today, priority="normal", by=kim)
-    assert spy.firsts() == ["register", "release", "numbering"]
+    assert spy.firsts() == ["register", "release", "numbering", "devices"]  # the device FOR KEY SHARE after its insert (review fix C3)
     wo_services.change_status(opened.work_orders[0], WoStatus.CANCELLED)
     spy.reset()
     open_updates(r56, from_releases=[r52], due_on=today, priority="normal", by=kim)
-    assert spy.firsts() == ["register", "release", "numbering"]
+    assert spy.firsts() == ["register", "release", "numbering", "devices"]
 
     third, _ = update_wo(pump, r56, assigned_to=techs["tom"])
     spy.reset()

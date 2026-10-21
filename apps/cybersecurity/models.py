@@ -38,6 +38,9 @@ OS_NAME_VALIDATOR = product_text("Enter the operating system with its edition, e
 MDS2_DOCUMENT_VALIDATOR = reference_token("Enter the MDS2's document number as the form shows it, without spaces.")
 UPDATE_REFERENCE_VALIDATOR = reference_token("Enter the manufacturer's patch list, notice, or field change number as it is written, "
                                              "without spaces, e.g. ICAR-2026-09.")
+# Slice 38 review fix C15: a software update's copy of its work order's vendor report number (workorders.WorkOrder.checks_reference)
+VENDOR_REPORT_VALIDATOR = reference_token("Enter the vendor's service report or field service order number as it is printed, without "
+                                          "spaces.")
 VERSION_MAX, OS_NAME_MAX, DOCUMENT_MAX, UPDATE_REFERENCE_MAX = 60, 80, 40, 40
 
 
@@ -239,7 +242,8 @@ class InstalledBy(models.TextChoices):
 
 RECORDED_OUTCOMES = (UpdateOutcome.INSTALLED, UpdateOutcome.PATCHES, UpdateOutcome.ALREADY)
 INSTALL_OUTCOMES = (UpdateOutcome.INSTALLED, UpdateOutcome.PATCHES)  # counted as installs; "already" never is
-OUTCOME_FIELDS = ("outcome", "release_before", "release_after", "reference", "basis", "applied_on", "recorded_by", "later_kept")
+OUTCOME_FIELDS = ("outcome", "release_before", "release_after", "reference", "basis", "applied_on", "recorded_by", "later_kept",
+                  "on_vendor_service", "vendor_report")
 
 
 def _update_rules():
@@ -276,6 +280,11 @@ class SoftwareUpdate(TenantModel):
     recorded_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, editable=False,
                                     related_name="+")
     later_kept = models.BooleanField(default=False, editable=False)  # the device's facts were newer than applied_on: kept, not written
+    # Where the outcome came from (review fix C15): the work order as it was when the outcome was recorded (a completion or Confirm
+    # version), never as it is now: on vendor service then, and the vendor's report number then (its checks_reference). Cleared with the
+    # outcome; never on a hand row.
+    on_vendor_service = models.BooleanField(default=False, editable=False)
+    vendor_report = models.CharField(max_length=UPDATE_REFERENCE_MAX, blank=True, editable=False, validators=[VENDOR_REPORT_VALIDATOR])
     # Entered in error (a hand row's only; a work order's outcome is cleared instead): never deleted, hidden, kept in history
     removed_on = models.DateField(null=True, blank=True, editable=False)
     removed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, editable=False,
