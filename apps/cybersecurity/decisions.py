@@ -110,12 +110,16 @@ RETIRED = "{tag} is retired: a decision is for a device on site."
 RETURNED = "{tag} was returned to its owner: a decision is for a device on site."
 NOT_CONNECTED = "{tag} is not connected here, as recorded or disclosed: it needs no decision."
 CONNECTION_UNKNOWN = "{tag}'s connection is not recorded: record its facts first (Record facts)."
-NOT_NEEDED = "{name} is not past its support, and no end is announced within 12 months."
+# Said of what is recorded, never more (review 39 F12): "as recorded", and a device whose support nothing records is told so
+NOT_NEEDED = "{name} is not past its support as recorded, and no end is announced within 12 months."
+SECURITY_END_NOT_RECORDED = "{tag}: the end of the manufacturer's security updates for {version} is not recorded: record it on the release (Models) first."
+NO_RELEASE_RECORDED = "{tag}: its release is not recorded, nor the end of its security updates: record its release (Record facts) first."
 EXTENDED = ("{name}: the manufacturer's security updates continue (announced to end {day}): a decision can be recorded once their end is "
             "within 12 months.")
 NO_DEVICE_OURS = "No device of ours on site runs {version}."
 NO_MODEL_DEVICE = "No {model} of ours is on site."
-NONE_NEEDED = "No device of ours on site in this scope is past its support, connected or able to connect, or has an end announced within 12 months."
+NONE_NEEDED = ("No device of ours on site in this scope is both connected (or able to connect) and past its support or within 12 months "
+               "of an announced end, as recorded.")
 IN_FORCE = "{number} is in force for this scope: review and renew it instead."
 SUPERSEDES_OTHER = "{number} is for another scope: renew a decision for this one."
 ALREADY_ENDED = "{number} ended on {day}: it stays as recorded."
@@ -129,16 +133,22 @@ SUPERSEDED_BY = "Superseded by {number}"
 ENDED_NO_LONGER_NEEDED = "Ended: no longer needed"
 ENTERED_IN_ERROR = "Entered in error"
 
-_MAC = re.compile(r"^(?:[0-9a-f]{2}[-.:]){5}[0-9a-f]{2}$|^(?:[0-9a-f]{4}\.){2}[0-9a-f]{4}$|^(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{12}$",
-                  re.IGNORECASE)
+# A MAC in the layouts switches and tools print (review 39 F5): six pairs joined by - . _ or :, three groups of four joined by - . or _
+# (Cisco's dotted, H3C's and HPE Comware's hyphenated), two groups of six joined by - . _ or : (HP ProCurve's), or twelve bare hex digits
+# with a letter and a digit (a plain twelve-digit number is a ticket number's shape)
+_MAC = re.compile(r"^(?:[0-9a-f]{2}[-._:]){5}[0-9a-f]{2}$|^(?:[0-9a-f]{4}[-._]){2}[0-9a-f]{4}$|^[0-9a-f]{6}[-._:][0-9a-f]{6}$"
+                  r"|^(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{12}$", re.IGNORECASE)
 _DOTTED = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}(?:/\d{1,3})?$")
+# Four dotted numbers anywhere in the token, ending it or followed by a token's joiner (an address with a port, a range, or a prefix:
+# "10.20.30.40#443", "10.20.30.0-24", "FW-10.20.30.40"); never inside a longer run of digits and dots on its left
+_DOTTED_IN = re.compile(r"(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?=$|[-#_/.:])")
 _PORT = re.compile(r"^(?:port(?![a-z])|(?:tcp|udp)[-/_.#]?\d+$|\d+[-/_.#](?:tcp|udp)$)", re.IGNORECASE)
 
 
 def network_identifier(text: str) -> bool:
     """A token that reads as a network identifier (build39 section 2), refused in every cyber token field this slice adds: an address or
-    a block (ipaddress.ip_network(strict=False) parses it, or four dotted numbers), a MAC (six pairs, three dotted fours, or twelve hex
-    digits with a letter and a digit), one starting "VLAN" in any case, or a port ("port...", "tcp-443", "443/udp")."""
+    a block (ipaddress.ip_network(strict=False) parses it, or four dotted numbers, alone or within the token with a port, a range, or a
+    prefix joined on), a MAC (_MAC's layouts), one starting "VLAN" in any case, or a port ("port...", "tcp-443", "443/udp")."""
     text = (text or "").strip()
     if not text:
         return False
@@ -147,7 +157,8 @@ def network_identifier(text: str) -> bool:
         return True
     except ValueError:
         pass
-    return bool(_DOTTED.match(text) or _MAC.match(text) or text.casefold().startswith("vlan") or _PORT.match(text))
+    return bool(_DOTTED.match(text) or _DOTTED_IN.search(text) or _MAC.match(text) or text.casefold().startswith("vlan")
+                or _PORT.match(text))
 
 
 # --- small parts ---------------------------------------------------------------------------------------------------------------------
@@ -277,7 +288,8 @@ def record_decision(*, asset=None, device_model=None, release=None, reasons, res
     (rules.SUPPORT_CONTROLS slugs) and IT's reference for recorded_elsewhere, the plan with its day and owner, who accepted it, IT's
     exception number, the day decided (today by default), the review (rules.review_default by default), and the decision it supersedes
     (the live one of the same scope: ended "Superseded by <number>" first, in the same transaction). Stores the devices on site it governs
-    now (governed_ids: rules' "joined since"). History "Recorded" (", superseding <number>"). Returns the new decision."""
+    now (governed_ids: rules' "joined since"; never one a more specific live decision governs: _governed). History "Recorded" (",
+    superseding <number>"). Returns the new decision."""
     services._check(by, perms.can_decide, DECIDE_PERMISSION)
     today = services._today(today)
     errors: dict = {}
@@ -386,6 +398,7 @@ def record_decision(*, asset=None, device_model=None, release=None, reasons, res
             members = _scope_members(kind, device=device, model_id=model_id, release=locked_release)
             needs = _scope_needs(kind, members, device=device, model_id=model_id, release=locked_release, today=today)
             _check_reasons(needs, reason_list)
+            governed = _governed(kind, members, model_id=model_id, release=locked_release, old=old)
             if plan == DecisionPlan.RETURN_TO_OWNER and not (device is not None and device.ownership != Ownership.OWNED):
                 raise ValidationError({"plan": RETURN_ONLY_TEMPORARY})
             if rules.SEGMENTED_CONTROL in control_list:
@@ -401,7 +414,7 @@ def record_decision(*, asset=None, device_model=None, release=None, reasons, res
                 number=number, applies_to=AppliesTo.SUPPORT_ENDED, asset=device, device_model_id=model_id if device is None else None,
                 release=locked_release, reasons=reason_list, response=response, controls=control_list, controls_reference=reference,
                 plan=plan, plan_by=plan_day, plan_owner=owner, accepted_by=accepted, exception_reference=exception, recorded_by=by,
-                decided_on=decided, review_by=review, governed_ids=[str(a.pk) for a in members], supersedes=old)
+                decided_on=decided, review_by=review, governed_ids=[str(a.pk) for a in governed], supersedes=old)
             with transaction.atomic():
                 services._save(row, by, RECORDED_SUPERSEDING.format(number=old.number) if old is not None else RECORDED)
     except IntegrityError:  # the live-scope constraint, or a deferred key at COMMIT (a device deleted meanwhile)
@@ -427,8 +440,9 @@ def refusal_for(*, asset=None, device_model=None, release=None, supersedes=None,
     """Why record_decision would refuse this scope now, in its words and its order, read before the person tries (the Record decision
     modal), without its locks: the decision to renew already ended; a device retired or returned; a live decision in force for the
     scope; a release or model with no device of ours on site; nothing past its support or announced within 12 months (a device not
-    connected here, its connection not recorded, the manufacturer's updates continuing). None when the scope itself would not be refused
-    (the fields are the service's to check). record_decision decides again under its locks."""
+    connected here, its connection not recorded, the manufacturer's updates continuing, nothing recording its security updates' end).
+    None when the scope itself would not be refused (the fields are the service's to check). record_decision decides again under its
+    locks."""
     today = services._today(today)
     old = _decision_row(supersedes, "supersedes", lock=False) if supersedes is not None else None
     if old is not None and old.ended_on is not None:
@@ -465,10 +479,25 @@ def _scope_members(kind: str, *, device, model_id, release) -> list:
     return list(scope.select_related(*rules._WITH_RECORD).order_by("tag"))
 
 
+def _governed(kind: str, members: list, *, model_id, release, old) -> list:
+    """The scope's devices on site this decision governs as it is recorded (governed_ids): rules' governing over them, with the new
+    decision among the live ones in place of the one it supersedes. A device scope: its device. A release's devices of ours but those
+    under their own live decision; a model's devices of ours but those under their own or their recorded release's. So a device that
+    comes under it later, when the more specific decision ends, reads "joined since" (review 39 F1). One query (none for a device
+    scope), under the register lock."""
+    if kind == rules.DEVICE_SCOPE:
+        return list(members)
+    new = DeviceSecurityDecision(applies_to=AppliesTo.SUPPORT_ENDED, device_model_id=model_id, release=release)
+    live = [d for d in rules._decisions_for(members) if old is None or d.pk != old.pk]
+    governing = rules._governing(members, [*live, new])
+    return [a for a in members if governing.get(a.pk) is new]
+
+
 def _scope_needs(kind: str, members: list, *, device, model_id, release, today: date) -> list:
     """The decidable needs of the scope's devices (rules.support_need), refused in words when it has none: a device not connected here,
-    its connection not recorded, the manufacturer's updates continuing (EXTENDED), nothing past support or announced within 12 months;
-    a release or model with no device of ours on site."""
+    its connection not recorded, the manufacturer's updates continuing (EXTENDED), nothing recording the end of its security updates
+    (its release's, or with no release recorded), nothing past support or announced within 12 months as recorded (NOT_NEEDED); a release
+    or model with no device of ours on site, or none there both connected (or able to connect) and past support or announced (NONE_NEEDED)."""
     if not members:
         if kind == rules.RELEASE_SCOPE:
             raise ValidationError({"release": NO_DEVICE_OURS.format(version=release.version)})
@@ -487,6 +516,9 @@ def _scope_needs(kind: str, members: list, *, device, model_id, release, today: 
             raise ValidationError({"asset": NOT_CONNECTED.format(tag=device.tag)})
         if need is not None and need.key == rules.EXTENDED:
             raise ValidationError({"asset": EXTENDED.format(name=device.tag, day=rules.day_words(need.day))})
+        if s.security.key == rules.SECURITY_NOT_RECORDED and s.os.key in (rules.OS_NOT_RECORDED, rules.NO_OS):  # nothing known
+            words = SECURITY_END_NOT_RECORDED if s.release is not None else NO_RELEASE_RECORDED
+            raise ValidationError({"asset": words.format(tag=device.tag, version=getattr(s.release, "version", ""))})
         raise ValidationError({"asset": NOT_NEEDED.format(name=device.tag)})
     raise ValidationError({_scope_field(kind): NONE_NEEDED})
 

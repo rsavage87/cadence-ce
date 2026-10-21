@@ -356,8 +356,8 @@ def test_the_seeded_security_decisions(seeded):
         assert rules.review_words(pumps, today) == f"Review due since {day(plan_day)}"
         assert rules.decision_words(pumps, today) == (
             f"Review due since {day(plan_day)}: keep in use with controls (2: on a medical device network segment; traffic limited to the "
-            f"ports and hosts it needs). Plan: update by {day(plan_day)} (owner {kim}). Accepted by IT security or the CISO, as recorded by "
-            f"{rob} on {day(decided)}; IT exception DEMO-EX-1037.")
+            f"ports and hosts it needs). Plan: update by {day(plan_day)} (owner {kim}). Accepted by IT security or the CISO on "
+            f"{day(decided)}, as recorded by {rob}; IT exception DEMO-EX-1037.")
         assert [(c.key, c.words) for c in rules.decision_checks(pumps, today)] == [
             (rules.CHECK_PLAN_PASSED, f"The plan's date ({day(plan_day)}) has passed")]
         assert rules.badge(today) == {"count": 1, "hot": True}
@@ -392,8 +392,8 @@ def test_the_seeded_security_decisions(seeded):
         assert rules.decision_state(c_arm, today) == rules.IN_FORCE and rules.covers(c_arm, today)
         assert rules.decision_words(c_arm, today) == (
             f"Keep in use with controls (2: traffic limited to the ports and hosts it needs; vendor remote access off, or attended only); "
-            f"review by {day(c_arm.review_by)}. Plan: replace, planned for FY{fy}. Accepted by IT security or the CISO, as recorded by "
-            f"{rob} on {day(today)}; IT exception DEMO-EX-1042.")
+            f"review by {day(c_arm.review_by)}. Plan: replace, planned for FY{fy}. Accepted by IT security or the CISO on {day(today)}, "
+            f"as recorded by {rob}; IT exception DEMO-EX-1042.")
         assert rules.decision_checks(c_arm, today) == []
         # its controls agree with its model's profile: no separate segment (so never "segmented": traffic limited instead), and the
         # manufacturer installs its updates remotely (slice 38's patches), so its remote access off or attended only
@@ -428,8 +428,8 @@ def test_the_seeded_security_decisions(seeded):
         headings = {h.key: h for h in attention.headings}
         assert list(headings) == ["temporary", "not_confirmed", "review_due", "checks"]
         (row,) = headings["temporary"].rows
-        assert row.words == (f"{tag} (rental, {seed_demo.RENTAL_COMPANY}; due back {day(rental.due_back_on)}): security updates ended; its "
-                             "owner installs updates: ask the owner to update it, or return it")
+        assert row.words == (f"{tag} (rental, {seed_demo.RENTAL_COMPANY}; due back {day(rental.due_back_on)}): security updates ended "
+                             f"after {day(plan_day)}; its owner installs updates: ask the owner to update it, or return it")
         assert (row.asset, row.link, row.record) == (rental, rules.Link(rules.URLS["device"], (tag,), (("tab", "security"),)),
                                                      rules.Link(rules.URLS["record"], (), (("asset", tag),)))
         (unconfirmed,) = headings["not_confirmed"].rows

@@ -24,10 +24,12 @@ device's row: a completion that records what an update did takes it first, befor
 Nothing here is deleted: a release entered in error is marked (removed_on, removed_by) and refused while a device on site names it
 (rules.on_site, of the release's model: the devices the Models panel counts, review fix C4), (slice 38) while an open software update
 work order is to install it (OPEN_TO_INSTALL), or (slice 39) while a live security decision is for it (DECISION_LIVE); its version is
-not changed while any decision names it, live or ended (DECISION_NAMES); a retired or returned device's record keeps naming it, as an
-update's record that is not open does (its history reads it as it was; the rules read a release entered in error as not recorded, an
-update's words as "<version> (entered in error since)"); adding the same version again restores it. A device's facts stay with its history when it is retired; a
-retired device (or a returned temporary one) is refused, in words.
+not changed while any decision names it, live or ended (DECISION_NAMES); both name the decision's number only to a reader of decisions
+(permissions.can_view_devices), anyone else reads that a security decision holds it (DECISION_LIVE_UNREAD, DECISION_NAMES_UNREAD); a
+retired or returned device's record keeps naming it, as an update's record that is not open does (its history reads it as it was; the
+rules read a release entered in error as not recorded, an update's words as "<version> (entered in error since)"); adding the same
+version again restores it. A device's facts stay with its history when it is retired; a retired device (or a returned temporary one) is
+refused, in words.
 
 Field checks (one helper for add and update, every problem keyed by field, all at once): dates are days (date objects or ISO text), from
 EARLIEST_YEAR, at most HORIZON_YEARS ahead, and the days something happened (support checked, MDS2 released, MDS2 requested) not after
@@ -419,9 +421,10 @@ def add_release(model, *, by, today: date | None = None, profile: bool | None = 
 def update_release(release, *, by, today: date | None = None, **fields):
     """Change a release's (or the profile's) fields; the version only while no device on site names it (running: a retired or returned
     device's record follows the correction; a new spelling of the same version, by version_key, any time) and (slice 39) no security
-    decision names the release, live or ended (DECISION_NAMES: a decision is immutable, so its version never changes under it), never on
-    the profile, never to a version already on file. The same checks as add_release, on the row as it is now (locked) with the change applied. History
-    "Edited" (nothing saved when nothing changes). Returns the row; the caller's copy follows it."""
+    decision names the release, live or ended (DECISION_NAMES, its number only for a reader of decisions, else DECISION_NAMES_UNREAD: a
+    decision is immutable, so its version never changes under it), never on the profile, never to a version already on file. The same
+    checks as add_release, on the row as it is now (locked) with the change applied. History "Edited" (nothing saved when nothing
+    changes). Returns the row; the caller's copy follows it."""
     _check(by, perms.can_edit, EDIT_PERMISSION)
     today = _today(today)
     _unknown(fields)
@@ -446,7 +449,7 @@ def update_release(release, *, by, today: date | None = None, **fields):
                 if running(locked):  # devices on site, as the panel counts (a retired device's record follows the correction)
                     errors["version"] = VERSION_NAMED
                 elif named:  # slice 39: a decision names this version, live or ended (immutable: its words keep the version)
-                    errors["version"] = DECISION_NAMES.format(number=named)
+                    errors["version"] = DECISION_NAMES.format(number=named) if _reads_decisions(by) else DECISION_NAMES_UNREAD
                 elif other is not None:
                     errors["version"] = _taken(other, given["version"])
         _check_row({**{f: getattr(locked, f) for f in RELEASE_FIELDS}, **given}, versioned=not locked.is_profile, errors=errors)
@@ -486,6 +489,16 @@ def _running_words(named: int) -> str:
 OPEN_TO_INSTALL = "{number} is open to install this release: complete or cancel it first."  # slice 38
 DECISION_LIVE = "{number} is decided for this release: end it first."  # slice 39
 DECISION_NAMES = "{number} names this version: add the new version instead."  # slice 39
+# The same two refusals for a user who may not read decisions (permissions.can_view_devices: Device security View and Equipment View),
+# without the decision's number, as the API's destroy refusals word them (review 39 F7)
+DECISION_LIVE_UNREAD = "A security decision is in force for this release: ending it needs Device security Approve and Equipment View."
+DECISION_NAMES_UNREAD = "A security decision names this version: add the new version instead."
+
+
+def _reads_decisions(by) -> bool:
+    """Whether a refusal may name a security decision's number to `by`: a reader of decisions (permissions.can_view_devices); None is the
+    system (the seed, tests)."""
+    return by is None or perms.can_view_devices(by)
 
 
 def _open_update_number(release) -> str:
@@ -509,11 +522,12 @@ def _decision_number(release, *, live: bool = False) -> str:
     return rows.order_by("number").values_list("number", flat=True).first() or ""
 
 
-def removal_refusal(release) -> str:
+def removal_refusal(release, *, by=None) -> str:
     """Why Entered in error is refused for `release` now, in remove_release's words (a screen says it before it is tried), or "": already
     removed, the profile, devices on site naming it, (slice 38) an open software update work order to install it (OPEN_TO_INSTALL), or
-    (slice 39) a live security decision for it (DECISION_LIVE). A cancelled, completed, or recorded update naming it never stops it, nor
-    an ended decision: those read the release as it was ("(entered in error since)")."""
+    (slice 39) a live security decision for it (DECISION_LIVE, its number only when `by` reads decisions, else DECISION_LIVE_UNREAD; None
+    is the system). A cancelled, completed, or recorded update naming it never stops it, nor an ended decision: those read the release as
+    it was ("(entered in error since)")."""
     if release.removed_on is not None:
         return ALREADY_REMOVED
     if release.is_profile:
@@ -525,7 +539,9 @@ def removal_refusal(release) -> str:
     if number:
         return OPEN_TO_INSTALL.format(number=number)
     decided = _decision_number(release, live=True)
-    return DECISION_LIVE.format(number=decided) if decided else ""
+    if not decided:
+        return ""
+    return DECISION_LIVE.format(number=decided) if _reads_decisions(by) else DECISION_LIVE_UNREAD
 
 
 def remove_release(release, *, by, today: date | None = None):
@@ -538,7 +554,7 @@ def remove_release(release, *, by, today: date | None = None):
     with transaction.atomic():
         lock_register()  # first: the register's writers one at a time (review round 3)
         locked = _locked_release(release)
-        refusal = removal_refusal(locked)
+        refusal = removal_refusal(locked, by=by)
         if refusal:
             raise ValidationError({"release": refusal})
         locked.removed_on, locked.removed_by = today, by
