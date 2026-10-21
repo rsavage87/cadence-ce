@@ -309,21 +309,22 @@ def test_the_sentences(floor, make_user):
                            plan_by=date(2027, 3, 1), plan_owner=dana)
     assert seen(rules.decision_words(with_controls, TODAY, fy_start=1)) == (
         "Keep in use with controls (2: traffic limited to the ports and hosts it needs; vendor remote access off, or attended only); "
-        "review by Oct 21, 2027. Plan: update by Mar 1, 2027 (owner Dana Ruiz). Accepted by IT security or the CISO, as recorded by "
-        "Kim Lee on Oct 21, 2026; IT exception DEMO-EX-1042.")
+        "review by Oct 21, 2027. Plan: update by Mar 1, 2027 (owner Dana Ruiz). Accepted by IT security or the CISO on Oct 21, 2026, as "
+        "recorded by Kim Lee; IT exception DEMO-EX-1042.")
     without = decide(2, asset=floor.d["P-4"], decided_on=TODAY, review_by=date(2027, 10, 21))
     assert seen(rules.decision_words(without, TODAY, fy_start=1)) == (
-        "Keep in use without added controls: risk accepted until Oct 21, 2027. No plan recorded. Accepted by the CE leader, as recorded "
-        "on Oct 21, 2026; no IT exception number recorded.")
+        "Keep in use without added controls: risk accepted until Oct 21, 2027. No plan recorded. Accepted by the CE leader on Oct 21, "
+        "2026; no IT exception number recorded.")
     out = decide(3, asset=floor.d["P-3"], response=OUT_OF_USE, decided_on=TODAY, review_by=date(2027, 1, 21),
                  accepted_by=AcceptedBy.COMMITTEE, recorded_by=kim, plan=DecisionPlan.REPLACE_PLANNED, plan_by=date(2027, 8, 1))
     assert seen(rules.decision_words(out, TODAY, fy_start=1)) == (
         "Take out of use, decided Oct 21, 2026; review by Jan 21, 2027. Plan: replace, planned for FY2027. Decided by a committee, as "
-        "recorded by Kim Lee on Oct 21, 2026; no IT exception number recorded.")
+        "recorded by Kim Lee; no IT exception number recorded.")  # the day decided said once, first
+    assert seen(rules.who_words(out)) == "Decided by a committee on Oct 21, 2026, as recorded by Kim Lee; no IT exception number recorded"
     # past review: read first, replacing the review part; "risk accepted until" dropped
     assert seen(rules.decision_words(without, date(2027, 10, 22), fy_start=1)) == (
-        "Review due since Oct 21, 2027: keep in use without added controls. No plan recorded. Accepted by the CE leader, as recorded on "
-        "Oct 21, 2026; no IT exception number recorded.")
+        "Review due since Oct 21, 2027: keep in use without added controls. No plan recorded. Accepted by the CE leader on Oct 21, 2026; "
+        "no IT exception number recorded.")
     assert seen(rules.decision_words(out, date(2027, 1, 22), fy_start=1)).startswith(
         "Review due since Jan 21, 2027: take out of use, decided Oct 21, 2026. Plan: replace")
     assert rules.decision_words(without, date(2027, 10, 21), fy_start=1).startswith("Keep in use without added controls: risk accepted")
@@ -402,7 +403,7 @@ def test_a_reason_ended_since_the_decision(floor):
     assert checks(d) == {}
     floor.r52.os_family, floor.r52.os_support_ends_on = OsFamily.LINUX, TODAY - DAY
     floor.r52.save()
-    assert checks(d)[rules.CHECK_ALSO_ENDED].words == "The OS vendor's support also ended since this decision"
+    assert checks(d)[rules.CHECK_ALSO_ENDED].words == "The OS vendor's support has ended, and this decision does not name it"
     d.reasons = ["security_updates", "os_support"]
     d.save()
     assert rules.CHECK_ALSO_ENDED not in checks(d)
@@ -511,8 +512,8 @@ def test_needs_attention_lists_each_heading(tenant, floor, techs, make_user):
                                                                                  ("standing", "updates_ended")))
     assert row.record == rules.Link("web:security_decision_new", (), (("release", floor.r52.pk),))
     (temp,) = found["temporary"].rows
-    assert temp.words == ("T-1 (rental, Summit Medical Rentals; due back Nov 10, 2026): security updates ended; its owner installs "
-                          "updates: ask the owner to update it, or return it")
+    assert temp.words == ("T-1 (rental, Summit Medical Rentals; due back Nov 10, 2026): security updates ended after Sep 21, 2026; its "
+                          "owner installs updates: ask the owner to update it, or return it")
     assert temp.record == rules.Link("web:security_decision_new", (), (("asset", "T-1"),))
     # an update open answers P-1; one done with the version not confirmed lists P-2 apart
     update_wo(floor.d["P-1"], floor.r56)

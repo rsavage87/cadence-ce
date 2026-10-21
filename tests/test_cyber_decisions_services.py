@@ -105,7 +105,8 @@ def test_each_scope_is_recorded_with_its_number_devices_and_history(floor, make_
     assert (on52.recorded_by, on52.decided_on, on52.review_by) == (kim, TODAY, date(2027, 10, 21))
     assert reasons_of(on52) == ["Recorded"]
     model_wide = record(device_model=floor.model)
-    assert model_wide.number == "SD-26-0002" and len(model_wide.governed_ids) == 4 and model_wide.release_id is None
+    assert model_wide.number == "SD-26-0002" and model_wide.release_id is None
+    assert model_wide.governed_ids == [str(floor.d["P-4"].pk)]  # P-1 to P-3 are governed by 5.2's decision (review 39 F1)
     own = record(asset=floor.d["T-1"], plan=DecisionPlan.RETURN_TO_OWNER)
     assert (own.asset_id, own.device_model_id, own.governed_ids) == (floor.d["T-1"].pk, None, [str(floor.d["T-1"].pk)])
     assert own.review_by == date(2026, 11, 10)  # a rental: its due back day
@@ -236,7 +237,7 @@ def test_the_review_rules(floor):
 
 
 def test_the_scope_needs_a_device_past_its_support(floor, dept, vent_model):
-    assert refused(asset=floor.d["P-4"]) == {"asset": "P-4 is not past its support, and no end is announced within 12 months."}
+    assert refused(asset=floor.d["P-4"]) == {"asset": "P-4 is not past its support as recorded, and no end is announced within 12 months."}
     facts(floor.d["P-1"], floor.r52, network=Network.NOT_CONNECTED)
     assert refused(asset=floor.d["P-1"]) == {"asset": "P-1 is not connected here, as recorded or disclosed: it needs no decision."}
     floor.profile.connects = ""
@@ -262,14 +263,14 @@ def test_the_scope_needs_a_device_past_its_support(floor, dept, vent_model):
 
 
 def test_the_reasons_are_those_that_hold_now(floor):
-    words = "the manufacturer's security updates ended, or their end is announced"
+    words = "the manufacturer's security updates or support ended, or their end is announced"
     assert refused(asset=floor.d["P-1"], reasons=["os_support"]) == {"reasons": f"Choose the reasons that hold now: {words}."}
     assert refused(asset=floor.d["P-1"], reasons=["security_updates", "os_support"]) == {
         "reasons": f"Choose the reasons that hold now: {words}."}
     floor.r52.os_family, floor.r52.os_support_ends_on = OsFamily.LINUX, TODAY - DAY
     floor.r52.save()
-    both = ("Choose the reasons that hold now: the manufacturer's security updates ended, or their end is announced; the OS vendor's "
-            "published support ended, or its end is announced.")
+    both = ("Choose the reasons that hold now: the manufacturer's security updates or support ended, or their end is announced; the OS "
+            "vendor's published support ended, or its end is announced.")
     assert refused(asset=floor.d["P-1"], reasons=["security_updates"]) == {"reasons": both}  # every reason that ended is named
     floor.r52.os_support_ends_on = TODAY + 100 * DAY
     floor.r52.save()
@@ -495,7 +496,7 @@ def test_a_decisions_history_reads_in_words(floor, make_user):
     changes = {c.field: c.after for c in added.changes}
     assert changes["Controls"] == ("Traffic limited to the ports and hosts it needs (firewall or access list); Controls recorded in IT's "
                                    "system (with its reference)")
-    assert changes["Reasons"] == "The manufacturer's security updates ended, or their end is announced"
+    assert changes["Reasons"] == "The manufacturer's security updates or support ended, or their end is announced"
     assert changes["Decision"] == "Keep in use with controls" and changes["Plan"] == "Update planned, not opened yet"
     assert changes["Accepted by"] == "IT security or the CISO" and changes["IT's change or exception number for the controls"] == "CHG0012345"
     assert "Number" not in changes and "Governed ids" not in changes

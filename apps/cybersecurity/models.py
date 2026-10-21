@@ -319,9 +319,11 @@ class SoftwareUpdate(TenantModel):
 # --- slice 39: security decisions ----------------------------------------------------------------------------------------------------
 
 class AppliesTo(models.TextChoices):
-    """Why a decision was recorded. Slice 40 adds "advisory" (with the advisory and its own constraints)."""
+    """Why a decision was recorded. Slice 40 adds "advisory" (with the advisory and its own constraints). support_ended's label holds for
+    both of its needs (rules.support_need): support ended, and an end announced within 12 months (review 39 F10); its slug never
+    changes."""
 
-    SUPPORT_ENDED = "support_ended", "Security updates or OS support ended"
+    SUPPORT_ENDED = "support_ended", "Support ended, or its end announced"
 
 
 class DecisionResponse(models.TextChoices):

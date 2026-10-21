@@ -466,10 +466,10 @@ def release_edit(request, pk):
     return _saved(request, dm, f"Version {saved.version} saved")
 
 
-def _remove_blocker(release) -> str:
+def _remove_blocker(release, user) -> str:
     """Why Entered in error cannot be done now: the service's own refusal (devices on site naming it, as the panel counts them), said
-    before it is tried, or ""."""
-    return cyber.removal_refusal(release)
+    before it is tried, or "" (a security decision's number only for a reader of decisions: the service words it by `user`)."""
+    return cyber.removal_refusal(release, by=user)
 
 
 @web_view(MODULE, EDIT)
@@ -478,7 +478,7 @@ def release_remove(request, pk):
     history keeps it), hidden from the lists and pickers; adding the same version again restores it."""
     release = _release(pk)
     dm = release.device_model
-    ctx = {"dm": dm, "release": release, "blocker": _remove_blocker(release), "error": "", "action": request.get_full_path()}
+    ctx = {"dm": dm, "release": release, "blocker": _remove_blocker(release, request.user), "error": "", "action": request.get_full_path()}
     if request.method != "POST":
         return render(request, REMOVE, ctx)
     try:
