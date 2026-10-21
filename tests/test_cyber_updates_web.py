@@ -430,7 +430,7 @@ def test_a_technician_opens_one_left_unassigned_in_the_services_words(client, wo
     assert (row.target, row.target_release, row.target_reference) == ("patches", None, "ICAR-2026-09")  # patches name no release
     assert wo.assigned_to is None and wo.priority == "high" and wo.due_on == today + 10 * DAY and wo.problem == updates.PATCHES_PROBLEM
     assert toast_of(r) == (f"{wo.number} opened for CE-10002. Open: to apply the manufacturer's patches (ref ICAR-2026-09). "
-                           f"{updates.ASSIGN_NEEDS}")
+                           "Left unassigned: assigning needs Work orders Approve, so a manager assigns it or a technician takes it.")
     rows = r.context["cyber"]["updates"]["rows"]
     assert [(u["number"], u["label"]) for u in rows] == [(wo.number, "Open")]  # the drawer's tab lists it
 
@@ -446,7 +446,7 @@ def test_the_director_opens_one_assigned(client, world, users, today):
     for wo in WorkOrder.objects.all():
         wo_services.change_status(wo, WoStatus.CANCELLED)
     r = client.post(open_url(world["pump"]), open_data(world, today), **MODAL)  # nobody chosen
-    assert toast_of(r).endswith(updates.NOBODY_CHOSEN)
+    assert toast_of(r).endswith("Left unassigned: nobody was chosen to assign, so a manager assigns it or a technician takes it.")
 
 
 @pytest.mark.parametrize("changes, expected", [
@@ -518,7 +518,7 @@ def test_open_routes_by_who_installs_updates_here(client, world, users, today, u
     elif updates_by:
         assert wo.assigned_to is None and not wo.vendor_service and message.endswith(route)
     else:
-        assert message.endswith(updates.NOBODY_CHOSEN)
+        assert message.endswith("Left unassigned: nobody was chosen to assign, so a manager assigns it or a technician takes it.")
 
 
 def test_a_temporary_device_goes_to_its_owner(client, world, users, dept, pump_model, today):
@@ -885,8 +885,9 @@ def test_a_technicians_batch_is_left_unassigned_and_names_each_skip(client, worl
     assert {"cyber-changed", "wo-changed", "toast", "modal-close"} <= set(fired)
     opened = WorkOrder.objects.filter(type=WoType.SOFTWARE_UPDATE).exclude(pk=fleet["open_wo"].pk).order_by("asset__tag")
     assert [wo.asset.tag for wo in opened] == ["CE-10002", "P-1", "P-2"] and not any(wo.assigned_to_id for wo in opened)
-    assert toast_of(r) == ("3 software updates opened to install 5.6 (demo). 3 left unassigned. " + updates.ASSIGN_NEEDS
-                           + " Skipped, held as evidence for an incident: P-H. Skipped, with an open software update already: P-O.")
+    assert toast_of(r) == ("3 software updates opened to install 5.6 (demo). 3 left unassigned: assigning needs Work orders Approve, so "
+                           "a manager assigns them or technicians take them. Skipped, held as evidence for an incident: P-H. Skipped, with an "
+                           "open software update already: P-O.")
     assert release_row(r, world["r56"])["update"]["words"] == "Updates to 5.6 (demo): 4 open"
 
 
@@ -952,8 +953,8 @@ def test_the_batch_routes_by_who_installs_updates_here(client, world, users, fle
     r = client.get(batch_url(world["r56"]), **MODAL)
     assert r.context["routes"] == [updates.INSTALLED_HERE.format(who="information technology"), forms.BATCH_OWNER_ROUTE]
     r = client.post(batch_url(world["r56"]), batch_data(dept, today, releases=[world["r52"]], department=str(fleet["west"].pk)), **MODAL)
-    assert toast_of(r) == ("1 software update opened to install 5.6 (demo). 1 left unassigned. "
-                           + updates.INSTALLED_HERE.format(who="information technology"))
+    assert toast_of(r) == ("1 software update opened to install 5.6 (demo). 1 left unassigned: updates to this model are installed here "
+                           "by information technology.")
 
 
 # --- the never words ---------------------------------------------------------------------------------------------------------------

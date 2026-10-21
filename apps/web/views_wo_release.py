@@ -9,7 +9,9 @@ The section (offer, then picked): only where rules.release_offer holds (a regist
 who may record: Device security Edit and Equipment View, never scoped; no query for another type), read once in views_wo_complete._setup.
 The target above the radios in rules' words (the work order is open while it is completed: "Open: to install 5.6 (demo)"); the outcome
 radios, each with its label (UpdateOutcome's, and "Not confirmed now") and what it does: none chosen while a choice is needed; on a
-re-completion with an outcome recorded, "Keep as recorded" first and chosen (it sends nothing: the record stays). The release it runs
+re-completion with an outcome recorded, "Keep as recorded" first and chosen (it sends nothing: the record stays), and "Not confirmed now"
+saying it keeps the record too (NOT_CONFIRMED_KEEPS: updates.check_choice records nothing for it, so Confirm version is never offered on
+that row; Entered in error at Device security Approve clears the outcome). The release it runs
 now (the model's releases, version order, the recorded one marked; the target chosen to begin with on a release target), the reference
 (the target's patch list to begin with on a patches target), the basis (UpdateBasis), and the help line (drug libraries are not
 recorded here). The hidden `shown_software_outcome` marker says the section was on screen: without it nothing is sent (KEEP), and the
@@ -42,6 +44,10 @@ OUTCOME_HINTS = {
     UpdateOutcome.ALREADY: "Checked today: it already runs the update",
     NOT_CONFIRMED: "Nothing is recorded now; Confirm version on the device's Security tab records it later. Say why in the resolution",
 }
+# "Not confirmed now" on a re-completion with an outcome recorded: it records nothing, so what was recorded stays (build38: a correction is
+# entered in error at Approve), never the hint above (Confirm version is offered only while nothing is recorded)
+NOT_CONFIRMED_KEEPS = ("Keeps what was recorded: {label}; Entered in error on the device's Security tab (Device security Approve) clears it. "
+                       "Say why in the resolution")
 RELEASE_LABEL = "The release it runs now"
 RELEASE_HINT = "Patches applied leave the version as recorded: choose the recorded one, or Not chosen."
 RELEASE_BLANK = "Not chosen"
@@ -74,7 +80,8 @@ def offer(wo, user, today=None):
     kept = o.update.outcome  # a re-completion's recorded outcome ("" while nothing is recorded: a choice is needed)
     outcomes = [(KEEP, KEEP_LABEL, KEEP_HINT.format(label=UpdateOutcome(kept).label))] if kept else []
     outcomes += [(value, UpdateOutcome(value).label, OUTCOME_HINTS[value]) for value in o.outcomes]
-    outcomes.append((NOT_CONFIRMED, NOT_CONFIRMED_LABEL, OUTCOME_HINTS[NOT_CONFIRMED]))
+    outcomes.append((NOT_CONFIRMED, NOT_CONFIRMED_LABEL,
+                     NOT_CONFIRMED_KEEPS.format(label=UpdateOutcome(kept).label) if kept else OUTCOME_HINTS[NOT_CONFIRMED]))
     return {
         "legend": LEGEND, "target": rules.update_words(o.update), "needed": o.needed, "recorded_outcome": kept,
         "recorded": rules.release_name(o.recorded), "not_recorded": rules.RELEASE_NOT_RECORDED,
