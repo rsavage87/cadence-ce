@@ -216,7 +216,11 @@ def test_edit_only_role_can_review_and_create_but_not_close_or_reopen(client, si
     assert pump_recall.status == S.IN_PROGRESS
     rc.set_status(pump_recall, S.CLOSED)
     assert ">Reopen</button>" not in client.get("/recalls/").content.decode()
-    assert client.post(status_url(pump_recall), {"to": S.UNDER_REVIEW}, **HX).status_code == 403
+    # A reopen posted from a page drawn before the closure: refused with the list as it is now, and why (never a bare 403)
+    r = client.post(status_url(pump_recall), {"to": S.UNDER_REVIEW}, **HX)
+    assert r.status_code == 200 and "FDA Z-TEST-1 is closed: reopening it needs Approve access." in r["HX-Trigger"]
+    pump_recall.refresh_from_db()
+    assert pump_recall.status == S.CLOSED
     assert client.post("/recalls/match/", **HX).status_code == 200
 
 

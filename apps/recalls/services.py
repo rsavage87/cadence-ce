@@ -10,7 +10,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from typing import NamedTuple
 
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.db.models import Count, F, Max, Q
 from django.utils import timezone
@@ -20,6 +20,7 @@ from apps.notifications import assignments
 from apps.workorders.models import OPEN_STATUSES, Priority, Source, WorkOrder, WoStatus, WoType
 
 from .models import Alert, AlertMatch
+from .permissions import transition_level
 
 
 def _norm(s: str) -> str:
@@ -78,26 +79,71 @@ def _who(by) -> str:
     return str(by) if by else ""
 
 
+CLOSE_PERMISSION = "Closing or reopening an alert needs Approve access."
+STATUS_FIELDS = ("status", "closed_on", "disposition_note")  # what set_status writes, and nothing else
+STATUS_BY_TRANSITION = "Use POST /api/v1/alert-matches/{id}/transition/ to change the status."
+
+
+def level_refusal(match: AlertMatch) -> str:
+    """Why a move needs Approve, from the match's status as it is: a closed one is reopened ("FDA Z-2026-4408 is reviewed, not
+    affected: reopening it needs Approve access."), else closing it does."""
+    if match.status in DONE_STATUSES:
+        return f"{alert_label(match.alert)} is {match.get_status_display().lower()}: reopening it needs Approve access."
+    return CLOSE_PERMISSION
+
+
+def _locked(match: AlertMatch) -> AlertMatch:
+    """The match's row as it is now, locked (its own row only), with its alert."""
+    return AlertMatch.objects.select_for_update(of=("self",)).select_related("alert").get(pk=match.pk)
+
+
 @transaction.atomic
-def set_status(match: AlertMatch, to_status: str, by=None, note: str = "", today: date | None = None) -> AlertMatch:
+def set_status(match: AlertMatch, to_status: str, by=None, note: str = "", today: date | None = None, level: int | None = None) -> AlertMatch:
+    """Move a match along ALLOWED_TRANSITIONS, on its row as it is now, locked (never the caller's copy, which may predate another
+    person's closure or reopen); only STATUS_FIELDS are written, and the caller's copy follows. `level`: the Recalls level of the person
+    moving it (the screen, the API), who was checked against the match as they read it (permissions.can_transition): checked again on
+    the locked row after the transition itself, so a match closed or reopened meanwhile never moves at a level its move now needs more
+    than (PermissionDenied, CLOSE_PERMISSION). None: never checked here (the recall work order batch, which locks and checks the match
+    itself, and the seed)."""
     today = today or timezone.localdate()
-    if to_status not in ALLOWED_TRANSITIONS[match.status]:
+    current = _locked(match)
+    if to_status not in ALLOWED_TRANSITIONS[current.status]:
         label = dict(S.choices).get(to_status, to_status)
-        raise ValidationError(f"Cannot move {alert_label(match.alert)} from {match.get_status_display().lower()} to {str(label).lower()}.")
+        raise ValidationError(f"Cannot move {alert_label(current.alert)} from {current.get_status_display().lower()} to {str(label).lower()}.")
+    if level is not None and level < transition_level(current.status, to_status):
+        raise PermissionDenied(level_refusal(current))
     note = (note or "").strip()
     if to_status in DONE_STATUSES:
-        match.closed_on = today
+        current.closed_on = today
         if not note:
             # The disposition note is what a surveyor reads; without one, record who closed it and when.
             verb = "Closed" if to_status == S.CLOSED else "Reviewed, not affected"
             who = _who(by)
             note = f"{verb} {fmt_date(today)}" + (f" by {who}" if who else "")
-    elif match.status in DONE_STATUSES:
-        match.closed_on = None  # reopening keeps the note: it is the history of the last closure
-    match.status = to_status
+    elif current.status in DONE_STATUSES:
+        current.closed_on = None  # reopening keeps the note: it is the history of the last closure
+    current.status = to_status
     if note:
-        match.disposition_note = note
-    match.save()
+        current.disposition_note = note
+    current.save(update_fields=[*STATUS_FIELDS, "updated_at"])
+    for field in STATUS_FIELDS:
+        setattr(match, field, getattr(current, field))
+    return match
+
+
+@transaction.atomic
+def set_note(match: AlertMatch, note: str, *, status: str | None = None) -> AlertMatch:
+    """The API's edit of a match's disposition note (Approve, its door's level), on the row as it is now, locked as set_status locks it:
+    only the note is written, so a closure or move committed after the caller read the match is never written back over. `status`, when
+    the caller sent one, must be the stored one (a status changes only through set_status: refused, keyed status). The caller's copy
+    follows."""
+    current = _locked(match)
+    if status is not None and status != current.status:
+        raise ValidationError({"status": STATUS_BY_TRANSITION})
+    current.disposition_note = note
+    current.save(update_fields=["disposition_note", "updated_at"])
+    for field in STATUS_FIELDS:
+        setattr(match, field, getattr(current, field))
     return match
 
 

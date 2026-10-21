@@ -63,11 +63,15 @@ class AlertMatchViewSet(TenantViewSet):
         raise MethodNotAllowed("POST", detail="Matches are created by matching alerts to the inventory, not posted.")
 
     def perform_update(self, serializer):
-        # Status goes through the transition action so it is permission-checked and follows the allowed moves.
+        # Status goes through the transition action so it is permission-checked and follows the allowed moves; the note is written on
+        # the match's row as it is now (rc_services.set_note), never the copy read here over a closure made since.
         match, d = serializer.instance, serializer.validated_data
         if "status" in d and d["status"] != match.status:
-            raise DRFValidationError({"status": "Use POST /api/v1/alert-matches/{id}/transition/ to change the status."})
-        serializer.save()
+            raise DRFValidationError({"status": rc_services.STATUS_BY_TRANSITION})
+        try:
+            rc_services.set_note(match, d.get("disposition_note", match.disposition_note), status=d.get("status"))
+        except ValidationError as e:
+            raise DRFValidationError(e.message_dict) from e
 
     @action(detail=True, methods=["post"])
     def transition(self, request, pk=None):
@@ -76,9 +80,11 @@ class AlertMatchViewSet(TenantViewSet):
         if to_status not in AlertMatch.Status.values:
             raise DRFValidationError({"status": f"Required; one of {', '.join(AlertMatch.Status.values)}."})
         if not rc_perms.can_transition(request.user, match.status, to_status):
-            raise PermissionDenied("Closing or reopening an alert needs Approve access.")
+            raise PermissionDenied(rc_services.level_refusal(match))
         try:
-            rc_services.set_status(match, to_status, by=request.user, note=request.data.get("note", ""))
+            # The level again on the match's row as it is now (set_status): one closed or reopened since it was read needs Approve
+            rc_services.set_status(match, to_status, by=request.user, note=request.data.get("note", ""),
+                                   level=request.user.level_for(rc_perms.MODULE))
         except ValidationError as e:
             return Response({"detail": e.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
         return Response(self.get_serializer(match).data)

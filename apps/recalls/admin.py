@@ -20,6 +20,9 @@ class AlertAdmin(admin.ModelAdmin):
 
 @admin.register(AlertMatch)
 class AlertMatchAdmin(TenantModelAdmin):
+    # The disposition changes only through recalls.services (set_status, set_note: on the row as it is now, with the transitions and
+    # levels), never a form loaded earlier; a match's identity is fixed by matching.
+    readonly_fields = ("alert", "device_model", "status", "closed_on", "disposition_note", "created_at", "updated_at")
     list_display = ("alert", "device_model", "status", "closed_on")
     list_filter = ("status",)
     autocomplete_fields = ("device_model",)

@@ -725,8 +725,8 @@ class Command(BaseCommand):
                 elif status_ == AlertMatch.Status.CLOSED:
                     set_status(match, AlertMatch.Status.IN_PROGRESS, today=today - timedelta(days=closed_days_ago + 7))
                     set_status(match, AlertMatch.Status.CLOSED, note=note, today=today - timedelta(days=closed_days_ago))
-                # Slice 25: it reached the facility the day the notice was published (the binder dates a match by its arrival). After
-                # the status changes, which save the whole row.
+                # Slice 25: it reached the facility the day the notice was published (the binder dates a match by its arrival). Last,
+                # after the status changes and the batch.
                 AlertMatch.objects.filter(pk=match.pk).update(created_at=_noon(alert.published_on))
             self._approved_aem(domain, today)
             engineers = self._vendor_staff(today)  # slice 31: before the vendor work, which names one of them

@@ -122,12 +122,17 @@ def recall_status(request, pk):
     match = _get_match(pk)
     to_status = request.POST.get("to", "")
     if not rc_perms.can_transition(request.user, match.status, to_status):
-        raise PermissionDenied
+        if match.status in rc.DONE_STATUSES:  # a page drawn before someone closed it: the list as it is now, and why (as below)
+            return toast(_render_body(request), rc.level_refusal(match))
+        raise PermissionDenied  # a closing move this person's page never offers
     try:
-        rc.set_status(match, to_status, by=request.user, note=request.POST.get("note", ""))
+        # The level again on the match's row as it is now: one closed or reopened since it was read above needs Approve
+        rc.set_status(match, to_status, by=request.user, note=request.POST.get("note", ""), level=request.user.level_for(rc_perms.MODULE))
         message = f"{rc.alert_label(match.alert)}: {match.get_status_display().lower()}"
     except ValidationError as e:
         message = e.messages[0]
+    except PermissionDenied as e:  # closed or reopened since it was read above: the list as it is now, and why
+        message = str(e)
     return toast(_render_body(request), message)
 
 
