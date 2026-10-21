@@ -197,10 +197,13 @@ def _kinds(values, allowed: dict, field: str, errors: dict, *, words: str) -> li
     return [slug for slug in allowed if slug in given]
 
 
-def _decision_row(decision, field: str = "decision"):
-    """The decision, FOR UPDATE of its own row (an instance, its id, or its number in any letter case), this facility's only."""
+def _decision_row(decision, field: str = "decision", *, lock: bool = True):
+    """The decision (an instance, its id, or its number in any letter case), this facility's only: FOR UPDATE of its own row inside a
+    writer's transaction; `lock=False` a plain read (refusal_for, outside any transaction: FOR UPDATE there is an error on PostgreSQL)."""
     pk = services._pk(decision, DeviceSecurityDecision)
-    rows = DeviceSecurityDecision.objects.select_for_update(of=("self",)).order_by("pk")
+    rows = DeviceSecurityDecision.objects.order_by("pk")
+    if lock:
+        rows = rows.select_for_update(of=("self",))
     if pk is not None:
         found = rows.filter(pk=pk).first()
     elif isinstance(decision, str) and decision.strip():
@@ -427,7 +430,7 @@ def refusal_for(*, asset=None, device_model=None, release=None, supersedes=None,
     connected here, its connection not recorded, the manufacturer's updates continuing). None when the scope itself would not be refused
     (the fields are the service's to check). record_decision decides again under its locks."""
     today = services._today(today)
-    old = _decision_row(supersedes, "supersedes") if supersedes is not None else None
+    old = _decision_row(supersedes, "supersedes", lock=False) if supersedes is not None else None
     if old is not None and old.ended_on is not None:
         return Refusal(ALREADY_ENDED.format(number=old.number, day=rules.day_words(old.ended_on)))
     device = release_row = None
