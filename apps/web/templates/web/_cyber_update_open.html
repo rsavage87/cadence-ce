@@ -1,0 +1,33 @@
+{% load web %}
+{% comment %}Slice 38: Open software update (views_cyber_updates.update_open; updates.open_update; Device security Edit, Equipment View, Work
+   orders Edit): what to install (a release of the model other than the one on record, or the manufacturer's patches with their
+   reference), the due day, the priority (normal or high), and Assign to where the service would use it, else the line saying where the
+   update goes. Each refusal comes back under its field; one about the device at the top. A device that cannot take one now (not on
+   site, held as evidence, an open update already) gets the modal saying why.{% endcomment %}
+{% with dm=asset.device_model %}
+<div class="modal-h"><h2>{{ asset.tag }}: open software update</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note" role="alert">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="cu-open-form" class="cu-form" hx-post="{% url 'web:cybersecurity_update_open' asset.tag %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    <p class="full hint">{{ dm.manufacturer }} {{ dm.model }} · {{ asset.department }}{% if asset.room %}, room {{ asset.room }}{% endif %}. A software update work order: the work order shows only its type and a fixed problem; what it installs is kept here.</p>
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    <fieldset class="full cu-fs"{% if form.target.errors %} aria-describedby="cu-target_error"{% endif %}>
+      <legend>{{ form.target.label }}</legend>
+      <div class="radio">{% for radio in form.target %}<label for="{{ radio.id_for_label }}">{{ radio.tag }}<span>{{ radio.choice_label }}</span></label>{% endfor %}</div>
+      {% if form.target.errors %}<span class="err" id="cu-target_error">{{ form.target.errors|striptags }}</span>{% endif %}
+      <p class="hint cu-drug" id="cu-target_helptext">{{ form.target.help_text }}</p>
+    </fieldset>
+    {% include "web/_asset_field.html" with field=form.target_release cls="cu-if-release" %}
+    {% include "web/_asset_field.html" with field=form.target_reference cls="cu-if-patches" %}
+    {% include "web/_asset_field.html" with field=form.due_on %}
+    {% include "web/_asset_field.html" with field=form.priority %}
+    {% if "assign_to" in form.fields %}{% include "web/_asset_field.html" with field=form.assign_to cls="full" %}{% endif %}
+    {% if route %}<p class="full note cu-route">{{ route }}</p>{% endif %}
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Open the update</button></div>
+</form>
+{% endif %}
+{% endwith %}

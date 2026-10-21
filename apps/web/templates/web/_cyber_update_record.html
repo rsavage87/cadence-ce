@@ -1,0 +1,30 @@
+{% load web %}
+{% comment %}Slice 38: Record update (views_cyber_updates.update_record; updates.record; Device security Edit and Equipment View): an install
+   with no work order (the manufacturer remotely, automatic, IT, the department): a release installed or patches applied, the release it
+   runs now, the reference, the basis, who installed it, and the day. The device's facts follow it, never backwards. Each refusal comes
+   back under its field; one about the device at the top. A device not on site gets the modal saying why.{% endcomment %}
+{% with dm=asset.device_model %}
+<div class="modal-h"><h2>{{ asset.tag }}: record update</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note" role="alert">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="cu-record-form" class="cu-form" hx-post="{% url 'web:cybersecurity_update_record' asset.tag %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    <p class="full hint">{{ dm.manufacturer }} {{ dm.model }} · {{ asset.department }}{% if asset.room %}, room {{ asset.room }}{% endif %}. An install done with no work order here. The device's release follows it, unless a later record of the device is kept.</p>
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    <fieldset class="full cu-fs"{% if form.software_outcome.errors %} aria-describedby="cu-software_outcome_error"{% endif %}>
+      <legend>{{ form.software_outcome.label }}</legend>
+      <div class="radio">{% for radio in form.software_outcome %}<label for="{{ radio.id_for_label }}">{{ radio.tag }}<span>{{ radio.choice_label }}</span></label>{% endfor %}</div>
+      {% if form.software_outcome.errors %}<span class="err" id="cu-software_outcome_error">{{ form.software_outcome.errors|striptags }}</span>{% endif %}
+    </fieldset>
+    {% include "web/_asset_field.html" with field=form.software_release %}
+    {% include "web/_asset_field.html" with field=form.software_reference %}
+    {% include "web/_asset_field.html" with field=form.software_basis cls="full" %}
+    {% include "web/_asset_field.html" with field=form.installed_by %}
+    {% include "web/_asset_field.html" with field=form.applied_on %}
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Record the update</button></div>
+</form>
+{% endif %}
+{% endwith %}

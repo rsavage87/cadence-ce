@@ -1,1 +1,7 @@
-{% comment %}Slice 38: a release row's update campaign and "Open updates to this release" (apps.web.cyber_release_actions, under x.update). Wave 2 builds it.{% endcomment %}
+{% comment %}Slice 38: a release row's update campaign (apps.web.cyber_release_actions, under x.update): its update work orders by state as
+   counts (rules.campaign_words; no device named), and "Open updates to this release" (permissions.can_open_updates, with devices of the
+   model on site on another release or none recorded), whose address carries the panel's filters.{% endcomment %}
+{% if x.update.words or x.update.can_open %}<div class="cy-campaign">
+  {% if x.update.words %}<span class="cy-campaign-w">{{ x.update.words }}</span>{% endif %}
+  {% if x.update.can_open %}<button class="link" type="button" hx-get="{{ x.update.open_url }}" hx-target="#modal-card">Open updates to this release</button>{% endif %}
+</div>{% endif %}

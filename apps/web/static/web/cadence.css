@@ -1725,6 +1725,40 @@ a.cy-fig:hover{background:var(--surface-2)}
 }
 /* Slice 37 A: end */
 
+/* Slice 38: software updates */
+/* The device drawer's Security tab's "Software updates" (web/_asset_cyber_updates.html): its actions, then one entry per update, newest
+   first: the state's chip (never a priority) and the work order's number, the sentence (it wraps: the words are the record), and its
+   actions. A model panel's release row's campaign line and "Open updates to this release" (web/_cyber_release_actions.html). The update
+   modals (web/_cyber_update_*.html, _cyber_open_updates.html): radio cards and checkboxes in the form's grid, the routing lines as notes;
+   the release or the patch list shown while its target is chosen (CSS :has; without :has both show, and the view sends only the chosen
+   one's). Theme tokens only. */
+.cy-up-act{display:flex;flex-wrap:wrap;gap:6px 14px;margin:-2px 0 8px}
+.cy-up-list{list-style:none;margin:0;padding:0}
+.cy-up{padding:8px 0;border-top:1px solid var(--line);min-width:0}
+.cy-up:first-child{border-top:0;padding-top:2px}
+.cy-up-h{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:13px}
+.cy-up-h .link,.cy-up-n{font-weight:500}
+.cy-up-s{font-size:12.5px;color:var(--ink-2);line-height:1.45;margin-top:3px;overflow-wrap:anywhere}
+.cy-up-f{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:4px;font-size:12.5px}
+.cy-campaign{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px;margin-top:8px;padding-top:8px;border-top:1px solid var(--line);font-size:12.5px}
+.cy-campaign-w{color:var(--ink-2);overflow-wrap:anywhere}
+.cu-fs{margin:0;padding:8px 12px 12px;border:1px solid var(--line);border-radius:8px;min-width:0}
+.cu-fs>legend{padding:0 4px;font-size:12.5px;font-weight:600;color:var(--ink-2)}
+.cu-fs .hint{display:block;margin-top:6px}
+.cu-form .radio input,.cu-checks input{padding:0;border:0;width:auto}
+.cu-form .radio label span{display:block;min-width:0}
+.cu-checks{display:grid;gap:6px}
+.cu-checks .check-row{display:flex;flex-direction:row;align-items:center;gap:8px;font-size:13px;color:var(--ink)}
+.cu-route,.cu-already{margin:0}
+@supports selector(:has(*)){
+  .cu-form:has(input[name="target"][value="release"]:checked) .cu-if-patches,
+  .cu-form:has(input[name="target"][value="patches"]:checked) .cu-if-release{display:none}
+}
+@media (max-width:760px){
+  .cy-up-act .link,.cy-up-f .link,.cy-campaign .link{display:inline-block;padding:6px 0}
+}
+/* Slice 38: end */
+
 /* Slice 11: printing app pages */
 /* What the browser prints of an app page (the Overview's Export button calls window.print(); any other screen prints from the
    browser's menu): the page's content on white, in the light theme whatever the screen shows, with chart and chip colours kept.

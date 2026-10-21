@@ -1,0 +1,36 @@
+{% load web %}
+{% comment %}Slice 38: Open updates to this release (views_cyber_updates.release_open_updates; updates.open_updates; Device security Edit,
+   Equipment View, Work orders Edit): one software update work order per device of the model on site whose record names one of the
+   releases chosen (each with its devices on site), or none, optionally one department's; due on a day, or each device's next PM; the
+   priority (normal or high); Assign to where the service would use it, else the lines saying where they go. Refusals come back under
+   their fields (the release's at the top), with what was chosen kept. Its address carries the panel's filters, so the panel comes back
+   as it was.{% endcomment %}
+<div class="modal-h"><h2>Open updates to {{ release.version }} · {{ dm.manufacturer }} {{ dm.model }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note" role="alert">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="cu-batch-form" class="cu-form" hx-post="{{ action }}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    <p class="full hint">One software update work order per device chosen, in tag order, each to install {{ release.version }}. A device held as evidence, or with an open software update already, is skipped and named. Drug libraries are not recorded here.</p>
+    {% if already %}<p class="full hint cu-already">{{ already }}</p>{% endif %}
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    <fieldset class="full cu-fs"{% if form.from_releases.errors %} aria-describedby="cu-from_releases_error"{% endif %}>
+      <legend>{{ form.from_releases.label }}</legend>
+      <div class="cu-checks">
+        {% for box in form.from_releases %}<label class="check-row" for="{{ box.id_for_label }}">{{ box.tag }} {{ box.choice_label }}</label>{% endfor %}
+        <label class="check-row" for="{{ form.include_not_recorded.id_for_label }}">{{ form.include_not_recorded }} {{ form.include_not_recorded.label }}</label>
+      </div>
+      <span class="hint" id="cu-from_releases_helptext">{{ form.from_releases.help_text }}</span>
+      {% if form.from_releases.errors %}<span class="err" id="cu-from_releases_error">{{ form.from_releases.errors|striptags }}</span>{% endif %}
+    </fieldset>
+    {% include "web/_asset_field.html" with field=form.department cls="full" %}
+    {% include "web/_asset_field.html" with field=form.due_on %}
+    {% include "web/_asset_field.html" with field=form.priority %}
+    <div class="fld full"><label class="check-row" for="{{ form.due_at_next_pm.id_for_label }}">{{ form.due_at_next_pm }} {{ form.due_at_next_pm.label }}</label></div>
+    {% if "assign_to" in form.fields %}{% include "web/_asset_field.html" with field=form.assign_to cls="full" %}{% endif %}
+    {% for line in routes %}<p class="full note cu-route">{{ line }}</p>{% endfor %}
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Open the updates</button></div>
+</form>
+{% endif %}
