@@ -57,6 +57,7 @@
   </div>
   {% endif %}
 </div>
-{% if can_edit_devices and releases and on_site %}<div class="dr-f">
-  <button class="btn primary" type="button" hx-get="{{ set_url }}" hx-target="#modal-card">Set devices to a release</button>
+{% if can_edit_devices and releases and on_site or can_decide and on_site %}<div class="dr-f">
+  {% if can_edit_devices and releases %}<button class="btn primary" type="button" hx-get="{{ set_url }}" hx-target="#modal-card">Set devices to a release</button>{% endif %}
+  {% if can_decide %}<button class="btn" type="button" hx-get="{{ decide_model_url }}" hx-target="#modal-card">Record decision for every {{ dm.model }} of ours</button>{% endif %}
 </div>{% endif %}

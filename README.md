@@ -499,8 +499,8 @@ here." Below, the decisions by state (In force, Review within 30 days, Review du
 number, download as CSV. A decision's page shows its sentence, its reasons with their dates, controls, plan, who accepted and recorded it,
 its review, the devices it governs (tag, serial, model, department, connection, release, and what answers each), its Check lines, the
 decision it superseded or that superseded it, and its History; it prints for IT and the committee ("As recorded in Cadence; IT's
-exception record is the system of record") and its devices download as CSV. Record decision opens from a release's row in Models (a
-release's devices or the model's), from a device's Security tab (that device), from Needs attention, and as Review and renew (prefilled,
+exception record is the system of record") and its devices download as CSV. Record decision opens from a release's row in Models (that
+release's devices of ours), from a model's panel ("Record decision for every <model> of ours"), from a device's Security tab (that device), from Needs attention, and as Review and renew (prefilled,
 the exception number blank); the Security tab shows the device's need, what answers it, and the decision that governs it. Device
 security's nav item carries a badge counting the decisions past their review date that still govern a device here. Decisions never reach
 an email, a digest, the Overview's attention list, a custom report, the portal, labels, or Scan.

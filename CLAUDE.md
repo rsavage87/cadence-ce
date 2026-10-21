@@ -494,7 +494,7 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   devices it governs with their responses, Check lines, supersedes / superseded by, History; Review and renew, End
   (`web:security_decision_end`), Entered in error for can_decide), its print (`web/print_base.html`) and devices CSV, Record decision
   (`web:security_decision_new`, a modal: the scope fixed by the door, `?asset=<tag>` from the Security tab or a rentals row,
-  `?release=<id>` or `?model=<id>` from a release row or Needs attention, `?supersedes=<number>` for Review and renew; fields set in
+  `?release=<id>` from a release row, `?model=<id>` from a model's panel footer or Needs attention, `?supersedes=<number>` for Review and renew; fields set in
   `__init__`; never network_removed: rules.NETWORK_REMOVED_HINT), the Security tab's need, responses, and governing decision
   (rules.device_lines), a release row's live decision or Record decision (`_cyber_release_actions.html`), and the nav item's badge
   (rules.BADGE_TITLE);

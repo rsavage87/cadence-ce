@@ -328,6 +328,9 @@ def _panel_context(request, dm) -> dict:
         "dm": dm, "today": today, "profile": profile_row, "profile_card": _card(rules.facts(None, profile_row), dm, today, profile=True),
         "releases": releases, "mds2_words": _mds2_words(dm, held), "can_devices": can_devices, "can_edit": can_edit,
         "can_edit_devices": cyber_perms.can_edit_devices(user), "can_view_asset": can_devices,
+        # Slice 39: a decision for every device of ours of the model (the modal says first when none needs one: decisions.refusal_for)
+        "can_decide": cyber_perms.can_decide(user),
+        "decide_model_url": reverse("web:security_decision_new") + _qs({"model": dm.pk, "from": "panel"}),
         "on_site": len(read), "not_recorded": running.get(None, 0), "devices": shown[:SHOWN], "devices_count": len(shown),
         "narrowed": f.any, "all_url": base, "f": f, "query": _qs(params),
         "csv_url": reverse("web:cybersecurity_devices_csv") + _qs({"model": dm.pk, **params}),
