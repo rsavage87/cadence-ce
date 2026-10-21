@@ -322,15 +322,18 @@ def _panel_context(request, dm) -> dict:
                          "edit_url": reverse("web:cybersecurity_release_edit", args=[r.pk]) + _qs(params),
                          "remove_url": reverse("web:cybersecurity_release_remove", args=[r.pk]) + _qs(params),
                          "set_url": reverse("web:cybersecurity_set_release", args=[dm.pk]) + _qs({**params, "release": r.pk})})
-    campaigns = cyber_release_actions.annotate(request, dm, releases, params)  # slice 38: each release's updates (x["update"])
+    # slice 38: each release's updates (x["update"]); slice 39: its decision (x["decision"]) and the footer's, on the devices read above
+    campaigns = cyber_release_actions.annotate(request, dm, releases, params, read)
     return {
         **campaigns,
         "dm": dm, "today": today, "profile": profile_row, "profile_card": _card(rules.facts(None, profile_row), dm, today, profile=True),
         "releases": releases, "mds2_words": _mds2_words(dm, held), "can_devices": can_devices, "can_edit": can_edit,
         "can_edit_devices": cyber_perms.can_edit_devices(user), "can_view_asset": can_devices,
-        # Slice 39: a decision for every device of ours of the model (the modal says first when none needs one: decisions.refusal_for)
-        "can_decide": cyber_perms.can_decide(user),
-        "decide_model_url": reverse("web:security_decision_new") + _qs({"model": dm.pk, "from": "panel"}),
+        # Slice 39: a decision for every device of ours of the model, offered only while a device of ours of the model on site waits for
+        # one (cyber_release_actions._waiting, as Needs attention reads it; review 39 S1), its address carrying the panel's filters so
+        # the save, and Review and renew from its modal, answer with the panel as it was opened (S0)
+        "decide_model_url": (reverse("web:security_decision_new") + _qs({"model": dm.pk, "from": "panel", **params})
+                             if campaigns["decide_model"] else ""),
         "on_site": len(read), "not_recorded": running.get(None, 0), "devices": shown[:SHOWN], "devices_count": len(shown),
         "narrowed": f.any, "all_url": base, "f": f, "query": _qs(params),
         "csv_url": reverse("web:cybersecurity_devices_csv") + _qs({"model": dm.pk, **params}),
