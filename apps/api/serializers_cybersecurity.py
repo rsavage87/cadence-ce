@@ -19,7 +19,7 @@ are their own endpoint, behind Device security View and Equipment View, never a 
 - updates_of(...), work_order_update(...), software_choices(...): a work order's software_update and software_choices
   (serializers.WorkOrderSerializer, slice 38), only for Device security View and Equipment View (shows_updates) and only where
   rules.release_offer offers a choice: never a version, a reference, or a target to anyone else.
-- decisions_now(decisions, today), decision_data(decision, ...): one row of GET security-decisions/ (slice 39), every word the rules'
+- decision_data(decision, ...) with rules.decisions_now(decisions, today): one row of GET security-decisions/ (slice 39), every word the rules'
   (decision_words, scope_words, plan_words, control_words, reason_words, review_words, decision_state, the Check lines).
 """
 from django.urls import reverse
@@ -243,35 +243,6 @@ def software_choices(offer) -> dict:
 
 # --- slice 39: security decisions (GET security-decisions/) ------------------------------------------------------------------------
 
-def decisions_now(decisions, today) -> dict:
-    """{decision id: (governs, checks)} for a page of decisions, as rules.decision_devices and rules.decision_checks read one: `governs`
-    the devices on site it governs now (in its scope, and it the most specific live decision there: rules' governing), in tag order;
-    `checks` its Check lines (rules.Check). An ended decision governs nothing and has no Check line: ((), ()). Composed of the rules' own
-    pieces as rules.needs_attention composes them (the scope, the governing decision, the standings, the Check lines; the update
-    responses are not read: neither answer reads them), so a page reads a fixed number of queries however many decisions and devices:
-    the devices on site of the live decisions' models with their rows (one), the models' profiles (one), the live decisions that may
-    govern those devices (one); none when no decision on the page is live. A test holds every row to decision_devices and
-    decision_checks."""
-    out = {d.pk: ((), ()) for d in decisions}
-    live = [d for d in decisions if d.ended_on is None]
-    if not live:
-        return out
-    model_ids = {rules._model_of(d) for d in live}
-    devices = rules._devices_with_records(rules.on_site().filter(device_model_id__in=model_ids).order_by("tag", "pk"))
-    profiles = rules._profiles(model_ids)
-    governing = rules._governing(devices, rules._decisions_for(devices)) if devices else {}
-    by_model: dict = {}
-    for a in devices:
-        by_model.setdefault(a.device_model_id, []).append(a)
-    for d in live:
-        model_id = rules._model_of(d)
-        held = [a for a in by_model.get(model_id, ()) if rules._in_scope(d, a)]
-        found = [rules._decision_device(a, rules._standing(a, rules._cached_record(a), profiles.get(a.device_model_id), today), today,
-                                        governing, d, {}) for a in held]
-        out[d.pk] = (tuple(dd.asset for dd in found if dd.governed), tuple(rules._checks(d, found, profiles.get(model_id), today)))
-    return out
-
-
 def _superseded_by(decision):
     """The decision that superseded this one (the reverse one-to-one, read with the row), or None."""
     from django.core.exceptions import ObjectDoesNotExist
@@ -296,7 +267,7 @@ def decision_data(decision, *, today, fy_start=None, governs=(), checks=()) -> d
     (rules.decision_words); governed_ids (the devices it governed when recorded, ids); governs [{id, tag}] (the devices on site it
     governs now); checks [{key, words, info, action, tags}] (rules.decision_checks: information, never a refusal). `fy_start`: the
     facility's fiscal year start, read once for a page (else read here for a replacement planned); `governs` and `checks` from
-    decisions_now."""
+    rules.decisions_now."""
     from apps.cybersecurity.models import AcceptedBy, AppliesTo, DecisionEnd, DecisionPlan, DecisionResponse
 
     kind = rules.scope_kind(decision)
@@ -332,7 +303,7 @@ def decision_data(decision, *, today, fy_start=None, governs=(), checks=()) -> d
 
 
 class SecurityDecisionSerializer(serializers.BaseSerializer):
-    """GET security-decisions/: context holds "today", "fy_start", and "now" (decisions_now's result for the page)."""
+    """GET security-decisions/: context holds "today", "fy_start", and "now" (rules.decisions_now's result for the page)."""
 
     def to_representation(self, decision):
         ctx = self.context

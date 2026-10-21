@@ -437,16 +437,16 @@ class SecurityDecisionViewSet(_ReadOnly):
             return []
         candidates = (DeviceSecurityDecision.objects.filter(Q(asset_id=device.pk) | Q(asset__isnull=True, device_model_id=device.device_model_id))
                       .only("pk", "asset_id", "device_model_id", "release_id"))
-        return [d.pk for d in candidates if d.asset_id == device.pk or rules._in_scope(d, device)]
+        return [d.pk for d in candidates if d.asset_id == device.pk or rules.in_scope(d, device)]
 
     def _context(self, rows) -> dict:
         """What the page's rows read: the facility's today (read once), its fiscal year start (one query, only when a row plans a
-        replacement), and the devices each live decision governs now with its Check lines (serializers_cybersecurity.decisions_now: a
+        replacement), and the devices each live decision governs now with its Check lines (rules.decisions_now: a
         fixed number of queries)."""
         today = self._today()
         replacing = any(d.plan == DecisionPlan.REPLACE_PLANNED and d.plan_by is not None for d in rows)
         return {**self.get_serializer_context(), "today": today, "fy_start": fiscal.start_month() if replacing else None,
-                "now": scs.decisions_now(rows, today)}
+                "now": rules.decisions_now(rows, today)}
 
     def list(self, request, *args, **kwargs):
         qs = self.filter_queryset(self.get_queryset())

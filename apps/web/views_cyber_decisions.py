@@ -51,7 +51,7 @@ from apps.cybersecurity.models import (
     DeviceSecurityDecision,
     SoftwareRelease,
 )
-from apps.equipment.models import Asset, AssetStatus, DeviceModel, Ownership
+from apps.equipment.models import Asset, DeviceModel, Ownership
 from apps.facility import fiscal
 
 from . import history_tabs, views_cybersecurity
@@ -489,6 +489,7 @@ class Now:
     needs: dict
     reasons: list
     lines: list
+    today: date
 
     @property
     def decidable(self) -> bool:
@@ -501,50 +502,17 @@ def _now(scope: Scope, today: date) -> Now:
     needs = {pk: rules.support_need(s, today) for pk, s in read.items()}
     decidable = [n for n in needs.values() if n is not None and n.decidable]
     reasons = [kind for kind in rules.REASONS if any(kind in n.reasons for n in decidable)]
-    return Now(read=read, needs=needs, reasons=reasons, lines=_unique(line for n in decidable for line in n.lines))
-
-
-def _live_for(scope: Scope):
-    """The live decision for devices past support with this scope, or None."""
-    live = DeviceSecurityDecision.objects.filter(applies_to=AppliesTo.SUPPORT_ENDED, ended_on__isnull=True)
-    if scope.kind == rules.DEVICE_SCOPE:
-        return live.filter(asset=scope.asset).first()
-    if scope.kind == rules.RELEASE_SCOPE:
-        return live.filter(release=scope.release).first()
-    return live.filter(device_model=scope.model, asset__isnull=True, release__isnull=True).first()
+    return Now(read=read, needs=needs, reasons=reasons, lines=_unique(line for n in decidable for line in n.lines), today=today)
 
 
 def _blocker(scope: Scope, now: Now) -> tuple[str, str]:
-    """(why a decision cannot be recorded for the scope now, in the service's words, or ""; Review and renew's address for the live
-    decision that is in force for it, or ""), said before it is tried: the decision to renew already ended; a device not on site; a live
-    decision for the scope; nothing past its support or announced to end within 12 months (decisions' words for each case)."""
-    old = scope.old
-    if old is not None and old.ended_on is not None:
-        return decisions.ALREADY_ENDED.format(number=old.number, day=rules.day_words(old.ended_on)), ""
-    if scope.kind == rules.DEVICE_SCOPE and scope.asset.status == AssetStatus.RETIRED:
-        words = decisions.RETURNED if scope.asset.ownership != Ownership.OWNED else decisions.RETIRED
-        return words.format(tag=scope.asset.tag), ""
-    live = _live_for(scope)
-    if live is not None and (old is None or live.pk != old.pk):
-        renew = record_url(supersedes=live.number, **{"from": scope.origin})
-        return decisions.IN_FORCE.format(number=live.number), renew
-    if now.decidable:
+    """(why a decision cannot be recorded for the scope now, or ""; Review and renew's address for the live decision in force for it,
+    or ""), said before it is tried: decisions.refusal_for, the service's own checks in its order and words."""
+    refusal = decisions.refusal_for(**scope.kwargs(), supersedes=scope.old, today=now.today)
+    if refusal is None:
         return "", ""
-    if scope.kind == rules.DEVICE_SCOPE:
-        a = scope.asset
-        s, need = now.read.get(a.pk), now.needs.get(a.pk)
-        if s is not None and s.connection.key == rules.CONNECTION_NOT_RECORDED:
-            return decisions.CONNECTION_UNKNOWN.format(tag=a.tag), ""
-        if s is not None and s.connection.key not in rules.ON_SITE_KEYS:
-            return decisions.NOT_CONNECTED.format(tag=a.tag), ""
-        if need is not None and need.key == rules.EXTENDED:
-            return decisions.EXTENDED.format(name=a.tag, day=rules.day_words(need.day)), ""
-        return decisions.NOT_NEEDED.format(name=a.tag), ""
-    if not now.read:
-        if scope.kind == rules.RELEASE_SCOPE:
-            return decisions.NO_DEVICE_OURS.format(version=scope.release.version), ""
-        return decisions.NO_MODEL_DEVICE.format(model=scope.model.model), ""
-    return decisions.NONE_NEEDED, ""
+    renew = record_url(supersedes=refusal.live.number, **{"from": scope.origin}) if refusal.live is not None else ""
+    return refusal.words, renew
 
 
 def owners(request) -> list:

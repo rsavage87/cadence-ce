@@ -50,6 +50,7 @@ from __future__ import annotations
 import ipaddress
 import re
 from datetime import date
+from typing import NamedTuple
 
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, OperationalError, transaction
@@ -409,6 +410,47 @@ def record_decision(*, asset=None, device_model=None, release=None, reasons, res
     if old is not None:
         services._sync(supersedes, old)
     return row
+
+
+class Refusal(NamedTuple):
+    """Why record_decision would refuse a scope now (refusal_for): its words, and the live decision in force for the scope when that is
+    why (the door offers Review and renew for it)."""
+
+    words: str
+    live: object = None
+
+
+def refusal_for(*, asset=None, device_model=None, release=None, supersedes=None, today: date | None = None) -> Refusal | None:
+    """Why record_decision would refuse this scope now, in its words and its order, read before the person tries (the Record decision
+    modal), without its locks: the decision to renew already ended; a device retired or returned; a live decision in force for the
+    scope; a release or model with no device of ours on site; nothing past its support or announced within 12 months (a device not
+    connected here, its connection not recorded, the manufacturer's updates continuing). None when the scope itself would not be refused
+    (the fields are the service's to check). record_decision decides again under its locks."""
+    today = services._today(today)
+    old = _decision_row(supersedes, "supersedes") if supersedes is not None else None
+    if old is not None and old.ended_on is not None:
+        return Refusal(ALREADY_ENDED.format(number=old.number, day=rules.day_words(old.ended_on)))
+    device = release_row = None
+    model_id = services._model(device_model).pk if device_model is not None else None
+    if asset is not None:
+        kind, device = rules.DEVICE_SCOPE, Asset.objects.get(pk=services._pk(asset, Asset))
+        if device.status == AssetStatus.RETIRED:
+            return Refusal((RETURNED if device.ownership != Ownership.OWNED else RETIRED).format(tag=device.tag))
+    elif release is not None:
+        kind, release_row = rules.RELEASE_SCOPE, SoftwareRelease.objects.get(pk=services._pk(release, SoftwareRelease))
+        model_id = release_row.device_model_id
+    else:
+        kind = rules.MODEL_SCOPE
+    live = _live_for(asset_id=device.pk if device is not None else None, model_id=model_id,
+                     release_id=release_row.pk if release_row is not None else None)
+    if live is not None and (old is None or live.pk != old.pk):
+        return Refusal(IN_FORCE.format(number=live.number), live)
+    members = _scope_members(kind, device=device, model_id=model_id, release=release_row)
+    try:
+        _scope_needs(kind, members, device=device, model_id=model_id, release=release_row, today=today)
+    except ValidationError as e:
+        return Refusal(e.messages[0])
+    return None
 
 
 def _scope_members(kind: str, *, device, model_id, release) -> list:

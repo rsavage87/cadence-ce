@@ -533,7 +533,7 @@ def _read(client, urls, expect, *, pending=_pending, words=lambda url: rules.NEV
             left.append(url)
             continue
         # the drawer's tab and a model's panel as the screens fetch them (a partial); every other page whole
-        partial = "tab=" in url or re.search(r"/security/models/[0-9a-f-]{36}/$", url)
+        partial = "tab=" in url or re.search(r"/security/models/[0-9a-f-]{36}/$", url) or re.search(r"/security/decisions/SD-[0-9-]+/$", url)
         r = client.get(url, HTTP_HX_REQUEST="true") if partial else client.get(url)
         assert r.status_code == 200, (url, r.status_code)
         shown = _shown(r)
@@ -598,8 +598,7 @@ def _read_decision_pages(client, seeded) -> list:
 def test_the_seeded_pages_show_the_register_and_never_say_the_words(client, seeded):
     client.force_login(User.objects.get(username="kim@riverside.example"))
     pending = _read_pages(client, seeded)
-    if pending:
-        pytest.xfail(f"slice 37 wave 2's pages are not merged here yet: {pending}")
+    assert not pending, f"pages not built: {pending}"
 
 
 def test_the_seeded_decision_pages_show_the_decisions_and_never_say_the_words(client, seeded):
@@ -607,8 +606,7 @@ def test_the_seeded_decision_pages_show_the_decisions_and_never_say_the_words(cl
     page (its exception number, its Check, its devices with their updates), the decisions API, and the drawer's decision lines."""
     client.force_login(User.objects.get(username="kim@riverside.example"))
     pending = _read_decision_pages(client, seeded)
-    if pending:
-        pytest.xfail(f"slice 39 wave 2's pages are not merged here yet: {pending}")
+    assert not pending, f"pages not built: {pending}"
 
 
 # --- under row-level security ---------------------------------------------------------------------------------------------------
@@ -635,8 +633,7 @@ def test_the_seeded_register_reads_the_same_under_the_policies(client, seeded):
     with tenant_context(seeded):
         assert read() == before
     pending = _read_pages(client, seeded)
-    if pending:
-        pytest.xfail(f"slice 37 wave 2's pages are not merged here yet: {pending}")
+    assert not pending, f"pages not built: {pending}"
 
 
 @needs_postgres
@@ -660,5 +657,4 @@ def test_the_seeded_decisions_read_the_same_under_the_policies(client, seeded):
     with tenant_context(seeded):
         assert read() == before
     pending = _read_decision_pages(client, seeded)
-    if pending:
-        pytest.xfail(f"slice 39 wave 2's pages are not merged here yet: {pending}")
+    assert not pending, f"pages not built: {pending}"

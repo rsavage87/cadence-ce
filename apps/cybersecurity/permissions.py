@@ -16,7 +16,9 @@ retires devices), and every existing custom role reads None for it until a direc
   (can_decide).
 
 Scoped users (a vendor's company, a requester's unit) are refused everywhere, whatever their levels: the register is never theirs.
-The suggested IT security role (README) is a custom role with Device security Edit and Equipment View.
+The suggested IT security role (README) is a custom role with Device security Edit and Equipment View; for IT to record its exceptions
+as decisions, Device security Approve (with Equipment View it then also marks updates entered in error), and Work orders View to follow
+update work orders. Existing custom roles keep their levels.
 """
 from apps.accounts.models import Level, Module
 from apps.workorders import scoping

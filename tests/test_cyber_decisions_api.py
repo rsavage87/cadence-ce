@@ -1,6 +1,6 @@
 """
 Slice 39 wave 2: security decisions over the API, read only (apps/api/views_cybersecurity.py SecurityDecisionViewSet,
-serializers_cybersecurity.decision_data / decisions_now; build39 section 8), and the delete refusals a decision adds to the devices' and
+serializers_cybersecurity.decision_data with rules.decisions_now; build39 section 8), and the delete refusals a decision adds to the devices' and
 models' API (apps/api/views.py: AssetViewSet and DeviceModelViewSet perform_destroy; build39 section 5), on SQLite and PostgreSQL.
 
 GET /api/v1/security-decisions/ (Device security View and Equipment View, never a scoped user): every decision, live and ended, by number,

@@ -485,7 +485,9 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `_cyber_release_actions.html` (a release row's campaign counts), `views_wo_release.py` (the completion modal's "Software on the
   device", `_wo_release_picker.html`, offered only where rules.release_offer holds, the `shown_software_outcome` marker; the drawer's and
   print's "Software update" line for can_view_devices only);
-  slice 39 (routes in `urls_cybersecurity.py`): the Device security screen's Decisions tab (`/security/decisions/`, can_view_devices:
+  slice 39: `views_cyber_decisions.py` with `forms_cyber_decisions.py` and `urls_cyber_decisions.py` (`_cyber_decision*.html`,
+  `cyber_decisions.html`, `print_cyber_decision.html`; the Record decision modal says why it cannot be recorded before it is tried with
+  decisions.refusal_for, the service's own checks): the Device security screen's Decisions tab (`/security/decisions/`, can_view_devices:
   Needs attention from rules.needs_attention with the HICP sentence, the list by state (In force, Review within 30 days, Review due,
   Ended) filtered by scope, response, and exception number, its CSV), a decision's page (`web:security_decision`,
   `/security/decisions/<number>/` in any letter case; drawer partial and full page: the sentence, reasons, controls, plan, who, the
@@ -546,8 +548,8 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   `/api/v1/software-updates/`, read only (Device security View and Equipment View; ?device= id or tag, ?release=, ?state=; entered in
   error left out; the work order's number, never a link); slice 39: `/api/v1/security-decisions/` (`views_cybersecurity.py` /
   `serializers_cybersecurity.py`), read only, by id or number (can_view_devices; no scoped actions; ?scope=device|release|model,
-  ?state=in_force|review_due|ended, ?device= id or tag; each decision's fields with their words, the sentence, plan words, governed
-  device ids, and Check lines; fixed queries a page), and a device's or a model's destroy refused while a decision names it, in words for
+  ?state=in_force|review_soon|review_due|ended, ?device= id or tag; each decision's fields with their words, the sentence, plan words,
+  governed device ids, and Check lines; fixed queries a page through rules.decisions_now), and a device's or a model's destroy refused while a decision names it, in words for
   the reader (a Device security reader reads the decision's number); serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
   same thing and calls the same service; the API never imports apps.web. `tenancy.py` (`TenantAPIMixin`: the tenant from the session or
   token user, set after authentication and restored once the response is rendered), `authentication.py` (DRF's token check plus the

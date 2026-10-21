@@ -1345,6 +1345,40 @@ def _scope_of(decision):
     return scope_devices(asset=decision.asset_id or None, device_model=decision.device_model_id, release=decision.release_id or None)
 
 
+def in_scope(decision, asset) -> bool:
+    """Whether `decision`'s scope holds `asset` (its row read) on site now (scope_devices, in Python): the API's ?device= filter."""
+    return _in_scope(decision, asset)
+
+
+def decisions_now(decisions, today) -> dict:
+    """{decision id: (governs, checks)} for a page of decisions (the API's list), as decision_devices and decision_checks read one: `governs`
+    the devices on site it governs now (in its scope, and it the most specific live decision there: rules' governing), in tag order;
+    `checks` its Check lines (rules.Check). An ended decision governs nothing and has no Check line: ((), ()). Composed of the rules' own
+    pieces as needs_attention composes them (the scope, the governing decision, the standings, the Check lines; the update
+    responses are not read: neither answer reads them), so a page reads a fixed number of queries however many decisions and devices:
+    the devices on site of the live decisions' models with their rows (one), the models' profiles (one), the live decisions that may
+    govern those devices (one); none when no decision on the page is live. A test holds every row to decision_devices and
+    decision_checks."""
+    out = {d.pk: ((), ()) for d in decisions}
+    live = [d for d in decisions if d.ended_on is None]
+    if not live:
+        return out
+    model_ids = {_model_of(d) for d in live}
+    devices = _devices_with_records(on_site().filter(device_model_id__in=model_ids).order_by("tag", "pk"))
+    profiles = _profiles(model_ids)
+    governing = _governing(devices, _decisions_for(devices)) if devices else {}
+    by_model: dict = {}
+    for a in devices:
+        by_model.setdefault(a.device_model_id, []).append(a)
+    for d in live:
+        model_id = _model_of(d)
+        held = [a for a in by_model.get(model_id, ()) if _in_scope(d, a)]
+        found = [_decision_device(a, _standing(a, _cached_record(a), profiles.get(a.device_model_id), today), today,
+                                        governing, d, {}) for a in held]
+        out[d.pk] = (tuple(dd.asset for dd in found if dd.governed), tuple(_checks(d, found, profiles.get(model_id), today)))
+    return out
+
+
 def _in_scope(decision, a) -> bool:
     """Whether the device `a` (its row read) is on site in the decision's scope (scope_devices, in Python)."""
     if a.status == AssetStatus.RETIRED:
