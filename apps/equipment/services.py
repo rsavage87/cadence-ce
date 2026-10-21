@@ -226,6 +226,7 @@ INCOMING_WAITING = "waiting"  # create_asset's incoming_inspection (slice 26)
 AWAITING_LABEL = "Awaiting inspection"
 HELD_LABEL = "Held for incident"  # slice 28: a device held as evidence (Asset.incident_hold); it wins over AWAITING_LABEL
 RETURNED_LABEL = "Returned to owner"  # slice 29: a temporary device that went back (status retired, ownership not ours)
+CHANGED_MEANWHILE = "{tag} changed meanwhile: try again."  # a writer that would open a work order after its row (lock_numbering)
 HELD_REASON = "Held for an incident investigation"  # the device's history (Equipment View): never the incident's number
 RELEASED_REASON = "Hold released"
 NEW_DEVICE_STATUSES = (AssetStatus.IN_SERVICE, AssetStatus.OUT_OF_SERVICE)  # a new device is in use, or waiting for incoming inspection
@@ -240,7 +241,11 @@ def lock_tags() -> None:
     sticker space, unique in any letter case across both tables, so create_asset (and through it add_temporary_device, the devices
     import, and the API) and apps.testequipment.services (add_test_equipment, update_test_equipment's tag and unit changes, set_status's
     moves to in use) take it first, then check both tables, then write. A row
-    of its own that nothing else locks, taken before anything else (as pm.services.lock_planner); SQLite runs one writer at a time."""
+    of its own that nothing else locks, taken before anything else (as pm.services.lock_planner); SQLite runs one writer at a time.
+    Before a device's work and the work order numbering too (workorders.services.lock_numbering): create_asset numbers a new device's
+    incoming inspection under it, and Add device and Add rental or loaner take it before inserting a new department or model, so a
+    devices import chunk that may add a device, or that numbers, takes it at its load, before the chunk's devices' work and the
+    numbering, never after."""
     from apps.core.models import Sequence
     from apps.tenants.context import get_current_tenant
 
@@ -647,8 +652,15 @@ def _save_model(device_model: DeviceModel, values: dict, *, by=None, reason: str
     takes. Returns the fields that changed."""
     # Onto the row as it is now, locked: the caller's copy may predate another change (an AEM approval sets aem_interval_months),
     # and saving that copy whole would write the old value back. The caller's copy is refreshed afterwards.
-    fresh = DeviceModel.objects.select_for_update().get(pk=device_model.pk)
+    # FOR NO KEY UPDATE (apps.pm.aem._lock): a device naming the model is never kept waiting for it at its COMMIT, unless this save
+    # renames the model (a key change holds it FOR UPDATE: a devices import chunk takes the models it names FOR KEY SHARE first)
+    fresh = DeviceModel.objects.select_for_update(no_key=True).get(pk=device_model.pk)
     changed = [f for f, v in values.items() if getattr(fresh, f) != v]
+    if {"manufacturer", "model"} & set(changed):
+        # A rename changes the model's key: FOR UPDATE, which waits for a writer holding the model FOR KEY SHARE (a devices import chunk
+        # names it from its load, and may add a model of the new name meanwhile), then the name checked again under it
+        DeviceModel.objects.select_for_update().get(pk=device_model.pk)
+        _check_model_unique(values.get("manufacturer", fresh.manufacturer), values.get("model", fresh.model), exclude=fresh)
     previous = {f: getattr(fresh, f) for f in changed}
     for f in changed:
         setattr(fresh, f, values[f])
@@ -875,17 +887,21 @@ def status_label(asset) -> str:
 EDITABLE_FIELDS = ("serial", "device_model", "department", "room", "installed_on", "acquisition_cost", "warranty_end", "condition", "next_pm_on", "notes")
 
 
-def _locked_row(asset: Asset) -> Asset:
+def _locked_row(asset: Asset, *, numbering_on: date | None = None) -> Asset:
     """The device's row as it is now, locked until the transaction ends (slice 26 review fix): update_asset and set_status work on it,
     never on the caller's copy, which may predate a passed incoming inspection (the pass clears awaiting_inspection and starts the PM
     clock; a full save of an older copy, read by a page, the API, or an import chunk before the pass, would put them back). Its open
     work orders first, in number order (its open incoming inspections among them: inspections.lock_open's order), then its row.
     Slice 28 merge fix: every writer takes a device's work orders before its row (workorders.services._lock_for_hold, a start or
     completion, reads the hold that way), so retiring (which cancels open PMs) and a new next PM (which moves the open PM) never hold
-    the device's row while waiting for a work order a start holds."""
-    from apps.workorders.services import lock_work
+    the device's row while waiting for a work order a start holds. `numbering_on`: the writer may open a work order dated that day once
+    it holds the row, so the work order numbering of its year comes between the work and the row (workorders.services.lock_numbering:
+    the order a batch keeps, numbering before each device)."""
+    from apps.workorders.services import lock_numbering, lock_work
 
     lock_work(asset.pk)
+    if numbering_on is not None:
+        lock_numbering(numbering_on.year)
     return Asset.objects.select_for_update().get(pk=asset.pk)
 
 
@@ -975,7 +991,8 @@ def _move_open_pm(asset: Asset, by=None) -> None:
 
 
 @transaction.atomic
-def set_status(asset: Asset, to_status: str, *, by=None, note: str = "", today: date | None = None, changed_on: date | None = None) -> Asset:
+def set_status(asset: Asset, to_status: str, *, by=None, note: str = "", today: date | None = None, changed_on: date | None = None,
+               may_number: bool = True) -> Asset:
     """Move a device along STATUS_CHANGES. Retiring cancels its open PM work orders that can be cancelled and refuses while any
     other work is open (finish or cancel it first); the device leaves the PM schedule (_retire). Reinstating puts it back with a PM
     due today. `note` is kept in the device's history. `changed_on` dates the history row on an earlier day (not before the install
@@ -992,11 +1009,21 @@ def set_status(asset: Asset, to_status: str, *, by=None, note: str = "", today: 
     Slice 30, checks after a repair: never in service or on loan (HOLD) while a repair holds the device out (an open repair that tagged
     it out: workorders.services.holding_repairs; or, for a device in repair, any open repair): refused in words naming it
     (repair_hold_message). Completing that repair with its checks after repair returns the device. A device tagged out by hand with no
-    repair work order is not held this way."""
+    repair work order is not held this way.
+    Locks: the device's work and row (_locked_row); reinstating a device waiting for its incoming inspection takes the work order
+    numbering between them (workorders.services.lock_numbering), since it opens one, as a batch takes the numbering before each device
+    (one that became retired and waiting after the check before the locks is refused in words: CHANGED_MEANWHILE). `may_number=False`:
+    the caller holds other devices' rows and decided before them not to take the numbering (a devices import chunk, at its load), so a
+    reinstate that would open an inspection is refused in the same words, never numbered after those rows."""
     today = today or timezone.localdate()
     if to_status not in AssetStatus.values:
         raise ValidationError("Choose a device status.")
-    caller, asset = asset, _locked_row(asset)  # the row as it is now (review fix: never a copy from before a pass)
+    # Reinstating a device waiting for its incoming inspection opens one: the numbering before its row (lock_numbering), decided on the
+    # row as committed now; a device that became so meanwhile is refused, never numbered after its row
+    opens = to_status != AssetStatus.RETIRED and Asset.objects.filter(pk=asset.pk, status=AssetStatus.RETIRED, awaiting_inspection=True).exists()
+    if opens and not may_number:
+        raise ValidationError(CHANGED_MEANWHILE.format(tag=asset.tag))
+    caller, asset = asset, _locked_row(asset, numbering_on=today if opens else None)  # the row as it is now (review fix)
     if asset.incident_hold:  # slice 28: the incident's release is the only way out
         raise ValidationError(held_message(asset))
     refusal = temporary_status_refusal(asset, to_status)  # slice 29: before the general refusal, whose words say "retired"
@@ -1030,6 +1057,8 @@ def set_status(asset: Asset, to_status: str, *, by=None, note: str = "", today: 
         from apps.workorders import inspections
 
         if inspections.open_inspection(asset) is None:
+            if not opens:  # retired and waiting since the read above: its numbering was not taken before its row
+                raise ValidationError(CHANGED_MEANWHILE.format(tag=asset.tag))
             inspections.open_for(asset, by=by, today=today)
     caller.refresh_from_db()
     return caller
@@ -1200,7 +1229,8 @@ def use_before_inspection(asset: Asset, reason: str, *, by=None, today: date | N
     inspects it where it is. Equipment Approve (permissions.can_use_before_inspection) for a user given as `by` (PermissionDenied).
     Refused in words: a device not waiting, or not out of service or missing; a reason not listed is keyed "reason". Slice 28: a
     device held as evidence for an incident investigation is refused first (held_message): only its incident releases it. Returns the
-    device, read again; inspections.open_inspection(asset) is the inspection."""
+    device, read again; inspections.open_inspection(asset) is the inspection. Locks: its open inspections (inspections.lock_open), then,
+    with none open, the work order numbering (workorders.services.lock_numbering: one is opened), then its row."""
     from apps.workorders import inspections
     from apps.workorders.models import Priority, WorkOrderStatusHistory
 
@@ -1210,7 +1240,13 @@ def use_before_inspection(asset: Asset, reason: str, *, by=None, today: date | N
     reason = str(reason or "").strip()
     if reason not in UseBeforeInspection.values:
         raise ValidationError({"reason": "Choose why the device goes into use before its incoming inspection."})
-    inspections.lock_open(asset.pk)  # its inspections, then its row (the order completing one takes): a pass at that moment goes first or after
+    # its inspections, then its row (the order completing one takes): a pass at that moment goes first or after; with none open, one is
+    # opened, so the work order numbering comes before the row (workorders.services.lock_numbering: the order a batch keeps)
+    numbered = not inspections.lock_open(asset.pk)
+    if numbered:
+        from apps.workorders.services import lock_numbering
+
+        lock_numbering(today.year)
     fresh = Asset.objects.select_for_update().get(pk=asset.pk)
     if fresh.incident_hold:  # slice 28: held as evidence, so nobody uses it
         raise ValidationError(held_message(fresh))
@@ -1237,6 +1273,8 @@ def use_before_inspection(asset: Asset, reason: str, *, by=None, today: date | N
     due = today + timedelta(days=1)
     wo = inspections.open_inspection(fresh)
     if wo is None:
+        if not numbered:  # its inspection closed meanwhile: its numbering was not taken before its row
+            raise ValidationError(CHANGED_MEANWHILE.format(tag=fresh.tag))
         wo = inspections.open_for(fresh, by=by, today=today, due_on=due, priority=Priority.HIGH)
     else:
         wo.priority, wo.due_on = Priority.HIGH, min(wo.due_on, due)

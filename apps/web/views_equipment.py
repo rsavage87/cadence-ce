@@ -139,6 +139,9 @@ def _create(request, form: NewDeviceForm):
     d = form.cleaned_data
     try:
         with transaction.atomic():
+            # The facility's tag lock before a new department or model (create_asset takes it): a devices import chunk holds it while
+            # its rows add departments and models (equipment.services.lock_tags, before anything else)
+            eq.lock_tags()
             department = d["department"] or _new_department(d["new_department"])
             device_model = d["device_model"] or eq.create_device_model(**form.model_fields(), by=request.user)
             return eq.create_asset(device_model=device_model, department=department, by=request.user, **form.asset_fields())

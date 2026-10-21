@@ -38,13 +38,14 @@ for the model are accepted. The one skip the check cannot see in an earlier chun
 columns.
 """
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models.functions import Lower
 
 from apps.accounts.models import Level, Module
 from apps.equipment import permissions as eq_perms
 from apps.equipment import services as eq
 from apps.equipment.models import TAG_VALIDATOR, AddedAs, Asset, AssetStatus, Department, DeviceModel, RiskClass
+from apps.workorders.services import lock_devices_work, lock_numbering
 
 from .. import parse
 from ..base import Column, Importer, RowResult, RowSkip
@@ -124,6 +125,17 @@ def _tag_refused(tag: str) -> bool:
     return tag.lower() in eq.RESERVED_TAGS or eq.is_test_equipment_tag(tag)  # slice 35: a test equipment item's tag
 
 
+def _key_share(models) -> None:
+    """The models' rows held FOR KEY SHARE until the transaction ends, in id order. Django has no FOR KEY SHARE, so it is the same
+    query's SQL with the clause (as cybersecurity.services._locked_devices takes devices); SQLite locks nothing."""
+    ids = sorted({m.pk for m in models})
+    if not ids or connection.vendor != "postgresql":
+        return
+    qs = DeviceModel.objects.filter(pk__in=ids).order_by("pk")  # the tenant's models (the manager's filter is in the SQL)
+    sql, params = qs.query.sql_with_params()
+    list(DeviceModel.objects.raw(f"{sql} FOR KEY SHARE OF {connection.ops.quote_name(DeviceModel._meta.db_table)}", params))
+
+
 class _Later:
     """The row's part of the run's summary, handed to the chunk's Context only once the row has gone in: a row skipped half way
     (its savepoint rolled back) adds no department, model, or total that will never exist."""
@@ -200,11 +212,51 @@ class DevicesImporter(Importer):
         tags = {r["tag"].lower() for r in rows if r.get("tag")}
         ctx.cache["assets"] = {a.tag.lower(): a for a in Asset.objects.annotate(tag_lower=Lower("tag")).filter(tag_lower__in=tags)
                                .select_related("device_model", "department")}
-        ctx.cache["departments"] = {d.name.lower(): d for d in Department.objects.all()}
+        ctx.cache["level"] = Level.FULL if ctx.user is None else ctx.user.level_for(eq_perms.MODULE)  # None: the command line, may do all
+        ctx.cache["numbering"] = self._reinstates_waiting(ctx, rows)  # set_status refuses a reinstate that would number when not taken
         makers = {_words(r.get("manufacturer")).lower() for r in rows if r.get("manufacturer")}
         ctx.cache["models"] = {(m.manufacturer.lower(), m.model.lower()): m
                                for m in DeviceModel.objects.annotate(maker=Lower("manufacturer")).filter(maker__in=makers)}
-        ctx.cache["level"] = Level.FULL if ctx.user is None else ctx.user.level_for(eq_perms.MODULE)  # None: the command line, may do all
+        # The chunk holds every lock it takes to its end, so it takes them in the facility's order, each before the rows. The tag lock
+        # first when a row may add a device (create_asset takes it, then may number an incoming inspection) or the chunk numbers (Add
+        # device takes it before inserting a new department or model, then numbers; the chunk's rows insert departments and models
+        # while it holds the numbering): equipment.services.lock_tags is taken before anything else
+        if ctx.cache["numbering"] or any(tag not in ctx.cache["assets"] for tag in tags):
+            eq.lock_tags()
+        # The models its rows name and its devices' models, FOR KEY SHARE: its COMMIT takes them so for a device it adds, moves to
+        # another model, or saves twice (Django's PostgreSQL foreign keys are deferred, and one is checked again on a row the transaction
+        # already wrote), so it takes them now, before its devices' work, as a model writer that ends AEM holds the model before the
+        # devices' work (FOR UPDATE when the same save renames it: its key changed)
+        _key_share([*ctx.cache["models"].values(), *(a.device_model for a in ctx.cache["assets"].values())])
+        # The chunk changes these devices one after another in the file's order (update_asset, set_status: each its work, then its row):
+        # their open work orders first, all in one number order, as every writer of several devices' work takes them
+        # (workorders.services.lock_devices_work: AEM's pull-in, Recorded in error), so the two take turns, never wait in a circle
+        if ctx.cache["assets"]:
+            lock_devices_work([a.pk for a in ctx.cache["assets"].values()])
+        # A row that reinstates a retired device still waiting for its incoming inspection opens one (set_status), after the chunk holds
+        # earlier rows' devices: the work order numbering first, before any device's row (workorders.services.lock_numbering), as a
+        # batch takes it; only for such a row, since the numbering is the facility's busiest lock and the chunk holds it to its end
+        if ctx.cache["numbering"]:
+            lock_numbering(ctx.today.year)
+        ctx.cache["departments"] = {d.name.lower(): d for d in Department.objects.all()}
+
+    def _reinstates_waiting(self, ctx, rows) -> bool:
+        """Whether a row of the chunk may reinstate a device of ours retired while still waiting for its incoming inspection (set_status
+        opens its inspection, a work order number): its file status read and not retired, for a user who may reinstate. A temporary
+        device is never reinstated by the import (TEMPORARY_KEPT_NOTE, RETURNED_KEPT_NOTE); a tag is on one row of the file."""
+        if not self._may(ctx, eq_perms.RETIRE_LEVEL):
+            return False
+        for row in rows:
+            asset = ctx.cache["assets"].get((row.get("tag") or "").lower())
+            if (asset is None or asset.status != AssetStatus.RETIRED or not asset.awaiting_inspection or eq.owner_maintains(asset)):
+                continue
+            try:
+                status = parse.parse_choice(row.get("status") or "", STATUS_WORDS, what="status")
+            except parse.Unreadable:
+                continue
+            if status not in (None, AssetStatus.RETIRED):
+                return True
+        return False
 
     def _may(self, ctx, needed: int) -> bool:
         return ctx.cache["level"] >= needed
@@ -335,10 +387,12 @@ class DevicesImporter(Importer):
             return False
         was = asset.get_status_display().lower()
         try:
-            eq.set_status(asset, status, by=ctx.user, note="Imported", today=ctx.today)
+            eq.set_status(asset, status, by=ctx.user, note="Imported", today=ctx.today, may_number=ctx.cache["numbering"])
         except ValidationError as e:
             asset.refresh_from_db()
-            if asset.incident_hold:  # held a moment ago, after the check above
+            if e.messages and e.messages[0] == eq.CHANGED_MEANWHILE.format(tag=asset.tag):  # the device changed meanwhile: its words
+                result.warn(f"Status kept: {e.messages[0]}")
+            elif asset.incident_hold:  # held a moment ago, after the check above
                 result.warn(HELD_NOTE)
             elif eq.temporary_status_refusal(asset, status):  # slice 29: as read now
                 result.warn(_temporary_kept(asset))

@@ -575,10 +575,12 @@ def hold_device(incident, asset, *, by=None, today=None) -> IncidentHold:
     current = _locked(incident)
     _check_open(current)
     if _live_investigation(current) is None:
-        from apps.workorders.services import lock_work
+        from apps.workorders.services import lock_devices_work
 
         _check(by, perms.can_open_work_order, OPEN_WORK_ORDER_PERMISSION)
-        lock_work(current.asset_id)  # the suspect device's work before the numbering (review fix: lock order)
+        # the suspect's and the held device's work, in one number order, before the numbering and either device's row (review fix: lock
+        # order; one device's work after the other's waited in a circle with AEM's pull-in, which takes several devices' work at once)
+        lock_devices_work([current.asset_id, asset.pk])
         suspect_held = asset.pk == current.asset_id or current.holds.filter(asset_id=current.asset_id, released_on__isnull=True).exists()
         _set_investigation(current, _open_work_order(current.asset, by=by, today=today, held=suspect_held), by)
     hold = _hold(current, asset, by=by, today=today)

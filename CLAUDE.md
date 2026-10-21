@@ -215,7 +215,12 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   work orders but the investigation of an open incident holding it (by identity: incidents.services.investigation_of), read on the
   device's row locked after its work (`_lock_for_hold`, `lock_work`: a device's open work orders in number order, then its row, the
   order complete_work_order, equipment's `_locked_row`, and the incident services keep); `held_work_message`, `hold_blocker` (what a
-  screen offers), `with_held` (My work's `held`); `_on_completed` never returns a held device to service
+  screen offers), `with_held` (My work's `held`); `_on_completed` never returns a held device to service;
+  the facility's lock order: the tag lock (equipment's `lock_tags`, where a writer takes it), then devices' work (`lock_work`; a writer of
+  several devices' work takes all of it first, in one number order: `lock_devices_work`), then the work order numbering (`lock_numbering`,
+  before any device's row: a batch numbers first and takes each device at its COMMIT), then device rows; a model's row is locked FOR NO KEY
+  UPDATE (a deferred foreign key takes it FOR KEY SHARE at COMMIT; a rename's save holds it FOR UPDATE, so a devices import chunk takes
+  the models its rows name FOR KEY SHARE before its devices' work)
 - `apps/pm` PmProcedure, PM generation, on-time math (`pm_due_queryset`; `RETIRED_AND_CANCELLED` excuses a cancelled PM only when its
   device was retired on the PM's due date, from the device's history; `missed_pms`, the PMs not on time as of a
   day; slice 27, `windows.py` the PM completion window, the one rule every compliance figure uses: `Window` / `Windows` from Settings'

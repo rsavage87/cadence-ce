@@ -49,9 +49,10 @@ choice records an outcome (UpdateChoice.records), before lock_work; KEEP and "no
 completion holds the numbering and waits for its device): each device is taken FOR KEY SHARE (services._locked_devices) right after its
 work order's insert, and its model, status, and hold are read from that row. The insert itself holds nothing (review fixes C3, C4): Django
 creates PostgreSQL's foreign keys DEFERRABLE INITIALLY DEFERRED, so a row an insert names is checked, and taken KEY SHARE, only at COMMIT.
-A transaction PostgreSQL ends for a lock conflict (services._lock_conflict: equipment's reinstate and use-before-inspection take a device's
-row and then numbering, the known meeting) answers services.RACE in words, never a 500, and so does a deferred key failing at COMMIT (an
-IntegrityError: a device deleted meanwhile, the openers' backstop).
+A transaction PostgreSQL ends for a lock conflict (services._lock_conflict) answers services.RACE in words, never a 500, and so does a
+deferred key failing at COMMIT (an IntegrityError: a device deleted meanwhile, the openers' backstop). Equipment's reinstate of a waiting
+device and use-before-inspection used to take a device's row and then the numbering, the known meeting; they now take the numbering
+before the row (workorders.services.lock_numbering), and RACE stays the backstop.
 
 As each writer takes them:
 - complete_work_order recording (record_at_completion): register, lock_work, the work order, (its test equipment, a failed PM's numbering

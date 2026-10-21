@@ -49,7 +49,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import BooleanField, Case, Exists, OuterRef, Q, Value, When
 from django.utils import timezone
 
@@ -258,7 +258,48 @@ def lock_work(asset_id, *also) -> None:
     equipment writer of its own (apps.testequipment.services: details, status, calibrations, entered in error, the review) locks only its
     item's row (after the facility's tag lock when it takes one) and takes nothing after it, so no writer waits for a work order while
     holding an item."""
-    rows = WorkOrder.objects.select_for_update().filter(Q(asset_id=asset_id, status__in=OPEN_STATUSES) | Q(pk__in=also)).order_by("number")
+    lock_devices_work([asset_id], *also)
+
+
+def lock_numbering(year: int) -> None:
+    """Hold the facility's work order numbering for `year` (the Sequence row WorkOrder.save takes for a work order opened that year:
+    `wo-<year>`, got or created, never counted here) until the transaction ends. The order every writer keeps: the facility's tag lock
+    where a writer takes it (equipment.services.lock_tags: create_asset, then an incoming inspection's number), a device's work
+    (lock_work; a writer of several devices' work, all of it first: lock_devices_work), then the numbering, then the devices' rows.
+    hold_device opening an investigation and Auto-assign week take every device's work before they number one; a devices import chunk
+    takes this after its devices' work (and after the tag lock, which it takes first then) when one of its rows may reinstate a device
+    waiting for its incoming inspection. A writer that may open a work order after
+    taking a device's row takes this before that row (equipment.services.set_status's reinstate of a device waiting for its incoming
+    inspection, use_before_inspection):
+    a batch holds the numbering for its whole transaction and takes each device after it (a recall batch through its work orders'
+    inserts, at COMMIT: Django's PostgreSQL foreign keys are deferred; slice 38's update batch explicitly), so a writer holding a
+    device's row while it waited for the numbering waited in a circle with it."""
+    from apps.core.models import Sequence
+    from apps.tenants.context import get_current_tenant
+
+    tenant = get_current_tenant()
+    if tenant is None:
+        raise RuntimeError("lock_numbering() needs a tenant context")
+    key = f"wo-{year}"
+    try:
+        with transaction.atomic():  # a savepoint: two first-ever work orders of the year may both try to create the row
+            Sequence.unscoped.get_or_create(tenant=tenant, key=key)  # unscoped + explicit tenant, as Sequence.next
+    except IntegrityError:
+        pass
+    Sequence.unscoped.select_for_update().get(tenant=tenant, key=key)
+
+
+def lock_devices_work(asset_ids, *also) -> None:
+    """lock_work for several devices at once: all their open work orders and the work orders `also` names, in ONE number order, one
+    query, until the transaction ends. Every writer of several devices' work takes this before any device's row (then the devices in
+    the database's tag order, or one after another), never one device's work and row after another's: a sweep holds a device's work and
+    row while another writer holding the lower numbers waits for it. The writers: AEM's pull-in (apps.pm.aem._pull_in, the model's
+    devices in use), an incident's release and Recorded in error (incidents.services._lock_device_work, with the held days' late PMs),
+    hold_device opening an investigation (the suspect and the held device), Auto-assign week (pm.services.assign_week, the week's
+    devices), and a devices import chunk (imports.kinds.devices, the chunk's devices already here). Each device's own lock_work after this
+    takes only what it holds already, or work orders opened since (higher numbers)."""
+    rows = (WorkOrder.objects.select_for_update().filter(Q(asset_id__in=list(asset_ids), status__in=OPEN_STATUSES) | Q(pk__in=also))
+            .order_by("number"))
     list(rows.values_list("pk", flat=True))
 
 

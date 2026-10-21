@@ -15,7 +15,7 @@ from django.utils import timezone
 from apps.equipment.models import Asset, AssetStatus, RiskClass
 from apps.notifications import assignments
 from apps.workorders.models import OPEN_STATUSES, Priority, Source, WorkOrder, WoStatus, WoType
-from apps.workorders.services import create_work_order
+from apps.workorders.services import create_work_order, lock_devices_work
 
 from .dates import month_bounds
 from .schedule import DEFAULT_PM_HOURS, WEEK_DAYS, _planned, week_plan
@@ -250,6 +250,9 @@ def assign_week(*, by=None, today: date | None = None) -> WeekAssignment:
     today = today or timezone.localdate()
     lock_planner()
     result, steps = _week_steps(today)
+    # Every step device's open work orders in one number order before any is assigned (workorders.services.lock_devices_work: assigning
+    # them one at a time in the plan's order waited in a circle with AEM's pull-in, which takes several devices' work at once)
+    lock_devices_work([asset.id for asset, _w, _tech in steps])
     waiting = _first_open_pms([asset.id for asset, w, tech in steps if w is not None and tech is not None])
     with assignments.batch():  # slice 20: each technician gets one email listing the week's PMs now theirs, once this commits
         for asset, w, tech in steps:

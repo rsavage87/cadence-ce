@@ -14,7 +14,8 @@ A case goes proposed -> approved (in force) -> ended, or proposed -> rejected or
   least AEM_HISTORY_YEARS ago, and approval checks again. evidence() is that history, from the facility's own records only; the
   proposal keeps a snapshot of it, so the committee sees what the proposer saw next to today's figures.
 - One open proposal and one interval in force per model (partial unique constraints back this up). Every change locks the
-  model's row first, so two approvals of the same model cannot both win.
+  model's row first, so two approvals of the same model cannot both win. Then its decisions; a pull-in then takes every planned
+  device's open work orders in one number order before any device's row, the order a multi-device writer of work keeps (_pull_in).
 - Separation of duties: the committee signs off on someone else's case, so whoever proposed cannot approve or reject it.
 - A longer interval moves no device's next PM: it applies from each device's next PM, as update_device_model documents for any
   interval change. A shorter one, ending an AEM, or a model becoming excluded (life support, or marked for the manufacturer's
@@ -345,12 +346,17 @@ def pull_in_plan(dm: DeviceModel, interval_months: int, today: date | None = Non
 
 
 def _lock(dm: DeviceModel) -> DeviceModel:
-    """The model's row, locked for this transaction (a no-op on SQLite): every AEM change for a model happens under this lock."""
-    return DeviceModel.objects.select_for_update().get(pk=dm.pk)
+    """The model's row, locked for this transaction (a no-op on SQLite): every AEM change for a model happens under this lock. FOR NO
+    KEY UPDATE, as every writer of a model's row takes it (equipment.services._save_model): a device or work order naming the model is
+    never kept waiting for it at COMMIT (Django's PostgreSQL foreign keys are deferred: the check takes the model FOR KEY SHARE then)
+    while the pull-in holding it waits for that writer's devices' work. A save that renames the model (Edit details: its key) holds it
+    FOR UPDATE, so a devices import chunk takes the models its rows name FOR KEY SHARE at its load, before its devices' work."""
+    return DeviceModel.objects.select_for_update(no_key=True).get(pk=dm.pk)
 
 
 def _locked_decision(decision: AemDecision) -> AemDecision:
-    return AemDecision.objects.select_for_update().select_related("device_model").get(pk=decision.pk)
+    # The join locks the model's row too: FOR NO KEY UPDATE, as _lock
+    return AemDecision.objects.select_for_update(no_key=True).select_related("device_model").get(pk=decision.pk)
 
 
 def _save(obj, by, reason: str) -> None:
@@ -376,8 +382,19 @@ def _set_interval(dm: DeviceModel, months: int | None, by, reason: str, *also) -
 
 
 def _pull_in(dm: DeviceModel, *, by, today: date) -> int:
+    """Bring in every planned device's next PM (pull_in_plan), each through equipment.services.update_asset so its open PM work order
+    moves with it. Locks, after the model's row and its decisions (the callers): the open work orders of every device of the model in
+    use, in one number order (workorders.services.lock_devices_work), and only then the plan, read under them (a PM completion in flight
+    commits first, and one starting later waits, then reads the new interval: never a plan from before it); then each planned device's
+    work and row in the database's tag order (update_asset, pull_in_plan's order). A sweep of one device's work and row after another's
+    waited in a circle with every writer of several devices' work that takes it all first in number order (an incident's Recorded in
+    error, hold_device, Auto-assign week, a devices import chunk): a lower-tagged device with the higher-numbered work order."""
     from apps.equipment.services import update_asset
+    from apps.workorders.services import lock_devices_work
 
+    in_use = list(Asset.objects.filter(device_model=dm, status__in=Asset.ACTIVE_STATUSES, next_pm_on__isnull=False).values_list("pk", flat=True))
+    if in_use:
+        lock_devices_work(in_use)
     plan = pull_in_plan(dm, dm.pm_interval_months, today)
     for asset, due in plan:
         update_asset(asset, next_pm_on=due, by=by, today=today)  # moves the open PM work order with it
