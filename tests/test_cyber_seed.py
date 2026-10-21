@@ -26,12 +26,23 @@ from pg_helpers import as_app_role, needs_postgres
 
 from apps.accounts.models import User
 from apps.cybersecurity import rules
-from apps.cybersecurity.models import DeviceSecurity, Mds2Status, Network, SoftwareRelease
+from apps.cybersecurity.models import (
+    DeviceSecurity,
+    InstalledBy,
+    Mds2Status,
+    Network,
+    SoftwareRelease,
+    SoftwareUpdate,
+    UpdateBasis,
+    UpdateOutcome,
+    UpdateTarget,
+)
+from apps.cybersecurity.updates import PATCHES_PROBLEM, UPDATE_PROBLEM
 from apps.demo.management.commands import seed_demo
 from apps.equipment.models import Asset, AssetStatus, DeviceModel, Ownership
 from apps.tenants.context import tenant_context
 from apps.tenants.models import Tenant
-from apps.workorders.models import RepairCheck, WorkOrder
+from apps.workorders.models import OPEN_STATUSES, RepairCheck, Source, WorkOrder, WoStatus, WoType
 
 PUMP, MONITOR, VENT, BED, C_ARM, STERILIZER, DIALYSIS = ("Alaris 8015 PCU", "IntelliVue MX750", "Hamilton-G5", "Centrella", "Cios Spin",
                                                         "Amsco 400", "2008T BlueStar")
@@ -59,6 +70,16 @@ def manager() -> User:
     return User.objects.get(username=f"{seed_demo.SECURITY_RECORDED_BY}@riverside.example")
 
 
+def installed_pump() -> Asset:
+    """Slice 38: the pump whose update the technician completed as installed today (_software_updates)."""
+    return SoftwareUpdate.objects.get(outcome=UpdateOutcome.INSTALLED, work_order__isnull=False).asset
+
+
+def installed_by() -> User:
+    """Slice 38: the technician who completed it (the batch's assignee)."""
+    return SoftwareUpdate.objects.get(outcome=UpdateOutcome.INSTALLED, work_order__isnull=False).recorded_by
+
+
 # --- what the seed recorded ---------------------------------------------------------------------------------------------------------
 
 def test_the_ce_manager_recorded_profiles_releases_and_devices_through_the_services(seeded):
@@ -68,8 +89,9 @@ def test_the_ce_manager_recorded_profiles_releases_and_devices_through_the_servi
         profiles = {r.device_model.model: r for r in rows if r.is_profile}
         assert set(profiles) == {m for m, _ in seed_demo.SECURITY_PROFILES} == {PUMP, MONITOR, VENT, BED, C_ARM, STERILIZER}
         versions = sorted((r.device_model.model, r.version) for r in rows if not r.is_profile)
-        assert versions == sorted((m, v) for m, v, _ in seed_demo.SECURITY_RELEASES) == [
-            (PUMP, "5.2 (demo)"), (PUMP, "5.6 (demo)"), (MONITOR, "3.1 (demo)"), (MONITOR, "3.4 (demo)")]
+        # slice 38: the C-arm's release, added when CE found the other C-arm on it (_software_updates)
+        assert versions == sorted([*((m, v) for m, v, _ in seed_demo.SECURITY_RELEASES), (C_ARM, seed_demo.C_ARM_RELEASE)]) == [
+            (PUMP, "5.2 (demo)"), (PUMP, "5.6 (demo)"), (C_ARM, "7.2 (demo)"), (MONITOR, "3.1 (demo)"), (MONITOR, "3.4 (demo)")]
         # fictional: every version reads "(demo)", every MDS2 document number DEMO-, the OS's name is made up, no link anywhere
         assert all("(demo)" in v for _, v in versions) and not any(r.removed_on for r in rows)
         assert sorted(r.mds2_document for r in rows if r.mds2_document) == ["DEMO-MDS2-0001", "DEMO-MDS2-0002", "DEMO-MDS2-0003"]
@@ -85,7 +107,10 @@ def test_the_ce_manager_recorded_profiles_releases_and_devices_through_the_servi
         # patient monitor of ours (connected here, wired); the vendor loaner pump recorded the day it came; a C-arm off the network
         facts = {s.asset.tag: s for s in DeviceSecurity.objects.select_related("asset", "release", "checked_by")}
         pumps, monitors = ours(PUMP), ours(MONITOR)
-        assert [facts[a.tag].release.version for a in pumps[:12]] == ["5.2 (demo)"] * 12
+        installed = installed_pump()  # slice 38: one of them updated to the newer release today (_software_updates)
+        assert installed in pumps[:12] and facts[installed.tag].release_since == today
+        assert [facts[a.tag].release.version for a in pumps[:12]] == [
+            "5.6 (demo)" if a == installed else "5.2 (demo)" for a in pumps[:12]]
         assert [facts[a.tag].release.version for a in pumps[12:-4]] == ["5.6 (demo)"] * (len(pumps) - 16)
         assert not [a for a in pumps[-4:] if a.tag in facts]
         assert {facts[a.tag].release_since for a in pumps[12:-4]} == {today - 150 * DAY}
@@ -96,13 +121,19 @@ def test_the_ce_manager_recorded_profiles_releases_and_devices_through_the_servi
             "5.6 (demo)", Network.WIRELESS, loaner.asset.arrived_on, loaner.asset.arrived_on)
         c_arm = facts[ours(C_ARM)[0].tag]
         assert (c_arm.release, c_arm.network, c_arm.checked_on) == (None, Network.NOT_CONNECTED, today - 20 * DAY)
-        assert len(facts) == len(pumps) - 4 + len(monitors) + 2
+        # slice 38: the other C-arm found on its release at the last round of checks, the manufacturer's patches recorded since
+        other = facts[ours(C_ARM)[1].tag]
+        assert (other.release.version, other.release_since, other.checked_on) == (
+            "7.2 (demo)", today - seed_demo.C_ARM_FOUND_DAYS_AGO * DAY, today - seed_demo.C_ARM_PATCHED_DAYS_AGO * DAY)
+        assert len(facts) == len(pumps) - 4 + len(monitors) + 3
 
-        # each by the CE manager, with history saying who; the North Campus has none
-        rob = manager()
-        assert {s.checked_by_id for s in facts.values()} == {rob.pk}
+        # each by the CE manager, with history saying who (slice 38: but the pump the technician updated today, recorded at its
+        # completion by him); the North Campus has none
+        rob, technician = manager(), installed_by()
+        assert {s.checked_by_id for s in facts.values() if s.asset != installed} == {rob.pk}
+        assert facts[installed.tag].checked_by == technician
         assert {h.history_user_id for h in SoftwareRelease.history.all()} == {rob.pk}
-        assert {h.history_user_id for h in DeviceSecurity.history.all()} == {rob.pk}
+        assert {h.history_user_id for h in DeviceSecurity.history.all()} == {rob.pk, technician.pk}
     with tenant_context(Tenant.objects.get(slug="riverside-north")):
         assert not SoftwareRelease.objects.exists() and not DeviceSecurity.objects.exists()
 
@@ -116,17 +147,18 @@ def test_the_fleet_tab_head_figures_each_count_something(seeded):
         beds = len(ours(BED)) + 1  # with the rental bed (slice 29); the bed beyond repair is retired
         assert figures == {
             "no_mds2": (2, 1),  # the beds (none recorded) and the ventilators (requested from the manufacturer)
-            "updates_ended": (12, None),  # the pumps on the older release
-            "no_release": (4 + vents + beds + 1, None),  # pumps not recorded, the ventilators, the beds, the C-arm on the network
+            "updates_ended": (11, None),  # the pumps on the older release (slice 38: one updated today)
+            "no_release": (4 + vents + beds, None),  # pumps not recorded, the ventilators, the beds (slice 38: the C-arm on the network found)
             "not_segmented": (1, None),  # the C-arms
             "segment_not_recorded": (2, None),  # the ventilators and the beds
         }
         assert all(count for count, _ in figures.values())
         rows = {r.device_model.model: r for r in fleet.rows}
         pumps = rows[PUMP]
-        assert [(r.version if r else None, n) for r, n in pumps.by_release] == [("5.2 (demo)", 12), ("5.6 (demo)", len(ours(PUMP)) - 16 + 1),
+        # slice 38: one pump of the older release's updated today (_software_updates)
+        assert [(r.version if r else None, n) for r, n in pumps.by_release] == [("5.2 (demo)", 11), ("5.6 (demo)", len(ours(PUMP)) - 16 + 2),
                                                                                (None, 4)]
-        assert (pumps.updates_ended, pumps.connected, pumps.devices, pumps.mds2_words) == (12, pumps.devices, len(ours(PUMP)) + 1,
+        assert (pumps.updates_ended, pumps.connected, pumps.devices, pumps.mds2_words) == (11, pumps.devices, len(ours(PUMP)) + 1,
                                                                                            "On file for 5.6 (demo)")
         # the patient monitors: the MDS2 on file names the older release; most of them run the newer one
         monitors = rows[MONITOR]
@@ -198,6 +230,69 @@ def test_none_of_the_seeded_words_is_one_the_register_never_says(seeded):
     assert len(said) > 30 and not [w for w in said if never_said(w)], sorted(w for w in said if never_said(w))
 
 
+def test_the_seeded_software_updates(seeded):
+    """Slice 38 (_software_updates, after the register, through apps.cybersecurity.updates): Kim's batch to the pumps' newer release from
+    the older one in one department, its 3 or 4 pumps in tag order, each due on its next PM and assigned to a credentialed in-house
+    technician; the first completed by him as installed today (the pump's record on the newer release since today), the second with
+    the version not confirmed, the rest open; the other C-arm's patches by the manufacturer remotely, recorded by hand on its release.
+    The problems and resolutions name no version or reference; no vendor job; nothing on the ventilators; the North Campus has none."""
+    with tenant_context(seeded):
+        today = timezone.localdate()
+        kim = User.objects.get(username="kim@riverside.example")
+        rows = list(SoftwareUpdate.objects.select_related("asset", "asset__department", "work_order", "work_order__assigned_to",
+                                                         "target_release", "release_before", "release_after", "recorded_by", "opened_by"))
+        batch = sorted((r for r in rows if r.work_order_id), key=lambda r: r.asset.tag)
+        pumps = [r.asset for r in batch]
+        assert len(batch) in seed_demo.UPDATE_DEPARTMENT_PUMPS and len({p.department_id for p in pumps}) == 1
+        assert [p.tag for p in pumps] == sorted(p.tag for p in pumps) and {p.device_model.model for p in pumps} == {PUMP}
+        # the department: the first in DEPTS order with 3 or 4 of the pumps on the older release (the batch took all of them)
+        assert [w.number for w in (r.work_order for r in batch)] == sorted(r.work_order.number for r in batch)
+        wos = [r.work_order for r in batch]
+        assert {(w.type, w.source, w.priority, w.problem, w.requester) for w in wos} == {
+            (WoType.SOFTWARE_UPDATE, Source.MANUAL, "normal", UPDATE_PROBLEM, str(kim))}
+        assert {(r.target, r.target_release.version, r.opened_on, r.opened_by_id) for r in batch} == {
+            (UpdateTarget.RELEASE, seed_demo.PUMP_NEWER, today, kim.pk)}
+        assert all(w.due_on == (max(p.next_pm_on, today) if p.next_pm_on else today + seed_demo.UPDATE_DUE_DAYS * DAY)
+                   for w, p in zip(wos, pumps, strict=True))
+        technician = {w.assigned_to for w in wos}
+        assert len(technician) == 1 and not any(w.vendor_service for w in wos)
+        technician = technician.pop()
+        assert technician.user is not None and "Infusion pumps" in {c.value for c in technician.credentials.all()}
+
+        installed, unconfirmed, *still_open = batch
+        assert (installed.work_order.status, installed.outcome, installed.basis, installed.applied_on, installed.recorded_by) == (
+            WoStatus.COMPLETED, UpdateOutcome.INSTALLED, UpdateBasis.MANUFACTURER_RELEASE, today, technician.user)
+        assert (installed.release_before.version, installed.release_after.version) == (seed_demo.PUMP_OLDER, seed_demo.PUMP_NEWER)
+        assert rules.update_words(installed) == (f"{seed_demo.PUMP_NEWER} installed {rules.day_words(today)} (recorded before: "
+                                                 f"{seed_demo.PUMP_OLDER})")
+        assert installed.work_order.resolution == "Software update installed; version recorded."
+        assert rules.release_of(installed.asset).version == seed_demo.PUMP_NEWER and installed.asset.cyber.release_since == today
+        assert (unconfirmed.work_order.status, unconfirmed.outcome, unconfirmed.work_order.resolution) == (
+            WoStatus.COMPLETED, "", seed_demo.UPDATE_NOT_CONFIRMED_RESOLUTION)
+        assert rules.update_state(unconfirmed) == rules.NOT_CONFIRMED and rules.release_of(unconfirmed.asset).version == seed_demo.PUMP_OLDER
+        assert still_open and all(r.work_order.status in OPEN_STATUSES and rules.update_state(r) == rules.OPEN for r in still_open)
+        for w in wos:
+            assert "demo" not in f"{w.problem} {w.resolution}" and "DEMO" not in f"{w.problem} {w.resolution}"
+
+        hand = [r for r in rows if not r.work_order_id]
+        assert len(hand) == 1
+        hand = hand[0]
+        patched = today - seed_demo.C_ARM_PATCHED_DAYS_AGO * DAY
+        listed = (patched.replace(day=1) - DAY).strftime("%Y-%m")
+        assert hand.asset == ours(C_ARM)[1] and hand.asset.cyber.network == ""  # the C-arm on the network, never the one kept off it
+        assert (hand.outcome, hand.basis, hand.installed_by, hand.reference, hand.applied_on, hand.recorded_by, hand.later_kept) == (
+            UpdateOutcome.PATCHES, UpdateBasis.VALIDATED_LIST, InstalledBy.MANUFACTURER, f"DEMO-PATCH-{listed}", patched, manager(), False)
+        assert rules.update_words(hand) == (f"Patches on the manufacturer's validated patch list applied {rules.day_words(patched)}, version "
+                                            f"unchanged (7.2 (demo)); ref DEMO-PATCH-{listed}; installed by the manufacturer remotely")
+        assert not WorkOrder.objects.filter(type=WoType.SOFTWARE_UPDATE, vendor_service=True).exists()
+        assert not SoftwareUpdate.objects.filter(asset__device_model__model=VENT).exists()
+        assert not WorkOrder.objects.filter(problem=PATCHES_PROBLEM).exists()
+        said = [rules.update_words(r) for r in rows] + [w.resolution for w in wos]
+        assert not [w for w in said if never_said(w)]
+    with tenant_context(Tenant.objects.get(slug="riverside-north")):
+        assert not SoftwareUpdate.objects.exists()
+
+
 # --- the seeded pages -----------------------------------------------------------------------------------------------------------
 
 def _pending(client, url: str) -> bool:
@@ -258,6 +353,7 @@ def _pages(seeded) -> tuple[list, dict]:
         "/api/v1/software-releases/": ["DEMO-MDS2-0001", "5.2 (demo)"],
         f"/api/v1/device-security/?device_model={pump_model.pk}": ["5.2 (demo)"],
         "/api/v1/device-security/T-0102/": ["5.6 (demo)", "Connected (wireless)"],
+        "/api/v1/software-updates/": ["Open: to install 5.6 (demo)", "version not confirmed", "DEMO-PATCH-", "installed by the manufacturer"],
     }
     never = {"/security/changes/": [fleet_pump], "/security/changes.csv": [fleet_pump]}
     return list(shows), {"shows": shows, "never": never}

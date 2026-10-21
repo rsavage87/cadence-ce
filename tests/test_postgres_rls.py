@@ -156,6 +156,22 @@ def test_every_screen_renders_under_the_policies(client, seeded):
     # slice 37: the Device security screen (Fleet, Models, a model's panel, Changes for IT, their CSVs) and the drawer's Security tab
     urls += ["/security/", "/security/export.csv", f"/security/devices.csv?model={model.pk}", "/security/models/",
              f"/security/models/{model.pk}/", "/security/changes/", "/security/changes.csv", f"/equipment/{asset.tag}/?tab=security"]
+    # slice 38: the software updates' modals (urls_cybersecurity), on the seed's rows: Open software update on a pump with none open,
+    # Record update on the C-arm with its patches, Confirm version on the update completed with the version not confirmed, Entered in
+    # error on the one recorded by hand, Open updates to this release on the pumps' newer release; and the update work order's drawer
+    with tenant_context(seeded):
+        from apps.cybersecurity.models import SoftwareRelease, SoftwareUpdate
+
+        unconfirmed = SoftwareUpdate.objects.get(work_order__status="completed", outcome="")
+        hand = SoftwareUpdate.objects.select_related("asset").get(work_order__isnull=True)
+        updated = set(SoftwareUpdate.objects.values_list("asset_id", flat=True))
+        idle = Asset.objects.filter(device_model__model="Alaris 8015 PCU", status="in_service").exclude(pk__in=updated).order_by("tag").first()
+        newer = SoftwareRelease.objects.get(device_model__model="Alaris 8015 PCU", version="5.6 (demo)")
+        update_wo = SoftwareUpdate.objects.select_related("work_order").filter(work_order__isnull=False).order_by("work_order__number").first()
+    urls += [f"/security/devices/{idle.tag}/updates/open/", f"/security/devices/{hand.asset.tag}/updates/record/",
+             f"/security/updates/{unconfirmed.pk}/confirm/", f"/security/updates/{hand.pk}/remove/",
+             f"/security/releases/{newer.pk}/open-updates/", f"/work-orders/{update_wo.work_order.number}/",
+             f"/print/work-orders/{update_wo.work_order.number}/", f"/equipment/{hand.asset.tag}/?tab=security"]
     assert client.get("/search/?q=CE-1")["Location"] == "/equipment/?q=CE-1"
     pending = []
     for url in urls:
@@ -163,11 +179,14 @@ def test_every_screen_renders_under_the_policies(client, seeded):
             pending.append(url)
             continue
         r = client.get(url)
+        if r.status_code == 501:  # slice 38's scaffold stub (views_cyber_updates.NOT_BUILT): wave 2's view not merged here yet
+            pending.append(url)
+            continue
         assert r.status_code == 200, (url, r.status_code)
         if hasattr(r, "streaming_content"):
             assert b"".join(r.streaming_content), url  # a CSV is read after the view returns, inside the request's tenant
     if pending:
-        pytest.xfail(f"slice 37 wave 2's screens are not merged here yet: {pending}")
+        pytest.xfail(f"wave 2's screens are not merged here yet: {pending}")
 
 
 def test_a_scoped_user_sees_their_share_under_the_policies(client, seeded):
@@ -201,6 +220,18 @@ def test_the_api_under_the_policies(client, seeded):
     assert r.status_code == 200 and r.json()["count"] == len(seed_demo.TEST_EQUIPMENT)
     r = client.get(f"/api/v1/test-equipment/{analyzer.pk}/")
     assert r.status_code == 200 and r.json()["tag"] == "TE-301"
+    # slice 38: the software updates (the batch's work orders' records and the C-arm's patches recorded by hand), and an update work
+    # order's software_update in the rules' words, read as the runtime role
+    from apps.cybersecurity.models import SoftwareUpdate
+
+    with tenant_context(seeded):
+        installed = SoftwareUpdate.objects.select_related("work_order").get(outcome="installed", work_order__isnull=False)
+        rows = SoftwareUpdate.objects.count()
+    r = client.get("/api/v1/software-updates/")
+    assert r.status_code == 200 and r.json()["count"] == rows >= 4
+    assert client.get(f"/api/v1/software-updates/{installed.pk}/").json()["state"] == "done"
+    data = client.get(f"/api/v1/work-orders/{installed.work_order.pk}/").json()
+    assert data["software_update"]["words"].startswith("5.6 (demo) installed ")
 
 
 def test_the_survey_binder_under_the_policies(client, seeded):

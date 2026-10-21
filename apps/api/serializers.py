@@ -17,6 +17,7 @@ from apps.workorders import permissions as wo_perms
 from apps.workorders.completion import checklist_of, checklist_signature, procedure_for, repair_outcomes
 from apps.workorders.models import OPEN_STATUSES, LaborLine, PartLine, RepairCheck, WorkOrder, WoStatus, WoType
 
+from . import serializers_cybersecurity as cyber
 from .serializers_testequipment import test_equipment_of
 from .serializers_vendors import engineer_choices
 
@@ -268,14 +269,18 @@ def finding_limits(rows) -> dict:
 
 
 class WorkOrderListSerializer(serializers.ListSerializer):
-    """A page of work orders: what limits each open repair's findings read in one go (finding_limits, slice 33), not once per row; and
-    the test equipment each recorded (slice 35: serializers_testequipment.test_equipment_of, at most four queries for the page, none for a
-    reader who does not read test equipment)."""
+    """A page of work orders: what limits each open repair's findings read in one go (finding_limits, slice 33), not once per row; the
+    test equipment each recorded (slice 35: serializers_testequipment.test_equipment_of, at most four queries for the page, none for a
+    reader who does not read test equipment); and the software update records of the page's update work orders (slice 38:
+    serializers_cybersecurity.updates_of, one query for the page, none for a reader without Device security View and Equipment View or
+    a page with no update)."""
 
     def to_representation(self, data):
         items = list(data.all() if isinstance(data, models.manager.BaseManager) else data)
+        user = getattr(self.context.get("request"), "user", None)
         self.context["_finding_limits"] = finding_limits(items)
-        self.context["_test_equipment"] = test_equipment_of(items, getattr(self.context.get("request"), "user", None))
+        self.context["_test_equipment"] = test_equipment_of(items, user)
+        self.context["_software_updates"] = cyber.updates_of(items, user)
         return super().to_representation(items)
 
 
@@ -303,6 +308,12 @@ class WorkOrderSerializer(serializers.ModelSerializer):
     # for a reader who does not read test equipment (a scoped user; without Equipment View). Written only by the transition to completed
     # and POST {id}/test-equipment/.
     test_equipment = serializers.SerializerMethodField()
+    # Slice 38: a software update work order's record (what it is to install and what it did, in apps.cybersecurity.rules' words) and,
+    # on a single work order, what its completion may send: null for a reader without Device security View and Equipment View (a
+    # scoped user never reads them). Recorded only by the transition to completed (software_outcome, ...) or on the Device security
+    # screen.
+    software_update = serializers.SerializerMethodField()
+    software_choices = serializers.SerializerMethodField()
 
     class Meta:
         model = WorkOrder
@@ -312,7 +323,8 @@ class WorkOrderSerializer(serializers.ModelSerializer):
                   "problem", "resolution", "estimated_hours", "tagged_out", "is_late", "total_cost", "labor_lines", "part_lines", "updated_at",
                   "pm_result", "checklist_results", "follow_up_of", "legacy_number", "late_reason", "late_reason_label", "inspection_result",
                   "inspection_result_label", "repair_check", "repair_check_label", "checks_reference", "completion_checklist", "vendor_engineer",
-                  "vendor_engineer_name", "engineer_choices", "repair_finding", "repair_finding_label", "test_equipment"]
+                  "vendor_engineer_name", "engineer_choices", "repair_finding", "repair_finding_label", "test_equipment", "software_update",
+                  "software_choices"]
         # Slice 15: what a completion recorded (transition to completed, apps.workorders.completion) is read here, never written.
         # Slice 23: so is an imported work order's number in the previous system (apps.workorders.legacy sets it, once).
         # Slice 25: so is why a PM was late (the model field is editable=False): POST {id}/late-reason/ or the completion records it.
@@ -396,6 +408,44 @@ class WorkOrderSerializer(serializers.ModelSerializer):
         if wo.pk not in known:
             known.update(test_equipment_of([wo], self._user()))
         return known[wo.pk]
+
+    def get_software_update(self, wo):
+        """Slice 38: a software update work order's record, for a reader with Device security View and Equipment View
+        (serializers_cybersecurity.work_order_update): {"target", "target_release" ({"id", "version"} or null), "target_reference",
+        "state" (open, done, not_confirmed, cancelled: rules.update_state), "outcome" and "outcome_label" ("" while nothing is
+        recorded), "words" (rules.update_words: "Open: to install 5.6 (demo)", "5.6 (demo) installed Oct 20, 2026 (recorded before: 5.2
+        (demo))", "Completed Oct 20, 2026; version not confirmed", ...), "applied_on", "release_after" ({"id", "version"} or null)}.
+        Null on any other type, on an update imported from another system (no record), and for every other reader (a scoped user, one
+        without Device security View or Equipment View): the type and the neutral problem are all they read. A list's page is read at
+        once (WorkOrderListSerializer: one query), else this work order alone (one query, none for another type)."""
+        if "_software_updates" not in self.context:
+            self.context["_software_updates"] = cyber.updates_of([wo], self._user())
+        known = self.context["_software_updates"]
+        if known is None or wo.type != WoType.SOFTWARE_UPDATE:
+            return None
+        if wo.pk not in known:
+            known.update(cyber.updates_of([wo], self._user()))
+        update = known[wo.pk]
+        return cyber.work_order_update(update) if update is not None else None
+
+    def get_software_choices(self, wo):
+        """Slice 38, on a single work order (left out of a list's rows: it reads rows): what completing this software update may record,
+        for a user who may record it (apps.cybersecurity.rules.release_offer: Device security Edit and Equipment View, never scoped; the
+        device on site; an update opened from the Device security screen) and may complete it now (open, Work orders Edit), as
+        engineer_choices is offered: {"needed" (true: software_outcome must be sent), "target", "target_release", "target_reference",
+        "target_words", "outcomes" [{"value", "label"}] (installed, patches, already, not_confirmed), "releases" [{"id", "version",
+        "recorded"}] (the model's, the one the device's record names marked), "bases" {outcome: [{"value", "label"}]}}
+        (serializers_cybersecurity.software_choices). Null otherwise. The transition to completed sends software_outcome,
+        software_release (a release's id), software_reference, and software_basis."""
+        from apps.cybersecurity import rules as cyber_rules
+
+        user = self._user()
+        if self._in_list() or user is None or wo.type != WoType.SOFTWARE_UPDATE or wo.status not in OPEN_STATUSES:
+            return None
+        if not wo_perms.can_transition(user, wo.status, WoStatus.COMPLETED):
+            return None
+        offer = cyber_rules.release_offer(wo, user)
+        return cyber.software_choices(offer) if offer is not None else None
 
     def _user(self):
         return getattr(self.context.get("request"), "user", None)

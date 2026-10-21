@@ -15,6 +15,10 @@ are their own endpoint, behind Device security View and Equipment View, never a 
 
 - release_data(release, ...): one row of GET software-releases/.
 - device_data(standing, ...): one row of GET device-security/ (a rules.DeviceStanding).
+- update_data(update): one row of GET software-updates/ (slice 38), as the device's Security tab shows it.
+- updates_of(...), work_order_update(...), software_choices(...): a work order's software_update and software_choices
+  (serializers.WorkOrderSerializer, slice 38), only for Device security View and Equipment View (shows_updates) and only where
+  rules.release_offer offers a choice: never a version, a reference, or a target to anyone else.
 """
 from django.urls import reverse
 from rest_framework import serializers
@@ -130,14 +134,107 @@ class DeviceSecuritySerializer(serializers.BaseSerializer):
         return device_data(standing)
 
 
+def release_ref(release):
+    """A release an update names: {"id", "version"} (the version as the manufacturer writes it; the words say "(entered in error since)"
+    for one entered in error since), or None."""
+    return {"id": str(release.pk), "version": release.version} if release is not None else None
+
+
 def update_data(update) -> dict:
-    """GET software-updates/ (slice 38): one update as the device's Security tab shows it. Scaffold: the identity only; wave 2 adds the
-    target, the outcome and its words (rules.update_words), the state (rules.update_state), and the work order's number (never a link)."""
-    return {"id": str(update.pk), "tag": update.asset.tag}
+    """GET software-updates/ (slice 38): one update as the device's Security tab shows it, read with its device, work order, releases,
+    and who recorded it (the viewset's select_related: no query). Every word is the rules' (rules.update_state, STATE_LABELS,
+    update_words): id; device {id, tag}; work_order {id, number} (an install recorded by hand has none: null; never a link, which
+    would need Work orders View); target ("release", "patches", "" for a hand row), target_release {id, version} or null,
+    target_reference (a token); state (open, done, not_confirmed, cancelled) and state_label; outcome ("installed", "patches",
+    "already", "" while nothing is recorded) and outcome_label; words (the sentence the tab shows); applied_on; release_before and
+    release_after ({id, version} or null); reference (a token); basis and basis_label; installed_by and installed_by_label (a hand
+    row's); recorded_by (a name, null when none or the system); later_kept (the device's facts were newer: kept, not written);
+    opened_on (a work order's)."""
+    from apps.cybersecurity.models import InstalledBy, UpdateBasis, UpdateOutcome
+
+    wo = update.work_order if update.work_order_id else None
+    state = rules.update_state(update)
+    return {"id": str(update.pk), "device": {"id": str(update.asset_id), "tag": update.asset.tag},
+            "work_order": {"id": str(wo.pk), "number": wo.number} if wo is not None else None,
+            "target": update.target, "target_release": release_ref(update.target_release if update.target_release_id else None),
+            "target_reference": update.target_reference, "state": state, "state_label": rules.STATE_LABELS[state],
+            "outcome": update.outcome, "outcome_label": label(UpdateOutcome, update.outcome), "words": rules.update_words(update),
+            "applied_on": _day(update.applied_on),
+            "release_before": release_ref(update.release_before if update.release_before_id else None),
+            "release_after": release_ref(update.release_after if update.release_after_id else None),
+            "reference": update.reference, "basis": update.basis, "basis_label": label(UpdateBasis, update.basis),
+            "installed_by": update.installed_by, "installed_by_label": label(InstalledBy, update.installed_by),
+            "recorded_by": str(update.recorded_by) if update.recorded_by_id else None, "later_kept": update.later_kept,
+            "opened_on": _day(update.opened_on)}
 
 
 class SoftwareUpdateSerializer(serializers.BaseSerializer):
-    """GET software-updates/: each a SoftwareUpdate, read with its device, work order, and releases (the viewset's select_related)."""
+    """GET software-updates/: each a SoftwareUpdate, read with its device, work order, releases, and recorder (the viewset's
+    select_related)."""
 
     def to_representation(self, update):
         return update_data(update)
+
+
+# --- a work order's software update (serializers.WorkOrderSerializer: software_update and software_choices) ------------------------
+
+NOT_CONFIRMED_LABEL = "Not confirmed now"  # the completion's fourth choice (updates.NOT_CONFIRMED), as the modal's radio reads
+
+
+def shows_updates(user) -> bool:
+    """Whether `user` reads what a software update work order is to install and what it did: Device security View and Equipment
+    View, never a scoped user (permissions.can_view_devices, the Security tab's door)."""
+    from apps.cybersecurity import permissions as perms
+
+    return user is not None and getattr(user, "is_authenticated", False) and perms.can_view_devices(user)
+
+
+def updates_of(work_orders, user) -> dict | None:
+    """{work order id: its SoftwareUpdate, or None} for the software update work orders among `work_orders` (None: one with no record,
+    imported from another system), each with its target and releases read and its work order set to the one given (its words read it):
+    one query for a page, none without an update work order; None when `user` does not read them (no query)."""
+    from apps.cybersecurity.models import SoftwareUpdate
+    from apps.workorders.models import WoType
+
+    if not shows_updates(user):
+        return None
+    rows = {w.pk: w for w in work_orders if w.type == WoType.SOFTWARE_UPDATE}
+    if not rows:
+        return {}
+    found = dict.fromkeys(rows)
+    for update in (SoftwareUpdate.objects.filter(work_order_id__in=list(rows))
+                   .select_related("target_release", "release_before", "release_after")):
+        update.work_order = rows[update.work_order_id]
+        found[update.work_order_id] = update
+    return found
+
+
+def work_order_update(update) -> dict:
+    """A work order's software_update: what it is to install (target, target_release {id, version} or null, target_reference), its state
+    and the sentence (rules.update_state, update_words), and once recorded what it did (outcome and outcome_label, applied_on,
+    release_after {id, version} or null)."""
+    from apps.cybersecurity.models import UpdateOutcome
+
+    return {"target": update.target, "target_release": release_ref(update.target_release if update.target_release_id else None),
+            "target_reference": update.target_reference, "state": rules.update_state(update), "outcome": update.outcome,
+            "outcome_label": label(UpdateOutcome, update.outcome), "words": rules.update_words(update),
+            "applied_on": _day(update.applied_on),
+            "release_after": release_ref(update.release_after if update.release_after_id else None)}
+
+
+def software_choices(offer) -> dict:
+    """A work order's software_choices from rules.release_offer's Offer: what its completion may send. needed (true while nothing is
+    recorded: software_outcome must then be sent); the target (target, target_release {id, version} or null, target_reference) and
+    target_words (the sentence: "Open: to install 5.6 (demo)"); outcomes [{value, label}] (installed, patches, already, then
+    not_confirmed: nothing recorded now); releases [{id, version, recorded}] (the model's, in version order, the one the device's record
+    names marked recorded); bases {outcome: [{value, label}]} (the basis each outcome may name: already none)."""
+    from apps.cybersecurity.models import UpdateBasis, UpdateOutcome
+    from apps.cybersecurity.updates import NOT_CONFIRMED
+
+    recorded = offer.recorded.pk if offer.recorded is not None else None
+    return {"needed": offer.needed, "target": offer.target, "target_release": release_ref(offer.target_release),
+            "target_reference": offer.target_reference, "target_words": rules.update_words(offer.update),
+            "outcomes": [*({"value": str(o), "label": UpdateOutcome(o).label} for o in offer.outcomes),
+                         {"value": NOT_CONFIRMED, "label": NOT_CONFIRMED_LABEL}],
+            "releases": [{"id": str(r.pk), "version": r.version, "recorded": r.pk == recorded} for r in offer.releases],
+            "bases": {str(o): [{"value": str(b), "label": UpdateBasis(b).label} for b in offer.bases.get(o, ())] for o in offer.outcomes}}
