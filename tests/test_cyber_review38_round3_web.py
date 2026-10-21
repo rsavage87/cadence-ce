@@ -1,7 +1,7 @@
 """
 Slice 38 review fixes, round 3, the web forms and hints (H2), on SQLite and PostgreSQL:
 
-- Record update's "Release it runs now" starts on "Choose…" (forms_cyber_updates.RecordUpdateForm: no release to begin with, the
+- Record update's "Release installed" (round 4's label) starts on "Choose…" (forms_cyber_updates.RecordUpdateForm: no release to begin with, the
   recorded one only marked "(the device's record now)"). Release installed posted with the select as rendered sends no release and is
   refused (updates.CHOOSE_RUNS_NOW): nothing is written and the device's record, with its since, stays as it was.
 - Confirm version starts on the target release of a release target only (ConfirmForm), else on "Choose…": a patches target, or a

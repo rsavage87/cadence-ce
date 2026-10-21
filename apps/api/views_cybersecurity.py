@@ -47,7 +47,8 @@ GET software-updates/<id>/          One of them, by id.
 Another facility's row is a 404 (as an unknown one), a retired device too (but on software-updates/, which keeps a retired device's
 updates); a level missing a 403 in plain words; any write a 405 naming the Device security screen (with Device security Edit) or a 403
 (without it). What an update work order did is recorded by its transition to completed (POST work-orders/{id}/transition/ with
-software_outcome, software_release, software_reference, software_basis: the work order's software_choices says what this user may send);
+software_outcome, software_release (installed and already only; never with patches), software_reference, software_basis: the work
+order's software_choices says what this user may send);
 the work order itself reads it in software_update (serializers.WorkOrderSerializer), behind the same two levels.
 """
 import uuid

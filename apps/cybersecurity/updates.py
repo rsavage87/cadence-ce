@@ -124,7 +124,7 @@ CORRECT_PERMISSION = "Marking a software update entered in error needs Device se
 CHOOSE_OUTCOME = "Choose what this update did, or Not confirmed now."
 OUTCOME_WORDS = "Choose installed, patches, already, or not_confirmed."
 SEND_OUTCOME = "Send software_outcome: installed, patches, already, or not_confirmed."
-CHOOSE_RUNS_NOW = "Choose the release the device runs now."
+CHOOSE_RUNS_NOW = "Choose the release it runs after the update."  # the completion's now, Confirm's completed day, Record's install day
 REFERENCE_NEEDED = "Enter the manufacturer's patch list and its month or revision, e.g. ICAR-2026-09."
 BASIS_WORDS = "Choose the basis for this update."
 RECORDED_MEANWHILE = "This update was recorded meanwhile."
@@ -134,8 +134,10 @@ ALREADY_RUNS = "{tag} already runs {version}."
 # check_choice, confirm, record
 ONLY_UPDATES = "Only a software update records what it did."
 NOT_FROM_REGISTER = "This work order was not opened from the Device security screen: nothing is recorded on it."
-DUPLICATE = "This install is already recorded on the device's Security tab: {words}."
-PATCHES_NO_RELEASE = "Patches leave the version as recorded: choose no release."
+DUPLICATE = ("This install is already recorded on the device's Security tab: {words}. If it was installed again after another release "
+             "that day, record the release it runs with Record facts.")
+PATCHES_NO_RELEASE = ("Patches leave the version as recorded: choose no release. If the device's recorded release is wrong, correct it "
+                      "with Record facts first.")
 NOT_THE_TARGET = "The device runs {version}, not {target}: keep the work order open, or cancel it."
 # Confirm version's (its work order is completed: it cannot be kept open)
 NOT_THE_TARGET_DONE = "Already on the update means already on {target}, not {version}: choose Installed if it changed, or Patches applied."
@@ -619,6 +621,8 @@ def confirm(update, choice, *, by, today: date | None = None):
         named = _patches_name_none(choice, errors)
         if named and services._pk(choice.release_id, SoftwareRelease) is None:
             errors["software_release"] = CHOOSE_RUNS_NOW
+        elif choice.outcome == UpdateOutcome.INSTALLED and not choice.release_id:  # with the other problems, never after them
+            errors["software_release"] = CHOOSE_RUNS_NOW
     if errors:
         raise ValidationError(errors)
     try:
@@ -632,11 +636,15 @@ def confirm(update, choice, *, by, today: date | None = None):
             if SoftwareUpdate.objects.filter(pk=row.pk).exclude(outcome="").exists():
                 raise ValidationError({"software_outcome": RECORDED_MEANWHILE})
             release = _release_locked(choice.release_id) if named else None
+            # "already" with no release takes the target: read it locked, as it is now (a release entered in error meanwhile is refused),
+            # before the device (the lock order: releases, then devices)
+            takes_target = release is None and choice.outcome == UpdateOutcome.ALREADY and row.target_release_id is not None
+            target = _release_locked(row.target_release_id) if takes_target else row.target_release
             device = _held_device(row.asset_id, "software_outcome")
             if release is not None and not _names(release, device.device_model_id):
                 raise ValidationError({"software_release": CHOOSE_RUNS_NOW})
             problems: dict = {}
-            runs = _release_checks(choice.outcome, release=release, target=row.target_release, errors=problems, done=True)
+            runs = _release_checks(choice.outcome, release=release, target=target, errors=problems, done=True)
             if problems:
                 raise ValidationError(problems)
             if runs is not None and not _names(runs, device.device_model_id):  # the target taken: entered in error since
@@ -707,6 +715,8 @@ def record(asset, choice, *, installed_by: str, applied_on, by, today: date | No
         reference, basis = _fields(choice, errors)
         named = _patches_name_none(choice, errors)
         if named and services._pk(choice.release_id, SoftwareRelease) is None:
+            errors["software_release"] = CHOOSE_RUNS_NOW
+        elif choice.outcome == UpdateOutcome.INSTALLED and not choice.release_id:  # with the other problems, never after them
             errors["software_release"] = CHOOSE_RUNS_NOW
     if not isinstance(installed_by, str) or installed_by not in InstalledBy.values:
         errors["installed_by"] = INSTALLER_WORDS

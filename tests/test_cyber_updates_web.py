@@ -729,7 +729,8 @@ def test_entered_in_error_on_a_hand_row_hides_it_and_keeps_the_facts(client, wor
     r = client.get(remove_url(hand), **MODAL)
     body = unescape(html(r))
     assert "This update recorded by hand on CE-10002 stays on record, marked entered in error" in body
-    assert "CE-10002's facts stay as they are: correct its release with Record facts if it should change." in body
+    assert ("CE-10002's facts stay as they are: if its release should change, correct it with Record facts first, since an update "
+            "recorded again reads the version from the device's record.") in body
     assert rules.update_words(fresh(hand)) in body
     r = client.post(remove_url(hand), {}, **MODAL)
     saved_drawer(r, "CE-10002")

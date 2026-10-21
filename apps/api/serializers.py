@@ -436,7 +436,8 @@ class WorkOrderSerializer(serializers.ModelSerializer):
         "target_words", "outcomes" [{"value", "label"}] (installed, patches, already, not_confirmed), "releases" [{"id", "version",
         "recorded"}] (the model's, the one the device's record names marked), "bases" {outcome: [{"value", "label"}]}}
         (serializers_cybersecurity.software_choices). Null otherwise. The transition to completed sends software_outcome,
-        software_release (a release's id), software_reference, and software_basis."""
+        software_release (a release's id, for installed and already only; never with patches, which keep the version as recorded),
+        software_reference, and software_basis."""
         from apps.cybersecurity import rules as cyber_rules
 
         user = self._user()

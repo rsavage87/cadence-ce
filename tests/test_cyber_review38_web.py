@@ -389,7 +389,7 @@ def test_entered_in_error_on_a_device_on_site_still_offers_both(client, make_use
     complete_work_order(wo, software=UpdateChoice(INSTALLED, str(r56.pk), basis=MR), by=director, today=today)
     client.force_login(director)
     body = unescape(body_of(client.get(f"/security/updates/{row.pk}/remove/", **MODAL)))
-    assert "and Confirm version is offered again" in body and "correct its release with Record facts" in body
+    assert "and Confirm version is offered again" in body and "correct it with Record facts first" in body
     r = client.post(f"/security/updates/{row.pk}/remove/", {}, **MODAL)
     assert toast_of(r) == views.OUTCOME_REMOVED.format(number=wo.number)
 

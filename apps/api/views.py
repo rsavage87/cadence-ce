@@ -738,7 +738,9 @@ class WorkOrderViewSet(TenantViewSet):
           those a calibration since has judged, and the field then reads [].
         - a software update (slice 38), for a user who may record what it did (the work order's software_choices: GET it):
           "software_outcome" ("installed", "patches", "already", or "not_confirmed"; required while nothing is recorded, then left out
-          keeps what was recorded), "software_release" (the id of the release the device runs now, from software_choices),
+          keeps what was recorded), "software_release" (for installed and already only: the id of the release it runs after the
+          update, from software_choices; already may leave it out on a release target, which it then names; patches send none and are
+          refused with one: they keep the version as recorded),
           "software_reference" (the manufacturer's patch list and its month or revision, or a notice number: a token), and
           "software_basis" (one of software_choices' bases for the outcome). Refused from a user who may not record (a scoped user
           among them), never dropped; refused on another type. The others sent with no software_outcome answer what to send, and a

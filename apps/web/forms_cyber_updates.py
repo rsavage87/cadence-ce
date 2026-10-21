@@ -12,7 +12,7 @@ release; the release is for Release installed and Already on the update only, so
 it, or says the version is not recorded, and refuses patches that name a release); "already" names no basis (updates.NO_BASIS
 otherwise). The release's help says so (RELEASE_HELP; RECORD_RELEASE_HELP on Record update, which offers no Already).
 
-The release is a statement, never a default left in place (review round 3): Record update's "Release it runs now" starts on "Choose…"
+The release is a statement, never a default left in place (review round 3): Record update's "Release installed" starts on "Choose…"
 (the recorded release is marked, never chosen), and Confirm version's "Release it ran" (on the day the work order was completed, review
 round 4) starts on the target release of a release target, else on "Choose…". A Release installed sent with the select untouched names
 no release, and the service refuses it (CHOOSE_RUNS_NOW). The marks "(the device's record now)" are information, never a constraint.
@@ -59,7 +59,8 @@ DUE_HELP = "From today. The work order's due day."
 RECORDED_MARK = " (the device's record now)"
 # The release is read for Release installed and Already on the update only (review round 4): patches applied send none
 RELEASE_HELP = "For Release installed or Already on the update. Patches applied keep the version as recorded."
-RECORD_RELEASE_HELP = "For Release installed. Patches applied keep the version as recorded."  # Record update offers no Already
+RECORD_RELEASE_HELP = ("The release installed on the day below, for Release installed. Patches applied keep the version as "
+                       "recorded.")  # Record update offers no Already
 # Confirm version: the release on the day the work order was completed (its record may have moved on since)
 CONFIRM_RELEASE_LABEL = "Release it ran"
 CONFIRM_RELEASE_HELP = "On the day the work order was completed. " + RELEASE_HELP
@@ -209,7 +210,7 @@ class RecordUpdateForm(_UpdateForm):
 
     outcomes = RECORD_OUTCOMES
     software_outcome = _radios("What was done", ((o.value, o.label) for o in RECORD_OUTCOMES))
-    software_release = _select("Release it runs now", RECORD_RELEASE_HELP)
+    software_release = _select("Release installed", RECORD_RELEASE_HELP)
     software_reference = _text("Reference", REFERENCE_HELP, placeholder="e.g. ICAR-2026-09")
     software_basis = _select("Basis for this update", BASIS_HELP)
     installed_by = _select("Installed by", INSTALLED_BY_HELP)

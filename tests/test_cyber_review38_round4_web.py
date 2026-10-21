@@ -262,7 +262,8 @@ def test_record_update_and_confirm_version_send_no_release_with_patches(client, 
 def test_the_release_help_says_it_is_for_installed_and_already_on_every_door(client, make_user, world, it_user, today):
     pump, r56 = world["pump"], world["r56"]
     assert forms.RELEASE_HELP == v.RELEASE_HINT == RELEASE_WORDS
-    assert forms.RECORD_RELEASE_HELP == "For Release installed. Patches applied keep the version as recorded."  # it offers no Already
+    assert forms.RECORD_RELEASE_HELP == ("The release installed on the day below, for Release installed. Patches applied keep the version "
+                                         "as recorded.")  # it offers no Already
     wo, _row = update_wo(pump, r56, assigned_to=world["tom"])
     client.force_login(make_user("technician"))
     sec = section(body_of(client.get(complete_url(wo), **HX)))
@@ -271,7 +272,7 @@ def test_the_release_help_says_it_is_for_installed_and_already_on_every_door(cli
     assert 'aria-describedby="wc-software_release-hint"' in sec
     client.force_login(it_user)
     record = body_of(client.get(record_url(pump), **MODAL))
-    assert field_label_and_help(record, "software_release") == ("Release it runs now", forms.RECORD_RELEASE_HELP)
+    assert field_label_and_help(record, "software_release") == ("Release installed", forms.RECORD_RELEASE_HELP)  # the lead's round 4 follow-up
     _done, row = unconfirmed(world, today, reference="ICAR-2026-09")
     confirm = body_of(client.get(confirm_url(row), **MODAL))
     assert field_label_and_help(confirm, "software_release") == (CONFIRM_LABEL, f"{CONFIRM_HELP}. {RELEASE_WORDS}")

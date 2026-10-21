@@ -60,9 +60,10 @@ RECORDED = "Update recorded for {tag}: {words}"
 CONFIRMED = "{number} confirmed: {words}"
 OPENED_TO_INSTALL = "Opened to install {version}."
 OPENED_TO_PATCH = "Opened to apply the manufacturer's patches{ref}."
-FACTS_STAY = "The device's facts stay as they were: correct its release with Record facts if it should change."
+FACTS_STAY = ("The device's facts stay as they were: if its release should change, correct it with Record facts first, since an update "
+              "recorded again reads the version from the device's record.")
 HAND_REMOVED = "The update recorded by hand on {tag} is marked entered in error. " + FACTS_STAY
-OUTCOME_REMOVED = "{number}'s outcome is marked entered in error: Confirm version is offered again. " + FACTS_STAY
+OUTCOME_REMOVED = "{number}'s outcome is marked entered in error. " + FACTS_STAY + " Then Confirm version, offered again."
 # On a device not on site (retired, or returned to its owner) neither Confirm version nor Record facts is offered: the toast says what
 # was marked and the device's own words (cybersecurity.services._gone: "CE-10002 is retired: its facts stay as they were.")
 HAND_REMOVED_GONE = "The update recorded by hand on {tag} is marked entered in error. {gone}"
