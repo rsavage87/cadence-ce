@@ -60,6 +60,9 @@ APPLIED_HELP = "The day it was installed: not after today, not before the device
 ASSIGN_HELP = "A technician credentialed for this model, or nobody yet: a manager assigns it later, or a technician takes it."
 NO_QUALIFIED = "No active technician holds a credential for this model: leave it unassigned, or assign it from the work order."
 # Where an update goes when it is not assigned to a technician here (the service's rule, updates.open_update's assignment)
+# One device's update, by a user who may not assign: in the singular, as the toast the same open gives says it (views_cyber_updates'
+# LEFT_ONE and THEN_ONE); the batch keeps the service's plural (updates.ASSIGN_NEEDS)
+ASSIGN_NEEDS_ONE = "Left unassigned: assigning needs Work orders Approve, so a manager assigns it or a technician takes it."
 OWNER_ROUTE = "It goes to its owner, {vendor}: a {kind}'s owner installs its updates."
 VENDOR_ROUTE = "It goes to vendor service ({vendor}): updates to this model are installed here by the manufacturer or its service."
 BATCH_VENDOR_ROUTE = "Each goes to vendor service: updates to this model are installed here by the manufacturer or its service."
@@ -123,11 +126,11 @@ def technician_choices(qualified) -> list:
 
 
 def routing(user, updates_by: str, *, vendor: str = "", temporary_kind: str = "") -> tuple[bool, str]:
-    """(whether Assign to is offered, the line saying where the update goes) by open_update's rule: nobody unless the user may assign
-    (updates.ASSIGN_NEEDS); a temporary device to its owner; the manufacturer's model to vendor service; IT or the department to nobody
-    (updates.INSTALLED_HERE); clinical engineering or not recorded: Assign to."""
+    """(whether Assign to is offered, the line saying where the one device's update goes) by open_update's rule: nobody unless the user
+    may assign (updates.ASSIGN_NEEDS, worded for one work order: ASSIGN_NEEDS_ONE); a temporary device to its owner; the manufacturer's
+    model to vendor service; IT or the department to nobody (updates.INSTALLED_HERE); clinical engineering or not recorded: Assign to."""
     if not wo_perms.can_assign(user):
-        return False, updates.ASSIGN_NEEDS
+        return False, ASSIGN_NEEDS_ONE
     if temporary_kind:
         return False, OWNER_ROUTE.format(vendor=vendor, kind=temporary_kind)
     if updates_by == UpdatesBy.MANUFACTURER:
@@ -139,7 +142,8 @@ def routing(user, updates_by: str, *, vendor: str = "", temporary_kind: str = ""
 
 def batch_routing(user, updates_by: str, *, temporary: int) -> tuple[bool, list]:
     """The batch's (whether Assign to is offered, its routing lines): routing's, the manufacturer's model in the plural, and a line for
-    the temporary devices among them (each to its owner) when the user may assign."""
+    the temporary devices among them (each to its owner) when the user may assign. A user who may not assign: the service's plural
+    (updates.ASSIGN_NEEDS), never routing's one-device line."""
     if not wo_perms.can_assign(user):
         return False, [updates.ASSIGN_NEEDS]
     lines = []

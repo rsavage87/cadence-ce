@@ -5,6 +5,7 @@ owner (SET LOCAL ROLE cadence_app, for the rest of the test's transaction), befo
 public portal, every screen, the API, scoped users, and the management commands. A query made where no tenant is set sees no rows
 (or fails a write), as in production. tests/test_rls_paths.py stands in for this on SQLite. Skipped on SQLite.
 """
+from html import unescape
 from io import StringIO
 from urllib.parse import urlsplit
 
@@ -140,7 +141,6 @@ def test_the_public_portal_takes_a_request(client, seeded):
 def test_every_screen_renders_under_the_policies(client, seeded):
     director = User.objects.get(username="kim@riverside.example")
     client.force_login(director)
-    as_app_role()
     urls = ["/", "/equipment/", "/work-orders/", "/work-orders/?mode=board", "/pm/", "/contracts/", "/recalls/", "/reports/", "/users/",
             "/users/roles/", "/users/credentials/", "/settings/", "/account/password/", "/export/equipment.csv",
             "/export/work-orders.csv", "/export/contracts.csv", "/print/labels/?status=in_service", "/print/route-sheets/"]
@@ -173,13 +173,45 @@ def test_every_screen_renders_under_the_policies(client, seeded):
               f"/security/releases/{newer.pk}/open-updates/"]
     urls += [f"/work-orders/{update_wo.work_order.number}/", f"/print/work-orders/{update_wo.work_order.number}/",
              f"/equipment/{hand.asset.tag}/?tab=security"]
+    # Slice 38 review, round 2: the open update work order's completion modal (by HTMX, its "Software on the device" with the target),
+    # the Security tabs with update rows (the C-arm's patches recorded by hand, the pump whose update was completed as installed), the
+    # pumps' panel with the newer release's campaign line, and the change log's software updates area with its CSV and print. Each must
+    # show what it reads: a row the policies hid would still answer 200. What they must show is read here as the suite's role (the
+    # policies bypassed); the pages below as the runtime role.
+    with tenant_context(seeded):
+        from apps.cybersecurity import rules
+        from apps.web.views_wo_release import LEGEND
+
+        with_words = SoftwareUpdate.objects.select_related("asset", "work_order", "target_release", "release_before", "release_after")
+        open_row = with_words.filter(work_order__status="open").order_by("work_order__number").first()
+        installed = with_words.get(outcome="installed", work_order__isnull=False)
+        hand_row = with_words.get(pk=hand.pk)
+        campaign = rules.campaign_words(newer, rules.campaigns(newer.device_model).get(newer.pk))
+        shown = {f"/work-orders/{open_row.work_order.number}/complete/": [LEGEND, rules.update_words(open_row)],
+                 f"/equipment/{installed.asset.tag}/?tab=security": [rules.update_words(installed)],
+                 f"/equipment/{hand.asset.tag}/?tab=security": [rules.update_words(hand_row)],
+                 f"/security/models/{newer.device_model_id}/": [campaign]}
+        logged = [f"{installed.asset.tag} · software update {installed.work_order.number}", f"{hand.asset.tag} · software update recorded"]
+    assert open_row is not None and campaign.startswith("Updates to 5.6 (demo): ") and all(all(w) for w in shown.values())
+    complete = f"/work-orders/{open_row.work_order.number}/complete/"  # the drawer's Mark completed, by HTMX
+    modals.append(complete)
+    urls += [url for url in shown if url not in modals and url not in urls]
+    log = ["/users/log/?area=software_updates", "/users/log/export.csv?area=software_updates", "/users/log/print/?area=software_updates"]
+    urls += log
+    as_app_role()
     assert client.get("/search/?q=CE-1")["Location"] == "/equipment/?q=CE-1"
     for url in urls + modals:
         r = client.get(url, **({"HTTP_HX_REQUEST": "true"} if url in modals else {}))
         assert r.status_code == 200, (url, r.status_code)
         if hasattr(r, "streaming_content"):
-            assert b"".join(r.streaming_content), url  # a CSV is read after the view returns, inside the request's tenant
-    for url in modals:  # opened directly: the device's drawer, or the model's panel
+            body = b"".join(r.streaming_content).decode()  # a CSV is read after the view returns, inside the request's tenant
+            assert body, url
+        else:
+            body = r.content.decode()
+        body = unescape(body)
+        assert all(words in body for words in shown.get(url, [])), (url, [w for w in shown[url] if w not in body])
+        assert url not in log or all(name in body for name in logged), (url, [n for n in logged if n not in body])
+    for url in [u for u in modals if u != complete]:  # opened directly: the device's drawer, or the model's panel
         r = client.get(url)
         assert r.status_code == 302 and client.get(r["Location"]).status_code == 200, (url, r.status_code)
 
@@ -385,6 +417,86 @@ def test_changing_things_under_the_policies(client, seeded):
     r = client.post("/settings/targets/", {"target_pm_pct": "96", "target_uptime_pct": "99.5", "target_mttr_days": "3",
                                            "repair_budget_monthly": "", "labor_rate": "85", "vendor_labor_rate": "215"}, HTTP_HX_REQUEST="true")
     assert r.status_code == 200
+
+
+def test_software_updates_written_under_the_policies(client, seeded):
+    """Slice 38 review, round 2: the slice's writes as the runtime role, each landing in this facility only (stamped with the request's
+    tenant and passing WITH CHECK, with their history; the other facility's rows untouched): Open software update through its view on
+    a pump with none, Open updates to this release (the batch) for one department, Confirm version on the update completed with the
+    version not confirmed, Entered in error on the patches recorded by hand, and the API's transition completing an open update work
+    order with software_outcome (the device's record moves to the release installed)."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.cybersecurity.models import DeviceSecurity, SoftwareRelease, SoftwareUpdate
+    from apps.workorders.models import WoStatus, WoType
+
+    north = Tenant.objects.exclude(pk=seeded.pk).get()  # the seed's second facility, Kim's too
+
+    def counts(tenant) -> dict:
+        """This facility's rows (the history managers are not tenant-scoped: filtered here, as core.history._rows does)."""
+        with tenant_context(tenant):
+            return {"work orders": WorkOrder.objects.count(), "updates": SoftwareUpdate.objects.count(),
+                    "records": DeviceSecurity.objects.count(), "work order history": WorkOrder.history.filter(tenant_id=tenant.pk).count(),
+                    "update history": SoftwareUpdate.history.filter(tenant_id=tenant.pk).count(),
+                    "record history": DeviceSecurity.history.filter(tenant_id=tenant.pk).count()}
+
+    def pump_on(asset) -> int | None:
+        return DeviceSecurity.objects.filter(asset=asset).values_list("release_id", flat=True).first()
+
+    with tenant_context(seeded):
+        today = timezone.localdate()
+        older = SoftwareRelease.objects.get(device_model__model="Alaris 8015 PCU", version="5.2 (demo)")
+        newer = SoftwareRelease.objects.get(device_model__model="Alaris 8015 PCU", version="5.6 (demo)")
+        updated = set(SoftwareUpdate.objects.values_list("asset_id", flat=True))
+        idle = list(Asset.objects.filter(device_model=newer.device_model, status="in_service", incident_hold=False,
+                                         cyber__release=older).exclude(pk__in=updated).order_by("tag")[:2])
+        unconfirmed = SoftwareUpdate.objects.select_related("asset").get(work_order__status=WoStatus.COMPLETED, outcome="")
+        hand = SoftwareUpdate.objects.get(work_order__isnull=True)
+        open_wo = SoftwareUpdate.objects.select_related("work_order").filter(work_order__status=WoStatus.OPEN).order_by("work_order__number")[0].work_order
+    assert len(idle) == 2  # one for Open software update, the other's department for the batch
+    before = {t.slug: counts(t) for t in (seeded, north)}
+    client.force_login(User.objects.get(username="kim@riverside.example"))
+    as_app_role()
+    hx = {"HTTP_HX_REQUEST": "true"}
+    due = (today + timedelta(days=30)).isoformat()
+
+    r = client.post(f"/security/devices/{idle[0].tag}/updates/open/", {"target": "release", "target_release": str(newer.pk),
+                                                                       "due_on": due, "priority": "normal", "assign_to": ""}, **hx)
+    assert r.status_code == 200 and r.get("HX-Retarget") == "#drawer", r.content.decode()[:500]
+    with tenant_context(seeded):
+        opened = SoftwareUpdate.objects.select_related("work_order").get(asset=idle[0])
+        assert opened.tenant_id == opened.work_order.tenant_id == seeded.pk and opened.work_order.type == WoType.SOFTWARE_UPDATE
+        batch_before = SoftwareUpdate.objects.count()
+
+    r = client.post(f"/security/releases/{newer.pk}/open-updates/", {"from_releases": [str(older.pk)], "department": str(idle[1].department_id),
+                                                                     "due_on": due, "priority": "normal", "assign_to": ""}, **hx)
+    assert r.status_code == 200 and r.get("HX-Retarget") == "#drawer", r.content.decode()[:500]
+    with tenant_context(seeded):
+        batch = SoftwareUpdate.objects.count() - batch_before
+        assert batch >= 1 and SoftwareUpdate.objects.filter(asset=idle[1], target_release=newer, work_order__status=WoStatus.OPEN).exists()
+
+    r = client.post(f"/security/updates/{unconfirmed.pk}/confirm/", {"software_outcome": "installed", "software_release": str(newer.pk),
+                                                                      "software_reference": "", "software_basis": "manufacturer_release"}, **hx)
+    assert r.status_code == 200 and r.get("HX-Retarget") == "#drawer", r.content.decode()[:500]
+    r = client.post(f"/security/updates/{hand.pk}/remove/", {}, **hx)
+    assert r.status_code == 200 and r.get("HX-Retarget") == "#drawer", r.content.decode()[:500]
+    r = client.post(f"/api/v1/work-orders/{open_wo.pk}/transition/", {"status": "completed", "software_outcome": "installed",
+                                                                       "software_release": str(newer.pk), "software_basis": "manufacturer_release"},
+                    content_type="application/json")
+    assert r.status_code == 200 and r.json()["software_update"]["state"] == "done", r.content.decode()[:500]
+
+    with tenant_context(seeded):
+        assert SoftwareUpdate.objects.get(pk=unconfirmed.pk).outcome == "installed" and pump_on(unconfirmed.asset_id) == newer.pk
+        assert SoftwareUpdate.objects.get(pk=hand.pk).removed_on == today
+        done = SoftwareUpdate.objects.select_related("work_order").get(work_order=open_wo)
+        assert done.outcome == "installed" and done.work_order.status == WoStatus.COMPLETED and pump_on(done.asset_id) == newer.pk
+    after = {t.slug: counts(t) for t in (seeded, north)}
+    assert after[north.slug] == before[north.slug]  # the other facility: nothing written, nothing changed
+    mine, was = after[seeded.slug], before[seeded.slug]
+    assert mine["work orders"] - was["work orders"] == mine["updates"] - was["updates"] == 1 + batch
+    assert all(mine[k] > was[k] for k in ("work order history", "update history", "record history")), (was, mine)
 
 
 # --- management commands -------------------------------------------------------------------------------------------------------

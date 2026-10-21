@@ -421,7 +421,8 @@ def test_a_technician_opens_one_left_unassigned_in_the_services_words(client, wo
     client.force_login(users["technician"])
     r = client.get(open_url(world["pump"]), **MODAL)
     body = html(r)
-    assert "assign_to" not in r.context["form"].fields and r.context["route"] == updates.ASSIGN_NEEDS and updates.ASSIGN_NEEDS in unescape(body)
+    # review fix (round 2): one device's routing line in the singular, as its toast says it (the batch keeps updates.ASSIGN_NEEDS)
+    assert "assign_to" not in r.context["form"].fields and r.context["route"] == forms.ASSIGN_NEEDS_ONE and forms.ASSIGN_NEEDS_ONE in unescape(body)
     r = client.post(open_url(world["pump"]), open_data(world, today, target="patches", target_reference="ICAR-2026-09",
                                                        target_release=str(world["r56"].pk), priority="high"), **MODAL)
     saved_drawer(r, "CE-10002")

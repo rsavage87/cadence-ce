@@ -7,7 +7,8 @@ Slice 38 review fixes, the web doors (F3), on SQLite and PostgreSQL:
   NOT_CONFIRMED_KEEPS), never that Confirm version records it later; posted, the record stays, as it said.
 - C13: a completion that records what an update did fires cyber-changed (the Device security screen's lists refetch themselves); one
   recording nothing does not.
-- C14: the toasts say "left unassigned" once, worded for how many: "it" for one, "them" for more.
+- C14: the toasts say "left unassigned" once, worded for how many: "it" for one, "them" for more; round 2: the single-device modal's
+  routing line too, the sentence its toast ends with (the batch's modal keeps the plural).
 - C18: Entered in error on a device not on site (retired, or returned to its owner) promises neither Confirm version nor Record facts,
   in the modal or the toast: its facts stay as they were (cybersecurity.services._gone's words).
 """
@@ -27,6 +28,7 @@ from apps.cybersecurity.updates import NOT_CONFIRMED, UpdateChoice
 from apps.equipment import services as eq
 from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, Ownership
 from apps.tenants.context import tenant_context
+from apps.web import forms_cyber_updates as forms
 from apps.web import views_cyber_updates as views
 from apps.web import views_wo_release as v
 from apps.web.forms import NewWorkOrderForm
@@ -257,6 +259,35 @@ def test_one_update_with_nobody_chosen_says_it_in_the_singular(client, make_user
     assert message.lower().count("left unassigned") == 1 and " them" not in message
 
 
+def route_lines(body: str) -> list:
+    return [unescape(line) for line in re.findall(r'<p class="full note cu-route">(.*?)</p>', body)]
+
+
+def test_one_devices_modal_says_left_unassigned_in_the_singular_as_its_toast_does(client, make_user, world, today):
+    """Round 2: the single-device Open software update modal's routing line, for a user who may not assign, is worded for the one work
+    order it opens (forms_cyber_updates.ASSIGN_NEEDS_ONE), the same sentence its toast ends with once saved; the batch's modal keeps
+    the service's plural (updates.ASSIGN_NEEDS)."""
+    client.force_login(make_user("technician"))
+    url = f"/security/devices/{world['pump'].tag}/updates/open/"
+    lines = route_lines(body_of(client.get(url, **MODAL)))
+    assert lines == [forms.ASSIGN_NEEDS_ONE]
+    assert lines == ["Left unassigned: assigning needs Work orders Approve, so a manager assigns it or a technician takes it."]
+    assert " them" not in lines[0] and "takes one" not in lines[0] and updates.ASSIGN_NEEDS not in lines
+    message = toast_of(client.post(url, _open_data(world, today), **MODAL))
+    assert message.endswith(" " + lines[0])  # what the modal said before saving is what the toast says after
+    assert lines[0] == views._left_unassigned(1, updates.ASSIGN_NEEDS, batch=False)
+    batch = route_lines(body_of(client.get(f"/security/releases/{world['r56'].pk}/open-updates/", **MODAL)))
+    assert batch == [updates.ASSIGN_NEEDS]  # several work orders: "them"
+
+
+def test_a_directors_single_modal_names_nobody_chosen_nowhere(client, make_user, world, today):
+    """A user who may assign is offered Assign to on the single-device modal: no routing line, so never the service's plural
+    updates.NOBODY_CHOSEN there (the toast words it for one when nobody is chosen: above)."""
+    client.force_login(make_user("director"))
+    body = body_of(client.get(f"/security/devices/{world['pump'].tag}/updates/open/", **MODAL))
+    assert route_lines(body) == [] and updates.NOBODY_CHOSEN not in unescape(body) and updates.ASSIGN_NEEDS not in unescape(body)
+
+
 @pytest.fixture
 def more_pumps(world, dept, pump_model):
     """P-1 and P-2 on 5.2 (demo) in the ICU, P-5 on 5.2 (demo) in 4 West."""
@@ -367,6 +398,6 @@ def test_entered_in_error_on_a_device_on_site_still_offers_both(client, make_use
 
 def test_no_new_word_here_is_a_never_word():
     words = [v.NOT_CONFIRMED_KEEPS, views.HAND_REMOVED_GONE, views.OUTCOME_REMOVED_GONE, views.LEFT_ONE, views.LEFT_UNASSIGNED,
-             views.THEN_ONE, views.THEN_MANY, *views.UNASSIGNED_WHY.values()]
+             views.THEN_ONE, views.THEN_MANY, *views.UNASSIGNED_WHY.values(), forms.ASSIGN_NEEDS_ONE]
     for text in [*words, *SEEN]:
         assert not never(text), (never(text), text[:300])
