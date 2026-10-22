@@ -1000,17 +1000,25 @@ def support_need(asset_standing, today: date) -> Need | None:
     return None
 
 
-def need_unknown(asset_standing) -> bool:
+def need_unknown(asset_standing, reasons=None) -> bool:
     """Whether what a device's support need turns on is not recorded (review 39 skeptics S3): its connection (neither its own fact nor its
     model's disclosure), or, connected or able to connect, both the end of the manufacturer's security updates (nor the model's support)
-    and the OS vendor's support (or no OS). Such a device has no need as recorded, yet nothing says it needs no decision: Record
-    decision says to record it first (decisions.refusal_for's UNKNOWN), and Needs attention never offers End for a decision because of
-    it. No query."""
+    and the OS vendor's support (or no OS). For a decision being renewed (`reasons`: the kinds it names; skeptics T2), also the fact
+    each of its reasons rests on: SECURITY_UPDATES while the end of the manufacturer's security updates is not recorded (nor the model's
+    support), OS_SUPPORT while the OS vendor's support is not recorded, whatever the other line records (a profile recording the OS for
+    every version, read once a release's own support facts are cleared). Such a device has no need as recorded, yet nothing says it needs
+    no decision: Record decision says to record it first (decisions.refusal_for's UNKNOWN), and Needs attention never offers End for a
+    decision because of it. No query."""
     connection = asset_standing.connection.key
     if connection == CONNECTION_NOT_RECORDED:
         return True
-    return (connection in ON_SITE_KEYS and asset_standing.security.key == SECURITY_NOT_RECORDED
-            and asset_standing.os.key in (OS_NOT_RECORDED, NO_OS))
+    if connection not in ON_SITE_KEYS:
+        return False
+    security = asset_standing.security.key == SECURITY_NOT_RECORDED
+    os_unknown = asset_standing.os.key == OS_NOT_RECORDED
+    named = tuple(reasons or ())
+    return ((security and (os_unknown or asset_standing.os.key == NO_OS)) or (security and SECURITY_UPDATES in named)
+            or (os_unknown and OS_SUPPORT in named))
 
 
 # --- the governing decision ----------------------------------------------------------------------------------------------------------
@@ -1463,6 +1471,30 @@ def decision_devices(decision, today: date) -> list:
                              responses) for a in devices]
 
 
+_SPECIFIC = {MODEL_SCOPE: 0, RELEASE_SCOPE: 1, DEVICE_SCOPE: 2}  # how specific a scope is: the most specific live decision governs
+
+
+def under(decision, devices: list) -> list:
+    """The DecisionDevices of `devices` (decision_devices') the decision governs, or, ended, would govern recorded again for its scope
+    now (none governing them, or a live decision no more specific than its scope): never a device a more specific live decision
+    governs, as Record decision reads a scope (decisions.would_govern; skeptics T0). No query."""
+    if decision.ended_on is None:
+        return [dd for dd in devices if dd.governed]
+    rank = _SPECIFIC[scope_kind(decision)]
+    return [dd for dd in devices if dd.governing is None or _SPECIFIC[scope_kind(dd.governing)] <= rank]
+
+
+def holding_lines(decision, devices: list) -> list:
+    """A decision's "What holds now" (its page and print): the standing lines of the needs of the devices it governs (under), each once,
+    in tag order; never a line that holds only for a device a more specific live decision governs (skeptics T0). No query."""
+    out: list = []
+    for dd in under(decision, devices):
+        for line in dd.need.lines if dd.need is not None else ():
+            if line not in out:
+                out.append(line)
+    return out
+
+
 @dataclass(frozen=True)
 class Check:
     """A Check line (build39 section 3): information, never a refusal. `key` one of the CHECK_ keys; `info` True for the lines that only
@@ -1739,9 +1771,10 @@ def needs_attention(today: date, *, user) -> Attention:
     - ending (information): devices with an end announced within 12 months, no decision governing them, and no update responding (ours
       per model and release, temporary devices each).
     - review_due: live decisions past review whose scope holds a device on site (the badge's count), Review and renew; End instead when
-      no device in its scope has a decidable need now (updated to a supported release, not connected here, ...: Record decision would
-      refuse to renew it, decisions.refusal_for; review 39 F15), and neither while a device in it has no need only because what it
-      turns on is not recorded (need_unknown: the decision's page says what to record first; skeptics S3).
+      no device it governs has a decidable need now (updated to a supported release, not connected here, each under a more specific
+      decision, ...: Record decision would refuse to renew it, decisions.refusal_for; review 39 F15, skeptics T0), and neither while a
+      device it governs has no need only because what it, or a reason the decision names, turns on is not recorded (need_unknown with
+      the decision's reasons: its page says what to record first; skeptics S3, T2).
     - review_soon: live decisions to review within 30 days whose scope holds a device on site, Review and renew (End instead, or
       neither, as review_due).
     - no_device: live decisions whose scope holds no device on site, End.
@@ -1802,11 +1835,13 @@ def needs_attention(today: date, *, user) -> Attention:
             continue
         state = decision_state(d, today)
         if state in (REVIEW_DUE, REVIEW_SOON):
-            # Review and renew while a device in its scope has a decidable need; End only when none needs one as recorded; neither
-            # while one has no need only because what it turns on is not recorded (need_unknown: its page says what to record
-            # first). decisions.refusal_for's kinds, in the same order (skeptics S3).
-            renewable = any(needs[a.pk] is not None and needs[a.pk].decidable for a in held)
-            unknown = not renewable and any(need_unknown(standings[a.pk]) for a in held)
+            # Review and renew while a device it governs has a decidable need (a renewal governs the same devices; never one a more
+            # specific live decision governs: skeptics T0); End only when none needs one as recorded; neither while one has no need
+            # only because what it, or a reason the decision names, turns on is not recorded (need_unknown with its reasons: its page
+            # says what to record first; skeptics S3, T2). decisions.refusal_for's kinds, in the same order.
+            ruled = [a for a in held if governing.get(a.pk) is not None and governing[a.pk].pk == d.pk]
+            renewable = any(needs[a.pk] is not None and needs[a.pk].decidable for a in ruled)
+            unknown = not renewable and any(need_unknown(standings[a.pk], d.reasons) for a in ruled)
             rows[state].append(_decision_row(d, review_words(d, today), held=len(held), may_decide=may_decide, renew=renewable,
                                              end=not renewable and not unknown))
         dds = [_decision_device(a, standings[a.pk], today, governing, d, responses) for a in held]

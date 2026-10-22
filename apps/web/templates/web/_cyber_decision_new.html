@@ -1,7 +1,8 @@
 {% load web %}
 {% comment %}Slice 39: Record decision (views_cyber_decisions.decision_new; decisions.record_decision; Device security Approve and Equipment
-   View). The scope is the door's (the modal's address); the reasons are what holds now for its devices, as words, sent as hidden values
-   (a change meanwhile is refused under them, and the modal comes back with them as they hold then). Then the decision, the controls (the
+   View). The scope is the door's (the modal's address); the reasons are what holds now for the devices the decision would govern
+   (views_cyber_decisions._now: never a device a more specific live decision governs), as words, sent as hidden values (a change
+   meanwhile is refused under them, and the modal comes back with them as they hold then). Then the decision, the controls (the
    support controls as checkboxes with their words; never "taken off the network": the hint says to record that on the device), IT's
    reference for them, the plan with its day and owner, who accepted it, IT's exception number, the day decided, and the review day
    (blank for the default, each response's rule in words). A review day already passed is said once before it is saved, only when

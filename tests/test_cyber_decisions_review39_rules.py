@@ -178,7 +178,9 @@ def test_a_device_under_a_more_specific_decision_joins_when_that_one_ends(floor)
     end_decision(own, by=None, today=TODAY)
     assert checks(on52)[rules.CHECK_JOINED].words == "1 device joined since: P-1"
     assert [r.words for r in headings()["checks"].rows] == [f"{on52.number} · 1 device joined since: P-1"]
-    # a model's decision: the devices on a release with its own decision are that one's, until it ends
+    # a model's decision: the devices on a release with its own decision are that one's, until it ends (P-4 on a release past its
+    # security updates with none of its own: a model's decision governing only devices that need none is refused, skeptics T0)
+    facts(p4, release(floor.model, "4.0 (demo)", security_updates_end_on=TODAY - DAY))
     whole = record(device_model=floor.model)
     assert whole.governed_ids == ids(p4)
     end_decision(on52, by=None, today=TODAY)

@@ -341,7 +341,7 @@ def _page_context(request, d) -> dict:
         "d": d, "sd_url": url, "sentence": rules.decision_words(d, today, fy_start=fy), "sd_state": _state(d, today),
         "scope_label": rules.SCOPE_LABELS[kind], "scope_words": rules.scope_words(d, len(devices) if kind != rules.DEVICE_SCOPE else None),
         "applies": AppliesTo(d.applies_to).label, "reasons": rules.reason_words(d),
-        "now_lines": _unique(line for dd in devices if dd.need is not None for line in dd.need.lines),
+        "now_lines": rules.holding_lines(d, devices),  # the devices it governs, never one a more specific decision governs (skeptics T0)
         "controls": rules.control_words(d), "plan_words": rules.plan_words(d, fy_start=fy), "who": rules.who_words(d),
         "verb": "Decided by" if d.response == DecisionResponse.TAKE_OUT_OF_USE else "Accepted by",
         "accepted": AcceptedBy(d.accepted_by).label, "review": rules.review_words(d, today), "end": rules.end_words(d),
@@ -515,8 +515,9 @@ def _scope(request) -> Scope:
 
 @dataclass(frozen=True)
 class Now:
-    """What holds now for the scope's devices on site: their standings and needs, the decidable ones' reasons (kinds, in REASONS' order)
-    and their standing lines."""
+    """What holds now for the scope: its devices on site (`read`: their standings; the scope's words count them), their needs, and, of
+    the devices the decision would govern (decisions.would_govern: never one a more specific live decision governs), the decidable
+    needs' reasons (kinds, in REASONS' order) and their standing lines."""
 
     read: dict
     needs: dict
@@ -530,10 +531,13 @@ class Now:
 
 
 def _now(scope: Scope, today: date) -> Now:
-    """rules.standings and rules.support_need over the scope's devices on site (fixed queries)."""
+    """rules.standings and rules.support_need over the scope's devices on site; the reasons and lines from the devices the decision would
+    govern recorded now (decisions.would_govern, in place of the one renewed), never a device a more specific live decision governs, as
+    record_decision reads them (skeptics T0). Fixed queries."""
     read = rules.standings(scope.devices(), today)
     needs = {pk: rules.support_need(s, today) for pk, s in read.items()}
-    decidable = [n for n in needs.values() if n is not None and n.decidable]
+    governed = decisions.would_govern([s.asset for s in read.values()], **scope.kwargs(), old=scope.old)
+    decidable = [needs[a.pk] for a in governed if needs[a.pk] is not None and needs[a.pk].decidable]
     reasons = [kind for kind in rules.REASONS if any(kind in n.reasons for n in decidable)]
     return Now(read=read, needs=needs, reasons=reasons, lines=_unique(line for n in decidable for line in n.lines), today=today)
 

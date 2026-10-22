@@ -128,11 +128,12 @@ def test_one_query_as_decisions_grow(floor, dept, today):
         bed = Asset.objects.create(tag=f"B-{i}", device_model=model, department=dept)
         facts(bed, None, network=Network.WIRELESS)
         scope = {"device_model": model} if i % 2 else {"asset": bed}
-        decisions.record_decision(**scope, reasons=["security_updates"], response=DecisionResponse.TAKE_OUT_OF_USE,
-                                  accepted_by=AcceptedBy.CE_LEADER, decided_on=today - 60 * DAY, review_by=today - DAY, by=None, today=today)
-        if not i % 2:  # and the model's own, in force (never counted)
+        if not i % 2:  # and the model's own, in force (never counted), recorded first: once the device has its own, the model's would
+            # govern no device (decisions.GOVERNED_ELSEWHERE, skeptics T0)
             decisions.record_decision(device_model=model, reasons=["security_updates"], response=DecisionResponse.TAKE_OUT_OF_USE,
                                       accepted_by=AcceptedBy.CE_LEADER, by=None, today=today)
+        decisions.record_decision(**scope, reasons=["security_updates"], response=DecisionResponse.TAKE_OUT_OF_USE,
+                                  accepted_by=AcceptedBy.CE_LEADER, decided_on=today - 60 * DAY, review_by=today - DAY, by=None, today=today)
     assert counted() == (1, 5)
 
 
