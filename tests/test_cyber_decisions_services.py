@@ -104,6 +104,9 @@ def test_each_scope_is_recorded_with_its_number_devices_and_history(floor, make_
     assert on52.governed_ids == [str(floor.d[t].pk) for t in ("P-1", "P-2", "P-3")]  # devices of ours only, tag order
     assert (on52.recorded_by, on52.decided_on, on52.review_by) == (kim, TODAY, date(2027, 10, 21))
     assert reasons_of(on52) == ["Recorded"]
+    # P-4 on a release past its security updates with no decision of its own: a model's decision governing only devices that need none
+    # is refused (skeptics T0)
+    facts(floor.d["P-4"], release(floor.model, "4.0 (demo)", security_updates_end_on=TODAY - DAY))
     model_wide = record(device_model=floor.model)
     assert model_wide.number == "SD-26-0002" and model_wide.release_id is None
     assert model_wide.governed_ids == [str(floor.d["P-4"].pk)]  # P-1 to P-3 are governed by 5.2's decision (review 39 F1)
@@ -430,6 +433,7 @@ def test_every_writer_takes_its_locks_in_the_contracts_order(floor, spy):
     record(asset=floor.d["P-1"], supersedes=own)
     assert spy.calls == ["register", "decision", "number", "devices"]
     spy.reset()
+    facts(floor.d["P-4"], release(floor.model, "4.0 (demo)", security_updates_end_on=TODAY - DAY))  # a device the model's decision governs
     record(device_model=floor.model)
     assert spy.calls == ["register", "number"]
     spy.reset()

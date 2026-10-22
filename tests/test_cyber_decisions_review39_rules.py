@@ -178,7 +178,9 @@ def test_a_device_under_a_more_specific_decision_joins_when_that_one_ends(floor)
     end_decision(own, by=None, today=TODAY)
     assert checks(on52)[rules.CHECK_JOINED].words == "1 device joined since: P-1"
     assert [r.words for r in headings()["checks"].rows] == [f"{on52.number} · 1 device joined since: P-1"]
-    # a model's decision: the devices on a release with its own decision are that one's, until it ends
+    # a model's decision: the devices on a release with its own decision are that one's, until it ends (P-4 on a release past its
+    # security updates with none of its own: a model's decision governing only devices that need none is refused, skeptics T0)
+    facts(p4, release(floor.model, "4.0 (demo)", security_updates_end_on=TODAY - DAY))
     whole = record(device_model=floor.model)
     assert whole.governed_ids == ids(p4)
     end_decision(on52, by=None, today=TODAY)
@@ -213,11 +215,12 @@ def test_the_no_release_row_links_to_the_devices_with_no_release(floor):
     shown = filters.parse(dict(row.link.query))
     read = rules.standings(rules.on_site().filter(device_model=floor.model), TODAY)
     assert [s.asset.tag for s in read.values() if shown.keeps(s)] == ["P-3"]  # the model's panel, as the row counts
-    # a release's row stays as it was
+    # a release's row: the panel narrowed by its standing would list 5.2's devices too (decided): its one device's Security tab
+    # (skeptics T1: the panel lists every release's devices of that standing)
     facts(floor.d["P-3"], floor.r52)
     facts(floor.d["P-4"], release(floor.model, "4.0 (demo)", security_updates_end_on=TODAY - DAY))
     (row,) = headings()["no_decision"].rows
-    assert row.link.query == (("whose", "ours"), ("connected", "either"), ("standing", "updates_ended"))
+    assert row.tags == ("P-4",) and row.link == rules.Link("web:asset", ("P-4",), (("tab", "security"),))
 
 
 # --- F3, F14: the review day's words for a temporary device ------------------------------------------------------------------------

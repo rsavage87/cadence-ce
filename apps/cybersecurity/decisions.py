@@ -24,7 +24,8 @@ decided (not after today), the review (after the day decided, by rules.review_ca
 is a token, never a network identifier (network_identifier: an address, a MAC, a VLAN, or a port: NOT_AN_ADDRESS). Then, under the locks:
 the device on site (its row FOR KEY SHARE: a retire in flight is waited for and then read); a release versioned, not entered in error, of
 its model; devices of ours on site in a release's or a model's scope; the scope past its support or an end announced within 12 months
-(rules.support_need over the scope's devices); the reasons those that hold now (none that does not, every one that ended); return it to
+(rules.support_need over the devices the decision would govern: never one a more specific live decision governs, would_govern); the
+reasons those that hold now for those devices (none that does not, every one that ended); return it to
 its owner only for a temporary device's own decision; the model's record not saying "not on a separate segment" when the controls name
 `segmented`; no live decision for the scope (IN_FORCE: "review and renew it instead"), but the one superseded; supersedes a live decision
 of the same scope.
@@ -114,6 +115,10 @@ CONNECTION_UNKNOWN = "{tag}'s connection is not recorded: record its facts first
 NOT_NEEDED = "{name} is not past its support as recorded, and no end is announced within 12 months."
 SECURITY_END_NOT_RECORDED = "{tag}: the end of the manufacturer's security updates for {version} is not recorded: record it on the release (Models) first."
 NO_RELEASE_RECORDED = "{tag}: its release is not recorded, nor the end of its security updates: record its release (Record facts) first."
+# A decision being renewed for the OS vendor's support, while that support is not recorded (rules.need_unknown with its reasons)
+OS_SUPPORT_NOT_RECORDED = ("{tag}: the OS vendor's support for the operating system of {version} is not recorded: record it on the release "
+                           "(Models) first.")
+NO_RELEASE_OS = "{tag}: its release is not recorded, nor its operating system's support: record its release (Record facts) first."
 EXTENDED = ("{name}: the manufacturer's security updates continue (announced to end {day}): a decision can be recorded once their end is "
             "within 12 months.")
 NO_DEVICE_OURS = "No device of ours on site runs {version}."
@@ -122,6 +127,12 @@ NONE_NEEDED = ("No device of ours on site in this scope is both connected (or ab
                "of an announced end, as recorded.")
 # A release's or a model's scope with more than one device whose need is not recorded (rules.need_unknown): the first one's words follow
 SCOPE_NOT_RECORDED = "{count} of ours in this scope are not recorded enough to tell whether they need a decision ({tags}). {words}"
+# A release's or a model's scope whose devices are under more specific live decisions (would_govern; skeptics T0): a decision for it
+# governs only the others, and is read from them
+GOVERNED_ELSEWHERE = ("Every device of ours on site in this scope is under a more specific decision ({numbers}): a decision for this scope "
+                      "would govern none of them.")
+NEEDED_ELSEWHERE = ("No device a decision for this scope would govern ({tags}) is both connected (or able to connect) and past its support "
+                    "or within 12 months of an announced end, as recorded: those that are, are under a more specific decision ({numbers}).")
 IN_FORCE = "{number} is in force for this scope: review and renew it instead."
 SUPERSEDES_OTHER = "{number} is for another scope: renew a decision for this one."
 ALREADY_ENDED = "{number} ended on {day}: it stays as recorded."
@@ -302,12 +313,12 @@ def record_decision(*, asset=None, device_model=None, release=None, reasons, res
                     plan=DecisionPlan.NONE, plan_by=None, plan_owner=None, accepted_by, exception_reference="", decided_on=None,
                     review_by=None, supersedes=None, by, today: date | None = None) -> DeviceSecurityDecision:
     """Record a decision for devices past support (the module docstring's rules and lock order): its scope (`asset`; or `release`, with
-    its `device_model` or alone; or `device_model` alone), the reasons that hold now (kinds: rules.REASONS), the response, the controls
-    (rules.SUPPORT_CONTROLS slugs) and IT's reference for recorded_elsewhere, the plan with its day and owner, who accepted it, IT's
-    exception number, the day decided (today by default), the review (rules.review_default by default), and the decision it supersedes
-    (the live one of the same scope: ended "Superseded by <number>" first, in the same transaction). Stores the devices on site it governs
-    now (governed_ids: rules' "joined since"; never one a more specific live decision governs: _governed). History "Recorded" (",
-    superseding <number>"). Returns the new decision."""
+    its `device_model` or alone; or `device_model` alone), the reasons that hold now for the devices it would govern (kinds:
+    rules.REASONS; _scope_read), the response, the controls (rules.SUPPORT_CONTROLS slugs) and IT's reference for recorded_elsewhere, the
+    plan with its day and owner, who accepted it, IT's exception number, the day decided (today by default), the review
+    (rules.review_default by default), and the decision it supersedes (the live one of the same scope: ended "Superseded by <number>"
+    first, in the same transaction). Stores the devices on site it governs now (governed_ids: rules' "joined since"; never one a more
+    specific live decision governs: _would_govern). History "Recorded" (", superseding <number>"). Returns the new decision."""
     services._check(by, perms.can_decide, DECIDE_PERMISSION)
     today = services._today(today)
     errors: dict = {}
@@ -414,9 +425,11 @@ def record_decision(*, asset=None, device_model=None, release=None, reasons, res
             if live is not None and (old is None or live.pk != old.pk):
                 raise ValidationError({field: IN_FORCE.format(number=live.number)})
             members = _scope_members(kind, device=device, model_id=model_id, release=locked_release)
-            needs = _scope_needs(kind, members, device=device, model_id=model_id, release=locked_release, today=today)
-            _check_reasons(needs, reason_list)
-            governed = _governed(kind, members, model_id=model_id, release=locked_release, old=old)
+            read = _scope_read(kind, members, device=device, model_id=model_id, release=locked_release, old=old, today=today)
+            if read.refusal is not None:
+                raise ValidationError({field: read.refusal.words})
+            _check_reasons(read.needs, reason_list)
+            governed = read.governed
             if plan == DecisionPlan.RETURN_TO_OWNER and not (device is not None and device.ownership != Ownership.OWNED):
                 raise ValidationError({"plan": RETURN_ONLY_TEMPORARY})
             if rules.SEGMENTED_CONTROL in control_list:
@@ -448,9 +461,10 @@ def record_decision(*, asset=None, device_model=None, release=None, reasons, res
 
 # What a refusal of the scope means (Refusal.kind; review 39 skeptics S3): KIND_IN_FORCE a live decision is in force for it (the doors
 # offer Review and renew for that one); KIND_ENDED the decision to renew has ended; KIND_GONE no device of the scope is on site (retired,
-# returned, none of ours); KIND_NOT_NEEDED none in it needs a decision as recorded (not connected here, the manufacturer's updates
-# continuing, not past its support); KIND_UNKNOWN what a device's need turns on is not recorded (rules.need_unknown: record it first).
-# End answers a decision being renewed only for GONE and NOT_NEEDED (END_ANSWERS), never for a fact not recorded.
+# returned, none of ours); KIND_NOT_NEEDED none it would govern needs a decision as recorded (not connected here, the manufacturer's
+# updates continuing, not past its support, or each under a more specific decision: skeptics T0); KIND_UNKNOWN what a device's need, or
+# a reason of the decision being renewed, turns on is not recorded (rules.need_unknown: record it first; skeptics T2). End answers a
+# decision being renewed only for GONE and NOT_NEEDED (END_ANSWERS), never for a fact not recorded.
 KIND_IN_FORCE, KIND_ENDED, KIND_GONE, KIND_NOT_NEEDED, KIND_UNKNOWN = "in_force", "ended", "gone", "not_needed", "unknown"
 END_ANSWERS = (KIND_GONE, KIND_NOT_NEEDED)
 
@@ -472,9 +486,10 @@ class Refusal(NamedTuple):
 def refusal_for(*, asset=None, device_model=None, release=None, supersedes=None, today: date | None = None) -> Refusal | None:
     """Why record_decision would refuse this scope now, in its words and its order, read before the person tries (the Record decision
     modal, a decision's page), without its locks: the decision to renew already ended; a device retired or returned; a live decision in
-    force for the scope; a release or model with no device of ours on site; nothing past its support or announced within 12 months (a
-    device not connected here, its connection not recorded, the manufacturer's updates continuing, nothing recording its security
-    updates' end). Each with its kind (Refusal.kind). None when the scope itself would not be refused (the fields are the service's to
+    force for the scope; a release or model with no device of ours on site; nothing it would govern past its support or announced within
+    12 months (a device not connected here, its connection not recorded, the manufacturer's updates continuing, nothing recording its
+    security updates' end, or, for the decision renewed, the fact one of its reasons rests on; each device under a more specific
+    decision). Each with its kind (Refusal.kind). None when the scope itself would not be refused (the fields are the service's to
     check). record_decision decides again under its locks."""
     today = services._today(today)
     old = _decision_row(supersedes, "supersedes", lock=False) if supersedes is not None else None
@@ -496,7 +511,7 @@ def refusal_for(*, asset=None, device_model=None, release=None, supersedes=None,
     if live is not None and (old is None or live.pk != old.pk):
         return Refusal(IN_FORCE.format(number=live.number), KIND_IN_FORCE, live)
     members = _scope_members(kind, device=device, model_id=model_id, release=release_row)
-    return _scope_read(kind, members, device=device, model_id=model_id, release=release_row, today=today)[1]
+    return _scope_read(kind, members, device=device, model_id=model_id, release=release_row, old=old, today=today).refusal
 
 
 def _scope_members(kind: str, *, device, model_id, release) -> list:
@@ -508,81 +523,113 @@ def _scope_members(kind: str, *, device, model_id, release) -> list:
     return list(scope.select_related(*rules._WITH_RECORD).order_by("tag"))
 
 
-def _governed(kind: str, members: list, *, model_id, release, old) -> list:
-    """The scope's devices on site this decision governs as it is recorded (governed_ids): rules' governing over them, with the new
-    decision among the live ones in place of the one it supersedes. A device scope: its device. A release's devices of ours but those
-    under their own live decision; a model's devices of ours but those under their own or their recorded release's. So a device that
-    comes under it later, when the more specific decision ends, reads "joined since" (review 39 F1). One query (none for a device
-    scope), under the register lock."""
-    if kind == rules.DEVICE_SCOPE:
-        return list(members)
+def _would_govern(kind: str, members: list, *, model_id, release, old) -> tuple[list, dict]:
+    """(the scope's devices on site a decision for it governs recorded now, {device id: the more specific live decision governing it
+    instead} for the others): rules' governing over them, with the new decision among the live ones in place of the one it supersedes
+    (`old`). A device scope: its device. A release's devices of ours but those under their own live decision; a model's devices of ours
+    but those under their own or their recorded release's. What the decision is read from (its needs, its reasons, what holds now:
+    skeptics T0) and what it stores (governed_ids: a device that comes under it later, when the more specific decision ends, reads
+    "joined since"; review 39 F1). One query (none for a device scope or no device)."""
+    if kind == rules.DEVICE_SCOPE or not members:
+        return list(members), {}
     new = DeviceSecurityDecision(applies_to=AppliesTo.SUPPORT_ENDED, device_model_id=model_id, release=release)
     live = [d for d in rules._decisions_for(members) if old is None or d.pk != old.pk]
     governing = rules._governing(members, [*live, new])
-    return [a for a in members if governing.get(a.pk) is new]
+    return ([a for a in members if governing.get(a.pk) is new],
+            {a.pk: governing[a.pk] for a in members if governing.get(a.pk) is not None and governing[a.pk] is not new})
 
 
-def _scope_needs(kind: str, members: list, *, device, model_id, release, today: date) -> list:
-    """The decidable needs of the scope's devices (rules.support_need), refused in words, keyed by the scope's field, when it has none
-    (_scope_read's)."""
-    needs, refusal = _scope_read(kind, members, device=device, model_id=model_id, release=release, today=today)
-    if refusal is not None:
-        raise ValidationError({_scope_field(kind): refusal.words})
-    return needs
+def would_govern(members: list, *, asset=None, device_model=None, release=None, old=None) -> list:
+    """The devices of `members` (the scope's devices on site, rules.scope_devices, their rows read: rules.standings' assets) that a
+    decision for this scope (`asset`; `release`; or `device_model`), recorded now in place of `old` (Review and renew), would govern
+    (_would_govern): never one a more specific live decision governs. Record decision's modal reads its reasons and what holds now from
+    them, as record_decision does (skeptics T0). One query (none for a device scope or no device)."""
+    members = list(members)
+    if asset is not None or not members:
+        return members
+    kind = rules.RELEASE_SCOPE if release is not None else rules.MODEL_SCOPE
+    return _would_govern(kind, members, model_id=members[0].device_model_id, release=release, old=old)[0]
 
 
-def _device_refusal(a, s, need) -> Refusal:
+def _device_refusal(a, s, need, reasons=None) -> Refusal:
     """Why one device on site with no decidable need has none, in words with its kind: its connection not recorded (UNKNOWN), not
     connected here (NOT_NEEDED), the manufacturer's updates continuing (EXTENDED: NOT_NEEDED), nothing recording the end of its security
-    updates (its release's, or with no release recorded: UNKNOWN; rules.need_unknown), nothing past support or announced within 12
-    months as recorded (NOT_NEEDED)."""
+    updates (its release's, or with no release recorded: UNKNOWN; rules.need_unknown), or, for a decision being renewed (`reasons`, its
+    kinds), the fact one of them rests on (the end of the security updates; the OS vendor's support: UNKNOWN; skeptics T2), nothing past
+    support or announced within 12 months as recorded (NOT_NEEDED)."""
     if s.connection.key == rules.CONNECTION_NOT_RECORDED:
         return Refusal(CONNECTION_UNKNOWN.format(tag=a.tag), KIND_UNKNOWN)
     if s.connection.key not in rules.ON_SITE_KEYS:
         return Refusal(NOT_CONNECTED.format(tag=a.tag), KIND_NOT_NEEDED)
     if need is not None and need.key == rules.EXTENDED:
         return Refusal(EXTENDED.format(name=a.tag, day=rules.day_words(need.day)), KIND_NOT_NEEDED)
-    if rules.need_unknown(s):  # connected or able to: nothing known of its security updates' end or its OS support
-        words = SECURITY_END_NOT_RECORDED if s.release is not None else NO_RELEASE_RECORDED
+    if rules.need_unknown(s, reasons):  # connected or able to: what its need, or the decision's reason, turns on is not recorded
+        if s.security.key == rules.SECURITY_NOT_RECORDED:
+            words = SECURITY_END_NOT_RECORDED if s.release is not None else NO_RELEASE_RECORDED
+        else:  # the OS vendor's support, a reason of the decision being renewed
+            words = OS_SUPPORT_NOT_RECORDED if s.release is not None else NO_RELEASE_OS
         return Refusal(words.format(tag=a.tag, version=getattr(s.release, "version", "")), KIND_UNKNOWN)
     return Refusal(NOT_NEEDED.format(name=a.tag), KIND_NOT_NEEDED)
 
 
-def _scope_read(kind: str, members: list, *, device, model_id, release, today: date) -> tuple[list, Refusal | None]:
-    """(the decidable needs of the scope's devices (rules.support_need), in member order; why it has none, or None): a release or model
-    with no device of ours on site (GONE); a device's own (_device_refusal); a release's or a model's devices, when one's need is not
-    recorded (UNKNOWN: the first such one's words, in tag order, after how many and which when there are more: SCOPE_NOT_RECORDED), else
-    when the manufacturer's updates for some continue (EXTENDED, worded for those with the earliest announced end: skeptics S7), else
-    none both connected (or able to connect) and past support or announced (NONE_NEEDED). Fixed queries (rules.standings)."""
+class _ScopeRead(NamedTuple):
+    governed: list  # the scope's devices on site a decision for it would govern (_would_govern), in tag order
+    needs: list  # their decidable needs (rules.support_need), in the same order
+    refusal: Refusal | None  # why it has none, or None
+
+
+def _numbers(decisions) -> str:
+    return ", ".join(sorted({d.number for d in decisions}))
+
+
+def _scope_read(kind: str, members: list, *, device, model_id, release, old, today: date) -> _ScopeRead:
+    """A scope read for record_decision and refusal_for (_ScopeRead): the devices a decision for it would govern recorded now in place of
+    `old` (_would_govern: never one a more specific live decision governs; skeptics T0), their decidable needs (the reasons offered and
+    required are theirs), and why it has none: a release or model with no device of ours on site (GONE); a device's own
+    (_device_refusal, with the reasons of `old`); every device of ours in a release's or a model's scope under a more specific decision
+    (GOVERNED_ELSEWHERE: NOT_NEEDED); of those it would govern, one whose need, or a reason of `old`, is not recorded (UNKNOWN: the first
+    such one's words, in tag order, after how many and which when there are more: SCOPE_NOT_RECORDED), else some whose manufacturer's
+    updates continue (EXTENDED, worded for those with the earliest announced end: skeptics S7), else devices in the scope with a need
+    under a more specific decision (NEEDED_ELSEWHERE), else none both connected (or able to connect) and past support or announced
+    (NONE_NEEDED). Fixed queries (rules.standings, _would_govern)."""
     if not members:
         if kind == rules.RELEASE_SCOPE:
-            return [], Refusal(NO_DEVICE_OURS.format(version=release.version), KIND_GONE)
+            return _ScopeRead([], [], Refusal(NO_DEVICE_OURS.format(version=release.version), KIND_GONE))
         model = DeviceModel.objects.filter(pk=model_id).first()
-        return [], Refusal(NO_MODEL_DEVICE.format(model=model.model if model else "device of this model"), KIND_GONE)
+        return _ScopeRead([], [], Refusal(NO_MODEL_DEVICE.format(model=model.model if model else "device of this model"), KIND_GONE))
+    renewing = old.reasons if old is not None else None
+    governed, elsewhere = _would_govern(kind, members, model_id=model_id, release=release, old=old)
     standings = rules.standings(members, today)
     needs = {a.pk: rules.support_need(standings[a.pk], today) for a in members}
-    decidable = [needs[a.pk] for a in members if needs[a.pk] is not None and needs[a.pk].decidable]
+    decidable = [needs[a.pk] for a in governed if needs[a.pk] is not None and needs[a.pk].decidable]
     if decidable:
-        return decidable, None
+        return _ScopeRead(governed, decidable, None)
     if kind == rules.DEVICE_SCOPE:
-        return [], _device_refusal(device, standings[device.pk], needs[device.pk])
-    unknown = [a for a in members if rules.need_unknown(standings[a.pk])]
+        return _ScopeRead(governed, [], _device_refusal(device, standings[device.pk], needs[device.pk], renewing))
+    if not governed:
+        return _ScopeRead([], [], Refusal(GOVERNED_ELSEWHERE.format(numbers=_numbers(elsewhere.values())), KIND_NOT_NEEDED))
+    unknown = [a for a in governed if rules.need_unknown(standings[a.pk], renewing)]
     if unknown:
-        words = _device_refusal(unknown[0], standings[unknown[0].pk], needs[unknown[0].pk]).words
+        words = _device_refusal(unknown[0], standings[unknown[0].pk], needs[unknown[0].pk], renewing).words
         if len(unknown) > 1:
             words = SCOPE_NOT_RECORDED.format(count=f"{len(unknown)} devices", tags=rules._tags(a.tag for a in unknown), words=words)
-        return [], Refusal(words, KIND_UNKNOWN)
-    extended = [a for a in members if needs[a.pk] is not None and needs[a.pk].key == rules.EXTENDED]
+        return _ScopeRead(governed, [], Refusal(words, KIND_UNKNOWN))
+    extended = [a for a in governed if needs[a.pk] is not None and needs[a.pk].key == rules.EXTENDED]
     if extended:
         day = min(needs[a.pk].day for a in extended)
         first = [a.tag for a in extended if needs[a.pk].day == day]
-        return [], Refusal(EXTENDED.format(name=rules._tags(first), day=rules.day_words(day)), KIND_NOT_NEEDED)
-    return [], Refusal(NONE_NEEDED, KIND_NOT_NEEDED)
+        return _ScopeRead(governed, [], Refusal(EXTENDED.format(name=rules._tags(first), day=rules.day_words(day)), KIND_NOT_NEEDED))
+    needed = [d for pk, d in elsewhere.items() if needs[pk] is not None and needs[pk].decidable]
+    if needed:
+        words = NEEDED_ELSEWHERE.format(tags=rules._tags(a.tag for a in governed), numbers=_numbers(needed))
+        return _ScopeRead(governed, [], Refusal(words, KIND_NOT_NEEDED))
+    return _ScopeRead(governed, [], Refusal(NONE_NEEDED, KIND_NOT_NEEDED))
 
 
 def _check_reasons(needs: list, given: list) -> None:
-    """The reasons given hold now for the scope (ended, or announced to end within 12 months, on a device it holds), and every one that
-    ended is named (REASONS_NOW, keyed reasons)."""
+    """The reasons given hold now for the scope (ended, or announced to end within 12 months, on a device the decision would govern:
+    `needs` are _scope_read's, never a device a more specific live decision governs; skeptics T0), and every one that ended is named
+    (REASONS_NOW, keyed reasons)."""
     holding = {kind for n in needs for kind in n.reasons}
     ended = {kind for n in needs for kind in n.ended}
     if set(given) - holding or ended - set(given):

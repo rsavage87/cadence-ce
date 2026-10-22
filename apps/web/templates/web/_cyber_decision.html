@@ -1,12 +1,12 @@
 {% load web %}
 {% comment %}Slice 39: a security decision's page (views_cyber_decisions._page_context), in the drawer. Its sentence (rules.decision_words),
-   its Check lines (information, never refusals; End where it answers one), what was decided (scope, reasons recorded and what holds now,
-   controls, plan, who accepted it, IT's exception number, who recorded it, the days, its end, supersedes and superseded by), the devices
-   on site in its scope (tag, serial, model, department, connection, release, and its response: update lines with their work orders, then
-   this decision or the one governing it instead), and History. Review and renew, End, and Entered in error for permissions.can_decide on
-   a live one: Review and renew only while its renewal would be taken, else the refusal's words (decisions.refusal_for: a fact to record
-   first, or nothing in its scope needing one, End then the primary action); Print (a new tab) and the devices' CSV for every reader.
-   Device security View and Equipment View only.{% endcomment %}
+   its Check lines (information, never refusals; End where it answers one), what was decided (scope, reasons recorded and what holds now
+   for the devices it governs: rules.holding_lines, controls, plan, who accepted it, IT's exception number, who recorded it, the days,
+   its end, supersedes and superseded by), the devices on site in its scope (tag, serial, model, department, connection, release, and
+   its response: update lines with their work orders, then this decision or the one governing it instead), and History. Review and
+   renew, End, and Entered in error for permissions.can_decide on a live one: Review and renew only while its renewal would be taken,
+   else the refusal's words (decisions.refusal_for: a fact to record first, or nothing it governs needing one, End then the primary
+   action); Print (a new tab) and the devices' CSV for every reader. Device security View and Equipment View only.{% endcomment %}
 <div class="dr-h cy-panel-h">
   <div>
     <h2>{{ d.number }} · {{ scope_words }}</h2>

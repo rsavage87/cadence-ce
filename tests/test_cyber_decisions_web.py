@@ -245,8 +245,9 @@ def test_needs_attention_says_its_empty_words_and_its_decision_headings(client, 
     assert rules.ATTENTION_EMPTY in body and "All clear" not in body
     # a decision past its review that still governs a device; one to review within 30 days; one that governs no device here now
     facts(floor.d["P-1"], floor.r52)
-    late = decide(asset=floor.d["P-1"], decided_on=today - 400 * DAY, review_by=today - 10 * DAY)
+    # the model's first: once P-1 has its own, the model's would govern no device that needs one (skeptics T0)
     soon = decide(device_model=floor.model, decided_on=today - 300 * DAY, review_by=today + 10 * DAY, reasons=["security_updates"])
+    late = decide(asset=floor.d["P-1"], decided_on=today - 400 * DAY, review_by=today - 10 * DAY)
     r = client.get("/security/decisions/")
     body = html(r)
     by_key = {h["key"]: h for h in r.context["attention"]["headings"]}
@@ -267,10 +268,11 @@ def test_needs_attention_says_its_empty_words_and_its_decision_headings(client, 
 def test_the_list_its_filters_and_its_csv(client, signed_in, floor):
     signed_in("technician")
     today = floor.today
+    # the model's first: once 5.2 has its own, the model's would govern no device that needs one (skeptics T0)
+    c = decide(device_model=floor.model, decided_on=today - 400 * DAY, review_by=today - 3 * DAY)
     a = decide(release=floor.r52, response=KEEP_WITH, controls=["traffic_restricted"], exception_reference="DEMO-EX-1037",
                accepted_by=AcceptedBy.IT_SECURITY)
     b = decide(asset=floor.d["T-1"], decided_on=today - 300 * DAY, review_by=today + 5 * DAY)
-    c = decide(device_model=floor.model, decided_on=today - 400 * DAY, review_by=today - 3 * DAY)
     e = decide(asset=floor.d["P-1"])
     decisions.end_decision(e, by=None)
     r = client.get("/security/decisions/")
@@ -624,10 +626,11 @@ def test_a_release_row_shows_its_decision_or_record_decision(client, signed_in, 
     assert rows["5.6 (demo)"] is None and "Record decision</button>" in html(r)
     signed_in("technician")
     assert "Record decision" not in html(client.get(url, **HX))
+    # the model's first: once 5.2 has its own, the model's would govern no device that needs one (skeptics T0)
+    model_wide = decide(device_model=floor.model)
     d = decide(release=floor.r52)
     body = html(client.get(url, **HX))
     assert f'Security decision <a class="link" href="/security/decisions/{d.number}/"' in body and rules.review_words(d, floor.today) in body
-    model_wide = decide(device_model=floor.model)
     rows = {x["r"].version: x["decision"] for x in client.get(url, **HX).context["releases"]}
     assert rows["5.2 (demo)"]["number"] == d.number and rows["5.6 (demo)"]["number"] == model_wide.number and rows["5.6 (demo)"]["model_wide"]
     # Device security View without Equipment View: the panel, no decisions
