@@ -493,8 +493,9 @@ its review.
 Device security's Decisions tab opens with Needs attention: devices of ours past their support, connected or able to connect, with no
 decision recorded and no update to a supported release open (per model and release, with Record decision); rentals, loaners, and demo units past theirs (ask the owner to update it,
 or return it); updates done with the version not confirmed; ends announced within 12 months (information); decisions past their review
-date or to review within 30 days, each whose scope still holds a device here (a decision none of whose devices needs one any more offers End,
-not Review and renew; while a device's connection or support is not recorded, neither: its page says what to record first; the count
+date or to review within 30 days, each whose scope still holds a device here (a decision none of the devices it governs needs any more offers
+End, not Review and renew; while a device's connection or support is not recorded, or the fact one of the decision's reasons rests on (the
+security updates' end, the OS support), neither: its page says what to record first; the count
 opens the list narrowed the same way), or governing no device here now (End); and Check lines: a support
 or OS end that holds now and the decision does not name, the model's record no longer giving the segment it relies on, devices joined since, the plan's date passed, a device still in service after a
 decision to take it out of use, the plan owner's account deactivated. With nothing listed it reads "Nothing listed from what is recorded
@@ -502,7 +503,9 @@ here." Below, the decisions by state (In force, Review within 30 days, Review du
 number, download as CSV. A decision's page shows its sentence, its reasons with their dates, controls, plan, who accepted and recorded it,
 its review, the devices it governs (tag, serial, model, department, connection, release, and what answers each), its Check lines, the
 decision it superseded or that superseded it, and its History; Review and renew only while it would be taken (else why not), End the main
-action when nothing in its scope needs a decision; it prints for IT and the committee ("As recorded in Cadence; IT's
+action when nothing it governs needs a decision; the reasons Record decision offers and requires, and "What holds now", come from the
+devices the decision would govern (never one a more specific decision governs), and a release or model scope whose devices needing a
+decision all have a more specific one is refused; it prints for IT and the committee ("As recorded in Cadence; IT's
 exception record is the system of record") and its devices download as CSV. Record decision opens from a release's row in Models (that
 release's devices of ours, offered while one of them has no decision governing it and no update answering it), from a model's panel ("Record decision for every <model> of ours", offered while a device of ours of the model on site has a need, no
 decision governing it, and no update answering it, whatever its release, and keeping the panel's filters), from a device's Security tab (that device), from Needs attention, and as Review and renew (prefilled,

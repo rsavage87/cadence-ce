@@ -384,7 +384,10 @@ joined since, by identity); `supersedes`; `ended_on` / `ended_by` / `end_reason`
   layouts needing a hex letter and a digit, a UUID's layout exempt; a VLAN; a port); `refusal_for` the same scope checks read without
   locks, in the same order (the modal says why before it is tried; outside any transaction, so no FOR UPDATE), a `Refusal(words, kind,
   live)` (KIND_* in_force, ended, gone, not_needed, unknown; `ends_it`: End is offered only for gone and not_needed, never for a fact to
-  record first: `rules.need_unknown`, SCOPE_NOT_RECORDED; a release's or model's updates continuing in EXTENDED's words); the lock order: the register, the decision superseded or ended FOR UPDATE of its own row, the
+  record first: `rules.need_unknown(standing, reasons)`, judged against the reasons of the decision renewed (OS_SUPPORT_NOT_RECORDED,
+  NO_RELEASE_OS), SCOPE_NOT_RECORDED; a release's or model's reasons read from the devices it would govern (`decisions.would_govern`,
+  `_scope_read`; `rules.holding_lines` / `under` for "What holds now"), GOVERNED_ELSEWHERE / NEEDED_ELSEWHERE refusing a scope whose
+  devices (needing one) all have a more specific decision; a release's or model's updates continuing in EXTENDED's words); the lock order: the register, the decision superseded or ended FOR UPDATE of its own row, the
   release (release scope), the number, the device FOR KEY SHARE (device scope: its model, status, and ownership read there), the insert;
   an IntegrityError or a lock conflict answers RACE; history reasons fixed sentences with Cadence numbers only; equipment's writers never
   write here nor take the register lock: the readers re-derive); `rules.py`'s slice 39 section the one place for needs and words:
@@ -403,8 +406,9 @@ joined since, by identity); `supersedes`; `ended_on` / `ended_by` / `end_reason`
   `ATTENTION_EMPTY`) and `AttentionRow`s; links as data, `Link` by URL name: `URLS`, the doors reverse them; Record decision and End only
   for can_decide, a work order's link only with Work orders View) and `badge` (one aggregate query: live decisions past review whose
   scope still holds a device on site, `holds_device_q`, the review headings' condition and their list's `?here=1`; `BADGE_TITLE`; a
-  decision to review offers Review and renew while a device in its scope has a decidable need, End only when none does and no device's
-  need is unknown, else neither; a row links to the model panel only where it lists just the row's devices (`_group_link`)); `decisions_now` / `in_scope` the API's page
+  decision to review offers Review and renew while a device it governs has a decidable need, End only when none does and no device's
+  need is unknown, else neither; a row links to the model panel only where the panel, with the link's filters, lists just the row's
+  devices, any release (`_group_link`)); `decisions_now` / `in_scope` the API's page
   readers; two readings named apart: in scope (the badge, past review, govern no device) and
   governed (responses, joined since, the other Checks); fixed queries as decisions and devices grow. Words: `DECISION_NEVER_WORDS`
   (NEVER_WORDS, which slice 39 gave exempt, waiver, hardened, and deadline, plus "overdue") on every decision door (pages, modals, the
