@@ -1680,17 +1680,20 @@ def _release_sort(a) -> str:
 
 
 def _group_link(model_id, release_id, members: list, need: Need, *, standings: dict, by_model: dict) -> Link | None:
-    """A group row's link: the model's panel narrowed by the Fleet's filters (_model_link) when the devices it lists of the row's release
-    (or, with no release recorded, with none: the norelease filter) are the row's own; else the device's Security tab when the row
-    counts one device; else none (review 39 skeptics S9). The Fleet has no filter for "no decision governing it, no update answering
-    it", so a device of that release with the same standing under its own decision, or answered by an update, would be listed though
-    the row does not count it. Devices of the model's other releases with the same standing are listed too, each counted in its own row
-    or governed. No query (the standings already read)."""
+    """A group row's link: the model's panel narrowed by the Fleet's filters (_model_link) only where the panel, with exactly those
+    filters, lists the row's devices and no other; else the device's Security tab when the row counts one device; else none (review 39
+    skeptics S9, T1). The panel lists every device of the model on site that the filters keep (views_cybersecurity._panel_context:
+    FleetFilters.keeps on each standing), whatever its release (the Fleet has no release filter; the row for devices with no release
+    recorded adds norelease), so this compares the row's devices with that whole list (`by_model`: the model's devices on site). The list
+    holds more than the row counts when a device with the row's standing is governed by a decision or answered by an update (the Fleet
+    has no filter for either), is on another release (that release's row counts it, or a decision governs it), or, for an ending row, has
+    its end announced more than 12 months away (the standing filter has no horizon: it needs no decision). No query (the standings
+    already read)."""
     from .filters import parse
 
     link = _model_link(model_id, need, norelease=release_id is None)
     shown = parse(dict(link.query))
-    listed = {a.pk for a in by_model.get(model_id, ()) if _recorded_release_id(a) == release_id and shown.keeps(standings[a.pk])}
+    listed = {a.pk for a in by_model.get(model_id, ()) if shown.keeps(standings[a.pk])}
     if listed == {a.pk for a in members}:
         return link
     return _device_link(members[0]) if len(members) == 1 else None
@@ -1698,9 +1701,8 @@ def _group_link(model_id, release_id, members: list, need: Need, *, standings: d
 
 def _group_rows(groups: dict, needs: dict, *, may_decide: bool, standings: dict, by_model: dict) -> list:
     """Rows per model and release (devices of ours): "Alaris 8015 PCU on 5.2 (demo): 4 devices of ours; security updates ended after
-    ...", linked to the model's panel narrowed by standing (with no release recorded, also to the devices with none) where it lists
-    the row's devices of that release and no other (_group_link), Record decision for the release (or, with no release recorded, the
-    model)."""
+    ...", linked to the model's panel narrowed by standing (with no release recorded, also to the devices with none) where the panel lists
+    the row's devices and no other (_group_link), Record decision for the release (or, with no release recorded, the model)."""
     rows = []
     for (model_id, release_id), members in sorted(groups.items(), key=lambda kv: (kv[1][0].device_model.manufacturer.casefold(),
                                                                                     kv[1][0].device_model.model.casefold(),

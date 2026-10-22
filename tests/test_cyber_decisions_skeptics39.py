@@ -9,8 +9,9 @@ Slice 39 skeptics' fixes (the rules, the decision service, the decision pages), 
   a hex letter in the layouts a digits-only ticket takes); a UUID in its own layout is a record's identifier.
 - S7: a release's or a model's devices whose manufacturer's updates continue past 12 months (the OS ended) are refused in those words.
 - S8: a model whose parts ended (its support continuing) is never worded as its support ended: the heading and the reason name parts.
-- S9: Needs attention's row links to the model's panel only where the panel lists the row's devices of that release and no other (a
-  device under its own decision would be listed); a reader of decisions who may not end one is never told to "end it first".
+- S9: Needs attention's row links to the model's panel only where the panel lists the row's devices and no other (a device under its
+  own decision would be listed; the final round's T1, test_cyber_decisions_final39: any release's); a reader of decisions who may not
+  end one is never told to "end it first".
 """
 from datetime import date, timedelta
 from html import unescape

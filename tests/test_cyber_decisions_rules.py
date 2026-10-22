@@ -555,7 +555,9 @@ def test_needs_attention_ending_and_the_readers(tenant, floor, make_user):
     assert list(found) == ["ending"] and found["ending"].info
     (row,) = found["ending"].rows
     assert row.words == "Alaris 8015 PCU on 5.4 (demo): 1 device of ours; ending within 12 months: security updates end Jun 30, 2027 (announced)"
-    assert row.record is None and row.link.query[-1] == ("standing", "updates_end_announced")  # View: no Record decision
+    # View: no Record decision; the panel narrowed to an announced end would list P-1 to P-3 too (5.6's end is years away): the one
+    # device's Security tab (skeptics T1)
+    assert row.record is None and row.link == rules.Link("web:asset", ("P-4",), (("tab", "security"),))
     facts(floor.d["P-4"], floor.r56)
     panel = rules.needs_attention(TODAY, user=viewer)
     assert panel.empty and panel.empty_words == "Nothing listed from what is recorded here."

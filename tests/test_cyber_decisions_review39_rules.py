@@ -213,11 +213,12 @@ def test_the_no_release_row_links_to_the_devices_with_no_release(floor):
     shown = filters.parse(dict(row.link.query))
     read = rules.standings(rules.on_site().filter(device_model=floor.model), TODAY)
     assert [s.asset.tag for s in read.values() if shown.keeps(s)] == ["P-3"]  # the model's panel, as the row counts
-    # a release's row stays as it was
+    # a release's row: the panel narrowed by its standing would list 5.2's devices too (decided): its one device's Security tab
+    # (skeptics T1: the panel lists every release's devices of that standing)
     facts(floor.d["P-3"], floor.r52)
     facts(floor.d["P-4"], release(floor.model, "4.0 (demo)", security_updates_end_on=TODAY - DAY))
     (row,) = headings()["no_decision"].rows
-    assert row.link.query == (("whose", "ours"), ("connected", "either"), ("standing", "updates_ended"))
+    assert row.tags == ("P-4",) and row.link == rules.Link("web:asset", ("P-4",), (("tab", "security"),))
 
 
 # --- F3, F14: the review day's words for a temporary device ------------------------------------------------------------------------
