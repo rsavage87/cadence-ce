@@ -357,7 +357,7 @@ class AcceptedBy(models.TextChoices):
 
 class DecisionEnd(models.TextChoices):
     SUPERSEDED = "superseded", "Superseded by a new decision"
-    NO_LONGER_NEEDED = "no_longer_needed", "No longer needed: updated, replaced, retired, or returned"
+    NO_LONGER_NEEDED = "no_longer_needed", "No longer needed"  # never why: the person ending it knows
     ENTERED_IN_ERROR = "entered_in_error", "Entered in error"
 
 

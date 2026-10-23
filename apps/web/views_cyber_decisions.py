@@ -87,8 +87,9 @@ RENEWED = "{number} recorded for {scope}, superseding {old}."
 ENDED = "{number} ended: no longer needed."
 IN_ERROR = "{number} marked entered in error."
 # The End and Entered in error modals' words
-END_WORDS = ("End {number} as no longer needed: the devices were updated, replaced, retired, or returned. It stays on record as it was, "
-             "with its history, and from today it governs no device.")
+# Never why it is no longer needed (the person ending it knows: its devices updated, replaced, retired, or returned, or each under a
+# decision of its own): only what ending it does
+END_WORDS = "End {number} as no longer needed. It stays on record as it was, with its history, and from today it governs no device."
 IN_ERROR_WORDS = ("Mark {number} entered in error: it stays on record, marked, with its history, and from today it governs no device. "
                   "Record the decision again if one is needed.")
 # The print's closing lines
@@ -693,7 +694,8 @@ def _ending(request, number, *, kind: str):
 @require_http_methods(["GET", "POST"])
 @web_view(MODULE, APPROVE)
 def decision_end(request, number):
-    """End: no longer needed (updated, replaced, retired, or returned). permissions.can_decide."""
+    """End: no longer needed (its devices updated, replaced, retired, or returned, or each under a decision of its own).
+    permissions.can_decide."""
     return _ending(request, number, kind="end")
 
 

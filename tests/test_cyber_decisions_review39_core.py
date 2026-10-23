@@ -88,3 +88,19 @@ def test_renewing_a_decision_no_device_needs_offers_end(client, signed_in, floor
     assert f"/security/decisions/{old.number}/end/" in page and f"supersedes={old.number}" not in page
     modal = client.get(f"/security/decisions/new/?supersedes={old.number}", HTTP_HX_REQUEST="true").content.decode()
     assert f"End {old.number}" in modal and f"/security/decisions/{old.number}/end/" in modal
+
+
+@pytest.mark.django_db
+def test_end_never_says_why_a_decision_is_no_longer_needed(client, signed_in, floor):  # noqa: F811
+    """Last skeptic: End is offered when each device of a release decision is under a decision of its own (GOVERNED_ELSEWHERE); its
+    confirmation and the stored end's words claim nothing about the devices (never "updated, replaced, retired, or returned")."""
+    from apps.cybersecurity import rules
+
+    old = decide(release=floor.r52)
+    for tag in ("P-1", "P-2", "P-3"):
+        decide(asset=floor.d[tag])
+    signed_in("manager")
+    body = client.get(f"/security/decisions/{old.number}/end/", HTTP_HX_REQUEST="true").content.decode()
+    assert f"End {old.number} as no longer needed." in body and "updated, replaced" not in body
+    ended = decisions.end_decision(old, by=None)
+    assert "updated, replaced" not in rules.end_words(ended)

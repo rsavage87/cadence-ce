@@ -477,8 +477,9 @@ months; at most 36 months, 12 to take out of use: Cadence's choices, not a rule)
 keeps its number, never its text, and a reference is never an address (an address with a port, range, or prefix too), a MAC in any
 layout, alone or within a reference (a ticket number of digits in a MAC's layout, or a UUID, is taken), a VLAN, or a port. A device recorded "Not connected here" (Record facts) needs no decision, so "taken off the
 network" is not offered as a control, and the segment is refused as one while the model's record says its devices are on no separate
-segment. A decision is never changed: Review and renew records the next one and ends it as superseded; End (no longer needed: updated,
-replaced, retired, or returned) and Entered in error end one. Retiring, returning, or updating a device never touches a decision: the
+segment. A decision is never changed: Review and renew records the next one and ends it as superseded; End (no longer needed: its devices
+updated, replaced, retired, or returned, or each under a decision of its own; recorded as "No longer needed", never why) and Entered in
+error end one. Retiring, returning, or updating a device never touches a decision: the
 screens read what holds now.
 
 The most specific decision in force governs each device: its own, else its release's, else its model's; a rental, loaner, or demo unit

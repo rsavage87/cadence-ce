@@ -7,7 +7,8 @@ exception stays in IT's system: a decision holds its number (a token), never its
 - record_decision: a decision for devices past the manufacturer's or the OS vendor's support (or whose end is announced within 12
   months), for one device, a model's devices of ours on one release, or every device of ours of a model; superseding the live decision
   for the same scope (Review and renew: the old one is ended "superseded" in the same transaction, then the new one inserted).
-- end_decision: ended as no longer needed (updated, replaced, retired, or returned). A decision is superseded only by recording a new one.
+- end_decision: ended as no longer needed (its devices updated, replaced, retired, or returned, or each under a decision of its own). A
+  decision is superseded only by recording a new one.
 - mark_entered_in_error: ended as entered in error.
 A decision is immutable once recorded: nothing here changes its fields but its end (ended_on, ended_by, end_reason). Nothing is deleted.
 Equipment's writers (retire, return to owner, a model change, a status change) never write here: the readers (rules) re-derive.
@@ -663,10 +664,10 @@ def _end(decision, *, reason: str, history: str, by, today: date | None):
 
 
 def end_decision(decision, *, reason: str = DecisionEnd.NO_LONGER_NEEDED, by, today: date | None = None) -> DeviceSecurityDecision:
-    """End a live decision as no longer needed (updated, replaced, retired, or returned): ended_on today, ended_by, end_reason; history
-    "Ended: no longer needed". Superseded only by record_decision, entered in error only by mark_entered_in_error (END_REASON_WORDS, keyed
-    end_reason); an ended one is refused (ALREADY_ENDED). Locks: the register, the decision's own row. Returns the row (the caller's copy
-    follows it)."""
+    """End a live decision as no longer needed (its devices updated, replaced, retired, or returned, or each under a decision of their
+    own): ended_on today, ended_by, end_reason; history "Ended: no longer needed". Superseded only by record_decision, entered in error
+    only by mark_entered_in_error (END_REASON_WORDS, keyed end_reason); an ended one is refused (ALREADY_ENDED). Locks: the register,
+    the decision's own row. Returns the row (the caller's copy follows it)."""
     services._check(by, perms.can_decide, END_PERMISSION)
     if reason != DecisionEnd.NO_LONGER_NEEDED:
         raise ValidationError({"end_reason": END_REASON_WORDS})
