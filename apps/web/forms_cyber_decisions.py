@@ -18,13 +18,24 @@ the field it names (the service's keys are these fields' names; one about the sc
   service would take the decision (the view's dry run; else its refusals come back first); the form sends it again with `review_passed`
   naming that day.
 
+Slice 40, a decision for the devices a security advisory names (build40 section 7.5; the form for an advisory scope, `advisory` given):
+the four responses (also "Decided the part it names is not in use here", with rules.NOT_IN_USE_HELP) and every control of rules.CONTROLS
+(network_removed included: the service takes it only when every device it would govern has its own fact "Not connected here", and the
+view says so beside it before it is tried); no reasons (the view shows the advisory and its devices' lines instead); the review day's
+words for the four. A support form is unchanged: three responses, rules.SUPPORT_CONTROLS. The prefill (prefill_initial, door only):
+a new advisory decision starts from the live decision of exactly this scope of another need key (support first, else the most recently
+decided advisory decision of the scope; the view finds it, lock-free), past its review or not: its response (unless not in use here, or
+one this form does not offer), controls (those this form offers), IT's reference for them, plan, plan owner, and the plan's day only when
+it is on or after today; decided today, the review day blank (the default), who accepted it and IT's exception number blank (PREFILL_NOTE
+says so: an act of IT or a committee is recorded for this advisory, never inherited).
+
 Choices are set in __init__ from what the view read, never a class-level queryset. Never "required" (a field the service needs says so
 in its refusal: "Choose ...", "Enter ..."), never a never word (rules.DECISION_NEVER_WORDS).
 """
 from django import forms
 
 from apps.cybersecurity import rules
-from apps.cybersecurity.models import EXCEPTION_REFERENCE_MAX, AcceptedBy, DecisionPlan, DecisionResponse
+from apps.cybersecurity.models import EXCEPTION_REFERENCE_MAX, SUPPORT_RESPONSES, AcceptedBy, DecisionPlan, DecisionResponse
 
 from .forms_cybersecurity import ServiceForm
 
@@ -43,6 +54,12 @@ NO_OWNERS = "Nobody here holds Device security View yet: leave it blank."
 ACCEPTED_HELP = "Who accepted the decision (or decided to take the devices out of use), as the person recording it states it."
 DECIDED_HELP = "The day it was decided: not after today."
 REVIEW_BLANK = "Blank for the default."  # then each response's rule (rules.review_rule_words)
+# Slice 40: the prefill's note (prefill_initial), the source decision's number and its review in rules' words
+PREFILL_NOTE = ("Controls and plan prefilled from {number} ({review}). Who accepted it and IT's exception number are recorded for this "
+                "advisory.")
+# The review day's words for each response a form offers (review_help), in the form's order
+REVIEW_LABELS = {DecisionResponse.KEEP_WITH_CONTROLS: "Keep in use", DecisionResponse.TAKE_OUT_OF_USE: "Take out of use",
+                 DecisionResponse.NOT_IN_USE_HERE: "Not in use here"}
 
 
 def _text(label: str, help_text: str = "", placeholder: str = ""):
@@ -73,13 +90,32 @@ def _value(form, name: str) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
-def review_help(today, *, asset=None) -> str:
+def responses_for(advisory: bool) -> list:
+    """[(slug, label)] of the responses a form offers: the three for devices past support (models.SUPPORT_RESPONSES), the four for an
+    advisory's devices (also "Decided the part it names is not in use here")."""
+    if advisory:
+        return list(DecisionResponse.choices)
+    return [(r.value, r.label) for r in SUPPORT_RESPONSES]
+
+
+def controls_for(advisory: bool) -> dict:
+    """{slug: words} of the controls a form offers: rules.CONTROLS for an advisory's devices, rules.SUPPORT_CONTROLS (never
+    network_removed) for devices past support."""
+    return rules.CONTROLS if advisory else rules.SUPPORT_CONTROLS
+
+
+def review_help(today, *, asset=None, advisory: bool = False) -> str:
     """The review day's help: blank for the default (rules.review_default, its day for a decision made today), and each response's rule
     (rules.review_rule_words): "Blank for the default. Keep in use: Oct 21, 2027 if decided today (by default 12 months after the day
     decided, at most 36 months). Take out of use: Jan 21, 2027 if decided today (by default 3 months after the day decided, at most 12
-    months)." A temporary device's rule names the day it is due back."""
+    months)." A temporary device's rule names the day it is due back. `advisory` (slice 40): also "Not in use here: ..." (reviewed as a
+    keep decision)."""
     parts = []
-    for label, response in (("Keep in use", DecisionResponse.KEEP_WITH_CONTROLS), ("Take out of use", DecisionResponse.TAKE_OUT_OF_USE)):
+    shown = [DecisionResponse.KEEP_WITH_CONTROLS, DecisionResponse.TAKE_OUT_OF_USE]
+    if advisory:
+        shown.append(DecisionResponse.NOT_IN_USE_HERE)
+    for response in shown:
+        label = REVIEW_LABELS[response]
         rule = rules.review_rule_words(response, asset=asset)
         day = rules.day_words(rules.review_default(response, today, asset=asset))
         parts.append(f"{label}: {day} if decided today ({rule[:1].lower()}{rule[1:]}).")
@@ -97,8 +133,7 @@ class RecordDecisionForm(ServiceForm):
     now (`reasons`: the field only carries the service's refusal back to its place)."""
 
     reasons = _AnyOf(label="Reasons", required=False, widget=forms.MultipleHiddenInput)
-    response = forms.CharField(label="Decision", required=False,
-                               widget=forms.RadioSelect(choices=list(DecisionResponse.choices)))
+    response = forms.CharField(label="Decision", required=False, widget=forms.RadioSelect())  # choices by key (__init__)
     controls = _AnyOf(label="Controls", required=False, help_text=CONTROLS_HELP, widget=forms.CheckboxSelectMultiple)
     controls_reference = _text("IT's reference for the controls", rules.CONTROLS_REFERENCE_HELP, REFERENCE_PLACEHOLDER)
     plan = _select("Plan", PLAN_HELP)
@@ -112,9 +147,11 @@ class RecordDecisionForm(ServiceForm):
     layout = ("reasons", "response", "controls", "controls_reference", "plan", "plan_by", "plan_owner", "accepted_by", "exception_reference",
               "decided_on", "review_by")
 
-    def __init__(self, *args, owners, today, temporary: bool = False, asset=None, **kwargs):
+    def __init__(self, *args, owners, today, temporary: bool = False, asset=None, advisory=None, **kwargs):
         """`owners`: the people who may own a plan; `temporary`: the scope is one rental's, vendor loaner's, or demo unit's own (Return it
-        to its owner is offered); `asset`: that device, for the review day's words."""
+        to its owner is offered); `asset`: that device, for the review day's words; `advisory` (slice 40): the advisory a decision for its
+        devices is recorded under (the four responses, every control), or None (devices past support)."""
+        for_advisory = advisory is not None
         kwargs.setdefault("auto_id", "sd-%s")
         initial = kwargs.setdefault("initial", {})
         initial.setdefault("decided_on", today.isoformat())
@@ -125,14 +162,17 @@ class RecordDecisionForm(ServiceForm):
             # recorded, the select showing what it sends, never its first option chosen by nobody; no plan names no day and no owner.
             initial.update(plan=DecisionPlan.NONE, plan_by="", plan_owner="")
         super().__init__(*args, **kwargs)
-        self.fields["controls"].choices = list(rules.SUPPORT_CONTROLS.items())
+        self.fields["response"].widget.choices = responses_for(for_advisory)
+        if for_advisory:
+            self.fields["response"].help_text = rules.NOT_IN_USE_HELP
+        self.fields["controls"].choices = list(controls_for(for_advisory).items())
         self.fields["plan"].widget.choices = plans
         people = owner_choices(owners)
         self.fields["plan_owner"].widget.choices = [NO_OWNER, *people]
         if not people:
             self.fields["plan_owner"].help_text = NO_OWNERS
         self.fields["accepted_by"].widget.choices = [CHOOSE, *AcceptedBy.choices]
-        self.fields["review_by"].help_text = review_help(today, asset=asset)
+        self.fields["review_by"].help_text = review_help(today, asset=asset, advisory=for_advisory)
 
     def service_kwargs(self) -> dict:
         """record_decision's fields as typed (the scope, the reasons, and the decision superseded are the view's)."""
@@ -152,6 +192,36 @@ def renew_initial(decision, today) -> dict:
             "plan": decision.plan, "plan_by": decision.plan_by.isoformat() if decision.plan_by else "",
             "plan_owner": str(decision.plan_owner_id) if decision.plan_owner_id else "", "accepted_by": decision.accepted_by,
             "exception_reference": "", "decided_on": today.isoformat()}
+
+
+def _lower_first(text: str) -> str:
+    return text[:1].lower() + text[1:]
+
+
+def prefill_initial(source, today, key) -> dict:
+    """Record decision's starting values for a new decision of need key `key` (rules.key_of's shape) prefilled from `source`, the live
+    decision of exactly this scope of another key (support first, else the most recently decided advisory decision of the scope; the
+    view finds it, past its review or not): its response (never "not in use here", a judgment about another advisory's part, nor one this
+    form does not offer), its controls (those this form offers) and IT's reference for them (kept only with recorded_elsewhere), its plan
+    and plan owner, and the plan's day only when it is on or after today (else blank: the service asks for a new one); decided today, the
+    review day blank (the default), who accepted it and IT's exception number blank (recorded for this need, never inherited). No query."""
+    advisory = key != rules.SUPPORT_KEY
+    offered = {value for value, _label in responses_for(advisory)}
+    response = source.response if source.response != DecisionResponse.NOT_IN_USE_HERE and source.response in offered else ""
+    allowed = controls_for(advisory)
+    controls = [c for c in (source.controls or ()) if c in allowed] if response else []
+    return {"response": response, "controls": controls,
+            "controls_reference": source.controls_reference if rules.RECORDED_ELSEWHERE in controls else "",
+            "plan": source.plan or DecisionPlan.NONE,
+            "plan_by": source.plan_by.isoformat() if source.plan_by is not None and source.plan_by >= today else "",
+            "plan_owner": str(source.plan_owner_id) if source.plan_owner_id else "", "accepted_by": "", "exception_reference": "",
+            "decided_on": today.isoformat(), "review_by": ""}
+
+
+def prefill_note(source, today) -> str:
+    """ "Controls and plan prefilled from SD-26-0001 (review due since Sep 30, 2026). Who accepted it and IT's exception number are
+    recorded for this advisory." (the source's review in rules' words)."""
+    return PREFILL_NOTE.format(number=source.number, review=_lower_first(rules.review_words(source, today)))
 
 
 class EndForm(ServiceForm):

@@ -1,13 +1,15 @@
 {% comment %}Slice 37: the device drawer's Security tab (apps.web.asset_cyber.tab_context, under "cyber"; Device security View and Equipment View,
    never a scoped user). The device's facts and the two standing lines in rules' words, the release card (each group with its source), Record
    facts (Device security Edit, never on a retired device), and the facts' own history (Show older through the Record facts URL). Slice 39:
-   the support decision under the device's lines (web/_cyber_decision_device.html).{% endcomment %}
+   the support decision under the device's lines (web/_cyber_decision_device.html). Slice 40: the advisories naming its model, after it
+   under their own heading (web/_cyber_advisory_device.html).{% endcomment %}
 {% if cyber.can_record %}<div class="sec-actions"><button class="link" type="button" hx-get="{{ cyber.facts_url }}" hx-target="#modal-card">Record facts</button></div>{% endif %}
 <div class="sec"><h3>This device <span>what this facility knows about this unit</span></h3>
   {% if cyber.gone %}<div class="note">{{ cyber.gone }}</div>{% endif %}
   <dl class="dl">{% for r in cyber.lines %}<div{% if r.wide %} class="inc-wide"{% endif %}><dt>{{ r.label }}</dt><dd>{{ r.words }}</dd></div>{% endfor %}</dl>
 </div>
 {% include "web/_cyber_decision_device.html" with decision=cyber.decision %}
+{% include "web/_cyber_advisory_device.html" with advisories=cyber.advisories %}
 {% include "web/_asset_cyber_updates.html" with updates=cyber.updates %}
 {% for g in cyber.card %}<div class="sec"><h3>{{ g.title }} <span>{{ g.source }}</span></h3>
   <dl class="dl">{% for r in g.rows %}<div{% if r.wide %} class="inc-wide"{% endif %}><dt>{{ r.label }}</dt><dd>{% if r.url %}<a class="link" href="{{ r.url }}" target="_blank" rel="noopener noreferrer">{{ r.words }}</a>{% else %}{{ r.words }}{% endif %}</dd></div>{% endfor %}</dl>

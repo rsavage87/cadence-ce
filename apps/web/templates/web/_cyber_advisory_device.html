@@ -1,0 +1,34 @@
+{% comment %}Slice 40: the Security tab's "Advisories" (apps.web.asset_cyber.advisory_lines, under cyber.advisories; Device security View and
+   Equipment View, never a scoped user), after the support decision under its own heading. Each advisory naming this device's model that
+   is open, that this device needs a response under, whose live decision governs it, or, marked not applicable, that names it since: its
+   name (a link to its page), its status words, its CVE IDs (three, then "and N more"), the device's line under it, and its responses (the
+   updates and the manufacturer's patches recorded, each work order's number a link with Work orders View; the governing decision's
+   number, a link to its page, its state, and its sentence; or "No response recorded"). Record decision for this device (Review and renew
+   for its own decision past review) for permissions.can_decide while it needs a response and no decision covers it; Open software
+   update with the advisory for permissions.can_open_updates; Reopen it for Device security Edit where it is named since. The rest
+   counted; none: "No advisory recorded here names this model." Cadence's words only (rules), never a verdict on the device.{% endcomment %}
+{% if advisories %}<div class="sec cy-ups" data-section="advisories"><h3>Advisories <span>the security advisories recorded here that name this model</span></h3>
+  {% if advisories.items %}
+  <ul class="cy-up-list">
+    {% for x in advisories.items %}
+    <li class="cy-up" data-advisory="{{ x.number }}">
+      <div class="cy-up-h"><a class="link" href="{{ x.url }}" hx-get="{{ x.url }}" hx-target="#drawer">{{ x.name }}</a></div>
+      <div class="cy-up-s"><span class="muted">{{ x.status }}</span></div>
+      <div class="cy-up-s">{{ x.cves }}</div>
+      {% if x.line %}<div class="cy-up-s" data-line>{{ x.line }}</div>{% endif %}
+      {% for r in x.responses %}{% with t=r.line %}
+      <div class="cy-up-s" data-kind="{{ r.kind }}">{% if r.state %}<span class="chip {{ r.tone }}">{{ r.state }}</span> {% endif %}{{ t.before }}{% if t.number %}{% if t.url %}<a class="link" href="{{ t.url }}" hx-get="{{ t.url }}" hx-target="#drawer">{{ t.number }}</a>{% else %}{{ t.number }}{% endif %}{% endif %}{{ t.after }}</div>
+      {% endwith %}{% endfor %}
+      {% if x.record_url or x.renew_url or x.open_url or x.reopen_url %}<div class="cy-up-f">
+        {% if x.record_url %}<button class="link" type="button" hx-get="{{ x.record_url }}" hx-target="#modal-card">Record decision</button>{% endif %}
+        {% if x.renew_url %}<button class="link" type="button" hx-get="{{ x.renew_url }}" hx-target="#modal-card">Review and renew</button>{% endif %}
+        {% if x.open_url %}<button class="link" type="button" hx-get="{{ x.open_url }}" hx-target="#modal-card">Open software update</button>{% endif %}
+        {% if x.reopen_url %}<button class="link" type="button" hx-get="{{ x.reopen_url }}" hx-target="#modal-card">Reopen it</button>{% endif %}
+      </div>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if advisories.rest %}<p class="hint" data-rest>{{ advisories.rest }}</p>{% endif %}
+  {% if advisories.empty %}<div class="empty">{{ advisories.empty }}</div>{% endif %}
+</div>{% endif %}
