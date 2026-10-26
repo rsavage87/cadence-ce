@@ -67,7 +67,7 @@
         </details>
         {% endif %}
         {% endif %}
-        {% if m.set_url or m.remove_url or m.open_url or m.model_record_url or m.listed %}<div class="cy-release-f">
+        {% if m.acts %}<div class="cy-release-f">
           {% if m.set_url %}<button class="link" type="button" hx-get="{{ m.set_url }}" hx-target="#modal-card">Set models</button>{% endif %}
           {% if m.open_url %}<button class="link" type="button" hx-get="{{ m.open_url }}" hx-target="#modal-card">Open updates to {{ m.fix_version }}</button>{% endif %}
           {% for r in m.listed %}{% if r.record_url %}<button class="link" type="button" hx-get="{{ r.record_url }}" hx-target="#modal-card">Record decision for {{ r.version }}</button>{% endif %}{% endfor %}

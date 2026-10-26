@@ -472,7 +472,7 @@ def _model_row(a, row, rc, lines, answers, who: _Reader) -> dict:
     unopened = any(ans is not None and ans.kind and ans.kind not in NO_OPENER and not any(r.kind in OPEN_SHOWN for r in ans.responses)
                    for _ln, ans in needing)
     counts_lines = rc.lines if rc is not None else {}
-    return {
+    found = {
         "row": row, "model": f"{dm.manufacturer} {dm.model}", "versions": row.get_versions_display(),
         "listed": releases, "remedy": row.get_remedy_display(),
         "fix": rules.release_name(row.fix_release) if row.fix_release_id else "", "patches": row.patches_reference,
@@ -490,6 +490,9 @@ def _model_row(a, row, rc, lines, answers, who: _Reader) -> dict:
         "releases_url": (reverse("web:cybersecurity_set_release", args=[dm.pk])
                          if who.edit_devices and counts_lines.get(rules.LINE_NOT_RECORDED, 0) else ""),
     }
+    found["acts"] = bool(found["set_url"] or found["remove_url"] or found["open_url"] or found["model_record_url"]
+                         or any(r["record_url"] for r in releases))
+    return found
 
 
 def _source_row(a, s, *, may_edit: bool, removable: bool) -> dict:
