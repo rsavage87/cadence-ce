@@ -241,6 +241,19 @@ AREAS = {a.key: a for a in (
     # Slice 39: security decisions for devices past support (Device security View and Equipment View: a decision can name a device)
     Area("device_security_decisions", "Device security decisions", "cybersecurity.DeviceSecurityDecision", "cybersecurity",
          _safe(lambda r: r.number), _safe(lambda r: reverse("web:security_decision", args=[r.number])), also=("equipment",)),
+    # Slice 40: security advisories, their sources, the models and releases they name (Device security View: they name models, never
+    # devices; history reasons carry AD numbers only). Appended last, so no earlier area's rank moves. Links open the advisory's page.
+    Area("security_advisories", "Device security advisories", "cybersecurity.SecurityAdvisory", "cybersecurity", _safe(lambda r: r.number),
+         _safe(lambda r: reverse("web:security_advisory", args=[r.number]))),
+    Area("advisory_sources", "Advisory sources", "cybersecurity.AdvisorySource", "cybersecurity",
+         _safe(lambda r: f"{r.advisory.number} · {r.get_source_display()}"),
+         _safe(lambda r: reverse("web:security_advisory", args=[r.advisory.number])), select=("advisory",)),
+    Area("advisory_models", "Models an advisory names", "cybersecurity.AdvisoryModel", "cybersecurity",
+         _safe(lambda r: f"{r.advisory.number} · {r.device_model}"),
+         _safe(lambda r: reverse("web:security_advisory", args=[r.advisory.number])), select=("advisory", "device_model")),
+    Area("advisory_releases", "Releases an advisory names", "cybersecurity.AdvisoryRelease", "cybersecurity",
+         _safe(lambda r: f"{r.advisory.number} · {r.release}"),
+         _safe(lambda r: reverse("web:security_advisory", args=[r.advisory.number])), select=("advisory", "release__device_model")),
 )}
 ACCESS = Area("access", "Access", "accounts.AccessEvent", "users", _safe(lambda e: str(e.user) if e.user_id else ""))
 ALL_AREAS = {**AREAS, ACCESS.key: ACCESS}
@@ -328,7 +341,12 @@ HIDE = {
     # slice 38: both in the record's name
     "cybersecurity.softwareupdate": {"asset", "work_order"},
     # slice 39: the number is the record's name; the ids it governed when recorded are read by the rules ("joined since"), not history
-    "cybersecurity.devicesecuritydecision": {"number", "governed_ids"},
+    "cybersecurity.devicesecuritydecision": {"number", "governed_ids", "advisory_changes"},
+    # slice 40: the number is the record's name; the stored key, the counters, the ids seen, and each child's advisory are the rules'
+    "cybersecurity.securityadvisory": {"number", "changes"},
+    "cybersecurity.advisorysource": {"advisory", "reference_key", "advisory_removed"},
+    "cybersecurity.advisorymodel": {"advisory", "seen_release_ids"},
+    "cybersecurity.advisoryrelease": {"advisory", "advisory_model"},
 }
 
 # Labels that read better than the verbose names, per model; `_label` falls back to the verbose name.
@@ -420,7 +438,19 @@ LABELS = {
                                              "plan": "Plan", "plan_by": "Plan by", "plan_owner": "Plan owner", "accepted_by": "Accepted by",
                                              "exception_reference": "IT exception", "recorded_by": "Recorded by", "decided_on": "Decided",
                                              "review_by": "Review by", "supersedes": "Supersedes", "ended_on": "Ended",
-                                             "ended_by": "Ended by", "end_reason": "Why it ended"},
+                                             "ended_by": "Ended by", "end_reason": "Why it ended", "advisory": "Advisory"},
+    # Slice 40 (never "fixed": the fix)
+    "cybersecurity.securityadvisory": {"cves": "CVE IDs", "received_on": "Received", "recorded_by": "Recorded by", "status": "Status",
+                                       "not_applicable_reason": "Why not applicable", "status_on": "Status since", "status_by": "Status by",
+                                       "models_confirmed_on": "Models confirmed", "models_confirmed_by": "Models confirmed by",
+                                       "changed_on": "Changed", "removed_on": "Entered in error", "removed_by": "Marked by"},
+    "cybersecurity.advisorysource": {"source": "Source", "reference": "Reference", "url": "Link", "published_on": "Published",
+                                     "updated_on": "Updated", "revision": "Revision", "last_change": "What changed",
+                                     "removed_on": "Removed", "removed_by": "Removed by"},
+    "cybersecurity.advisorymodel": {"device_model": "Device model", "versions": "Releases it names", "remedy": "What the advisory offers",
+                                    "fix_release": "The release the advisory names as the fix",
+                                    "patches_reference": "The patch list the advisory names"},
+    "cybersecurity.advisoryrelease": {"release": "Software release"},
     "testequipment.testequipment": {"tag": "Tag", "kind": "Kind", "serial": "Serial number", "program": "Certificates",
                                     "interval_months": "Interval", "status_reason": "Why", "status_since": "Since", "held_by": "Held by",
                                     "held_since": "Needs a pass dated on or after"},  # out of service: the one release rule's day
@@ -482,6 +512,9 @@ KINDS = {
                                  "uptime_lowest_pct": "percent", "response_target_pct": "percent", "response_reported_pct": "percent"},
     # Slice 39: a decision's controls and reasons in the register's words (apps.cybersecurity.rules.CONTROLS, REASONS), never slugs
     "cybersecurity.devicesecuritydecision": {"controls": "security_controls", "reasons": "security_reasons"},
+    # Slice 40: an advisory's CVE IDs as a list; what a revision changed in words (models.AdvisoryChange), never slugs
+    "cybersecurity.securityadvisory": {"cves": "names"},
+    "cybersecurity.advisorysource": {"last_change": "advisory_changes"},
 }
 
 # Staff-written text that stays on its own page, its print, and its History (slice 32's narrative, slice 34's summary): the change log,
@@ -767,6 +800,13 @@ def _kind_text(kind: str, value, rec) -> str:
         if not isinstance(value, list) or any(v not in words for v in value):
             raise ValueError(kind)
         return "; ".join(text for slug, text in words.items() if slug in value) or EMPTY
+    if kind == "advisory_changes":  # slice 40: a revision's changes, in the choices' order
+        from apps.cybersecurity.models import AdvisoryChange
+
+        labels = dict(AdvisoryChange.choices)
+        if not isinstance(value, list) or any(v not in labels for v in value):
+            raise ValueError(kind)
+        return "; ".join(text for slug, text in labels.items() if slug in value) or EMPTY
     raise ValueError(kind)
 
 

@@ -24,11 +24,17 @@ text of any kind. References are tokens and https links; answers are choices, bl
 - DeviceSecurityDecision (slice 39): the facility's decision for devices past the manufacturer's or the OS vendor's support (one device, a
   model's devices of ours on one release, or every device of ours of a model): keep in use with controls, keep in use without added
   controls, or take out of use; a plan; who accepted it (a role) and IT's exception number (IT's record stays the system of record);
-  and the facility's own review date. Immutable once recorded: a change is a new decision that supersedes it. Slice 40 adds advisories
-  (applies_to "advisory", with its own constraints).
+  and the facility's own review date. Immutable once recorded: a change is a new decision that supersedes it. Slice 40 adds decisions
+  for an advisory's devices (applies_to "advisory", with its own constraints, and the response "not in use here").
+- SecurityAdvisory, AdvisorySource, AdvisoryModel, AdvisoryRelease (slice 40): a security advisory the facility took in, entered by hand
+  (Cadence receives none by itself): its publications (sources: a token reference and an https link, never its text), the models of
+  this facility's catalog it names, the releases of each it names (or every release, or releases not stated), and what it offers (a
+  release from the manufacturer, the manufacturer's patches, mitigations only, no fix). Which devices it concerns is derived from each
+  device's recorded release, never stored (rules.advisory_lines). Written only by apps.cybersecurity.advisories.
 
 Every rule is apps.cybersecurity.rules; every write is apps.cybersecurity.services (and equipment.services.update_asset's model change,
-through services.model_changed), slice 38's updates are apps.cybersecurity.updates, and slice 39's decisions apps.cybersecurity.decisions.
+through services.model_changed), slice 38's updates are apps.cybersecurity.updates, slice 39's decisions apps.cybersecurity.decisions,
+and slice 40's advisories apps.cybersecurity.advisories.
 """
 from django.conf import settings
 from django.db import models
@@ -52,6 +58,10 @@ VENDOR_REPORT_VALIDATOR = reference_token("Enter the vendor's service report or 
 EXCEPTION_REFERENCE_VALIDATOR = reference_token("Enter IT's exception, ticket, or change number as it is written, without spaces, e.g. "
                                                 "EX-1042.")
 VERSION_MAX, OS_NAME_MAX, DOCUMENT_MAX, UPDATE_REFERENCE_MAX, EXCEPTION_REFERENCE_MAX = 60, 80, 40, 40, 40
+# Slice 40: an advisory's references as its publisher prints them (tokens; advisories.py also refuses a network identifier)
+ADVISORY_REFERENCE_VALIDATOR = reference_token("Enter the reference as its publisher prints it, without spaces, e.g. ICSMA-25-030-01.")
+REVISION_VALIDATOR = reference_token("Enter the revision as its publisher prints it, without spaces, e.g. UpdateA or 3.")
+ADVISORY_REFERENCE_MAX, REVISION_MAX, ADVISORY_URL_MAX = 40, 20, 300
 
 
 class OsFamily(models.TextChoices):
@@ -319,11 +329,12 @@ class SoftwareUpdate(TenantModel):
 # --- slice 39: security decisions ----------------------------------------------------------------------------------------------------
 
 class AppliesTo(models.TextChoices):
-    """Why a decision was recorded. Slice 40 adds "advisory" (with the advisory and its own constraints). support_ended's label holds for
-    both of its needs (rules.support_need): support ended, and an end announced within 12 months (review 39 F10); its slug never
-    changes."""
+    """Why a decision was recorded. support_ended's label holds for both of its needs (rules.support_need): support ended, and an end
+    announced within 12 months (review 39 F10); its slug never changes. advisory (slice 40): the devices an advisory names (with the
+    advisory and its own constraints)."""
 
     SUPPORT_ENDED = "support_ended", "Support ended, or its end announced"
+    ADVISORY = "advisory", "A security advisory"
 
 
 class DecisionResponse(models.TextChoices):
@@ -333,6 +344,11 @@ class DecisionResponse(models.TextChoices):
     KEEP_WITH_CONTROLS = "keep_with_controls", "Keep in use with controls"
     KEEP_WITHOUT_ADDED_CONTROLS = "keep_without_added_controls", "Keep in use without added controls"
     TAKE_OUT_OF_USE = "take_out_of_use", "Take out of use"
+    # Slice 40, an advisory's devices only (never "does not apply", "not affected", "not vulnerable"): the facility's own judgment
+    NOT_IN_USE_HERE = "not_in_use_here", "Decided the part it names is not in use here"
+
+
+SUPPORT_RESPONSES = (DecisionResponse.KEEP_WITH_CONTROLS, DecisionResponse.KEEP_WITHOUT_ADDED_CONTROLS, DecisionResponse.TAKE_OUT_OF_USE)
 
 
 class DecisionPlan(models.TextChoices):
@@ -371,9 +387,10 @@ def _decision_scope():
 
 
 class DeviceSecurityDecision(TenantModel):
-    """The facility's decision for devices past support (slice 39), written only by apps.cybersecurity.decisions; read through
-    apps.cybersecurity.rules (needs, the governing decision, coverage, Check lines, words). Immutable once recorded: its writers only end
-    it (superseded, no longer needed, entered in error). One live decision per scope and reason (the conditional constraints below)."""
+    """The facility's decision for devices past support (slice 39) or for the devices an advisory names (slice 40), written only by
+    apps.cybersecurity.decisions; read through apps.cybersecurity.rules (needs, the governing decision, coverage, Check lines, words).
+    Immutable once recorded: its writers only end it (superseded, no longer needed, entered in error). One live decision per scope and
+    key (the key: applies_to, and the advisory for an advisory's; the conditional constraints below)."""
 
     number = models.CharField(max_length=20, editable=False)
     applies_to = models.CharField(max_length=20, choices=AppliesTo.choices)
@@ -403,6 +420,10 @@ class DeviceSecurityDecision(TenantModel):
     ended_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, editable=False,
                                  related_name="+")
     end_reason = models.CharField(max_length=20, choices=DecisionEnd.choices, blank=True, editable=False)
+    # Slice 40: the advisory an advisory decision is for, and the advisory's change count when recorded (its "changed since" Check
+    # compares counts, never days: a same-day revision counts)
+    advisory = models.ForeignKey("SecurityAdvisory", null=True, blank=True, on_delete=models.PROTECT, related_name="decisions")
+    advisory_changes = models.PositiveIntegerField(null=True, blank=True, editable=False)
     history = HistoricalRecords()
 
     class Meta:
@@ -424,8 +445,197 @@ class DeviceSecurityDecision(TenantModel):
                                                                         release__isnull=True, asset__isnull=True,
                                                                         device_model__isnull=False),
                                     name="uniq_live_support_decision_model"),
+            # Slice 40: the advisory set exactly for an advisory decision; "not in use here" only for one; one live decision per scope
+            # and advisory (the advisory is never null inside these conditions: never one constraint over a nullable key)
+            models.CheckConstraint(condition=Q(applies_to=AppliesTo.SUPPORT_ENDED.value, advisory__isnull=True,
+                                               advisory_changes__isnull=True)
+                                   | Q(applies_to=AppliesTo.ADVISORY.value, advisory__isnull=False, advisory_changes__isnull=False),
+                                   name="security_decision_advisory"),
+            models.CheckConstraint(condition=Q(applies_to=AppliesTo.ADVISORY.value) | Q(response__in=[r.value for r in SUPPORT_RESPONSES]),
+                                   name="security_decision_not_in_use"),
+            models.UniqueConstraint(fields=["advisory", "asset"], condition=Q(applies_to=AppliesTo.ADVISORY.value, ended_on__isnull=True,
+                                                                              asset__isnull=False),
+                                    name="uniq_live_advisory_decision_device"),
+            models.UniqueConstraint(fields=["advisory", "release"], condition=Q(applies_to=AppliesTo.ADVISORY.value,
+                                                                                ended_on__isnull=True, release__isnull=False),
+                                    name="uniq_live_advisory_decision_release"),
+            models.UniqueConstraint(fields=["advisory", "device_model"], condition=Q(applies_to=AppliesTo.ADVISORY.value,
+                                                                                     ended_on__isnull=True, release__isnull=True,
+                                                                                     asset__isnull=True, device_model__isnull=False),
+                                    name="uniq_live_advisory_decision_model"),
         ]
 
     def __str__(self):
         return self.number
+
+
+# --- slice 40: security advisories ---------------------------------------------------------------------------------------------------
+
+class AdvisoryStatus(models.TextChoices):
+    OPEN = "open", "Open"
+    NOT_APPLICABLE = "not_applicable", "Not applicable here"
+    CLOSED = "closed", "Closed"
+
+
+class NotApplicableReason(models.TextChoices):
+    """Each reason is checked against Cadence's records when marked (advisories.not_applicable_refusals), so marking it removes nothing
+    from any attention door at that moment; a device named since is listed again."""
+
+    NO_MODEL_HERE = "no_model_here", "It names no model in this facility's catalog"
+    NONE_HERE = "none_here", "No device of the models it names is recorded on site here"
+    RELEASES_NOT_HERE = "releases_not_here", "No device here is recorded on a release it names"
+
+
+class AdvisorySourceKind(models.TextChoices):
+    CISA_ICSMA = "cisa_icsma", "CISA ICS medical advisory"
+    MANUFACTURER_BULLETIN = "manufacturer_bulletin", "Manufacturer bulletin"
+    MANUFACTURER_PORTAL = "manufacturer_portal", "Manufacturer's customer portal notice"
+    FDA_COMMUNICATION = "fda_communication", "FDA safety communication"
+    ISAC = "isac", "ISAC alert"
+    OTHER = "other", "Other"
+
+
+class AdvisoryChange(models.TextChoices):
+    """What a revision changed (a source's last_change, a set). The first three reopen the models' confirmation (advisories.REOPENING)."""
+
+    PRODUCTS_CHANGED = "products_changed", "Products or releases changed"
+    VULNERABILITIES_ADDED = "vulnerabilities_added", "Vulnerabilities added"
+    FIX_AVAILABLE = "fix_available", "The advisory now names a fix"
+    MITIGATIONS_CHANGED = "mitigations_changed", "Mitigations changed"
+    OTHER_DETAILS = "other_details", "Other details"
+
+
+class AdvisoryVersions(models.TextChoices):
+    LISTED = "listed", "The releases listed"
+    ALL = "all", "Every release"
+    NOT_STATED = "not_stated", "Releases not stated"
+
+
+class AdvisoryRemedy(models.TextChoices):
+    """What the advisory offers for a model, as the advisory states it (never Cadence's verdict)."""
+
+    RELEASE = "release", "A release from the manufacturer"
+    PATCHES = "patches", "The manufacturer's validated patches"
+    MITIGATIONS = "mitigations", "Mitigations only, as the advisory states"
+    NO_FIX_YET = "no_fix_yet", "No fix yet, as the advisory states"
+    NO_FIX_PLANNED = "no_fix_planned", "No fix planned, as the advisory states"
+
+
+class SecurityAdvisory(TenantModel):
+    """A security advisory the facility took in (the issue, which may have several publications). No title or text is kept: its name is
+    its number, its first source's reference, and the models it names (rules.advisory_name). Needs are derived from each device's
+    recorded release (rules.advisory_lines) for an advisory open or closed and not entered in error."""
+
+    number = models.CharField(max_length=20, editable=False)  # AD-<yy>-<nnnn>, yy of received_on
+    cves = models.JSONField(default=list)  # upper-cased CVE IDs, unique within the advisory, in the order given (matched in Python)
+    received_on = models.DateField()
+    recorded_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, editable=False,
+                                    related_name="+")
+    status = models.CharField(max_length=20, choices=AdvisoryStatus.choices, default=AdvisoryStatus.OPEN)
+    not_applicable_reason = models.CharField(max_length=20, choices=NotApplicableReason.choices, blank=True)
+    status_on = models.DateField(null=True, blank=True)  # the day it last left open (marked not applicable, or closed)
+    status_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    models_confirmed_on = models.DateField(null=True, blank=True)  # null: "Models to confirm"
+    models_confirmed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    changed_on = models.DateField(null=True, blank=True)  # the day of the last change that matters (its words)
+    changes = models.PositiveIntegerField(default=0, editable=False)  # counted with changed_on: the decisions' "changed since" Check
+    removed_on = models.DateField(null=True, blank=True)  # entered in error: marked, never deleted
+    removed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    history = HistoricalRecords()
+
+    class Meta:
+        ordering = ["-received_on", "-number"]
+        verbose_name_plural = "security advisories"
+        constraints = [
+            models.UniqueConstraint(fields=["tenant", "number"], name="uniq_security_advisory_number"),
+            # The reason set exactly when not applicable; the day set exactly when not open (never a constraint on a SET_NULL person)
+            models.CheckConstraint(condition=(Q(status=AdvisoryStatus.NOT_APPLICABLE.value) & ~Q(not_applicable_reason=""))
+                                   | Q(status__in=[AdvisoryStatus.OPEN.value, AdvisoryStatus.CLOSED.value], not_applicable_reason=""),
+                                   name="security_advisory_reason"),
+            models.CheckConstraint(condition=Q(status=AdvisoryStatus.OPEN.value, status_on__isnull=True)
+                                   | Q(status__in=[AdvisoryStatus.NOT_APPLICABLE.value, AdvisoryStatus.CLOSED.value],
+                                       status_on__isnull=False),
+                                   name="security_advisory_status_on"),
+        ]
+
+    def __str__(self):
+        return self.number
+
+
+class AdvisorySource(TenantModel):
+    """One publication of an advisory: who published it, its reference (a token) and link (https, a pointer never fetched), its days,
+    and its revision. The same source kind and reference is one publication: unique among live sources."""
+
+    advisory = models.ForeignKey(SecurityAdvisory, on_delete=models.PROTECT, related_name="sources")
+    source = models.CharField(max_length=24, choices=AdvisorySourceKind.choices)
+    reference = models.CharField(max_length=ADVISORY_REFERENCE_MAX, blank=True, validators=[ADVISORY_REFERENCE_VALIDATOR])
+    reference_key = models.CharField(max_length=ADVISORY_REFERENCE_MAX, blank=True, editable=False)  # casefolded
+    url = models.CharField(max_length=ADVISORY_URL_MAX, blank=True)  # https only, checked by services._url
+    published_on = models.DateField(null=True, blank=True)
+    updated_on = models.DateField(null=True, blank=True)
+    revision = models.CharField(max_length=REVISION_MAX, blank=True, validators=[REVISION_VALIDATOR])
+    last_change = models.JSONField(default=list)  # AdvisoryChange slugs: what the last revision recorded changed
+    removed_on = models.DateField(null=True, blank=True)  # this source removed (Remove source)
+    removed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    # Set only when its advisory is entered in error (one update, no history row): frees the reference without touching removed_on
+    advisory_removed = models.BooleanField(default=False, editable=False)
+    history = HistoricalRecords()
+
+    class Meta:
+        ordering = ["advisory", "created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["tenant", "source", "reference_key"],
+                                    condition=Q(removed_on__isnull=True, advisory_removed=False, reference_key__gt=""),
+                                    name="uniq_live_advisory_source_reference"),
+        ]
+
+    def __str__(self):
+        return f"{self.advisory} · {self.get_source_display()}{f' {self.reference}' if self.reference else ''}"
+
+
+class AdvisoryModel(TenantModel):
+    """A model of this facility's catalog an advisory names: which of its releases (listed, every release, or not stated) and what the
+    advisory offers for it. A release fix is a release of the model, never one it lists; "every release" or "not stated" never with a
+    release fix (a device on a newer release would read as named: critique39_scope B3)."""
+
+    advisory = models.ForeignKey(SecurityAdvisory, on_delete=models.PROTECT, related_name="model_rows")
+    device_model = models.ForeignKey("equipment.DeviceModel", on_delete=models.PROTECT, related_name="advisory_rows")
+    versions = models.CharField(max_length=12, choices=AdvisoryVersions.choices)
+    remedy = models.CharField(max_length=16, choices=AdvisoryRemedy.choices)
+    fix_release = models.ForeignKey(SoftwareRelease, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    patches_reference = models.CharField(max_length=UPDATE_REFERENCE_MAX, blank=True, validators=[UPDATE_REFERENCE_VALIDATOR])
+    # The model's versioned, not removed releases when set_model last saved (the "Release added since" Check, by identity)
+    seen_release_ids = models.JSONField(default=list, editable=False)
+    history = HistoricalRecords()
+
+    class Meta:
+        ordering = ["advisory", "created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["advisory", "device_model"], name="uniq_advisory_model"),
+            models.CheckConstraint(condition=Q(remedy=AdvisoryRemedy.RELEASE.value, versions=AdvisoryVersions.LISTED.value,
+                                               fix_release__isnull=False)
+                                   | (~Q(remedy=AdvisoryRemedy.RELEASE.value) & Q(fix_release__isnull=True)),
+                                   name="advisory_model_fix"),
+            models.CheckConstraint(condition=Q(remedy=AdvisoryRemedy.PATCHES.value) | Q(patches_reference=""),
+                                   name="advisory_model_patches"),
+        ]
+
+    def __str__(self):
+        return f"{self.advisory} · {self.device_model}"
+
+
+class AdvisoryRelease(TenantModel):
+    """A release a model row lists (versions listed only; set by advisories.set_model, which also sets `advisory` to the row's)."""
+
+    advisory = models.ForeignKey(SecurityAdvisory, on_delete=models.PROTECT, related_name="release_rows")
+    advisory_model = models.ForeignKey(AdvisoryModel, on_delete=models.CASCADE, related_name="releases")
+    release = models.ForeignKey(SoftwareRelease, on_delete=models.PROTECT, related_name="+")
+    history = HistoricalRecords()
+
+    class Meta:
+        ordering = ["advisory_model", "created_at"]
+        constraints = [models.UniqueConstraint(fields=["advisory_model", "release"], name="uniq_advisory_release")]
+
+    def __str__(self):
+        return f"{self.advisory} · {self.release}"
 

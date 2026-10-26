@@ -120,6 +120,7 @@ PROFILE_KEPT = "A profile is cleared field by field, never removed."
 ALREADY_REMOVED = "This release is already marked entered in error."
 REMOVED_RELEASE = "This release was entered in error: add its version again to restore it."
 URL_WORDS = "Enter the manufacturer's https link, without a password, token, or signature in it."
+CHOOSE_ADVISORY = "Choose an advisory recorded here."  # slice 40
 CHOICE_WORDS = "Choose from the list, or leave it not recorded."
 ON_FILE_ONLY = "Record this only while the MDS2 is on file."
 EDITION_NEEDED = "Choose the MDS2's form (the year on it)."
@@ -193,6 +194,28 @@ def _locked_release(release, field: str = "release", message: str = CHOOSE_RELEA
     found = SoftwareRelease.objects.select_for_update(of=("self",)).filter(pk=pk).order_by("pk").first() if pk is not None else None
     if found is None:
         raise ValidationError({field: message})
+    return found
+
+
+def _locked_advisory(advisory, field: str = "advisory", *, lock: bool = True):
+    """Slice 40: the advisory's row as it is now (this facility's only), by instance, id, or number in any letter case; locked until the
+    transaction ends (FOR UPDATE of its own row, no join) only when `lock`. The lock-free form serves the GET doors' readers: FOR UPDATE
+    outside a transaction is an error on PostgreSQL (slice 39's 500), so a reader never locks. Refused keyed `field`."""
+    from .models import SecurityAdvisory
+
+    pk = _pk(advisory, SecurityAdvisory)
+    rows = SecurityAdvisory.objects.order_by("pk")
+    if pk is not None:
+        rows = rows.filter(pk=pk)
+    elif isinstance(advisory, str) and advisory.strip():
+        rows = rows.filter(number__iexact=advisory.strip())
+    else:
+        rows = rows.none()
+    if lock:
+        rows = rows.select_for_update(of=("self",))
+    found = rows.first()
+    if found is None:
+        raise ValidationError({field: CHOOSE_ADVISORY})
     return found
 
 
@@ -293,13 +316,33 @@ def _link_keys(parts) -> list:
     return keys
 
 
-def _url(value, errors: dict) -> str:
-    """The MDS2's link: https only, no user or password in it, no query, fragment, or path parameter key that looks like a credential
-    (_credential_key), at most URL_MAX characters."""
+# Slice 40 (critique40_rules S5, N7): a link names the publisher's page, never an address on the facility's own network: no IP-literal
+# host, no explicit port, no single-label host, no internal suffix. The MDS2 link takes the same checks.
+INTERNAL_SUFFIXES = (".local", ".lan", ".internal", ".home.arpa", ".corp")
+
+
+def _public_host(parts) -> bool:
+    """True for a public host name: dotted, not an IP literal, no port, no internal suffix."""
+    import ipaddress
+
+    host = (parts.hostname or "").rstrip(".").casefold()
+    if not host or "." not in host or parts.port is not None or host.endswith(INTERNAL_SUFFIXES):
+        return False
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return True
+    return False
+
+
+def _url(value, errors: dict, field: str = "mds2_url", words: str = URL_WORDS, limit: int | None = None) -> str:
+    """A link (the MDS2's; slice 40: an advisory source's): https only, a public host name (_public_host), no user or password in it, no
+    query, fragment, or path parameter key that looks like a credential (_credential_key), at most `limit` (URL_MAX) characters. A
+    problem is keyed `field` with `words`."""
     if value is None:
         return ""
     if not isinstance(value, str):
-        errors["mds2_url"] = URL_WORDS
+        errors[field] = words
         return ""
     text = value.strip()
     if not text:
@@ -307,13 +350,13 @@ def _url(value, errors: dict) -> str:
     try:
         parts = urlsplit(text)
         URLValidator(schemes=["https"])(text)
-        ok = (len(text) <= URL_MAX and parts.scheme == "https" and parts.hostname and parts.username is None and parts.password is None
-              and "@" not in parts.netloc)
+        ok = (len(text) <= (limit or URL_MAX) and parts.scheme == "https" and parts.hostname and parts.username is None
+              and parts.password is None and "@" not in parts.netloc and _public_host(parts))
         ok = ok and not any(_credential_key(k) for k in _link_keys(parts))
     except (ValidationError, ValueError):
         ok = False
     if not ok:
-        errors["mds2_url"] = URL_WORDS
+        errors[field] = words
     return text
 
 

@@ -112,8 +112,10 @@ CHANGES_DAYS = (7, 30, 90)  # Changes for IT: the windows offered (30 by default
 NEVER_WORDS = ("secure", "compliant", "certified", "patched", "unpatched", "vulnerable", "unsupported", "mitigated",
                "protected", "safe", "at risk", "exposed", "exploitable", "remediated", "end of life", "high risk", "critical", "required",
                "requires", "NPRM", "FDA-approved", "FDA-cleared", "IEC 80001", "DNV",
-               # slice 39 (build39 section 4; the advisory words come with slice 40)
-               "exempt", "waiver", "hardened", "deadline")
+               # slice 39 (build39 section 4)
+               "exempt", "waiver", "hardened", "deadline",
+               # slice 40 (build40 section 1): an advisory's statuses are the issuer's (CSAF), never Cadence's verdict
+               "affected", "fixed", "exploited", "zero-day", "uncontrolled")
 # A decision's words also never say "overdue" (its only clock is its own review date: "Review due since ..."). Not in NEVER_WORDS, which
 # every door's whole page is scanned with: the device drawer around the Security tab carries Equipment's own PM words ("overdue for PM").
 DECISION_NEVER_WORDS = (*NEVER_WORDS, "overdue")
@@ -916,7 +918,10 @@ BADGE_TITLE = "Decisions past their review date"
 # scope in the query: asset=<tag>, release=<id>, model=<id>, or supersedes=<number> for Review and renew), End (its number), a model's
 # panel on the Device security screen (with the Fleet's filters), a device's drawer (tab=security), a work order
 URLS = {"decision": "web:security_decision", "record": "web:security_decision_new", "end": "web:security_decision_end",
-        "model": "web:cybersecurity_model", "device": "web:asset", "work_order": "web:wo"}
+        "model": "web:cybersecurity_model", "device": "web:asset", "work_order": "web:wo",
+        # slice 40: an advisory's page and the Advisories tab; slice 38's update doors (opened from an advisory)
+        "advisory": "web:security_advisory", "advisories": "web:security_advisories", "decisions": "web:security_decisions",
+        "open_update": "web:cybersecurity_update_open", "open_updates": "web:cybersecurity_release_open_updates"}
 
 
 def _lower_first(text: str) -> str:
@@ -1023,12 +1028,43 @@ def need_unknown(asset_standing, reasons=None) -> bool:
 
 # --- the governing decision ----------------------------------------------------------------------------------------------------------
 
-def _live():
-    """Live (not ended) decisions for devices past support."""
-    return DeviceSecurityDecision.objects.filter(applies_to=AppliesTo.SUPPORT_ENDED, ended_on__isnull=True)
+# A need's key (slice 40, build40 section 5.1): (applies_to, advisory id): (support_ended, None) for a device past support, (advisory, the
+# advisory's id) for the devices an advisory names. Every reader of decisions reads one key's at a time: a decision governs only the
+# need of its own key.
+SUPPORT_KEY = (AppliesTo.SUPPORT_ENDED.value, None)
 
 
-_DECISION_RELATED = ("asset", "device_model", "release", "plan_owner", "recorded_by")
+def key_of(decision) -> tuple:
+    """The decision's need key: (applies_to, advisory id or None)."""
+    return (decision.applies_to, decision.advisory_id)
+
+
+def advisory_key(advisory) -> tuple:
+    """The need key of an advisory's devices."""
+    return (AppliesTo.ADVISORY.value, getattr(advisory, "pk", advisory))
+
+
+def _live(key: tuple = SUPPORT_KEY):
+    """Live (not ended) decisions of one need key (devices past support by default)."""
+    applies_to, advisory_id = key
+    rows = DeviceSecurityDecision.objects.filter(applies_to=applies_to, ended_on__isnull=True)
+    return rows.filter(advisory_id=advisory_id) if advisory_id is not None else rows.filter(advisory__isnull=True)
+
+
+def _live_all():
+    """Every live (not ended) decision, of every key (group them with _by_key before governing)."""
+    return DeviceSecurityDecision.objects.filter(ended_on__isnull=True)
+
+
+def _by_key(decisions) -> dict:
+    """{need key: [decisions]} (in the order given)."""
+    out: dict = {}
+    for d in decisions:
+        out.setdefault(key_of(d), []).append(d)
+    return out
+
+
+_DECISION_RELATED = ("asset", "device_model", "release", "plan_owner", "recorded_by", "advisory")
 
 
 def scope_kind(decision) -> str:
@@ -1048,7 +1084,10 @@ def _recorded_release_id(asset):
 
 def _governing(devices, decisions) -> dict:
     """{device id: the most specific live decision whose scope holds it, or None}: its own (device scope); else, for a device of ours on
-    site, its recorded release's (release scope), else its model's (model scope). A temporary device is governed only by its own."""
+    site, its recorded release's (release scope), else its model's (model scope). A temporary device is governed only by its own.
+    `decisions` are of one need key (slice 40): given two keys it raises ValueError, never reading one key's decision as another's."""
+    if len({key_of(d) for d in decisions}) > 1:
+        raise ValueError("decisions of several need keys: govern each key apart (rules._by_key)")
     by_asset = {d.asset_id: d for d in decisions if d.asset_id}
     by_release = {d.release_id: d for d in decisions if d.release_id}
     by_model = {d.device_model_id: d for d in decisions if not d.asset_id and not d.release_id}
@@ -1064,15 +1103,15 @@ def _governing(devices, decisions) -> dict:
     return out
 
 
-def _decisions_for(devices) -> list:
-    """The live decisions that may govern `devices` (their own, or their models' release and model scopes), with what their words read.
-    One query."""
+def _decisions_for(devices, key: tuple = SUPPORT_KEY) -> list:
+    """The live decisions of `key` that may govern `devices` (their own, or their models' release and model scopes), with what their
+    words read. One query."""
     model_ids = {a.device_model_id for a in devices}
-    return list(_live().filter(Q(asset_id__in=[a.pk for a in devices]) | Q(asset__isnull=True, device_model_id__in=model_ids))
+    return list(_live(key).filter(Q(asset_id__in=[a.pk for a in devices]) | Q(asset__isnull=True, device_model_id__in=model_ids))
                 .select_related(*_DECISION_RELATED).order_by("number"))
 
 
-def governing_decisions(assets, today: date) -> dict:
+def governing_decisions(assets, today: date, key: tuple = SUPPORT_KEY) -> dict:
     """{asset id: the governing live decision, or None} for the devices of `assets` (a queryset or a list): the most specific live
     support decision whose scope holds it, whether or not past its review (build39 section 3): its own (device scope); else, only for a
     device of ours on site, the one for its recorded release (release scope), else the one for its model (model scope). A temporary
@@ -1083,7 +1122,7 @@ def governing_decisions(assets, today: date) -> dict:
     devices = _devices_with_records(assets)
     if not devices:
         return {}
-    return _governing(devices, _decisions_for(devices))
+    return _governing(devices, _decisions_for(devices, key))
 
 
 def covers(decision, today: date) -> bool:
@@ -1254,12 +1293,20 @@ def who_words(decision, *, day: bool = True) -> str:
     recording: Record decision takes a day decided in the past (an exception that already lapsed), and the day it was recorded is its
     History's (review 39 F8). Nobody recording (the system) says no recorder. `day` False leaves the day out (decision_words, to take out
     of use: its sentence opens "Take out of use, decided Oct 21, 2026")."""
-    verb = "Decided by" if decision.response == DecisionResponse.TAKE_OUT_OF_USE else "Accepted by"
+    verb = who_verb(decision)
     when = f" on {day_words(decision.decided_on)}" if day else ""
     recorder = f", as recorded by {decision.recorded_by}" if decision.recorded_by_id else ""
     exception = (f"IT exception {decision.exception_reference}" if decision.exception_reference
                  else "no IT exception number recorded")
     return f"{verb} {AcceptedBy(decision.accepted_by).label}{when}{recorder}; {exception}"
+
+
+DECIDED_RESPONSES = (DecisionResponse.TAKE_OUT_OF_USE, DecisionResponse.NOT_IN_USE_HERE)  # "Decided by", never "Accepted by"
+
+
+def who_verb(decision) -> str:
+    """ "Decided by" to take out of use and for "not in use here" (slice 40), else "Accepted by": the one place the verb is decided."""
+    return "Decided by" if decision.response in DECIDED_RESPONSES else "Accepted by"
 
 
 def _past_review(decision, today: date) -> bool:
@@ -1274,6 +1321,8 @@ def decision_words(decision, today: date, *, fy_start: int | None = None) -> str
       accepted" appears)
     - take out of use: "Take out of use, decided Oct 21, 2026; review by Jan 21, 2027." (never "out of use" as a device's state: the
       decision retires nothing)
+    - not in use here (slice 40, an advisory's devices): "Decided Oct 21, 2026 that the part it names is not in use here; review by Oct
+      21, 2027. Decided by the CE leader, as recorded by Kim Lee; no IT exception number recorded." (no plan part: it has none)
     Past its review (a live decision, review_by before today), "Review due since Oct 21, 2027" is read first and replaces the review part
     (and "risk accepted until" is dropped): "Review due since Oct 21, 2027: keep in use without added controls." Then plan_words and
     who_words (without the day to take out of use: its first part says it). `fy_start`: the facility's fiscal year start month, read
@@ -1285,10 +1334,14 @@ def decision_words(decision, today: date, *, fy_start: int | None = None) -> str
         head, tail = f"Keep in use with controls ({len(controls)}: {'; '.join(controls)})", f"; review by {review}"
     elif response == DecisionResponse.KEEP_WITHOUT_ADDED_CONTROLS:
         head, tail = "Keep in use without added controls", f": risk accepted until {review}"
+    elif response == DecisionResponse.NOT_IN_USE_HERE:  # slice 40: an advisory's devices; no plan (the template drops its part)
+        head, tail = (f"Decided {day_words(decision.decided_on)} that the part it names is not in use here", f"; review by {review}")
     else:
         head, tail = f"Take out of use, decided {day_words(decision.decided_on)}", f"; review by {review}"
     first = f"Review due since {review}: {_lower_first(head)}." if _past_review(decision, today) else f"{head}{tail}."
-    who = who_words(decision, day=response != DecisionResponse.TAKE_OUT_OF_USE)  # take out of use says the day decided first
+    who = who_words(decision, day=response not in DECIDED_RESPONSES)  # their sentences say the day decided first
+    if response == DecisionResponse.NOT_IN_USE_HERE:
+        return f"{first} {who}."
     return f"{first} {plan_words(decision, fy_start=fy_start)}. {who}."
 
 
@@ -1879,3 +1932,373 @@ def badge(today: date) -> dict:
     (permissions.can_view_devices, never a scoped user)."""
     count = _live().filter(review_by__lt=today).filter(holds_device_q()).count()
     return {"count": count, "hot": count > 0}
+
+
+# --- slice 40: security advisories (build40 sections 1 and 4) --------------------------------------------------------------------------
+#
+# An advisory names models of this facility's catalog (AdvisoryModel rows) and, for each, the releases it names (listed, every release,
+# or releases not stated) and what it offers (a release from the manufacturer, its validated patches, mitigations, no fix). Which devices
+# it concerns is derived here from each device's recorded release only (slice 38: what a device ran on a past day is never asked), never
+# stored. CVE IDs and other JSON lists are matched in Python, never with a JSON lookup (SQLite has none). Positive conditions only.
+
+HICP_ADVISORIES = ("HHS 405(d) HICP 2023 recommends taking in security advisories, finding the devices they concern, and choosing a "
+                   "response with the manufacturer. Cadence keeps no advisory text: record the source, its reference, and the models and "
+                   "releases it names. A response is an update open to the fix or to a release it does not name, the manufacturer's "
+                   "patches recorded, or a decision.")
+HICP_ADVISORY_DECISIONS = ("HHS 405(d) HICP 2023 recommends identifying, alongside the manufacturer, a response to each vulnerability an "
+                           "advisory discloses, with a remediation plan where a patch cannot fix it. IT's exception stays in IT's system; "
+                           "record its number here.")
+ADVISORIES_EMPTY = ("No advisories recorded here yet. Cadence does not receive advisories by itself: record each one your team takes "
+                    "in.")
+DEVICE_ADVISORIES_EMPTY = "No advisory recorded here names this model."
+NO_CVES_WORDS = "No CVE IDs recorded"
+NO_MODEL_NAMED = "no model of this facility's catalog"
+NOT_IN_USE_HELP = ("The component or feature the advisory names is not deployed or used on these devices here. If you turned a feature "
+                   "off as a control, choose Keep in use with controls (a connectivity feature turned off).")
+ADVISORY_DECISION_HINT = ("For the devices of this scope that {number} names, on a release it names or with no release recorded. "
+                          "Cadence keeps no advisory text.")
+
+# A device's line under a model row (advisory_lines), decided in this order: the fix before a release it names (critique39_scope B3)
+ON_FIX, NAMED, LINE_NOT_RECORDED, OTHER_RELEASE = "on_fix", "named", "not_recorded", "other"
+LINE_KINDS = {NAMED: "On a release it names", LINE_NOT_RECORDED: "Release not recorded", ON_FIX: "On the fix it names",
+              OTHER_RELEASE: "On a release it does not name"}
+NEEDS_RESPONSE = (NAMED, LINE_NOT_RECORDED)
+
+# What answers a line that needs a response (advisory_answers): a device's kind, the first that holds in ANSWER_ORDER
+PATCHES_RECORDED, PATCHES_OTHER_LIST, ANSWER_DECIDED, ANSWER_REVIEW_DUE, NO_RESPONSE = (
+    "patches_recorded", "patches_other_list", "decided", "review_due", "none")
+UPDATE_ELSEWHERE = "update_elsewhere"  # an open update that does not answer the line: shown with its words, never a response
+ANSWER_KINDS = {UPDATE_OPEN: "Update open", UPDATE_NOT_CONFIRMED: "Version not confirmed", PATCHES_RECORDED: "Patches recorded",
+                PATCHES_OTHER_LIST: "Patches, another list", ANSWER_DECIDED: "Decided", ANSWER_REVIEW_DUE: "Decision past its review date",
+                NO_RESPONSE: "No response recorded"}
+ANSWER_ORDER = (PATCHES_RECORDED, ANSWER_DECIDED, UPDATE_NOT_CONFIRMED, UPDATE_OPEN, PATCHES_OTHER_LIST, ANSWER_REVIEW_DUE, NO_RESPONSE)
+ANSWERED = (PATCHES_RECORDED, ANSWER_DECIDED)  # what Close counts as answered, besides the lines that need no response
+NO_RESPONSE_WORDS = "No response recorded"
+
+
+def advisory_name(advisory, rows=None, sources=None) -> str:
+    """ "AD-26-0003 · DEMO-ADV-0001 · Alaris 8015 PCU": the number, the first live source's reference (with none, its label and published
+    day, "Manufacturer bulletin, Jul 13, 2026", or its label), then the models it names (two, then "and 2 more"), or "no model of this
+    facility's catalog". No title is kept. `rows` (its AdvisoryModel rows with device_model) and `sources` (its sources, oldest first)
+    when already read; else read here (two queries)."""
+    from .models import AdvisorySource
+
+    if sources is None:
+        sources = list(AdvisorySource.objects.filter(advisory_id=advisory.pk).order_by("created_at", "pk"))
+    if rows is None:
+        rows = list(advisory.model_rows.select_related("device_model").order_by("created_at", "pk"))
+    parts = [advisory.number]
+    live = [s for s in sources if s.removed_on is None]
+    if live:
+        first = live[0]
+        if first.reference:
+            parts.append(first.reference)
+        elif first.published_on:
+            parts.append(f"{first.get_source_display()}, {day_words(first.published_on)}")
+        else:
+            parts.append(first.get_source_display())
+    names = [r.device_model.model for r in rows]
+    if not names:
+        parts.append(NO_MODEL_NAMED)
+    elif len(names) <= 2:
+        parts.append(" and ".join(names) if len(names) == 2 else names[0])
+    else:
+        parts.append(f"{names[0]}, {names[1]}, and {len(names) - 2} more")
+    return " · ".join(parts)
+
+
+def rows_of(advisories) -> list:
+    """The AdvisoryModel rows of `advisories` (advisories, their ids, or a queryset of them), each with its advisory, model, and fix
+    release read, and `row.listed` (its listed releases, in version_key order) and `row.listed_ids` attached. Two queries."""
+    from .models import AdvisoryModel, AdvisoryRelease
+
+    if isinstance(advisories, QuerySet):
+        which = Q(advisory_id__in=advisories.values("pk"))
+    else:
+        which = Q(advisory_id__in=[getattr(a, "pk", a) for a in advisories])
+    rows = list(AdvisoryModel.objects.filter(which).select_related("advisory", "device_model", "fix_release")
+                .order_by("advisory__received_on", "advisory_id", "created_at", "pk"))
+    listed: dict = {}
+    for ar in (AdvisoryRelease.objects.filter(advisory_model_id__in=[r.pk for r in rows]).select_related("release")
+               .order_by("release__version_key", "pk")):
+        listed.setdefault(ar.advisory_model_id, []).append(ar.release)
+    for r in rows:
+        r.listed = listed.get(r.pk, [])
+        r.listed_ids = frozenset(x.pk for x in r.listed)
+    return rows
+
+
+@dataclass(frozen=True)
+class AdvisoryLine:
+    """One device under one model row: its `kind` (LINE_KINDS), its recorded release (None: none recorded), its standing (the connection
+    words), and `words`: "On 5.2 (demo), a release the advisory names", "The advisory names every release of the Cios Spin", ..."""
+
+    asset: object
+    row: object
+    kind: str
+    release: object | None
+    standing: object
+    words: str
+
+    @property
+    def needs_response(self) -> bool:
+        return self.kind in NEEDS_RESPONSE
+
+    @property
+    def place(self) -> str:
+        """ "ICU · Connected (wireless)": the device's department and connection."""
+        department = getattr(self.asset.department, "name", "") if self.asset.department_id else ""
+        return " · ".join(p for p in (department, self.standing.connection.words) if p)
+
+
+def _line(asset, row, standing) -> AdvisoryLine:
+    from .models import AdvisoryVersions
+
+    release = standing.release
+    model = row.device_model.model
+    if row.versions == AdvisoryVersions.ALL:
+        return AdvisoryLine(asset, row, NAMED, release, standing, f"The advisory names every release of the {model}")
+    if row.versions == AdvisoryVersions.NOT_STATED:
+        return AdvisoryLine(asset, row, NAMED, release, standing, f"The advisory names the {model} without stating releases")
+    if release is None:
+        return AdvisoryLine(asset, row, LINE_NOT_RECORDED, None, standing,
+                            f"{RELEASE_NOT_RECORDED}: it may run a release the advisory names")
+    if row.fix_release_id is not None and release.pk == row.fix_release_id:
+        return AdvisoryLine(asset, row, ON_FIX, release, standing, f"On {release.version}, the release the advisory names as the fix")
+    if release.pk in row.listed_ids:
+        return AdvisoryLine(asset, row, NAMED, release, standing, f"On {release.version}, a release the advisory names")
+    return AdvisoryLine(asset, row, OTHER_RELEASE, release, standing, f"On {release.version}, a release the advisory does not name")
+
+
+def advisory_lines(rows, *, today: date, assets=None) -> list:
+    """[AdvisoryLine] for `rows` (from rows_of): every device on site (ours and temporary, on_site) of each row's model, or only those of
+    `assets` (a list of devices or ids: the Security tab's one device), in the rows' order, then by tag. From each device's recorded
+    release only (release_of's rule: versioned, not entered in error, of its model). Fixed queries: the devices with their records (one),
+    their models' profiles (one, for the connection words)."""
+    model_ids = {r.device_model_id for r in rows}
+    if not model_ids:
+        return []
+    devices = on_site().filter(device_model_id__in=model_ids)
+    if assets is not None:
+        devices = devices.filter(pk__in=[getattr(a, "pk", a) for a in assets])
+    devices = list(devices.select_related(*_WITH_RECORD).order_by("tag"))
+    if not devices:
+        return []
+    held = standings(devices, today)
+    by_model: dict = {}
+    for a in devices:
+        by_model.setdefault(a.device_model_id, []).append(a)
+    return [_line(a, row, held[a.pk]) for row in rows for a in by_model.get(row.device_model_id, [])]
+
+
+def answers_row(update, row) -> bool:
+    """Whether an update answers a model row (build40 section 4.2), judged by where it leaves the device, never by a link: a release
+    target answers when the row lists releases and the target is not one it lists (the fix included: it is never listed); a patches
+    target answers when the row's remedy is the manufacturer's patches and the row names no list or the target names that list."""
+    from .models import AdvisoryRemedy, AdvisoryVersions, UpdateTarget
+
+    if update.target == UpdateTarget.RELEASE:
+        return row.versions == AdvisoryVersions.LISTED and update.target_release_id not in row.listed_ids
+    if update.target == UpdateTarget.PATCHES and row.remedy == AdvisoryRemedy.PATCHES:
+        return not row.patches_reference or (update.target_reference or "").casefold() == row.patches_reference.casefold()
+    return False
+
+
+@dataclass(frozen=True)
+class LineAnswer:
+    """What answers one line (advisory_answers): `kind` "" when the line needs no response (on the fix, or a release it does not name),
+    else the first of ANSWER_ORDER that holds; `responses` every Response shown (updates, the patches recorded, the decision), in that
+    order; `decision` the governing advisory decision (or None) and whether it `covers` the line now."""
+
+    line: AdvisoryLine
+    kind: str
+    responses: tuple = ()
+    decision: object | None = None
+    covers: bool = False
+
+
+def _patches_reference(update) -> str:
+    return update.reference or update.target_reference or ""
+
+
+def _update_rows(lines):
+    """The SoftwareUpdate rows that may answer `lines` (one query): open update work orders of any target, those completed or closed
+    with nothing recorded, and the live records of the manufacturer's patches (a hand row, a work order's patches, a work order's
+    "already" on a patches target)."""
+    from apps.workorders.models import OPEN_STATUSES, WoStatus
+
+    from .models import SoftwareUpdate, UpdateOutcome, UpdateTarget
+
+    ids = {ln.asset.pk for ln in lines}
+    finished = (WoStatus.COMPLETED, WoStatus.CLOSED)
+    patches = (Q(work_order__isnull=True, removed_on__isnull=True, outcome=UpdateOutcome.PATCHES)
+               | Q(work_order__status__in=finished, outcome=UpdateOutcome.PATCHES)
+               | Q(work_order__status__in=finished, outcome=UpdateOutcome.ALREADY, target=UpdateTarget.PATCHES))
+    return list(SoftwareUpdate.objects.filter(asset_id__in=ids)
+                .filter(Q(work_order__status__in=OPEN_STATUSES) | Q(work_order__status__in=finished, outcome="") | patches)
+                .select_related("work_order", "target_release").order_by("work_order__number", "applied_on", "pk"))
+
+
+def _open_update_words(update, row) -> str:
+    number = update.work_order.number
+    if update.target_release_id:
+        version = release_name(update.target_release)
+        if update.target_release_id == row.fix_release_id:
+            return f"Update open to {version}, the fix: {number}"
+        if update.target_release_id in row.listed_ids:
+            return f"Update open to {version}, a release the advisory names: {number}"
+        return f"Update open to {version}, a release the advisory does not name: {number}"
+    ref = f" ({update.target_reference})" if update.target_reference else ""
+    if answers_row(update, row):
+        return f"Update open: the manufacturer's patches{ref}: {number}"
+    if row.patches_reference:
+        return f"Update open: the manufacturer's patches{ref}: {number}; the advisory names {row.patches_reference}"
+    return f"Update open: the manufacturer's patches{ref}: {number}, not what the advisory offers"
+
+
+def _patches_words(update, row) -> str:
+    from .models import UpdateOutcome
+
+    day = day_words(update.applied_on) if update.applied_on else "on a day not recorded"
+    ref = _patches_reference(update)
+    shown = f" ({ref})" if ref else ""
+    if update.outcome == UpdateOutcome.ALREADY:
+        return f"Checked {day}: already had the manufacturer's patches{shown}"
+    if row.patches_reference and ref.casefold() != row.patches_reference.casefold():
+        return f"The manufacturer's patches recorded {day}{shown}; the advisory names {row.patches_reference}"
+    if row.patches_reference:
+        return f"The manufacturer's patches recorded {day}{shown}, the list the advisory names"
+    return f"The manufacturer's patches recorded {day}{shown}, since this advisory was received"
+
+
+def _patches_kind(update, row) -> str:
+    """PATCHES_RECORDED when a live patches record answers the row (build40 section 4.2: the list it names, on any day; with no list
+    named, applied on or after the day received), PATCHES_OTHER_LIST when the row names a list and a record since received names another
+    or none, else ""."""
+    from .models import AdvisoryRemedy
+
+    if row.remedy != AdvisoryRemedy.PATCHES:
+        return ""
+    ref = _patches_reference(update)
+    received = row.advisory.received_on
+    if row.patches_reference:
+        if ref.casefold() == row.patches_reference.casefold():
+            return PATCHES_RECORDED
+        return PATCHES_OTHER_LIST if update.applied_on is not None and update.applied_on >= received else ""
+    return PATCHES_RECORDED if update.applied_on is not None and update.applied_on >= received else ""
+
+
+def advisory_decisions(lines) -> dict:
+    """{(asset id, advisory id): the governing live advisory decision, or None} for the lines that need a response: per advisory, the
+    most specific live decision of its key whose scope holds the device (its own; for a device of ours, its recorded release's, else its
+    model's; a temporary device only its own), whether or not past review (covers says whether it covers now). One query."""
+    needing = [ln for ln in lines if ln.needs_response]
+    if not needing:
+        return {}
+    advisory_ids = {ln.row.advisory_id for ln in needing}
+    rows = list(DeviceSecurityDecision.objects.filter(applies_to=AppliesTo.ADVISORY, ended_on__isnull=True, advisory_id__in=advisory_ids)
+                .filter(Q(asset_id__in={ln.asset.pk for ln in needing})
+                        | Q(asset__isnull=True, device_model_id__in={ln.asset.device_model_id for ln in needing}))
+                .select_related(*_DECISION_RELATED).order_by("number"))
+    grouped = _by_key(rows)
+    out = {}
+    for advisory_id in advisory_ids:
+        devices = list({ln.asset.pk: ln.asset for ln in needing if ln.row.advisory_id == advisory_id}.values())
+        for pk, found in _governing(devices, grouped.get(advisory_key(advisory_id), [])).items():
+            out[(pk, advisory_id)] = found
+    return out
+
+
+def advisory_answers(lines, *, today: date, fy_start: int | None = None) -> dict:
+    """{(asset id, row id): LineAnswer} for `lines` (build40 section 4.2): for a line that needs a response, its open updates (answering
+    or not: answers_row), its updates done with the version not confirmed (answering only), the manufacturer's patches recorded (the
+    list the advisory names on any day; with no list named, since the day received) or another list since received, and the governing
+    advisory decision; its kind the first of ANSWER_ORDER that holds. A line that needs none has kind "". Fixed queries: the update rows
+    (one), the advisory decisions (one); `fy_start` the facility's fiscal year start month, read once by the caller (decision words)."""
+    from apps.workorders.models import OPEN_STATUSES
+
+    needing = [ln for ln in lines if ln.needs_response]
+    by_device: dict = {}
+    for u in _update_rows(needing) if needing else ():
+        by_device.setdefault(u.asset_id, []).append(u)
+    governing = advisory_decisions(needing)
+    out = {}
+    for ln in lines:
+        if not ln.needs_response:
+            out[(ln.asset.pk, ln.row.pk)] = LineAnswer(ln, "")
+            continue
+        kinds, shown = set(), []
+        for u in by_device.get(ln.asset.pk, ()):
+            wo = u.work_order
+            if wo is not None and wo.status in OPEN_STATUSES:
+                answering = answers_row(u, ln.row)
+                if answering:
+                    kinds.add(UPDATE_OPEN)
+                shown.append(Response(UPDATE_OPEN if answering else UPDATE_ELSEWHERE, _open_update_words(u, ln.row), wo.number, update=u))
+            elif wo is not None and not u.outcome:
+                if answers_row(u, ln.row):
+                    kinds.add(UPDATE_NOT_CONFIRMED)
+                    day = f" {day_words(wo.completed_on)}" if wo.completed_on else ""
+                    shown.append(Response(UPDATE_NOT_CONFIRMED, f"Update done{day}, version not confirmed: Confirm version ({wo.number})",
+                                          wo.number, update=u))
+            else:
+                kind = _patches_kind(u, ln.row)
+                if kind:
+                    kinds.add(kind)
+                    shown.append(Response(kind, _patches_words(u, ln.row), wo.number if wo is not None else "", update=u))
+        decision = governing.get((ln.asset.pk, ln.row.advisory_id))
+        covering = covers(decision, today)
+        if decision is not None:
+            kinds.add(ANSWER_DECIDED if covering else ANSWER_REVIEW_DUE)
+            shown.append(Response(ANSWER_DECIDED if covering else ANSWER_REVIEW_DUE, decision_words(decision, today, fy_start=fy_start),
+                                  decision.number, decision=decision, covers=covering))
+        kind = next((k for k in ANSWER_ORDER if k in kinds), NO_RESPONSE)
+        if not shown:
+            shown.append(Response(NO_RESPONSE, NO_RESPONSE_WORDS))
+        out[(ln.asset.pk, ln.row.pk)] = LineAnswer(ln, kind, tuple(shown), decision, covering)
+    return out
+
+
+# --- slice 40, wave 1A: counts, status words, Checks, Needs attention, the badge's advisory half (stubs: build40 sections 4.4-4.5, 7.2,
+# 7.9; signatures and names are the contract) -----------------------------------------------------------------------------------------
+
+ADVISORY_BADGE_TITLE = "Advisories with models to confirm"
+BOTH_BADGE_TITLE = "Advisories with models to confirm, and decisions past their review date"
+ADVISORY_ATTENTION_HEADINGS = {
+    "to_confirm": "Advisories with models to confirm",
+    "no_response": "On a release an advisory names, or no release recorded: no response recorded",
+    "temporary": "Temporary equipment an advisory names: its owner installs updates",
+    "not_confirmed": "Updates done, version not confirmed",
+    "other_list": "Patches naming another list than the advisory names",
+    "named_since": "Closed or not applicable, devices named since",
+    "changed": "Closed, models to confirm since a revision",
+    "checks": "Checks",
+    "decisions_due": "Advisory decisions past their review date",
+}
+
+
+def advisory_counts(advisories, *, today: date, devices_visible: bool) -> dict:
+    """{advisory id: AdvisoryCounts} (wave 1A): per advisory and model row, the line kinds and update counts (View), and for
+    `devices_visible` (can_view_devices) the answer kinds and the status words (build40 section 1). Fixed queries for any number."""
+    raise NotImplementedError("slice 40 wave 1A")
+
+
+def status_words(advisory, counts=None, *, devices_visible: bool) -> str:
+    """The advisory's status words (build40 section 1), the first that holds (wave 1A)."""
+    raise NotImplementedError("slice 40 wave 1A")
+
+
+def advisory_checks(advisory, *, today: date, devices_visible: bool) -> list:
+    """[Check] (wave 1A): release added since, patches naming another list, closed with models to confirm, devices named since."""
+    raise NotImplementedError("slice 40 wave 1A")
+
+
+def advisory_attention(today: date, *, user) -> Attention:
+    """The Advisories tab's Needs attention (wave 1A; build40 section 7.2): ADVISORY_ATTENTION_HEADINGS in order, gated per heading."""
+    raise NotImplementedError("slice 40 wave 1A")
+
+
+def advisory_badge(today: date) -> dict:
+    """{"count": n}: open advisories, not entered in error, with models to confirm (stored rows only; one query; the caller gates it:
+    permissions.can_edit). Wave 1A."""
+    raise NotImplementedError("slice 40 wave 1A")

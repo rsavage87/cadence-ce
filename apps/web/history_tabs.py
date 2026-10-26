@@ -35,9 +35,12 @@ RELATED = {
     "incidents": {"incident_holds": "incident_id"},  # slice 28: the incident drawer's History carries its holds' changes
     # slice 32: a program evaluation's History carries its objectives' and approvals' changes
     "evaluations": {"evaluation_objectives": "evaluation_id", "evaluation_approvals": "evaluation_id"},
+    # slice 40: an advisory's History carries its sources', model rows', and release rows' changes
+    "security_advisories": {"advisory_sources": "advisory_id", "advisory_models": "advisory_id", "advisory_releases": "advisory_id"},
 }
 NOUNS = {"labor": "Labor", "parts": "Part", "aem": "AEM case", "incident_holds": "Hold", "evaluation_objectives": "Objective",
-         "evaluation_approvals": "Approval", "test_equipment_uses": "Test equipment"}  # a related row's entries: "Labor added", "Part removed"
+         "evaluation_approvals": "Approval", "test_equipment_uses": "Test equipment", "advisory_sources": "Source",
+         "advisory_models": "Model", "advisory_releases": "Release"}  # a related row's entries: "Labor added", "Part removed"
 NAMED = {"test_equipment_uses"}  # slice 35: a related row whose entry names it ("Test equipment TE-01 added"): its record ends with the tag
 VERBS = {"added": "added", "changed": "changed", "deleted": "removed"}
 

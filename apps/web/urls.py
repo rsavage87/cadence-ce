@@ -86,6 +86,7 @@ urlpatterns = [
     path("incidents/", include("apps.web.urls_incidents")),  # slice 28: device incidents
     path("test-equipment/", include("apps.web.urls_testequipment")),  # slice 35: the CE department's test equipment
     path("security/decisions/", include("apps.web.urls_cyber_decisions")),  # slice 39: security decisions (the Decisions tab)
+    path("security/advisories/", include("apps.web.urls_cyber_advisories")),  # slice 40: security advisories (the Advisories tab)
     path("security/", include("apps.web.urls_cybersecurity")),  # slice 37: the Device security screen
     path("reports/", include("apps.web.urls_reports")),
     path("settings/", include("apps.web.urls_settings")),

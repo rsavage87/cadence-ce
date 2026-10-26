@@ -12,7 +12,7 @@
 {% else %}
 <form id="cu-open-form" class="cu-form" hx-post="{% url 'web:cybersecurity_update_open' asset.tag %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
   <div class="form">
-    <p class="full hint">{{ dm.manufacturer }} {{ dm.model }} · {{ asset.department }}{% if asset.room %}, room {{ asset.room }}{% endif %}. A software update work order: the work order shows only its type and a fixed problem; what it installs is kept here.</p>
+    <p class="full hint">{{ dm.manufacturer }} {{ dm.model }} · {{ asset.department }}{% if asset.room %}, room {{ asset.room }}{% endif %}. A software update work order: the work order shows only its type and the same problem text for every update; what it installs is kept here.</p>
     {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
     <fieldset class="full cu-fs"{% if form.target.errors %} aria-describedby="cu-target_error"{% endif %}>
       <legend>{{ form.target.label }}</legend>
