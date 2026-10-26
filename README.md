@@ -557,10 +557,11 @@ is (above), for one device, a release's devices of ours, or every device of ours
 (where "Taken off the network (used standalone)" is offered, once every device it covers is recorded "Not connected here"), keep in use
 without added controls, take out of use, or "Decided the part it names is not in use here" (no plan; a feature turned off as a control
 is keep in use with controls). A rental, loaner, or demo unit is covered only by its own. Each need has its own decisions: a support
-decision never answers an advisory, nor the reverse. Record decision for a scope that already has a decision of another kind starts
-from its controls and plan; who accepted it and IT's exception number are recorded for this advisory. The Decisions tab lists both
-kinds, with a Why filter and column ("Support ended, or its end announced", or the advisory's number), and a decision's page, print,
-and CSVs name its advisory.
+decision never answers an advisory, nor the reverse. Record decision for an advisory's scope that already has a live decision of
+another kind (a support decision first) starts from its response, controls, and plan, with the plan's day only when it has not
+passed (a passed day is asked for again); who accepted it and IT's exception number are recorded for this advisory. The Decisions tab
+lists both kinds, with a Why filter and column ("Support ended, or its end announced", or "Security advisory AD-…"), and a
+decision's page, print, and CSVs name its advisory.
 
 An advisory reads "Models to confirm", then, for readers of devices, "Open: 4 devices with no response recorded", "Open: 1 device under a
 decision past its review date", "Open: 1 device with patches naming another list", "Open: 1 update done, version not confirmed", "Open:
@@ -577,11 +578,16 @@ response (ask its owner to update it, or return it); updates done with the versi
 advisories closed or not applicable with devices named since; closed ones with models to confirm since a revision; releases added since
 the models were set; and advisory decisions past their review date (opening the Decisions tab narrowed to them). With nothing listed it
 reads "Nothing listed from what is recorded here." Below, the advisories filtered by status (open by default), models to confirm, or a
-CVE ID or reference, with their counts, download as CSV. An advisory's page shows its sources, the models it names with their counts,
-each device's line and what answers it (Record decision, Open software update, and Open updates to the fix where they can act), its
-Checks, the decisions recorded for it, and its History; its devices download as CSV for IT (tag, serial, model, department, whose,
+CVE ID, reference, or number, with their counts, download as CSV. An advisory's page shows its sources, the models it names with their
+counts, each device's line and what answers it (Record decision, Open software update, and Open updates to the fix where they can act),
+its Checks, the decisions recorded for it, and its History; its devices download as CSV for IT (tag, serial, model, department, whose,
 connection, release, line, response, decision, IT exception number, review by). A device's Security tab lists the advisories naming its
-model. Device security's badge counts the advisories with models to confirm (for Edit) beside the decisions past their review date.
+model. Opened from an advisory (its page, or its line on a device's Security tab), Open software update begins on what the advisory
+offers for the model (the release it names as the fix, or the manufacturer's patches with the list it names), and Open updates to the
+fix on the releases it lists with "Release not recorded" ticked: a starting point to change at will, and the update never names the
+advisory. "Record their releases", beside a count of devices with no release recorded, opens Set devices to this release. Each saves
+back to the page it was opened from. Device security's badge counts the advisories with models to confirm (for Edit) beside the
+decisions past their review date.
 
 Who may do what: Device security View reads advisories, their sources, the models and releases they name, and counts of devices by line
 and of updates; every device line, response, decision, and the devices CSV also need Equipment View. Edit records advisories, sources,
@@ -688,8 +694,9 @@ its module's docstring under `apps/api/`, and the browsable API (open `/api/v1/`
   account), each by id or number: its name, status with its words for your access, the day received and who recorded it, whether its
   models are confirmed, its CVE IDs, why it is not applicable, its sources, and the models it names (which releases, what it offers, the
   fix or patch list, and the devices per line, plus responses for Equipment View readers); one advisory adds each device's line and
-  responses for Equipment View readers; `?status=`, `?model=`, `?cve=`, `?reference=`. Recording them is the Device security screen's. A
-  device model an advisory names is never deleted (the refusal names the advisory for a Device security reader).
+  responses for Equipment View readers; `?status=`, `?model=`, `?cve=`, `?reference=`, and `?removed=1` (those entered in error too).
+  Recording them is the Device security screen's. A device model an advisory names, whatever its status, is never deleted (the refusal
+  names the advisory for a Device security reader).
 - the signed-in person's facilities and All facilities (`views_facilities.py`, `views_all_facilities.py`; session only).
 
 Vendor technicians and clinical requesters reach only their own devices and work orders (and Scan), as on the screens. Nobody gives

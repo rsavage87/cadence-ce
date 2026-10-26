@@ -20,10 +20,10 @@ no release, and the service refuses it (CHOOSE_RUNS_NOW). The marks "(the device
 Never "required" (a field the service needs says so in its refusal: "Choose ...", "Enter ..."), never "Critical" (the priority is normal
 or high: updates.OPEN_PRIORITIES), never a never word (rules.NEVER_WORDS).
 
-Slice 40: opened from a security advisory's page, Open software update and Open updates to this release begin from the advisory's row
-for the model (an `initial` given is laid over the defaults): the fix it names, or the manufacturer's patches with the list it names;
-the releases it lists and Release not recorded. A starting point only: the person may change any of it, and nothing about the advisory
-is posted (views_cyber_updates reads it from the address).
+Slice 40: opened with a security advisory (its page, or its line on the device's Security tab), Open software update and Open updates to
+this release begin from the advisory's row for the model (an `initial` given is laid over the defaults): the fix it names, or the
+manufacturer's patches with the list it names; the releases it lists and Release not recorded. A starting point only: the person may
+change any of it, and nothing about the advisory is posted (views_cyber_updates reads it from the address).
 """
 from datetime import timedelta
 

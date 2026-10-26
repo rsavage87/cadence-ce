@@ -54,7 +54,7 @@
           {% for label, n in m.updates %}<li>{{ label }}: <b>{{ n }}</b></li>{% endfor %}
           {% for label, n in m.answers %}<li>{{ label }}: <b>{{ n }}</b></li>{% endfor %}
         </ul>
-        {% if m.releases_url %}<p class="cy-act"><button class="link" type="button" hx-get="{{ m.releases_url }}" hx-target="#modal-card" title="Set devices to a release (the model's panel answers)">Record their releases</button></p>{% endif %}
+        {% if m.releases_url %}<p class="cy-act"><button class="link" type="button" hx-get="{{ m.releases_url }}" hx-target="#modal-card" title="Set devices of this model to a release">Record their releases</button></p>{% endif %}
         {% if who.devices %}
         {% if m.needing %}
         <ul class="cy-devs ad-lines">

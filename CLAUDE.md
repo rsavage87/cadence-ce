@@ -478,11 +478,13 @@ it (DECISION_LIVE_READ otherwise). Reading any decision (the Decisions tab, a de
   error names the release, listed or the fix (ADVISORY_NAMES), `update_release` while any advisory names the version
   (ADVISORY_NAMES_VERSION), the number only for `can_view`. Permissions: `can_view` the advisories, their rows, line-kind and update
   counts, stored statuses; `can_view_devices` device lines, responses, decision-derived words, the devices CSV; the update doors from an
-  advisory `can_open_updates` (slice 38's modals as doors only: updates.py and SoftwareUpdate unchanged). History areas
+  advisory `can_open_updates` (slice 38's modals as doors only: updates.py and SoftwareUpdate unchanged), "Record their releases"
+  `can_edit_devices` (slice 37's Set devices to this release). History areas
   `security_advisories`, `advisory_sources`, `advisory_models`, `advisory_releases` (Device security View: they name models, never
   devices; the advisory's History carries the rest through RELATED). The nav badge by halves (`reports.services._cyber_badge`):
-  decisions past review for can_view_devices (hot), advisories with models to confirm for can_edit (never hot), one count titled
-  BADGE_TITLE, ADVISORY_BADGE_TITLE, or BOTH_BADGE_TITLE. NEVER_WORDS gains affected, fixed, exploited, zero-day, uncontrolled. Never kept:
+  decisions past review for can_view_devices (hot), advisories with models to confirm for can_edit (never hot), one count, its
+  `cybersecurity_title` BADGE_TITLE, ADVISORY_BADGE_TITLE, or BOTH_BADGE_TITLE by the halves counted (a reader of either with nothing
+  counted reads `cybersecurity` None; neither, `{}`). NEVER_WORDS gains affected, fixed, exploited, zero-day, uncontrolled. Never kept:
   advisory text, a title, free text; never in an email, a digest, a custom report, the portal, labels, or Scan
 - `apps/recalls` Alert (global), AlertMatch (per tenant), matching, openFDA importer; `services.py` dispositions and recall work-order batches,
   `permissions.py` (review at Edit, close/reopen at Approve); `feeds.py` the openFDA fetch shared by `import_openfda` and the Recalls
@@ -579,25 +581,38 @@ it (DECISION_LIVE_READ otherwise). Reading any decision (the Decisions tab, a de
   (rules.BADGE_TITLE);
   slice 40: `views_cyber_advisories.py` with `forms_cyber_advisories.py` and `urls_cyber_advisories.py` (mounted at
   `/security/advisories/` before `/security/`, `new/` before `<str:number>/`; `cyber_advisories.html`, `_cyber_advisor*.html`; the
-  Advisories tab between Models and Decisions in `_cyber_tabs.html`, Device security View): the tab (Needs attention from
-  rules.advisory_attention as data, the HICP sentence, the list filtered by status, models to confirm, and `q` (a CVE ID or a source
-  reference), its CSV), an advisory's page (`web:security_advisory`, `/security/advisories/<number>/` in any letter case; drawer partial
-  and full page: the header with the CVE IDs and those also on another advisory, sources, model rows with their counts and, for
-  can_view_devices, the device lines and what answers each, the Checks, "Decisions for this advisory", History with its children
-  through RELATED, the devices CSV), every modal (Record advisory with the CVE overlap note, its `seen` marker, and its two buttons; Edit;
-  Add, Edit, Record revision, and Remove source; Set models with "Add a version not on file", which calls services.add_release alone and
-  re-renders from the POST; Remove model, Confirm models, Not applicable here with each reason's refusal, Close, Reopen, Entered in
-  error: fields set in `__init__`, the lock-free readers' refusals shown before trying, the writers' after) answering through
-  `advisory_saved` (the page into #drawer, CHANGED, a toast, the modal closed), and slice 38's two update modals opened
-  `?advisory=<number>&from=advisory` (preselected from the row, answering with the advisory page; `advisory` and `from` never carried
-  forward); each per-line action offered only where it can act. `views_cyber_decisions.py` keyed by need: Record decision takes
-  `advisory=<number>` with a scope (SCOPE_PARAMS, ORIGINS; `supersedes` first, `advisory` alone a 404), its responses, controls, hints,
-  HICP sentence, and `review_help` by key, "Not connected here" lines preselecting network_removed, `from=advisory` answering through
-  `advisory_saved`; the prefill (`forms_cyber_decisions.prefill_initial`, door only: the live decision of exactly this scope of the other
-  key, its response, controls, plan, and owner, never who accepted it or IT's number, with its note); the decision page, print, and CSVs
-  naming the advisory ("For: AD-…", "What holds now" from its lines), the Why filter and columns (`why=`, LIST_COLUMNS 16), the verb
-  from rules.who_verb; `asset_cyber.py` and `_cyber_advisory_device.html` the Security tab's Advisories section (each advisory naming
-  the device's model that is open, needs a response from it, or governs it; the rest counted);
+  Advisories tab between Models and Decisions in `_cyber_tabs.html`, Device security View): the tab (`web:security_advisories`: Needs
+  attention from rules.advisory_attention as data, the HICP sentence, the list by `status` (open by default, not_applicable, closed,
+  `all` with entered in error), `to_confirm=1`, and `q` (a CVE ID, a live source's reference, or a number, matched in Python), its CSV
+  (`security_advisories_csv`: LIST_COLUMNS number, CVE IDs, sources, models, received, status words, the line kinds and update counts;
+  the answer kinds after them for can_view_devices)), an advisory's page (`web:security_advisory`, `/security/advisories/<number>/` in
+  any letter case; drawer partial and full page: the header with the CVE IDs and those also on another advisory, sources, model rows
+  with their counts and, for can_view_devices, the device lines and what answers each, the Checks, "Decisions for this advisory",
+  History with its children through RELATED (`?history=1`), the devices CSV `security_advisory_devices_csv` (DEVICE_COLUMNS, every line
+  kind)), every modal (Record advisory with the CVE overlap note, its `seen` marker, and its two buttons; Edit; Add, Edit, Record
+  revision, and Remove source; Set models (`?model=<id>` a row, `?os=1` the models with an operating system) with "Add a version not on
+  file", which posts `add_version`, calls services.add_release alone, and re-renders from the POST; Remove model, Confirm models, Not
+  applicable here with each reason's refusal, Close, Reopen, Entered in error: fields set in `__init__`, the lock-free readers' refusals
+  shown before trying, the writers' after) answering through `advisory_saved` (the page into #drawer, CHANGED, a toast, the modal
+  closed); each per-line action offered only where it can act. Other screens' doors opened with an advisory: `opened_with` reads
+  `?advisory=<number>` from the address only (lock-free, never posted or carried forward; unknown or entered in error a 404, not
+  applicable or closed still read) and `answers_here` is `from=advisory` (the save answers through `advisory_saved`, a direct open
+  redirects to the page): slice 38's Open software update begins on the row's fix or patch list wherever `advisory=` is given (the
+  Security tab's link carries it alone and answers with the drawer), Open updates to this release on the row's listed releases with
+  Release not recorded ticked (both modals post to `{{ action }}`, their own address), and slice 37's Set devices to this release
+  ("Record their releases" beside a not-recorded count, `from=advisory`). `views_cyber_decisions.py` keyed by need: Record decision
+  takes `advisory=<number>` with a scope (SCOPE_PARAMS, ORIGINS; `supersedes` first, a different `advisory=` beside it or `advisory`
+  alone a 404), its responses, controls, hints, HICP sentence, and `review_help` by key, `decisions.network_refusal` beside
+  network_removed, `from=advisory` answering through `advisory_saved`; an advisory scope's new decision prefilled
+  (`forms_cyber_decisions.prefill_initial` / `prefill_note`, door only: the live decision of exactly this scope of another need key,
+  support first, else the latest advisory decision, past review or not; its response (never not_in_use_here), the controls the form
+  offers, plan and owner, the plan's day only when not passed (else blank: the service's PLAN_DAY asks for a new one), never who
+  accepted it or IT's number; PREFILL_NOTE), else, every device it would govern recorded "Not connected here", Keep in use with
+  controls and network_removed; the decision page, print, and CSVs naming the advisory ("For: AD-…", "What holds now" from its lines),
+  `why=support|advisory` (the API's ?applies_to=) and the CSV's "Why" and "Advisory" last (LIST_COLUMNS 16), the verb from
+  rules.who_verb; `asset_cyber.py` and `_cyber_advisory_device.html` the Security tab's Advisories section (each advisory naming the
+  device's model that is open, needs a response from it, or governs it, or, not applicable, names it since with Reopen it; the rest
+  counted; Record decision `from=device`, Open software update `?advisory=<number>` alone);
   `views_temporary.py` loaners and rentals (slice 29, with `forms_temporary.py`: Add rental or
   loaner, the drawer's temporary section (`asset_tabs.temporary_box`), Change details, Return to owner, Keep it, Vendor loaner arrived,
   Return the loaner; the Equipment "Whose" filter through `forms.equipment_assets`), `views_incidents.py` Incidents (slice 28, with
@@ -652,14 +667,17 @@ it (DECISION_LIVE_READ otherwise). Reading any decision (the Decisions tab, a de
   governed device ids, and Check lines; fixed queries a page through rules.decisions_now), and a device's or a model's destroy refused while a decision names it, in words for
   the reader (a Device security reader reads the decision's number); slice 40: `/api/v1/security-advisories/`
   (`views_cybersecurity.SecurityAdvisoryViewSet`), read only, by id or number (Device security View; no scoped actions; each advisory's
-  name, status and its words for the reader, sources, model rows with their counts split as the screens split them; retrieve adds the
-  device lines and responses for can_view_devices; ?status, ?model, ?cve, ?reference with 400 words; fixed queries a page through
-  rules.advisory_counts), a decision's `advisory` ({id, number} or null) with ?applies_to=support_ended|advisory and ?advisory= (id or
-  number), and the device model destroy locked FOR UPDATE before its delete, refused while an advisory names the model (its number for
-  a Device security reader), an IntegrityError answered in words; serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
-  same thing and calls the same service; the API never imports apps.web. `tenancy.py` (`TenantAPIMixin`: the tenant from the session or
-  token user, set after authentication and restored once the response is rendered), `authentication.py` (DRF's token check plus the
-  deactivated-facility refusal sign-in has)
+  name, status and its words for the reader, sources, model rows with their counts split as the screens split them (lines and updates
+  for View; answers, reviews_due, named_since for can_view_devices, else null); retrieve adds the device lines and responses for
+  can_view_devices; ?status, ?model (a model's id), ?cve (exact), ?reference (a live source's) with 400 words; fixed queries a page through
+  rules.advisory_counts; ?removed=1 lists those entered in error too, with no counts), a decision's `advisory` ({id, number} or null)
+  with ?applies_to=support_ended|advisory and ?advisory= (id or number), and the device model destroy locked FOR UPDATE first in its
+  transaction, refused while an advisory names the model (any status: "a security advisory naming it (AD-…)" for can_view, else the
+  register's unread words), an IntegrityError at COMMIT answered MODEL_KEPT ("<model> is in use, so it cannot be deleted.");
+  serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the same thing and calls the same
+  service; the API never imports apps.web. `tenancy.py` (`TenantAPIMixin`: the tenant from the session or token user, set after
+  authentication and restored once the response is rendered), `authentication.py` (DRF's token check plus the deactivated-facility
+  refusal sign-in has)
 - `apps/jobs` the daily jobs (`services.DAILY_JOBS`, `FACILITY_JOBS`, `run_daily_jobs`, `is_due`): each facility's jobs run at
   SCHEDULER_DAILY_AT on its own clock, the openFDA import on the server's; `JobRun` (a system table, not tenant-scoped: one row per job
   and local day, per facility for a facility's job, is the lock against double runs; the column is `facility`, never `tenant_id`), the
@@ -712,8 +730,9 @@ it (DECISION_LIVE_READ otherwise). Reading any decision (the Decisions tab, a de
   network_removed and physical controls, the replacement in the fiscal year after next, by the CE leader), then closed; one naming no
   model marked not applicable by a technician; the pumps' "5.2 (demo)" with "5.6 (demo)" the fix, confirmed (on the fix, slice 38's
   open updates to it, the one not confirmed, the rest "No response recorded": Close refused in words; Record decision for 5.2 prefilled
-  from the pumps' support decision); the beds, releases not stated, no fix yet, models not confirmed (the badge's advisory half: Kim's nav
-  reads 2, hot, BOTH_BADGE_TITLE; the rental bed its own row). Slice 39's pins count support decisions only (applies_to), and the
+  from the pumps' support decision, its passed plan day blank, so adding who accepted it alone is refused under the plan's day); the
+  beds, releases not stated, no fix yet, models not confirmed (the badge's advisory half: Kim's nav reads 2, hot, BOTH_BADGE_TITLE; the
+  rental bed its own row). Slice 39's pins count support decisions only (applies_to), and the
   Decisions tab's rows stay as they were. Not shown: an advisory decision past review, an update to a listed release, a patches work
   order, entered in error. Sources a bulletin, a portal notice, or other only, DEMO-ADV- references, no link, no CVE; no release, fact,
   update, or work order added)
