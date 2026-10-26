@@ -118,6 +118,7 @@ CLOSED = "{number} closed."
 REOPENED = "{number} reopened."
 IN_ERROR = "{number} marked entered in error."
 VERSION_ADDED = "Version {version} added to the {model}'s releases."
+CLEAR_TO_SAVE = "Clear this box to save the models."  # after add_release's refusal of a version Save sent (skeptic S1): the way to save
 # The confirmations' words (what each does, before it is done)
 CONFIRM_WORDS = ("Confirm that {number} names no other model of this facility's catalog than these: {models}. A revision that changes "
                  "what it names asks for this again.")
@@ -969,8 +970,8 @@ def advisory_models(request, number):
     offers, the fix or the patch list, and "These are all the models it names that are here". "Add a version not on file" posts
     `add_version` here: services.add_release alone (Edit), then this form again from the POST with the new release ticked (releases
     listed) or chosen as the fix (a release remedy with none chosen); nothing else is saved. A save posted with a version in that box
-    (Enter pressed in it) is the same: the version is added and the form comes back to be saved, never saved without it. Refused on an
-    advisory not open."""
+    (Enter pressed in it, or Save clicked) is the same: the version is added and the form comes back to be saved, never saved without
+    it; refused, the box says so and how to save without it (CLEAR_TO_SAVE). Refused on an advisory not open."""
     _need_edit(request.user)
     a = _advisory(number)
     if request.method != "POST" and not request.htmx:
@@ -993,9 +994,10 @@ def advisory_models(request, number):
         rows = [r for r in rules.rows_of([a]) if r.device_model_id == dm.pk]
         form = ModelForm(initial=model_initial(rows[0] if rows else None), releases=_model_releases(dm, today))
         return _models_modal(request, a, dm, form)
-    if request.POST.get("action") == "add_version" or str(request.POST.get("add_version", "")).strip():
+    saving = request.POST.get("action") != "add_version"
+    if not saving or str(request.POST.get("add_version", "")).strip():
         # The button, or Enter in its box (the browser submits through Save, without `action`): a version typed is added, never dropped
-        return _add_version(request, a, dm, today)
+        return _add_version(request, a, dm, today, saving=saving)
     form = ModelForm(request.POST, releases=_model_releases(dm, today))
     row = None
     named = AdvisoryModel.objects.filter(advisory_id=a.pk, device_model=dm).exists()
@@ -1009,9 +1011,11 @@ def advisory_models(request, number):
     return advisory_saved(request, a, (MODEL_SAVED if named else MODEL_NAMED).format(number=a.number, model=dm.model))
 
 
-def _add_version(request, a, dm, today):
+def _add_version(request, a, dm, today, *, saving: bool):
     """"Add a version not on file": services.add_release (profile=False, its own transaction), then Set models again from the POST with
-    the new release ticked (releases listed) or chosen as the fix (a release remedy with none chosen). Its refusal lands on the box."""
+    the new release ticked (releases listed) or chosen as the fix (a release remedy with none chosen). Its refusal lands on the box, the
+    text typed kept there: from the button in add_release's words alone; from Save (`saving`), which sends the box whenever it is not
+    blank, followed by CLEAR_TO_SAVE, so a refused version never leaves every later Save refused with nothing saying why."""
     version = request.POST.get("add_version", "")
     added = None
     try:
@@ -1020,6 +1024,8 @@ def _add_version(request, a, dm, today):
         form = ModelForm(request.POST, releases=_model_releases(dm, today))
         form.is_valid()
         form.add_service_errors(e)
+        if saving and form.has_error("add_version"):
+            form.errors["add_version"][:] = [" ".join([*form.errors["add_version"], CLEAR_TO_SAVE])]
         return _models_modal(request, a, dm, form)
     data = request.POST.copy()
     data.pop("action", None)
