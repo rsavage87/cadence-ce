@@ -403,7 +403,7 @@ form's question number. A security decision is never an exemption or a waiver, a
 "deadline" or "overdue".
 
 Device security is a module of its own in Roles: the director Full, the CE manager Approve, technicians Edit, Finance and quality,
-requesters, and vendors None. View sees the register; Edit records models' profiles and releases and devices' facts; Approve marks a
+requesters, and vendors None. View sees the register; Edit records models' profiles and releases, devices' facts, and security advisories; Approve marks a
 software update entered in error, records security decisions, and closes advisories (all below). Every list naming devices by tag or location (Fleet's devices, Changes for IT, the drawer's tab, their CSVs) also needs
 Equipment View; the Models tab needs Device security View alone. A vendor's or a requester's account never sees it, whatever its levels
 (on a custom role that sees only its company's or unit's share, Device security has no effect). For the IT department, make a custom role

@@ -1065,3 +1065,94 @@ def test_the_seeded_advisories_read_the_same_under_the_policies(client, seeded):
     pending = _read_advisory_pages(client, seeded)
     if pending:
         pytest.xfail(f"slice 40 wave 2's pages are not merged here yet: {pending}")
+
+
+@needs_postgres
+def test_advisories_written_under_the_policies(seeded):
+    """Slice 40 (critique40_locks S9, at the services: the doors' own walk comes with wave 2's screens): as the runtime role the advisory
+    writers and a decision for an advisory's devices write this facility's rows only, each stamped with its tenant and passing WITH CHECK,
+    with their history; the other facility's rows untouched. Record advisory, Add source, Set models with the fix, Record decision for
+    every pump of ours, Close."""
+    from apps.cybersecurity.models import AdvisoryModel, AdvisoryRelease
+
+    north = Tenant.objects.exclude(pk=seeded.pk).get()
+
+    def counts(tenant) -> dict:
+        with tenant_context(tenant):
+            return {"advisories": SecurityAdvisory.objects.count(), "sources": AdvisorySource.objects.count(),
+                    "rows": AdvisoryModel.objects.count(), "releases": AdvisoryRelease.objects.count(),
+                    "decisions": DeviceSecurityDecision.objects.count(),
+                    "history": SecurityAdvisory.history.filter(tenant_id=tenant.pk).count()
+                    + AdvisorySource.history.filter(tenant_id=tenant.pk).count()}
+
+    before = {t.slug: counts(t) for t in (seeded, north)}
+    as_app_role()
+    with tenant_context(seeded):
+        today = timezone.localdate()
+        rob = manager()
+        pump_model = DeviceModel.objects.get(model=PUMP)
+        older, newer = (SoftwareRelease.objects.get(device_model=pump_model, version=v) for v in (seed_demo.PUMP_OLDER, seed_demo.PUMP_NEWER))
+        ad = advisories.record_advisory(received_on=today, cves="CVE-2026-0001", source="manufacturer_bulletin", reference="DEMO-ADV-9001",
+                                        by=rob, today=today)
+        advisories.add_source(ad, source="other", reference="DEMO-ADV-9001-N", by=rob, today=today)
+        advisories.set_model(ad, device_model=pump_model, versions="listed", release_ids=[older], remedy="release", fix_release=newer,
+                             confirm=True, by=rob, today=today)
+        decision = decisions.record_decision(device_model=pump_model, applies_to=AppliesTo.ADVISORY, advisory=ad,
+                                             response="keep_with_controls", controls=["traffic_restricted"], accepted_by="ce_leader",
+                                             by=rob, today=today)
+        advisories.close(ad, by=rob, today=today)
+        ad.refresh_from_db()
+        assert (ad.status, decision.advisory_id) == ("closed", ad.pk)
+        written = [ad, decision, *AdvisorySource.objects.filter(advisory=ad), *AdvisoryModel.objects.filter(advisory=ad),
+                   *AdvisoryRelease.objects.filter(advisory=ad)]
+        assert len(written) == 6 and {row.tenant_id for row in written} == {seeded.pk}
+    after = {t.slug: counts(t) for t in (seeded, north)}
+    assert after[north.slug] == before[north.slug]  # the other facility: nothing written, nothing changed
+    mine, was = after[seeded.slug], before[seeded.slug]
+    assert {k: mine[k] - was[k] for k in ("advisories", "sources", "rows", "releases", "decisions")} == {
+        "advisories": 1, "sources": 2, "rows": 1, "releases": 1, "decisions": 1}
+    assert mine["history"] - was["history"] >= 5, (was, mine)
+
+
+@needs_postgres
+def test_the_advisory_readers_under_the_policies(seeded):
+    """Slice 40 (critique40_locks S9): the other facility's advisory naming a model of the same name (the North Campus's pumps), with a
+    reference and a number ours carry too, never reaches this facility's readers as the runtime role: the lines, the counts, Needs
+    attention, and the badge's advisory half read exactly as the owner reads them, and its row is refused in words by id
+    (services._locked_advisory, lock-free and locked), while its number names ours."""
+    from django.core.exceptions import ValidationError
+    from django.db import transaction
+
+    from apps.cybersecurity import services
+
+    north = Tenant.objects.exclude(pk=seeded.pk).get()
+    with tenant_context(north):
+        today = timezone.localdate()
+        theirs = advisories.record_advisory(received_on=today, cves="CVE-2026-0001", source="manufacturer_bulletin",
+                                            reference="DEMO-ADV-0004", by=None, today=today)
+        advisories.set_model(theirs, device_model=DeviceModel.objects.get(model=PUMP), versions="all", remedy="no_fix_yet", by=None,
+                             today=today)
+
+    def read():
+        kim = User.objects.get(username="kim@riverside.example")
+        found = SecurityAdvisory.objects.all()
+        reading = rules.advisory_reading(found, today)
+        counts = rules.advisory_counts(found, today=today, devices_visible=True)
+        return ({a.number for a in found}, sorted((ln.row.advisory.number, ln.asset.tag, ln.kind) for ln in reading.lines),
+                sorted((a.number, counts[a.pk].words) for a in found),
+                [(h.key, h.count, [r.words for r in h.rows]) for h in rules.advisory_attention(today, user=kim).headings],
+                rules.advisory_badge(today), {ln.asset.tenant_id for ln in reading.lines})
+
+    with tenant_context(seeded):
+        before = read()
+    assert theirs.number in before[0] and before[4] == {"count": 1} and before[5] == {seeded.pk}
+    as_app_role()
+    with tenant_context(seeded):
+        assert read() == before
+        assert not SecurityAdvisory.objects.filter(pk=theirs.pk).exists()
+        for lock in (False, True):
+            with pytest.raises(ValidationError) as refused, transaction.atomic():
+                services._locked_advisory(theirs.pk, lock=lock)
+            assert refused.value.message_dict == {"advisory": [services.CHOOSE_ADVISORY]}
+        ours = services._locked_advisory(theirs.number, lock=False)
+        assert ours.pk != theirs.pk and ours.tenant_id == seeded.pk
