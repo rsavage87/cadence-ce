@@ -4,7 +4,8 @@ Add source and Edit source, Record revision, Set models (with "Add a version not
 applicable here, Close, Reopen, Entered in error, Remove model, Remove source). The rules live in apps.cybersecurity.advisories: these
 forms render the fields, keep what was typed, and hand it to the writers as typed (days as ISO text, choices as their slugs, CVE IDs as
 the pasted text), so every problem comes back at once in the writers' words, keyed by the field it names (the writers' keys are these
-fields' names; one about the advisory or the model at the top).
+fields' names; one about the advisory or the model at the top). Set models sends only the fields its choices show (ModelForm.service_kwargs:
+a field a choice hides is never refused out of sight).
 
 Choices are set in __init__ from what the view read (the model's releases with their devices on site, the catalog's models), never a
 class-level queryset. No free text: references are tokens, the link an https address the writer checks, CVE IDs a pasted list. Never
@@ -190,7 +191,7 @@ class ModelForm(ServiceForm):
     """Set models for one model (advisories.set_model): which releases it names (the releases listed, with `releases`: [(release, its
     devices on site, its OS name)]), what it offers, the fix (a release of the model), the patch list, and "These are all the models it
     names that are here" (checked to begin with). "Add a version not on file" (add_version) is services.add_release's, posted on its
-    own (its refusal keyed `version` lands on it)."""
+    own (its refusal keyed `version` lands on it; the view adds a version typed there before any save, never sending it here)."""
 
     versions = _radios("Releases it names", AdvisoryVersions.choices, VERSIONS_HELP)
     release_ids = _AnyOf(label="The releases it lists", required=False, help_text=RELEASES_HELP, widget=forms.CheckboxSelectMultiple)
@@ -209,8 +210,14 @@ class ModelForm(ServiceForm):
         self.fields["fix_release"].widget.choices = [CHOOSE, *((str(r.pk), r.version) for r, _n, _os in releases)]
 
     def service_kwargs(self) -> dict:
-        return {"versions": _value(self, "versions"), "release_ids": _values(self, "release_ids"), "remedy": _value(self, "remedy"),
-                "fix_release": _value(self, "fix_release") or None, "patches_reference": _value(self, "patches_reference"),
+        """What the choices show is sent, nothing else (as slice 38's update forms): the releases only with The releases listed, the
+        fix only with A release from the manufacturer, the patch list only with the manufacturer's validated patches. A field its choice
+        hides (CSS :has) keeps what was in it when the choice moved on, and the writer's refusal of it would land where nobody sees it;
+        the writer keeps those refusals for the API."""
+        versions, remedy = _value(self, "versions"), _value(self, "remedy")
+        return {"versions": versions, "release_ids": _values(self, "release_ids") if versions == AdvisoryVersions.LISTED else [],
+                "remedy": remedy, "fix_release": (_value(self, "fix_release") or None) if remedy == AdvisoryRemedy.RELEASE else None,
+                "patches_reference": _value(self, "patches_reference") if remedy == AdvisoryRemedy.PATCHES else "",
                 "confirm": bool(self.cleaned_data.get("confirm"))}
 
 

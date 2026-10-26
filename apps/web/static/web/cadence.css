@@ -1764,8 +1764,8 @@ a.cy-fig:hover{background:var(--surface-2)}
    its counts a short list, label then number. An advisory's page: its CVE IDs as tokens that wrap, its sources and the models it names
    as the panel's cards and lists (.cy-card, .cy-up, .cy-dev), each device's responses under its line. The modals: the release and
    change checkboxes one per line, the reasons with why each does not hold now, "Add a version not on file" a box and its button on one
-   line (stacked on a phone); the fields that depend on a choice shown while it is made (CSS :has; without :has every field shows, and
-   the writer refuses what does not fit, in its words). Theme tokens only. */
+   line (stacked on a phone); the fields that depend on a choice shown while it is made (CSS :has; without :has every field shows; the
+   form sends only what the choices show: forms_cyber_advisories.ModelForm). Theme tokens only. */
 .ad-tbl td.ad-name{min-width:200px;max-width:320px;white-space:normal;overflow-wrap:anywhere}
 .ad-tbl .ad-cves{display:block;margin-top:2px;font-size:11.5px;color:var(--ink-3);overflow-wrap:anywhere}
 .ad-status{white-space:normal;line-height:1.35;padding-top:2px;padding-bottom:2px;max-width:100%}

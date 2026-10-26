@@ -2,7 +2,8 @@
 {% comment %}Slice 40: a security advisory's page (views_cyber_advisories._page_context), in the drawer. Its name and status words (for this
    reader), the day received and who recorded it, its CVE IDs and the other advisories sharing them, its Check lines (information, never
    refusals), its sources (who published each, its reference, link, days, revision, and what changed; Edit, Record revision, Remove for
-   Edit), the models it names (which releases, what it offers, the fix or patch list, the devices by line kind and updates; for a reader
+   Edit), the models it names (which releases, what it offers, the fix or patch list, the devices by line kind and updates (none for one
+   entered in error: it reads no count, and never says no device is on site); for a reader
    of devices each device's line and responses, those that need a response first, the rest behind Show, with Record decision and Open
    software update where they can act), "Decisions for this advisory" (a reader of devices), and History (its sources', models', and
    releases' changes too). The actions by level in the footer; the devices' CSV for a reader of devices. Device security View.{% endcomment %}
@@ -49,11 +50,11 @@
       <article class="cy-card ad-row" aria-label="{{ m.model }}">
         <div class="cy-release-h"><span class="t">{{ m.model }}</span><span class="muted">{{ m.versions }}{% if m.listed %}: {% for r in m.listed %}{{ r.version }}{% if not forloop.last %}, {% endif %}{% endfor %}{% endif %}</span></div>
         <p class="cy-dev-s">{{ m.remedy }}{% if m.fix %} · the fix it names: {{ m.fix }}{% endif %}{% if m.patches %} · the patch list it names: {{ m.patches }}{% endif %}</p>
-        <ul class="ad-counts">
+        {% if m.counted %}<ul class="ad-counts">
           {% for label, n in m.lines %}<li>{{ label }}: <b>{{ n }}</b></li>{% empty %}<li class="muted">No device of this model on site</li>{% endfor %}
           {% for label, n in m.updates %}<li>{{ label }}: <b>{{ n }}</b></li>{% endfor %}
           {% for label, n in m.answers %}<li>{{ label }}: <b>{{ n }}</b></li>{% endfor %}
-        </ul>
+        </ul>{% endif %}
         {% if m.releases_url %}<p class="cy-act"><button class="link" type="button" hx-get="{{ m.releases_url }}" hx-target="#modal-card" title="Set devices of this model to a release">Record their releases</button></p>{% endif %}
         {% if who.devices %}
         {% if m.needing %}

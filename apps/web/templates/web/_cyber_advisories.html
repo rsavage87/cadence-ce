@@ -2,7 +2,8 @@
 {% comment %}Slice 40: the Advisories tab's body (views_cyber_advisories._list_context). HICP 2023's recommendation once, small; Needs attention
    (rules.advisory_attention: web/_cyber_advisory_attention.html); then the advisories the filters keep, each row's number opening its page
    in the drawer, with its name, CVE IDs, the day received, its status words for this reader, and its counts: devices by line kind and
-   updates for every reader, what answers the lines for a reader of devices only (Equipment View). Re-fetches itself on cyber-changed
+   updates for every reader, what answers the lines for a reader of devices only (Equipment View); one entered in error reads no count
+   (a dash, never "None on site"). Re-fetches itself on cyber-changed
    (an advisory recorded or changed; a decision, an update, a register change).{% endcomment %}
 <div id="cy-advisories" class="cy-advisories" hx-get="{{ list_url }}{% query request.GET %}" hx-trigger="cyber-changed from:body" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap hx-target">
   <p class="hint cy-hicp">{{ hicp }}</p>
@@ -18,8 +19,8 @@
           <td class="cy-wrap ad-name">{{ row.name }}<small class="ad-cves">{{ row.cves }}</small></td>
           <td>{{ a.received_on|date:"M j, Y" }}</td>
           <td class="cy-wrap"><span class="chip {{ row.tone }} ad-status">{{ row.words }}</span></td>
-          <td class="cy-wrap"><ul class="ad-counts">{% for label, n in row.lines %}<li>{{ label }}: <b>{{ n }}</b></li>{% empty %}<li class="muted">None on site</li>{% endfor %}</ul></td>
-          <td class="cy-wrap"><ul class="ad-counts">{% for label, n in row.updates %}<li>{{ label }}: <b>{{ n }}</b></li>{% empty %}<li class="muted">None</li>{% endfor %}</ul></td>
+          {% if row.counted %}<td class="cy-wrap"><ul class="ad-counts">{% for label, n in row.lines %}<li>{{ label }}: <b>{{ n }}</b></li>{% empty %}<li class="muted">None on site</li>{% endfor %}</ul></td>
+          <td class="cy-wrap"><ul class="ad-counts">{% for label, n in row.updates %}<li>{{ label }}: <b>{{ n }}</b></li>{% empty %}<li class="muted">None</li>{% endfor %}</ul></td>{% else %}<td class="muted">—</td><td class="muted">—</td>{% endif %}
           {% if can_devices %}<td class="cy-wrap"><ul class="ad-counts">{% for label, n in row.answers %}<li>{{ label }}: <b>{{ n }}</b></li>{% empty %}<li class="muted">—</li>{% endfor %}</ul></td>{% endif %}
         </tr>
         {% endwith %}{% empty %}
