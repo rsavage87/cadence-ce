@@ -138,6 +138,29 @@ beds' own ("2.0 (demo)") whose security updates ended last month, recorded conne
 attention's rentals row. Every device of ours past its support is governed by one of the two (the pumps' listed under decisions past
 their review), so Needs attention's list of ours with no decision recorded is empty. No link, no CVE. Constants only: nothing is drawn, no
 device moves. The North Campus has none.
+
+Slice 40: security advisories (_security_advisories), after the decisions and before the vendor review, recorded by the CE manager
+through apps.cybersecurity.advisories as the Advisories tab records them, in the order received (each numbered AD-<yy>-<nnnn> by the year
+it was received, recorded with that day as today), and the decisions on two of them through apps.cybersecurity.decisions as Record
+decision records them (numbered in the year decided, after slice 39's). The first (received 28 days ago) names the patient monitors'
+older release, with mitigations only: decided not in use here for the monitors of ours on that release (release scope, by the CE
+leader, no plan, no IT exception, 21 days ago: in force), its second revision recorded today (only mitigations changed, so its models stay
+confirmed); the monitors on the newer release read "a release the advisory does not name", and it reads "Open: ready to close". The
+second (10 days ago) names every release of the C-arms, with the manufacturer's validated patches on the list the other C-arm's patches
+came from (slice 38: "the list the advisory names"); the C-arm kept off the network gets its own decision (kept in use with controls,
+taken off the network among them, a replacement planned in the fiscal year after next, by the CE leader), and the CE manager closed it.
+The third (7 days ago) names no model of the catalog: a technician marked it not applicable. The fourth (3 days ago, two sources) lists
+the pumps' older release with the newer one as the fix, its models confirmed: the pumps on the fix and the vendor loaner need nothing,
+slice 38's open updates to the fix answer theirs, the pump done with the version not confirmed reads so, and the rest of the older
+release's pumps and the four not recorded read "No response recorded" (slice 39's pump decision is for their support, never this
+advisory's need), so Close is refused in words, and Record decision for the release offers the pumps' support decision's controls and
+plan. The fifth (today) names the beds without stating releases, no fix yet, its models not confirmed (the bulletin names another bed
+model too): "Models to confirm", the badge's advisory half, the beds of ours with no response, and the rental bed as its own row (its
+owner installs updates). Not shown: an advisory decision past its review date (it would add a row to the Decisions tab's Needs
+attention), an update to a release an advisory names, a patches work order, and an advisory entered in error. Fictional throughout:
+every reference DEMO-ADV-, every source a manufacturer's bulletin, its customer portal, or other (never CISA, the FDA, or an ISAC), no
+link, no CVE ID. Constants only: nothing is drawn, no release is added or moved, no fact, update, or work order is recorded (the Fleet,
+Changes for IT, slice 38's batch, the evaluation, the vendor review, and the binder read as before). The North Campus has none.
 """
 import random
 from datetime import date, datetime, time, timedelta
@@ -154,11 +177,17 @@ from apps.contracts.models import Contract, ContractType, Coverage
 from apps.core.workdays import is_work_day
 from apps.credentials.models import Credential, Scope, Technician
 from apps.credentials.services import qualified_technicians, renew_credential
+from apps.cybersecurity import advisories as cyber_advisories
 from apps.cybersecurity import decisions as cyber_decisions
 from apps.cybersecurity import services as cyber
 from apps.cybersecurity import updates as cyber_updates
 from apps.cybersecurity.models import (
     AcceptedBy,
+    AdvisoryChange,
+    AdvisoryRemedy,
+    AdvisorySourceKind,
+    AdvisoryVersions,
+    AppliesTo,
     Connects,
     DecisionPlan,
     DecisionResponse,
@@ -167,6 +196,7 @@ from apps.cybersecurity.models import (
     Mds2Edition,
     Mds2Status,
     Network,
+    NotApplicableReason,
     OsFamily,
     Patching,
     PatientData,
@@ -618,6 +648,45 @@ DECISION_C_ARM_FY_AHEAD = 2  # the fiscal year after next
 # today's; a day that many days from today), and how it is connected here.
 RENTAL_RELEASE = ("T-0101", "2.0 (demo)", {"security_updates_end_on": -1, "support_checked_on": 0}, Network.WIRELESS)
 
+# Slice 40, security advisories (_security_advisories), after the decisions and before the vendor review, recorded by
+# SECURITY_RECORDED_BY (the CE manager: Device security Approve) through apps.cybersecurity.advisories as the Advisories tab records
+# them, in the order received, each on the day it came in (recorded with that day as today). Fictional throughout: every reference
+# DEMO-ADV-, every source a manufacturer's bulletin, its customer portal, or other (never CISA, the FDA, or an ISAC), no link, no CVE ID.
+# Each: received days ago; its sources (kind, reference, published days ago; None: not recorded), the first oldest; the model it names
+# (model, which releases, the versions it lists, what it offers, the fix's version; a patches remedy names the list the other C-arm's
+# patches came from, _c_arm_patches), or None; whether Set models' "These are all the models it names that are here" was ticked.
+ADVISORIES = [
+    # the patient monitors' older release, mitigations only
+    (28, [(AdvisorySourceKind.MANUFACTURER_BULLETIN, "DEMO-ADV-0001", 30)],
+     ("IntelliVue MX750", AdvisoryVersions.LISTED, [MONITOR_OLDER], AdvisoryRemedy.MITIGATIONS, None), True),
+    # every release of the C-arms, the manufacturer's validated patches
+    (10, [(AdvisorySourceKind.MANUFACTURER_PORTAL, "DEMO-ADV-0002", 12)],
+     ("Cios Spin", AdvisoryVersions.ALL, [], AdvisoryRemedy.PATCHES, None), True),
+    # no model of the catalog: marked not applicable (ADVISORY_NOT_APPLICABLE)
+    (7, [(AdvisorySourceKind.OTHER, "DEMO-ADV-0003", None)], None, False),
+    # the pumps' older release, the newer one the fix
+    (3, [(AdvisorySourceKind.MANUFACTURER_BULLETIN, "DEMO-ADV-0004", 5), (AdvisorySourceKind.OTHER, "DEMO-ADV-0004-N", None)],
+     ("Alaris 8015 PCU", AdvisoryVersions.LISTED, [PUMP_OLDER], AdvisoryRemedy.RELEASE, PUMP_NEWER), True),
+    # the beds, releases not stated, no fix yet; not confirmed: the bulletin names another bed model too
+    (0, [(AdvisorySourceKind.MANUFACTURER_BULLETIN, "DEMO-ADV-0005", None)],
+     ("Centrella", AdvisoryVersions.NOT_STATED, [], AdvisoryRemedy.NO_FIX_YET, None), False),
+]
+# The first advisory's monitors of ours on MONITOR_OLDER (release scope): decided the part it names is not in use here, by the CE leader,
+# no plan, no IT exception, ADVISORY_MONITORS_DECIDED_DAYS_AGO (recorded with that day as today), the review by default (in force). Its
+# bulletin's revision, recorded today: the revision, the day updated (days ago), and what changed (mitigations only: its models stay
+# confirmed, and its decision's "changed since" Check stays quiet).
+ADVISORY_MONITORS_DECISION = {"response": DecisionResponse.NOT_IN_USE_HERE, "accepted_by": AcceptedBy.CE_LEADER}
+ADVISORY_MONITORS_DECIDED_DAYS_AGO = 21
+ADVISORY_MONITORS_REVISION = ("2", 8, [AdvisoryChange.MITIGATIONS_CHANGED])
+# The second advisory's C-arm kept off the network (SECURITY_OFF_NETWORK, recorded "Not connected here"; device scope), today: kept in use
+# with controls, taken off the network among them, a replacement planned by the last day of the fiscal year after next (the other
+# C-arm's, DECISION_C_ARM_FY_AHEAD), by the CE leader, no IT exception, the review by default; then the CE manager closed the advisory.
+ADVISORY_C_ARM_DECISION = {"response": DecisionResponse.KEEP_WITH_CONTROLS, "controls": ["network_removed", "physical_controls"],
+                           "plan": DecisionPlan.REPLACE_PLANNED, "accepted_by": AcceptedBy.CE_LEADER}
+# The third advisory, marked not applicable on the day received: its index in ADVISORIES, the reason, and who (a technician: Device
+# security Edit).
+ADVISORY_NOT_APPLICABLE = (2, NotApplicableReason.NO_MODEL_HERE, "dwhitfield")
+
 
 def _security_fields(spec: dict, today: date) -> dict:
     """A release's fields as SECURITY_PROFILES, SECURITY_RELEASES, and RENTAL_RELEASE write them: a last day (SECURITY_LAST_DAYS) the
@@ -630,6 +699,13 @@ def _security_fields(spec: dict, today: date) -> dict:
             value = today + timedelta(days=value)
         out[name] = value
     return out
+
+
+def _c_arm_patches(today: date) -> str:
+    """The manufacturer's validated patch list the other C-arm's patches came from (slice 38: C_ARM_PATCHES of the month before the day
+    they were applied, C_ARM_PATCHED_DAYS_AGO), which the second advisory names (slice 40)."""
+    listed = add_months((today - timedelta(days=C_ARM_PATCHED_DAYS_AGO)).replace(day=1), -1)
+    return C_ARM_PATCHES.format(year=listed.year, month=listed.month)
 
 
 def _noon(day: date) -> datetime:
@@ -804,6 +880,7 @@ class Command(BaseCommand):
             self._device_security(today, domain)  # slice 37: draws nothing, after every draw
             self._software_updates(today, domain)  # slice 38: draws nothing, after the register (today's work: outside every period)
             self._security_decisions(today, domain)  # slice 39: draws nothing, after the updates (the pumps' decision shows them)
+            self._security_advisories(today, domain)  # slice 40: draws nothing, after the decisions (numbered after them)
             self._vendor_review(today, domain)  # slice 34: before the program evaluation, which stays made last
             self._program_evaluation(today, domain)  # slice 32: last, so its figures count everything above
         devices = len(assets) + len(NEW_DEVICES) + len(TEMPORARY_DEVICES)
@@ -1120,8 +1197,7 @@ class Command(BaseCommand):
         found, patched = today - timedelta(days=C_ARM_FOUND_DAYS_AGO), today - timedelta(days=C_ARM_PATCHED_DAYS_AGO)
         release = cyber.add_release(c_arm_model, by=manager, today=today, version=C_ARM_RELEASE)
         cyber.record_facts(c_arm, by=manager, today=today, release=release, release_since=found, checked_on=found)
-        listed = add_months(patched.replace(day=1), -1)  # the patch list of the month before
-        patches = cyber_updates.UpdateChoice(UpdateOutcome.PATCHES, reference=C_ARM_PATCHES.format(year=listed.year, month=listed.month),
+        patches = cyber_updates.UpdateChoice(UpdateOutcome.PATCHES, reference=_c_arm_patches(today),  # the patch list of the month before
                                              basis=UpdateBasis.VALIDATED_LIST)
         cyber_updates.record(c_arm, patches, installed_by=InstalledBy.MANUFACTURER, applied_on=patched, by=manager, today=today)
 
@@ -1169,6 +1245,63 @@ class Command(BaseCommand):
         rental = Asset.objects.get(tag=tag)
         release = cyber.add_release(rental.device_model, by=manager, today=today, version=version, **_security_fields(spec, today))
         cyber.record_facts(rental, by=manager, today=today, release=release, release_since=rental.arrived_on, network=network)
+
+    @staticmethod
+    def _security_advisories(today: date, domain: str) -> None:
+        """Slice 40: the CE manager's security advisories through apps.cybersecurity.advisories, as the Advisories tab records them (each
+        row's history says who), after slice 39's decisions (so its decisions are numbered after theirs) and before the vendor review:
+        ADVISORIES in the order received, each recorded with its sources and the model it names on the day it came in. Then, through
+        apps.cybersecurity.decisions as Record decision records them: the first one's monitors on the older release decided not in use
+        here (ADVISORY_MONITORS_DECISION, release scope, ADVISORY_MONITORS_DECIDED_DAYS_AGO); the third marked not applicable by a
+        technician on its day (ADVISORY_NOT_APPLICABLE); today, the second one's C-arm kept off the network (ADVISORY_C_ARM_DECISION,
+        device scope), then the second closed by the CE manager, and the first one's bulletin's revision (ADVISORY_MONITORS_REVISION).
+        Constants only: nothing is drawn, no release is added or moved, no fact, update, or work order is recorded."""
+        manager = User.objects.get(username=f"{SECURITY_RECORDED_BY}@{domain}")  # Device security Approve and Equipment View
+        found = []
+
+        def published(days_ago):
+            return today - timedelta(days=days_ago) if days_ago is not None else None
+
+        for received_ago, sources, model_row, confirm in ADVISORIES:
+            received = today - timedelta(days=received_ago)
+            (kind, reference, published_ago), *more = sources
+            advisory = cyber_advisories.record_advisory(received_on=received, cves=(), source=kind, reference=reference,
+                                                        published_on=published(published_ago), by=manager, today=received)
+            for kind, reference, published_ago in more:
+                cyber_advisories.add_source(advisory, source=kind, reference=reference, published_on=published(published_ago), by=manager,
+                                            today=received)
+            if model_row is not None:
+                model, versions, listed, remedy, fix = model_row
+                device_model = DeviceModel.objects.get(model=model)
+                releases = {r.version: r for r in SoftwareRelease.objects.filter(device_model=device_model).exclude(version_key="")}
+                cyber_advisories.set_model(advisory, device_model=device_model, versions=versions, release_ids=[releases[v] for v in listed],
+                                           remedy=remedy, fix_release=releases[fix] if fix else None,
+                                           patches_reference=_c_arm_patches(today) if remedy == AdvisoryRemedy.PATCHES else "",
+                                           confirm=confirm, by=manager, today=received)
+            found.append(advisory)
+        monitors, c_arms = found[0], found[1]
+
+        # the first: the monitors of ours on the older release, decided not in use here
+        older = SoftwareRelease.objects.get(device_model__model="IntelliVue MX750", version=MONITOR_OLDER)
+        cyber_decisions.record_decision(release=older, applies_to=AppliesTo.ADVISORY, advisory=monitors, **ADVISORY_MONITORS_DECISION,
+                                        by=manager, today=today - timedelta(days=ADVISORY_MONITORS_DECIDED_DAYS_AGO))
+        # the third: no model of the catalog, marked not applicable by a technician the day it came in
+        index, reason, username = ADVISORY_NOT_APPLICABLE
+        technician = User.objects.get(username=f"{username}@{domain}")
+        cyber_advisories.mark_not_applicable(found[index], reason=reason, by=technician, today=found[index].received_on)
+        # today: the second's C-arm kept off the network, then the second closed
+        model, _checked = SECURITY_OFF_NETWORK
+        off_network = (Asset.objects.filter(device_model__model=model, ownership=Ownership.OWNED).exclude(status=AssetStatus.RETIRED)
+                       .order_by("tag").first())
+        start = fiscal.start_month()
+        _first, replace_by = fiscal.fiscal_bounds(fiscal.current_fy(today, start) + DECISION_C_ARM_FY_AHEAD, start)
+        cyber_decisions.record_decision(asset=off_network, applies_to=AppliesTo.ADVISORY, advisory=c_arms, **ADVISORY_C_ARM_DECISION,
+                                        plan_by=replace_by, by=manager, today=today)
+        cyber_advisories.close(c_arms, by=manager, today=today)
+        # today: the first's bulletin's second revision (mitigations only: nothing reopens)
+        revision, updated_ago, changed = ADVISORY_MONITORS_REVISION
+        cyber_advisories.record_revision(monitors.sources.get(), revision=revision, updated_on=today - timedelta(days=updated_ago),
+                                         last_change=changed, by=manager, today=today)
 
     @staticmethod
     def _credential_lapse(today: date) -> None:

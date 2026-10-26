@@ -672,8 +672,8 @@ def offer_or_why(wo, user) -> tuple:
 def release_offer(wo, user):
     """The one predicate (slice 38) the completion modal, the work order serializer's software_choices, and updates.check_choice read:
     an Offer, or None unless the work order is a software update with its record (register-opened, so never imported), its device on
-    site (on_site: not retired, not returned), and `user` may record (permissions.can_edit_devices; None is the system). Slice 40 widens
-    the type gate. Offer.outcomes are installed, patches, and already, always (whether already fits the target is the service's check);
+    site (on_site: not retired, not returned), and `user` may record (permissions.can_edit_devices; None is the system). Offer.outcomes
+    are installed, patches, and already, always (whether already fits the target is the service's check);
     Offer.needed is True while nothing is recorded (a completion by a user must then choose, or Not confirmed now)."""
     return offer_or_why(wo, user)[0]
 

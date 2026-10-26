@@ -392,26 +392,29 @@ marked missing, retired, or returned to their owner in the last 7, 30, or 90 day
 devices. Fleet, a model's devices, and Changes for IT download as CSV with the columns on screen.
 
 Never kept: device credentials (no field can hold one), network identifiers (IP, MAC, hostname, VLAN, ports), SBOM contents, the MDS2
-file itself, advisory text, and free text of any kind: references are tokens and https links (never with a password, token, or signature
-in them), answers are choices. None of it reaches an email, a report email, a custom report, the device's own CSV or API record, the
+file itself, advisory text, and free text of any kind: references are tokens and links are https to a public host name (never an IP
+address, a port, a single-label name, or a .local, .lan, .internal, .home.arpa, or .corp name, and never with a password, token, or
+signature in them: an MDS2's link and an advisory source's alike), answers are choices. None of it reaches an email, a report email, a custom report, the device's own CSV or API record, the
 portal, labels, or Scan. The register never calls a device or a release "secure", "compliant", "certified", "patched" or "unpatched",
-"vulnerable", "unsupported", "mitigated", "protected", "safe", "at risk", "exposed", "exploitable", or "remediated", never "end of life"
-for an end of support, nor "high risk" or "critical" in its own voice; an MDS2 answer is named by its question in words, never by a
+"vulnerable", "unsupported", "mitigated", "protected", "safe", "at risk", "exposed", "exploitable", "remediated", "affected", "fixed",
+"exploited", "zero-day", or "uncontrolled" (an advisory's statuses are its issuer's words, never Cadence's), never "end of life" for an
+end of support, nor "high risk" or "critical" in its own voice; an MDS2 answer is named by its question in words, never by a
 form's question number. A security decision is never an exemption or a waiver, a device never "hardened", and a review date never a
 "deadline" or "overdue".
 
 Device security is a module of its own in Roles: the director Full, the CE manager Approve, technicians Edit, Finance and quality,
-requesters, and vendors None. View sees the register; Edit records models' profiles and releases and devices' facts; Approve marks a
-software update entered in error and records security decisions (both below). Every list naming devices by tag or location (Fleet's devices, Changes for IT, the drawer's tab, their CSVs) also needs
+requesters, and vendors None. View sees the register; Edit records models' profiles and releases, devices' facts, and security advisories; Approve marks a
+software update entered in error, records security decisions, and closes advisories (all below). Every list naming devices by tag or location (Fleet's devices, Changes for IT, the drawer's tab, their CSVs) also needs
 Equipment View; the Models tab needs Device security View alone. A vendor's or a requester's account never sees it, whatever its levels
 (on a custom role that sees only its company's or unit's share, Device security has no effect). For the IT department, make a custom role
 "IT security" with Device security Edit and Equipment View: it records the facts without adding, editing, or retiring devices. For IT to
 record its exceptions as decisions, raise Device security to Approve; with Equipment View it then also marks updates entered in error.
-Add Work orders View to follow update work orders. Upgrading:
+Add Work orders View to follow update work orders. With Device security Edit, IT records advisories, sets and confirms their models,
+and marks them not applicable. To close them and record decisions, raise Device security to Approve, with Equipment View. Upgrading:
 every custom role made before this release reads None for Device security, so a custom role that administers users cannot invite anyone
 into a role holding it (a technician's, for one: nobody gives more access than their own) until a director raises its Device security
-level. Software updates and security decisions are below. Advisories and the decisions on them, the version recorded at every
-completion, the import, the survey binder's section, and the evaluation's figures come next.
+level. Software updates, security decisions, and security advisories are below. The version recorded at every completion, the import,
+the survey binder's section, and the evaluation's figures come next, then the CISA feed.
 
 ## Software updates
 A software update is work of its own (FDA's 2016 postmarket guidance calls a routine cybersecurity update an enhancement, "not
@@ -475,8 +478,8 @@ committee, department leadership, or the authorizing official), IT's exception n
 12 months after the day decided, 3 to take out of use; for a rental, loaner, or demo unit its due back day when that comes first, else 3
 months; at most 36 months, 12 to take out of use: Cadence's choices, not a rule). IT's exception stays in IT's system of record: Cadence
 keeps its number, never its text, and a reference is never an address (an address with a port, range, or prefix too), a MAC in any
-layout, alone or within a reference (a ticket number of digits in a MAC's layout, or a UUID, is taken), a VLAN, or a port. A device recorded "Not connected here" (Record facts) needs no decision, so "taken off the
-network" is not offered as a control, and the segment is refused as one while the model's record says its devices are on no separate
+layout, alone or within a reference (a ticket number of digits in a MAC's layout, or a UUID, is taken), a VLAN, or a port. A device recorded "Not connected here" (Record facts) needs no decision about its support, so "taken
+off the network" is not offered as a control there (an advisory's decision offers it: below), and the segment is refused as one while the model's record says its devices are on no separate
 segment. A decision is never changed: Review and renew records the next one and ends it as superseded; End (no longer needed: its devices
 updated, replaced, retired, or returned, or each under a decision of its own; recorded as "No longer needed", never why) and Entered in
 error end one. Retiring, returning, or updating a device never touches a decision: the
@@ -522,6 +525,70 @@ cannot be marked entered in error until the decision ends, and a release any dec
 instead); the refusal names the decision only to someone who may read decisions, and tells only someone who may end it to end it first.
 Each row of Needs attention links to the model's panel only where the panel lists just the row's devices (else to the device, or not at
 all).
+
+## Security advisories
+HHS 405(d)'s HICP 2023 recommends taking in security advisories, finding the devices they concern, and choosing a response with the
+manufacturer; no rule requires it, and Cadence never says one does. Cadence receives no advisory by itself: Device security's Advisories
+tab records each one your team takes in, and keeps no advisory text. An advisory has a number (AD-26-0003, by the year received), the day
+received, its CVE IDs (pasted as CVE-YYYY-NNNN, separated by spaces, commas, or new lines), and its sources: who published it (a CISA ICS
+medical advisory, a manufacturer's bulletin or customer portal notice, an FDA safety communication, an ISAC alert, or other), its
+reference as the publisher prints it, a link, the day published, and its latest revision (the revision or the day updated, and what
+changed: products or releases, vulnerabilities added, a fix now named, mitigations, other details). Record only the reference an ISAC
+lets you share inside the facility. A CVE ID or reference already on another advisory is shown before saving, with "Add as a source of
+AD-…" or "Record as its own advisory"; the same publication twice is refused.
+
+For each model of the facility's catalog it names, Set models records which releases it names (the releases listed, every release, or
+releases not stated) and what it offers, as the advisory states it: a release from the manufacturer (with the release it names as the
+fix), the manufacturer's validated patches (with the patch list it names), mitigations only, no fix yet, or no fix planned. A version
+not on file is added from the same form, and "Models recorded with an operating system" narrows the list for an operating system's
+advisory. Until "These are all the models it names that are here" is confirmed, it reads "Models to confirm". A revision that changes
+its products, vulnerabilities, or fix asks for the models to be confirmed again (and reopens one marked not applicable); one that changes
+only mitigations or other details does not. Which devices it concerns comes from each device's recorded release, never stored: every
+device on site of a named model, ours and rentals, loaners, and demo units alike, reads a line ("On 5.2 (demo), a release the advisory
+names", "Release not recorded: it may run a release the advisory names", "On 5.6 (demo), the release the advisory names as the fix", "On
+5.4 (demo), a release the advisory does not name", "The advisory names every release of the Cios Spin", "The advisory names the Centrella
+without stating releases"), and a device on a release it names, or with no release recorded, needs a response, connected or not.
+
+A response is an update open to the fix or to a release it does not name, the manufacturer's patches recorded, or a decision. An update
+is judged by where it leaves the device: one to a release the advisory names is shown but answers nothing. Patches count when recorded on
+the list the advisory names (on any day) or, when it names none, since it was received; patches naming another list are a state of
+their own, as is an update done with the version not confirmed. A decision for an advisory's devices is recorded as a security decision
+is (above), for one device, a release's devices of ours, or every device of ours of a model, with no reasons: keep in use with controls
+(where "Taken off the network (used standalone)" is offered, once every device it covers is recorded "Not connected here"), keep in use
+without added controls, take out of use, or "Decided the part it names is not in use here" (no plan; a feature turned off as a control
+is keep in use with controls). A rental, loaner, or demo unit is covered only by its own. Each need has its own decisions: a support
+decision never answers an advisory, nor the reverse. Record decision for a scope that already has a decision of another kind starts
+from its controls and plan; who accepted it and IT's exception number are recorded for this advisory. The Decisions tab lists both
+kinds, with a Why filter and column ("Support ended, or its end announced", or the advisory's number), and a decision's page, print,
+and CSVs name its advisory.
+
+An advisory reads "Models to confirm", then, for readers of devices, "Open: 4 devices with no response recorded", "Open: 1 device under a
+decision past its review date", "Open: 1 device with patches naming another list", "Open: 1 update done, version not confirmed", "Open:
+12 updates open", or "Open: ready to close" (a reader without Equipment View reads "Open"). Close needs its models confirmed and every
+device that needs a response answered, and says which are not. Not applicable here takes one of three reasons, each checked against the
+records: it names no model in this facility's catalog; no device of the models it names is recorded on site; no device is recorded on a
+release it names. Both are checks at that moment: a device named since is listed again ("Closed or not applicable, devices named
+since"), and a closed advisory whose models need confirming after a revision says so. Reopen and Entered in error correct one (Entered in
+error is refused while a decision under it is in force).
+
+The Advisories tab opens with Needs attention: advisories with models to confirm; devices of ours on a release an advisory names, or
+with no release recorded, with no response (per advisory and model, with Record decision); each rental, loaner, or demo unit with no
+response (ask its owner to update it, or return it); updates done with the version not confirmed; patches naming another list;
+advisories closed or not applicable with devices named since; closed ones with models to confirm since a revision; releases added since
+the models were set; and advisory decisions past their review date (opening the Decisions tab narrowed to them). With nothing listed it
+reads "Nothing listed from what is recorded here." Below, the advisories filtered by status (open by default), models to confirm, or a
+CVE ID or reference, with their counts, download as CSV. An advisory's page shows its sources, the models it names with their counts,
+each device's line and what answers it (Record decision, Open software update, and Open updates to the fix where they can act), its
+Checks, the decisions recorded for it, and its History; its devices download as CSV for IT (tag, serial, model, department, whose,
+connection, release, line, response, decision, IT exception number, review by). A device's Security tab lists the advisories naming its
+model. Device security's badge counts the advisories with models to confirm (for Edit) beside the decisions past their review date.
+
+Who may do what: Device security View reads advisories, their sources, the models and releases they name, and counts of devices by line
+and of updates; every device line, response, decision, and the devices CSV also need Equipment View. Edit records advisories, sources,
+and revisions, sets, confirms, and removes models, marks one not applicable, and reopens one marked so; Approve with Equipment View
+closes one and records decisions; Approve reopens a closed one and marks one entered in error. A vendor's or a requester's account never
+sees them. A release an advisory names cannot be marked entered in error, nor its version changed (add the new version instead).
+Advisories never reach an email, a digest, the Overview's attention list, a custom report, the portal, labels, or Scan.
 
 ## Custom reports
 Reports' "+ Custom report" (Reports Edit: the director and Finance and quality by default) builds a report from work orders, devices,
@@ -615,6 +682,14 @@ its module's docstring under `apps/api/`, and the browsable API (open `/api/v1/`
   decision it supersedes, its sentence, the devices it governed when recorded, and its Check lines; `?scope=device|release|model`,
   `?state=in_force|review_soon|review_due|ended` (in_force: a review more than 30 days away; review_soon: within 30 days), `?device=` (an id, or a tag in any letter case). Recording them is the Device security screen's. A
   device or model a decision names is never deleted (the refusal names the decision for a Device security reader; retire the device).
+  Each decision reads `advisory` ({id, number}, or null for one about support), filtered by `?applies_to=support_ended|advisory` and
+  `?advisory=` (an id or a number).
+- security advisories (slice 40): `/api/v1/security-advisories/`, read only (Device security View; never a vendor's or a requester's
+  account), each by id or number: its name, status with its words for your access, the day received and who recorded it, whether its
+  models are confirmed, its CVE IDs, why it is not applicable, its sources, and the models it names (which releases, what it offers, the
+  fix or patch list, and the devices per line, plus responses for Equipment View readers); one advisory adds each device's line and
+  responses for Equipment View readers; `?status=`, `?model=`, `?cve=`, `?reference=`. Recording them is the Device security screen's. A
+  device model an advisory names is never deleted (the refusal names the advisory for a Device security reader).
 - the signed-in person's facilities and All facilities (`views_facilities.py`, `views_all_facilities.py`; session only).
 
 Vendor technicians and clinical requesters reach only their own devices and work orders (and Scan), as on the screens. Nobody gives

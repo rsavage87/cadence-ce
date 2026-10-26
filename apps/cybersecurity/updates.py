@@ -35,14 +35,19 @@ calls a routine cybersecurity update an enhancement, "not considered a repair"; 
 - Where the outcome came from (review fix C15) is the work order as it was when the outcome was recorded (on_vendor_service,
   vendor_report), never as it is later.
 
-Lock order (every writer here and every register writer in services.py; review of design38, critique38_rules C):
+Lock order (every writer here and every register writer in services.py; review of design38, critique38_rules C; slice 40's
+advisories.py and decisions.py keep it, map40_rest F8):
   1. the facility's register lock (services.lock_register)
-  2. work orders, in lock_work order (workorders.services.lock_work(asset_id, wo.pk)), when a writer names one
-  3. work order numbering (create_work_order's Sequence), when a writer opens one
+  2. an advisory's row, FOR UPDATE of its own row (services._locked_advisory), when a writer names one (slice 40: the advisory writers
+     and an advisory decision; never a writer here)
+  3. work orders, in lock_work order (workorders.services.lock_work(asset_id, wo.pk)), when a writer names one
   4. releases, FOR UPDATE of their own rows (services._locked_release)
-  5. devices: FOR KEY SHARE in tag order (services._locked_devices), or as the work order's own transaction holds them FOR UPDATE
-  6. security rows (DeviceSecurity)
-  7. update rows (SoftwareUpdate)
+  5. work order numbering (create_work_order's Sequence), when a writer opens one (the openers: the target release, then numbering)
+  6. devices: FOR KEY SHARE in tag order (services._locked_devices), or as the work order's own transaction holds them FOR UPDATE (a
+     completion that records holds its device FOR UPDATE through change_status before the chosen release: under the register, so no
+     other register writer runs between them)
+  7. security rows (DeviceSecurity)
+  8. update rows (SoftwareUpdate)
 Nothing takes the register lock after a work order's or a device's row. complete_work_order takes it first exactly when its `software`
 choice records an outcome (UpdateChoice.records), before lock_work; KEEP and "not confirmed now" take none. equipment.services.update_asset
 -> services.model_changed never takes it and never writes an update row. The batch never locks devices before numbering (a failed PM's

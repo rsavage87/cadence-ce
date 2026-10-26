@@ -17,9 +17,11 @@ equipment.services.update_asset -> model_changed, which runs with the device's w
 in tag order (AEM's pull-in) wait for the bulk set, or it for them, in turn. A transaction locking several devices FOR UPDATE in another
 order (an import chunk, in its file's order) can still meet the bulk set in a deadlock: PostgreSQL ends one side; the bulk set then answers
 the RACE refusal in words, and an import chunk reports the row it could not save. Slice 38 (apps.cybersecurity.updates) keeps one order
-for every register writer: the register lock; work orders in workorders.services.lock_work order, when a writer names one; work order
-numbering, when it opens one; releases; devices; security rows; update rows. Nothing takes the register lock after a work order's or a
-device's row: a completion that records what an update did takes it first, before lock_work (updates' module docstring).
+for every register writer: the register lock; (slice 40) an advisory's row, FOR UPDATE of its own row (_locked_advisory), when a writer
+names one; work orders in workorders.services.lock_work order, when a writer names one; releases; work order numbering, when it opens
+one; devices; security rows; update rows. Nothing takes the register lock after a work order's or a device's row: a completion that
+records what an update did takes it first, before lock_work (updates' module docstring). AdvisoryModel.device_model takes its model KEY
+SHARE at COMMIT (a deferred foreign key): only a model's rename or delete waits on it.
 
 Nothing here is deleted: a release entered in error is marked (removed_on, removed_by) and refused while a device on site names it
 (rules.on_site, of the release's model: the devices the Models panel counts, review fix C4), (slice 38) while an open software update
