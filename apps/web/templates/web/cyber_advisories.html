@@ -1,0 +1,26 @@
+{% extends "web/base.html" %}
+{% load web %}
+{% block title %}Device security{% endblock %}
+{% block content %}
+{% comment %}Slice 40 (views_cyber_advisories): the Device security screen's Advisories tab, its own address. Record advisory (Device
+   security Edit) opens its modal; the filters (status, models to confirm, a CVE ID, reference, or number) re-fetch the tab's body
+   (#cy-advisories, which re-fetches itself on cyber-changed) and push the address, which the Export link follows (data-act="with-filters").
+   An advisory's number opens its page in the drawer; the page renders with it open when its address is opened directly. Every word about
+   an advisory is apps.cybersecurity.rules' or advisories'.{% endcomment %}
+<div class="page-head">
+  <div><h1>Device security</h1><p class="sub">What each model's software can do and what its manufacturer discloses, and what this facility knows about each device's software and connection</p></div>
+  <div class="actions">
+    {% query request.GET page=None as ad_q %}<a class="btn" href="{% url 'web:security_advisories_csv' %}{{ ad_q }}" data-act="with-filters" data-base="{% url 'web:security_advisories_csv' %}" download title="Download the advisories in this list as CSV, one row each">{% icon "dl" %} Export</a>
+    {% if may_record %}<button class="btn primary" type="button" hx-get="{% url 'web:security_advisory_new' %}" hx-target="#modal-card">{% icon "plus" %} Record advisory</button>{% endif %}
+  </div>
+</div>
+{% include "web/_cyber_tabs.html" %}
+<form class="toolbar cy-filters" id="ad-filters" method="get" action="{{ list_url }}" role="search"
+      hx-get="{{ list_url }}" hx-trigger="change, submit, input changed delay:300ms from:#ad-q" hx-target="#cy-advisories" hx-swap="outerHTML" hx-push-url="true">
+  <label class="field"><span>Status</span><select name="status" aria-label="Status">{% for v, l in options.statuses %}<option value="{{ v }}"{% if f.status == v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></label>
+  <label class="field cy-check"><input type="checkbox" name="to_confirm" value="1"{% if f.to_confirm %} checked{% endif %}> Models to confirm</label>
+  <label class="field"><span>Find</span><input id="ad-q" type="search" name="q" value="{{ f.q }}" placeholder="CVE ID, reference, or number" aria-label="A CVE ID, a source's reference, or an advisory number" autocomplete="off" spellcheck="false"></label>
+  <noscript><button class="btn sm" type="submit">Apply</button></noscript>
+</form>
+{% include "web/_cyber_advisories.html" %}
+{% endblock %}

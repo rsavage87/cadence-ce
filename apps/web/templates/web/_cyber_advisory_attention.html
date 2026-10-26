@@ -1,0 +1,30 @@
+{% comment %}Slice 40: the Advisories tab's Needs attention (views_cyber_advisories._attention over rules.advisory_attention): each heading in
+   rules' words with its count (a link to the list it counts, for models to confirm), and its rows: the words (the advisory's page or a
+   device's Security tab in the drawer; the Decisions tab's list of advisory decisions past their review date as a page), Record decision
+   (permissions.can_decide; it answers with the advisory's page), Open software update (slice 38's door, can_open_updates, only where one
+   can open), and the work order's number (Work orders View). A heading drawn from device lines or decisions only for a reader of devices
+   (rules leaves it out otherwise). Empty, rules' own words, never a claim that everything is answered.{% endcomment %}
+<section class="sec cy-attn" aria-label="Needs attention">
+  <h3>Needs attention <span>advisories to take in, and the devices they name with no response recorded</span></h3>
+  {% if attention.empty %}<div class="empty">{{ attention.empty_words }}</div>{% else %}
+  <div class="cy-releases">
+    {% for h in attention.headings %}
+    <article class="cy-card" data-heading="{{ h.key }}" aria-label="{{ h.words }}">
+      <div class="cy-up-h"><span class="t">{{ h.words }}</span>{% if h.url %}<a class="chip {% if h.info %}neutral{% else %}warn{% endif %}" href="{{ h.url }}" title="Show them in the list below (a page load, so the filters above show it)">{{ h.count }}</a>{% else %}<span class="chip {% if h.info %}neutral{% else %}warn{% endif %}">{{ h.count }}</span>{% endif %}</div>
+      <ul class="cy-up-list">
+        {% for r in h.rows %}
+        <li class="cy-up">
+          <div class="cy-up-s">{% if r.url and r.page %}<a class="link" href="{{ r.url }}">{{ r.words }}</a>{% elif r.url %}<a class="link" href="{{ r.url }}" hx-get="{{ r.url }}" hx-target="#drawer">{{ r.words }}</a>{% else %}{{ r.words }}{% endif %}</div>
+          {% if r.record_url or r.open_url or r.wo_url %}<div class="cy-up-f">
+            {% if r.record_url %}<button class="link" type="button" hx-get="{{ r.record_url }}" hx-target="#modal-card">{% if "supersedes=" in r.record_url %}Review and renew{% else %}Record decision{% endif %}</button>{% endif %}
+            {% if r.open_url %}<button class="link" type="button" hx-get="{{ r.open_url }}" hx-target="#modal-card">Open software update</button>{% endif %}
+            {% if r.wo_url %}<a class="link" href="{{ r.wo_url }}" hx-get="{{ r.wo_url }}" hx-target="#drawer">Open {{ r.wo_number }}</a>{% endif %}
+          </div>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </article>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>

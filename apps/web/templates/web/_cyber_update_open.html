@@ -3,14 +3,15 @@
    orders Edit): what to install (a release of the model other than the one on record, or the manufacturer's patches with their
    reference), the due day, the priority (normal or high), and Assign to where the service would use it, else the line saying where the
    update goes. Each refusal comes back under its field; one about the device at the top. A device that cannot take one now (not on
-   site, held as evidence, an open update already) gets the modal saying why.{% endcomment %}
+   site, held as evidence, an open update already) gets the modal saying why. It posts to the address it was opened at (`action`), so
+   the origin of slice 40's advisory door (`?advisory=<number>&from=advisory`) comes with it, never as a field.{% endcomment %}
 {% with dm=asset.device_model %}
 <div class="modal-h"><h2>{{ asset.tag }}: open software update</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
 {% if blocker %}
 <div class="form"><div class="full note" role="alert">{{ blocker }}</div></div>
 <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
 {% else %}
-<form id="cu-open-form" class="cu-form" hx-post="{% url 'web:cybersecurity_update_open' asset.tag %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+<form id="cu-open-form" class="cu-form" hx-post="{{ action|default:'' }}{% if not action %}{% url 'web:cybersecurity_update_open' asset.tag %}{% endif %}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
   <div class="form">
     <p class="full hint">{{ dm.manufacturer }} {{ dm.model }} · {{ asset.department }}{% if asset.room %}, room {{ asset.room }}{% endif %}. A software update work order: the work order shows only its type and the same problem text for every update; what it installs is kept here.</p>
     {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}

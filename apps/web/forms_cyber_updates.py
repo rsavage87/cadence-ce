@@ -19,6 +19,11 @@ no release, and the service refuses it (CHOOSE_RUNS_NOW). The marks "(the device
 
 Never "required" (a field the service needs says so in its refusal: "Choose ...", "Enter ..."), never "Critical" (the priority is normal
 or high: updates.OPEN_PRIORITIES), never a never word (rules.NEVER_WORDS).
+
+Slice 40: opened from a security advisory's page, Open software update and Open updates to this release begin from the advisory's row
+for the model (an `initial` given is laid over the defaults): the fix it names, or the manufacturer's patches with the list it names;
+the releases it lists and Release not recorded. A starting point only: the person may change any of it, and nothing about the advisory
+is posted (views_cyber_updates reads it from the address).
 """
 from datetime import timedelta
 
@@ -269,8 +274,10 @@ class OpenUpdateForm(ServiceForm):
     def __init__(self, *args, releases, recorded, model_name: str, today, assign: bool, qualified=(), **kwargs):
         kwargs.setdefault("auto_id", "cu-%s")
         offered = [r for r in releases if recorded is None or r.pk != recorded.pk]
-        kwargs.setdefault("initial", {"target": UpdateTarget.RELEASE if offered else UpdateTarget.PATCHES,
-                                      "due_on": (today + timedelta(days=DUE_DAYS)).isoformat(), "priority": Priority.NORMAL})
+        # slice 40: opened from an advisory, its row's remedy over these (views_cyber_updates._open_initial): the fix, or its patch list
+        kwargs["initial"] = {"target": UpdateTarget.RELEASE if offered else UpdateTarget.PATCHES,
+                             "due_on": (today + timedelta(days=DUE_DAYS)).isoformat(), "priority": Priority.NORMAL,
+                             **(kwargs.get("initial") or {})}
         super().__init__(*args, **kwargs)
         self.fields["target_release"].widget.choices = [CHOOSE, *_release_choices(offered)]
         if not offered:
@@ -321,7 +328,10 @@ class OpenUpdatesForm(ServiceForm):
     def __init__(self, *args, others, not_recorded: int, departments, today, assign: bool, qualified=(), **kwargs):
         """`others`: [(release, devices on site on it)] of the model's releases but the target; `departments`: [(id, name)]."""
         kwargs.setdefault("auto_id", "cu-%s")
-        kwargs.setdefault("initial", {"due_on": (today + timedelta(days=DUE_DAYS)).isoformat(), "priority": Priority.NORMAL})
+        # slice 40: opened from an advisory, the releases its row lists and Release not recorded over these
+        # (views_cyber_updates._batch_initial)
+        kwargs["initial"] = {"due_on": (today + timedelta(days=DUE_DAYS)).isoformat(), "priority": Priority.NORMAL,
+                             **(kwargs.get("initial") or {})}
         super().__init__(*args, **kwargs)
         self.fields["from_releases"].choices = [(str(r.pk), f"{r.version} ({on_site_words(n)})") for r, n in others]
         self.fields["include_not_recorded"].label = NOT_RECORDED_LABEL.format(count=on_site_words(not_recorded))

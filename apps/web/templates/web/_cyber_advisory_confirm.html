@@ -1,0 +1,18 @@
+{% load web %}
+{% comment %}Slice 40: a confirmation on an advisory (views_cyber_advisories._confirming): Confirm models, Close, Reopen, Entered in error,
+   Remove model, Remove source. Says what it does before it is done, or why it cannot now (a lock-free reader's words: advisories'
+   close_refusal, reopen_refusal, entered_in_error_refusal, model_removal_refusal, source_removal_refusal, set_model_refusal); the
+   writer's own refusal (read again under its locks) comes back at the top.{% endcomment %}
+<div class="modal-h"><h2>{{ title }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note" role="alert" data-blocker>{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="ad-confirm-form" hx-post="{{ action }}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]">
+  <div class="form">
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    <div class="full cy-in-error"><p>{{ words }}</p></div>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn {{ tone }}" type="submit">{{ button }}</button></div>
+</form>
+{% endif %}

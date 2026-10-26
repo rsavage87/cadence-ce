@@ -1,0 +1,24 @@
+{% load web %}
+{% comment %}Slice 40: Add source and Edit source (views_cyber_advisories.source_new / source_edit; advisories.add_source / update_source;
+   Device security Edit): who published it, its reference as printed (a token; an ISAC's only as far as it may be shared inside the
+   facility), its https link (a pointer, never opened by Cadence), the day published, and, adding one, the CVE IDs it adds. Refused on an
+   advisory entered in error or a source removed (the modal says so). Each refusal comes back under its field.{% endcomment %}
+<div class="modal-h"><h2>{{ a.number }}: {% if adding %}add a source{% else %}edit a source{% endif %}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note" role="alert">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="ad-source-form" class="ad-form" hx-post="{{ action }}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    {% if adding %}<p class="full hint">Another publication of the same issue: a manufacturer's bulletin beside a CISA advisory, for one.</p>{% endif %}
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    {% include "web/_asset_field.html" with field=form.source %}
+    {% include "web/_asset_field.html" with field=form.reference %}
+    {% include "web/_asset_field.html" with field=form.published_on %}
+    {% include "web/_asset_field.html" with field=form.url cls="full" %}
+    {% if "cves" in form.fields %}{% include "web/_asset_field.html" with field=form.cves cls="full" %}{% endif %}
+    <p class="full hint ad-if-isac">{{ isac_help }}</p>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">{% if adding %}Add the source{% else %}Save{% endif %}</button></div>
+</form>
+{% endif %}

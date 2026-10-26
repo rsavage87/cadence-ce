@@ -1,0 +1,33 @@
+{% load web %}
+{% comment %}Slice 40: the Advisories tab's body (views_cyber_advisories._list_context). HICP 2023's recommendation once, small; Needs attention
+   (rules.advisory_attention: web/_cyber_advisory_attention.html); then the advisories the filters keep, each row's number opening its page
+   in the drawer, with its name, CVE IDs, the day received, its status words for this reader, and its counts: devices by line kind and
+   updates for every reader, what answers the lines for a reader of devices only (Equipment View). Re-fetches itself on cyber-changed
+   (an advisory recorded or changed; a decision, an update, a register change).{% endcomment %}
+<div id="cy-advisories" class="cy-advisories" hx-get="{{ list_url }}{% query request.GET %}" hx-trigger="cyber-changed from:body" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap hx-target">
+  <p class="hint cy-hicp">{{ hicp }}</p>
+  {% include "web/_cyber_advisory_attention.html" %}
+  <div class="sec"><h3>Advisories <span>{{ page.paginator.count }} in this list</span></h3>
+  <div class="tbl-wrap">
+    <table class="cy-tbl ad-tbl">
+      <thead><tr><th>Number</th><th>Advisory</th><th>Received</th><th>Status</th><th>Devices</th><th>Updates</th>{% if can_devices %}<th>Responses</th>{% endif %}</tr></thead>
+      <tbody>
+        {% for row in rows %}{% with a=row.a %}
+        <tr class="row" hx-get="{{ row.url }}" hx-target="#drawer">
+          <td><a class="tag" href="{{ row.url }}">{{ a.number }}</a></td>
+          <td class="cy-wrap ad-name">{{ row.name }}<small class="ad-cves">{{ row.cves }}</small></td>
+          <td>{{ a.received_on|date:"M j, Y" }}</td>
+          <td class="cy-wrap"><span class="chip {{ row.tone }} ad-status">{{ row.words }}</span></td>
+          <td class="cy-wrap"><ul class="ad-counts">{% for label, n in row.lines %}<li>{{ label }}: <b>{{ n }}</b></li>{% empty %}<li class="muted">None on site</li>{% endfor %}</ul></td>
+          <td class="cy-wrap"><ul class="ad-counts">{% for label, n in row.updates %}<li>{{ label }}: <b>{{ n }}</b></li>{% empty %}<li class="muted">None</li>{% endfor %}</ul></td>
+          {% if can_devices %}<td class="cy-wrap"><ul class="ad-counts">{% for label, n in row.answers %}<li>{{ label }}: <b>{{ n }}</b></li>{% empty %}<li class="muted">—</li>{% endfor %}</ul></td>{% endif %}
+        </tr>
+        {% endwith %}{% empty %}
+        <tr><td colspan="{% if can_devices %}7{% else %}6{% endif %}"><div class="empty">{% if f.any %}No advisory matches these filters. <a class="link" href="{{ list_url }}">Clear the filters</a>{% elif recorded %}{{ none_open }} <a class="link" href="{{ list_url }}?status=all">Show every one</a>{% else %}{{ empty_words }}{% endif %}</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% include "web/_pager.html" with noun="advisories" target="#cy-advisories" %}
+  </div>
+  </div>
+</div>
