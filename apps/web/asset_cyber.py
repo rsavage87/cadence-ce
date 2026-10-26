@@ -348,7 +348,8 @@ def advisory_lines(request, asset, today) -> dict:
             "open_url": (f"{reverse('web:cybersecurity_update_open', args=[asset.tag])}?{urlencode({'advisory': adv.number})}"
                          if can_open and needs and line.row.remedy in UPDATE_REMEDIES and not update_open else ""),
             "reopen_url": (reverse("web:security_advisory_reopen", args=[adv.number])
-                           if named_since and can_edit and cyber_advisories.reopen_refusal(adv, user=user) is None else ""),
+                           # the reader's state checks (user None); the level once above (Edit reopens one not applicable)
+                           if named_since and can_edit and cyber_advisories.reopen_refusal(adv, user=None) is None else ""),
         })
     return {"items": items, "rest": rest_words(rest, listed=True), "empty": ""}
 
