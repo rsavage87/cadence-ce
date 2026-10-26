@@ -46,11 +46,30 @@ rules' Check "Governs no device here now: end it").
 
 History reasons are fixed sentences with Cadence numbers only: "Recorded", "Recorded, superseding SD-26-0004", "Superseded by
 SD-26-0005", "Ended: no longer needed", "Entered in error".
+
+Slice 40, decisions for the devices a security advisory names (build40 section 5; critique40_scope B3): record_decision, refusal_for,
+would_govern, and the scope readers take `applies_to` and `advisory` (support and None by default: every slice 39 caller unchanged), and
+read only that need key's decisions (rules.key_of: an advisory decision never governs a support need, nor a support decision an
+advisory's). HHS 405(d) HICP 2023 recommends identifying a response to each vulnerability an advisory discloses, alongside the
+manufacturer (rules.HICP_ADVISORY_DECISIONS); no rule requires it. Before the locks (field shape): an advisory chosen (CHOOSE_ADVISORY;
+none for support: ADVISORY_NOT_FOR_SUPPORT), no support reasons (ADVISORY_REASONS), the four responses ("not in use here" for an advisory
+only, NOT_IN_USE_ADVISORY_ONLY, with no plan, NOT_IN_USE_PLAN), the controls from rules.CONTROLS (network_removed included). Under the
+locks: the advisory neither marked not applicable nor entered in error (ADVISORY_NOT_APPLICABLE, ADVISORY_IN_ERROR: refused here while a
+live decision names it, so no live decision ever names one), the day decided not before it was received (DECIDED_BEFORE_RECEIVED), the
+scope (_advisory_scope_read: gone as slice 39's; the advisory not naming the model or the release, or naming the release as the fix; a
+device on the fix, on a release it does not name, or with the patches recorded that answer it; every device under a more specific
+decision of the advisory; none needing a response now), network_removed only when every device it would govern has its own fact "Not
+connected here" (network_refusal), return it to its owner for a temporary device's own decision. It stores the advisory's change count
+(advisory_changes: the "changed since" Check compares counts). A device with an open update to the fix may still get a decision (interim
+controls). There is no "not recorded" refusal for an advisory: a release not recorded is a need.
+Lock order with an advisory: the register, the decision superseded, the advisory's row (services._locked_advisory, FOR UPDATE of its own
+row), the release, the number, the device FOR KEY SHARE, the insert. refusal_for reads the same without any lock.
 """
 from __future__ import annotations
 
 import ipaddress
 import re
+import uuid
 from datetime import date
 from typing import NamedTuple
 
@@ -64,12 +83,16 @@ from . import rules, services
 from .models import (
     EXCEPTION_REFERENCE_MAX,
     EXCEPTION_REFERENCE_VALIDATOR,
+    SUPPORT_RESPONSES,
     AcceptedBy,
+    AdvisoryStatus,
+    AdvisoryVersions,
     AppliesTo,
     DecisionEnd,
     DecisionPlan,
     DecisionResponse,
     DeviceSecurityDecision,
+    SecurityAdvisory,
     Segmented,
     SoftwareRelease,
 )
@@ -139,6 +162,39 @@ SUPERSEDES_OTHER = "{number} is for another scope: renew a decision for this one
 ALREADY_ENDED = "{number} ended on {day}: it stays as recorded."
 END_REASON_WORDS = ("Choose No longer needed: a decision is superseded by recording a new one, and marked entered in error on its own.")
 RACE = "This decision's devices or scope were being changed or recorded meanwhile: try again."
+
+# Slice 40, a decision for an advisory's devices (build40 section 5.3; critique40_scope B3). Before the locks (field shape):
+APPLIES_TO_WORDS = "Choose why it is recorded: support ended, or a security advisory."
+ADVISORY_NOT_FOR_SUPPORT = "A decision for devices past support names no advisory: leave it blank."
+ADVISORY_REASONS = "An advisory decision names no support reasons."
+ADVISORY_RESPONSE_WORDS = ("Choose keep in use with controls, keep in use without added controls, take out of use, or decided the part it "
+                           "names is not in use here.")
+NOT_IN_USE_ADVISORY_ONLY = "Decided the part it names is not in use here is a response to an advisory only."
+NOT_IN_USE_PLAN = "A decision that the part it names is not in use here has no plan."
+# Under the locks: the advisory, the day decided
+ADVISORY_NOT_APPLICABLE = "{number} is marked not applicable here: reopen it first."
+ADVISORY_IN_ERROR = "{number} was entered in error."
+DECIDED_BEFORE_RECEIVED = "The day decided is before {number} was received ({day})."
+# The scope (keyed by its field; each NOT_NEEDED: End answers a decision being renewed)
+MODEL_NOT_NAMED = "{number} does not name the {model}."
+DEVICE_MODEL_NOT_NAMED = "{number} does not name {tag}'s model, the {model}."
+RELEASE_NOT_NAMED = "{number} does not name {version}."
+RELEASE_IS_FIX = "{version} is the release {number} names as the fix."
+ON_FIX = "{tag} runs {version}, the release {number} names as the fix."
+NOT_NAMED = "{tag} runs {version}, a release {number} does not name."
+PATCHED = "{tag} has the manufacturer's patches recorded{day}, since {number} was received."
+PATCHED_LIST = "{tag} has the manufacturer's patches recorded{day} ({reference}), the list {number} names."
+ADVISORY_NEEDED_ELSEWHERE = ("No device a decision for this scope would govern ({tags}) needs a response to {number} now: those that do "
+                             "are under a more specific decision ({numbers}).")
+NONE_NEEDS = "No device it would govern needs a response to {number} now."
+# network_removed (keyed controls; critique40_rules S8): every device it would govern has its own fact "Not connected here"
+NETWORK_CONNECTED = "{tag} is recorded {connection}: record Not connected here on it first (Record facts), or choose other controls."
+NETWORK_CONNECTED_MANY = ("{tags} are recorded connected: record Not connected here on them first (Record facts), or choose other "
+                          "controls.")
+NETWORK_NOT_RECORDED = ("{tag} has no connection recorded here: record Not connected here on it first (Record facts), or choose other "
+                        "controls.")
+NETWORK_NOT_RECORDED_MANY = ("{tags} have no connection recorded here: record Not connected here on them first (Record facts), or choose "
+                             "other controls.")
 
 # History reasons (fixed sentences, Cadence numbers only)
 RECORDED = "Recorded"
@@ -290,17 +346,26 @@ def _scope_field(kind: str) -> str:
     return {rules.DEVICE_SCOPE: "asset", rules.RELEASE_SCOPE: "release", rules.MODEL_SCOPE: "device_model"}[kind]
 
 
-def _same_scope(old, *, asset_id, model_id, release_id) -> bool:
-    if old.applies_to != AppliesTo.SUPPORT_ENDED:
+def _key(applies_to=AppliesTo.SUPPORT_ENDED, advisory=None) -> tuple:
+    """The need key (rules.key_of's shape) of `applies_to` and `advisory` (an instance or its id; None for support)."""
+    if applies_to != AppliesTo.ADVISORY:
+        return rules.SUPPORT_KEY
+    return rules.advisory_key(getattr(advisory, "pk", advisory))
+
+
+def _same_scope(old, *, asset_id, model_id, release_id, applies_to=AppliesTo.SUPPORT_ENDED, advisory=None) -> bool:
+    """Whether `old` is a decision of this scope and need key (support by default; an advisory's with `applies_to` and `advisory`)."""
+    if rules.key_of(old) != _key(applies_to, advisory):
         return False
     if asset_id is not None:
         return old.asset_id == asset_id
     return old.asset_id is None and old.device_model_id == model_id and old.release_id == release_id
 
 
-def _live_for(*, asset_id, model_id, release_id):
-    """The live decision for devices past support with this scope, or None (under the register lock)."""
-    live = DeviceSecurityDecision.objects.filter(applies_to=AppliesTo.SUPPORT_ENDED, ended_on__isnull=True)
+def _live_for(*, asset_id, model_id, release_id, applies_to=AppliesTo.SUPPORT_ENDED, advisory=None):
+    """The live decision for this scope and need key (devices past support by default; an advisory's with `applies_to` and `advisory`),
+    or None (under the register lock)."""
+    live = rules._live(_key(applies_to, advisory))
     if asset_id is not None:
         return live.filter(asset_id=asset_id).first()
     if release_id is not None:
@@ -308,18 +373,83 @@ def _live_for(*, asset_id, model_id, release_id):
     return live.filter(device_model_id=model_id, asset__isnull=True, release__isnull=True).first()
 
 
+def _applies(applies_to, advisory, errors: dict) -> bool:
+    """Whether the decision is for an advisory's devices (`applies_to` AppliesTo.ADVISORY), refusing any other value at once (keyed
+    applies_to); an advisory decision names its advisory (CHOOSE_ADVISORY), a support decision none (ADVISORY_NOT_FOR_SUPPORT)."""
+    text = applies_to.strip() if isinstance(applies_to, str) else None
+    if text not in AppliesTo.values:
+        raise ValidationError({"applies_to": APPLIES_TO_WORDS})
+    blank = advisory is None or (isinstance(advisory, str) and not advisory.strip())
+    if text == AppliesTo.ADVISORY and blank:
+        errors["advisory"] = services.CHOOSE_ADVISORY
+    elif text == AppliesTo.SUPPORT_ENDED and not blank:
+        errors["advisory"] = ADVISORY_NOT_FOR_SUPPORT
+    return text == AppliesTo.ADVISORY
+
+
+def _response(value, for_advisory: bool, errors: dict) -> str:
+    """The response: keep in use with controls, keep in use without added controls, or take out of use; for an advisory's devices also
+    "not in use here" (refused for support: NOT_IN_USE_ADVISORY_ONLY)."""
+    text = value.strip() if isinstance(value, str) else None
+    if text == DecisionResponse.NOT_IN_USE_HERE and not for_advisory:
+        errors["response"] = NOT_IN_USE_ADVISORY_ONLY
+        return ""
+    if text not in (DecisionResponse.values if for_advisory else [r.value for r in SUPPORT_RESPONSES]):
+        errors["response"] = ADVISORY_RESPONSE_WORDS if for_advisory else RESPONSE_WORDS
+        return ""
+    return text
+
+
+def _advisory_refusal(advisory) -> str:
+    """Why no decision may be recorded under the advisory (its row as read): entered in error, or marked not applicable here; or ""."""
+    if advisory.removed_on is not None:
+        return ADVISORY_IN_ERROR.format(number=advisory.number)
+    if advisory.status == AdvisoryStatus.NOT_APPLICABLE:
+        return ADVISORY_NOT_APPLICABLE.format(number=advisory.number)
+    return ""
+
+
+def _advisory_row(advisory, model_id):
+    """The advisory's row naming the model (rules.rows_of's, its listed releases read), or None. Two queries."""
+    return next((r for r in rules.rows_of([advisory.pk]) if r.device_model_id == model_id), None)
+
+
+def network_refusal(devices, today: date) -> str:
+    """Why an advisory decision governing `devices` (the devices it would govern: decisions.would_govern's) cannot name network_removed,
+    or "": each needs its own fact "Not connected here" (critique40_rules S8; a connection as the model discloses, or none recorded, is
+    not that fact). Words for those recorded connected first, then for those with none recorded, up to five tags. The modal says it
+    before it is tried; record_decision checks it again under its locks. Fixed queries (rules.standings)."""
+    devices = list(devices)
+    held = rules.standings(devices, today)
+    connected = [a for a in devices if held[a.pk].connection.key == rules.CONNECTED]
+    if len(connected) == 1:
+        return NETWORK_CONNECTED.format(tag=connected[0].tag, connection=rules._lower_first(held[connected[0].pk].connection.words))
+    if connected:
+        return NETWORK_CONNECTED_MANY.format(tags=rules._tags(a.tag for a in connected))
+    missing = [a for a in devices if not (held[a.pk].connection.key == rules.NOT_CONNECTED and held[a.pk].connection.here)]
+    if len(missing) == 1:
+        return NETWORK_NOT_RECORDED.format(tag=missing[0].tag)
+    if missing:
+        return NETWORK_NOT_RECORDED_MANY.format(tags=rules._tags(a.tag for a in missing))
+    return ""
+
+
 # --- record ------------------------------------------------------------------------------------------------------------------------
 
-def record_decision(*, asset=None, device_model=None, release=None, reasons, response, controls=(), controls_reference="",
+def record_decision(*, asset=None, device_model=None, release=None, reasons=None, response, controls=(), controls_reference="",
                     plan=DecisionPlan.NONE, plan_by=None, plan_owner=None, accepted_by, exception_reference="", decided_on=None,
-                    review_by=None, supersedes=None, by, today: date | None = None) -> DeviceSecurityDecision:
+                    review_by=None, supersedes=None, applies_to=AppliesTo.SUPPORT_ENDED, advisory=None, by,
+                    today: date | None = None) -> DeviceSecurityDecision:
     """Record a decision for devices past support (the module docstring's rules and lock order): its scope (`asset`; or `release`, with
     its `device_model` or alone; or `device_model` alone), the reasons that hold now for the devices it would govern (kinds:
     rules.REASONS; _scope_read), the response, the controls (rules.SUPPORT_CONTROLS slugs) and IT's reference for recorded_elsewhere, the
     plan with its day and owner, who accepted it, IT's exception number, the day decided (today by default), the review
     (rules.review_default by default), and the decision it supersedes (the live one of the same scope: ended "Superseded by <number>"
     first, in the same transaction). Stores the devices on site it governs now (governed_ids: rules' "joined since"; never one a more
-    specific live decision governs: _would_govern). History "Recorded" (", superseding <number>"). Returns the new decision."""
+    specific live decision governs: _would_govern). History "Recorded" (", superseding <number>"). Returns the new decision.
+    Slice 40: `applies_to` AppliesTo.ADVISORY with `advisory` (an instance, its id, or its number) records a decision for the devices that
+    advisory names (the module docstring): no reasons, the four responses, rules.CONTROLS, the scope read by _advisory_scope_read, the
+    advisory's change count stored; superseding only a live decision of the same scope and advisory."""
     services._check(by, perms.can_decide, DECIDE_PERMISSION)
     today = services._today(today)
     errors: dict = {}
@@ -345,12 +475,21 @@ def record_decision(*, asset=None, device_model=None, release=None, reasons, res
             if release_id is None:
                 raise ValidationError({"release": CHOOSE_RELEASE})
     # Each field on its own
-    reason_list = _kinds(reasons, rules.REASONS, "reasons", errors, words=REASONS_WORDS)
-    if "reasons" not in errors and not reason_list:
-        errors["reasons"] = REASONS_NONE
-    response = _choice(response, DecisionResponse, "response", RESPONSE_WORDS, errors)
+    for_advisory = _applies(applies_to, advisory, errors)
+    if for_advisory:
+        given_reasons = () if reasons in (None, "") else reasons
+        if isinstance(given_reasons, str) or not hasattr(given_reasons, "__iter__") or list(given_reasons):
+            errors["reasons"] = ADVISORY_REASONS
+        reason_list = []
+    else:
+        reason_list = _kinds(reasons, rules.REASONS, "reasons", errors, words=REASONS_WORDS)
+        if "reasons" not in errors and not reason_list:
+            errors["reasons"] = REASONS_NONE
+    response = _response(response, for_advisory, errors)
     given_controls = controls if controls is not None else ()
-    if not isinstance(given_controls, str) and rules.NETWORK_REMOVED in list(given_controls or ()):
+    if for_advisory:  # every control, network_removed included (checked under the locks: network_refusal)
+        control_list = _kinds(given_controls, rules.CONTROLS, "controls", errors, words=CONTROLS_WORDS)
+    elif not isinstance(given_controls, str) and rules.NETWORK_REMOVED in list(given_controls or ()):
         errors["controls"] = rules.NETWORK_REMOVED_HINT
         control_list = []
     else:
@@ -367,6 +506,8 @@ def record_decision(*, asset=None, device_model=None, release=None, reasons, res
         elif reference and rules.RECORDED_ELSEWHERE not in control_list:
             errors["controls_reference"] = REFERENCE_ONLY_WITH
     plan = _choice(plan if plan not in (None, "") else DecisionPlan.NONE, DecisionPlan, "plan", PLAN_WORDS, errors)
+    if response == DecisionResponse.NOT_IN_USE_HERE and plan and plan != DecisionPlan.NONE:
+        errors["plan"] = NOT_IN_USE_PLAN
     accepted = _choice(accepted_by, AcceptedBy, "accepted_by", ACCEPTED_WORDS, errors)
     exception = _token(exception_reference, "exception_reference", errors)
     decided = (services._day(decided_on, "decided_on", "The day decided", errors, today=today, happened=True)
@@ -402,19 +543,30 @@ def record_decision(*, asset=None, device_model=None, release=None, reasons, res
                 old = _decision_row(supersedes, "supersedes")
                 if old.ended_on is not None:
                     raise ValidationError({"supersedes": ALREADY_ENDED.format(number=old.number, day=rules.day_words(old.ended_on))})
+            locked_advisory, key = None, rules.SUPPORT_KEY
+            if for_advisory:  # 3: the advisory's row, its status and day read there
+                locked_advisory = services._locked_advisory(advisory)
+                words = _advisory_refusal(locked_advisory)
+                if words:
+                    raise ValidationError({"advisory": words})
+                if decided < locked_advisory.received_on:
+                    raise ValidationError({"decided_on": DECIDED_BEFORE_RECEIVED.format(
+                        number=locked_advisory.number, day=rules.day_words(locked_advisory.received_on))})
+                key = rules.advisory_key(locked_advisory)
+            keyed = {"applies_to": key[0], "advisory": key[1]}
             locked_release = None
-            if kind == rules.RELEASE_SCOPE:  # 3
+            if kind == rules.RELEASE_SCOPE:  # 4
                 locked_release = services._locked_release(release_id, field="release", message=CHOOSE_RELEASE)
                 if not locked_release.version_key or locked_release.removed_on is not None:
                     raise ValidationError({"release": CHOOSE_RELEASE})
                 if model_id is not None and locked_release.device_model_id != model_id:
                     raise ValidationError({"release": NOT_OF_MODEL.format(version=locked_release.version)})
                 model_id = locked_release.device_model_id
-            if old is not None and not _same_scope(old, asset_id=asset_id, model_id=model_id, release_id=release_id):
+            if old is not None and not _same_scope(old, asset_id=asset_id, model_id=model_id, release_id=release_id, **keyed):
                 raise ValidationError({"supersedes": SUPERSEDES_OTHER.format(number=old.number)})
-            number = _number(decided)  # 4
+            number = _number(decided)  # 5
             device = None
-            if kind == rules.DEVICE_SCOPE:  # 5
+            if kind == rules.DEVICE_SCOPE:  # 6
                 held = services._locked_devices([asset_id])
                 if not held:
                     raise ValidationError({"asset": services.CHOOSE_DEVICE})
@@ -422,14 +574,24 @@ def record_decision(*, asset=None, device_model=None, release=None, reasons, res
                 if device.status == AssetStatus.RETIRED:  # read on its row (a retire in flight was waited for)
                     words = RETURNED if device.ownership != Ownership.OWNED else RETIRED
                     raise ValidationError({"asset": words.format(tag=device.tag)})
-            live = _live_for(asset_id=asset_id, model_id=model_id, release_id=release_id)
+            live = _live_for(asset_id=asset_id, model_id=model_id, release_id=release_id, **keyed)
             if live is not None and (old is None or live.pk != old.pk):
                 raise ValidationError({field: IN_FORCE.format(number=live.number)})
             members = _scope_members(kind, device=device, model_id=model_id, release=locked_release)
-            read = _scope_read(kind, members, device=device, model_id=model_id, release=locked_release, old=old, today=today)
+            if for_advisory:  # the rows read after the advisory's row (a change of them takes the register first)
+                row = _advisory_row(locked_advisory, device.device_model_id if device is not None else model_id)
+                read = _advisory_scope_read(kind, members, advisory=locked_advisory, row=row, device=device, model_id=model_id,
+                                            release=locked_release, old=old, today=today)
+            else:
+                read = _scope_read(kind, members, device=device, model_id=model_id, release=locked_release, old=old, today=today)
             if read.refusal is not None:
                 raise ValidationError({field: read.refusal.words})
-            _check_reasons(read.needs, reason_list)
+            if for_advisory:
+                words = network_refusal(read.governed, today) if rules.NETWORK_REMOVED in control_list else ""
+                if words:
+                    raise ValidationError({"controls": words})
+            else:
+                _check_reasons(read.needs, reason_list)
             governed = read.governed
             if plan == DecisionPlan.RETURN_TO_OWNER and not (device is not None and device.ownership != Ownership.OWNED):
                 raise ValidationError({"plan": RETURN_ONLY_TEMPORARY})
@@ -443,10 +605,11 @@ def record_decision(*, asset=None, device_model=None, release=None, reasons, res
                 old.ended_on, old.ended_by, old.end_reason = today, by, DecisionEnd.SUPERSEDED
                 services._save(old, by, SUPERSEDED_BY.format(number=number))
             row = DeviceSecurityDecision(
-                number=number, applies_to=AppliesTo.SUPPORT_ENDED, asset=device, device_model_id=model_id if device is None else None,
+                number=number, applies_to=key[0], asset=device, device_model_id=model_id if device is None else None,
                 release=locked_release, reasons=reason_list, response=response, controls=control_list, controls_reference=reference,
                 plan=plan, plan_by=plan_day, plan_owner=owner, accepted_by=accepted, exception_reference=exception, recorded_by=by,
-                decided_on=decided, review_by=review, governed_ids=[str(a.pk) for a in governed], supersedes=old)
+                decided_on=decided, review_by=review, governed_ids=[str(a.pk) for a in governed], supersedes=old,
+                advisory=locked_advisory, advisory_changes=locked_advisory.changes if locked_advisory is not None else None)
             with transaction.atomic():
                 services._save(row, by, RECORDED_SUPERSEDING.format(number=old.number) if old is not None else RECORDED)
     except IntegrityError:  # the live-scope constraint, or a deferred key at COMMIT (a device deleted meanwhile)
@@ -465,8 +628,10 @@ def record_decision(*, asset=None, device_model=None, release=None, reasons, res
 # returned, none of ours); KIND_NOT_NEEDED none it would govern needs a decision as recorded (not connected here, the manufacturer's
 # updates continuing, not past its support, or each under a more specific decision: skeptics T0); KIND_UNKNOWN what a device's need, or
 # a reason of the decision being renewed, turns on is not recorded (rules.need_unknown: record it first; skeptics T2). End answers a
-# decision being renewed only for GONE and NOT_NEEDED (END_ANSWERS), never for a fact not recorded.
+# decision being renewed only for GONE and NOT_NEEDED (END_ANSWERS), never for a fact not recorded. Slice 40: KIND_ADVISORY the advisory
+# itself refuses a decision (marked not applicable, or entered in error: reopen it, or nothing); an advisory's scope is never UNKNOWN.
 KIND_IN_FORCE, KIND_ENDED, KIND_GONE, KIND_NOT_NEEDED, KIND_UNKNOWN = "in_force", "ended", "gone", "not_needed", "unknown"
+KIND_ADVISORY = "advisory"
 END_ANSWERS = (KIND_GONE, KIND_NOT_NEEDED)
 
 
@@ -484,18 +649,32 @@ class Refusal(NamedTuple):
         return self.kind in END_ANSWERS
 
 
-def refusal_for(*, asset=None, device_model=None, release=None, supersedes=None, today: date | None = None) -> Refusal | None:
+def refusal_for(*, asset=None, device_model=None, release=None, supersedes=None, today: date | None = None,
+                applies_to=AppliesTo.SUPPORT_ENDED, advisory=None) -> Refusal | None:
     """Why record_decision would refuse this scope now, in its words and its order, read before the person tries (the Record decision
     modal, a decision's page), without its locks: the decision to renew already ended; a device retired or returned; a live decision in
     force for the scope; a release or model with no device of ours on site; nothing it would govern past its support or announced within
     12 months (a device not connected here, its connection not recorded, the manufacturer's updates continuing, nothing recording its
     security updates' end, or, for the decision renewed, the fact one of its reasons rests on; each device under a more specific
     decision). Each with its kind (Refusal.kind). None when the scope itself would not be refused (the fields are the service's to
-    check). record_decision decides again under its locks."""
+    check). record_decision decides again under its locks.
+    Slice 40: with `applies_to` AppliesTo.ADVISORY and `advisory` (an instance, its id, or its number; read without a lock), after the
+    decision to renew: the advisory marked not applicable or entered in error (KIND_ADVISORY), then as above for that advisory's need
+    (_advisory_scope_read: never UNKNOWN). An advisory with support is refused keyed advisory (ADVISORY_NOT_FOR_SUPPORT)."""
     today = services._today(today)
+    for_advisory = applies_to == AppliesTo.ADVISORY
+    if not for_advisory and advisory is not None:
+        raise ValidationError({"advisory": ADVISORY_NOT_FOR_SUPPORT})
     old = _decision_row(supersedes, "supersedes", lock=False) if supersedes is not None else None
     if old is not None and old.ended_on is not None:
         return Refusal(ALREADY_ENDED.format(number=old.number, day=rules.day_words(old.ended_on)), KIND_ENDED)
+    found = None
+    if for_advisory:
+        found = services._locked_advisory(advisory, lock=False)
+        words = _advisory_refusal(found)
+        if words:
+            return Refusal(words, KIND_ADVISORY)
+    keyed = {"applies_to": applies_to, "advisory": found}
     device = release_row = None
     model_id = services._model(device_model).pk if device_model is not None else None
     if asset is not None:
@@ -508,10 +687,14 @@ def refusal_for(*, asset=None, device_model=None, release=None, supersedes=None,
     else:
         kind = rules.MODEL_SCOPE
     live = _live_for(asset_id=device.pk if device is not None else None, model_id=model_id,
-                     release_id=release_row.pk if release_row is not None else None)
+                     release_id=release_row.pk if release_row is not None else None, **keyed)
     if live is not None and (old is None or live.pk != old.pk):
         return Refusal(IN_FORCE.format(number=live.number), KIND_IN_FORCE, live)
     members = _scope_members(kind, device=device, model_id=model_id, release=release_row)
+    if for_advisory:
+        row = _advisory_row(found, device.device_model_id if device is not None else model_id)
+        return _advisory_scope_read(kind, members, advisory=found, row=row, device=device, model_id=model_id, release=release_row, old=old,
+                                    today=today).refusal
     return _scope_read(kind, members, device=device, model_id=model_id, release=release_row, old=old, today=today).refusal
 
 
@@ -524,32 +707,39 @@ def _scope_members(kind: str, *, device, model_id, release) -> list:
     return list(scope.select_related(*rules._WITH_RECORD).order_by("tag"))
 
 
-def _would_govern(kind: str, members: list, *, model_id, release, old) -> tuple[list, dict]:
+def _would_govern(kind: str, members: list, *, model_id, release, old, key: tuple = rules.SUPPORT_KEY) -> tuple[list, dict]:
     """(the scope's devices on site a decision for it governs recorded now, {device id: the more specific live decision governing it
-    instead} for the others): rules' governing over them, with the new decision among the live ones in place of the one it supersedes
-    (`old`). A device scope: its device. A release's devices of ours but those under their own live decision; a model's devices of ours
-    but those under their own or their recorded release's. What the decision is read from (its needs, its reasons, what holds now:
-    skeptics T0) and what it stores (governed_ids: a device that comes under it later, when the more specific decision ends, reads
-    "joined since"; review 39 F1). One query (none for a device scope or no device)."""
+    instead} for the others): rules' governing over them, with the new decision among the live ones of its need key (`key`: support by
+    default; slice 40, an advisory's) in place of the one it supersedes (`old`). A device scope: its device. A release's devices of ours
+    but those under their own live decision; a model's devices of ours but those under their own or their recorded release's. What the
+    decision is read from (its needs, its reasons, what holds now: skeptics T0) and what it stores (governed_ids: a device that comes
+    under it later, when the more specific decision ends, reads "joined since"; review 39 F1). One query (none for a device scope or no
+    device)."""
     if kind == rules.DEVICE_SCOPE or not members:
         return list(members), {}
-    new = DeviceSecurityDecision(applies_to=AppliesTo.SUPPORT_ENDED, device_model_id=model_id, release=release)
-    live = [d for d in rules._decisions_for(members) if old is None or d.pk != old.pk]
+    new = DeviceSecurityDecision(applies_to=key[0], advisory_id=key[1], device_model_id=model_id, release=release)
+    live = [d for d in rules._decisions_for(members, key) if old is None or d.pk != old.pk]
     governing = rules._governing(members, [*live, new])
     return ([a for a in members if governing.get(a.pk) is new],
             {a.pk: governing[a.pk] for a in members if governing.get(a.pk) is not None and governing[a.pk] is not new})
 
 
-def would_govern(members: list, *, asset=None, device_model=None, release=None, old=None) -> list:
+def would_govern(members: list, *, asset=None, device_model=None, release=None, old=None, applies_to=AppliesTo.SUPPORT_ENDED,
+                 advisory=None) -> list:
     """The devices of `members` (the scope's devices on site, rules.scope_devices, their rows read: rules.standings' assets) that a
     decision for this scope (`asset`; `release`; or `device_model`), recorded now in place of `old` (Review and renew), would govern
-    (_would_govern): never one a more specific live decision governs. Record decision's modal reads its reasons and what holds now from
-    them, as record_decision does (skeptics T0). One query (none for a device scope or no device)."""
+    (_would_govern): never one a more specific live decision of its need key governs (support by default; slice 40, `applies_to`
+    AppliesTo.ADVISORY with `advisory`: an instance, its id, or its number, read without a lock). Record decision's modal reads its
+    reasons and what holds now from them, as record_decision does (skeptics T0). One query (none for a device scope or no device; one more
+    for an advisory given by its number)."""
     members = list(members)
     if asset is not None or not members:
         return members
+    found = advisory
+    if applies_to == AppliesTo.ADVISORY and not isinstance(advisory, (SecurityAdvisory, uuid.UUID)):
+        found = services._locked_advisory(advisory, lock=False)
     kind = rules.RELEASE_SCOPE if release is not None else rules.MODEL_SCOPE
-    return _would_govern(kind, members, model_id=members[0].device_model_id, release=release, old=old)[0]
+    return _would_govern(kind, members, model_id=members[0].device_model_id, release=release, old=old, key=_key(applies_to, found))[0]
 
 
 def _device_refusal(a, s, need, reasons=None) -> Refusal:
@@ -575,7 +765,7 @@ def _device_refusal(a, s, need, reasons=None) -> Refusal:
 
 class _ScopeRead(NamedTuple):
     governed: list  # the scope's devices on site a decision for it would govern (_would_govern), in tag order
-    needs: list  # their decidable needs (rules.support_need), in the same order
+    needs: list  # their decidable needs (rules.support_need), in the same order; an advisory's: their lines needing a response now
     refusal: Refusal | None  # why it has none, or None
 
 
@@ -625,6 +815,81 @@ def _scope_read(kind: str, members: list, *, device, model_id, release, old, tod
         words = NEEDED_ELSEWHERE.format(tags=rules._tags(a.tag for a in governed), numbers=_numbers(needed))
         return _ScopeRead(governed, [], Refusal(words, KIND_NOT_NEEDED))
     return _ScopeRead(governed, [], Refusal(NONE_NEEDED, KIND_NOT_NEEDED))
+
+
+def _model_words(model_id) -> str:
+    model = DeviceModel.objects.filter(pk=model_id).first()
+    return model.model if model is not None else "device of this model"
+
+
+def _advisory_device_refusal(device, line, updates: dict, number: str) -> Refusal:
+    """Why one device needs no response to the advisory now (NOT_NEEDED, its line under the advisory's row): on the release the advisory
+    names as the fix (ON_FIX), on a release it does not name (NOT_NAMED), or with the manufacturer's patches recorded that answer it (the
+    list the advisory names: PATCHED_LIST; with none named, since it was received: PATCHED)."""
+    version = line.release.version if line.release is not None else ""
+    if line.kind == rules.ON_FIX:
+        return Refusal(ON_FIX.format(tag=device.tag, version=version, number=number), KIND_NOT_NEEDED)
+    if line.kind == rules.OTHER_RELEASE:
+        return Refusal(NOT_NAMED.format(tag=device.tag, version=version, number=number), KIND_NOT_NEEDED)
+    found = updates.get((device.pk, line.row.pk))
+    if found is not None and found.patched is not None:
+        patched = found.patched
+        day = f" {rules.day_words(patched.applied_on)}" if patched.applied_on else ""
+        if line.row.patches_reference:
+            return Refusal(PATCHED_LIST.format(tag=device.tag, day=day, reference=rules._patches_reference(patched), number=number),
+                           KIND_NOT_NEEDED)
+        return Refusal(PATCHED.format(tag=device.tag, day=day, number=number), KIND_NOT_NEEDED)
+    return Refusal(NONE_NEEDS.format(number=number), KIND_NOT_NEEDED)
+
+
+def _advisory_scope_read(kind: str, members: list, *, advisory, row, device, model_id, release, old, today: date) -> _ScopeRead:
+    """The scope read of a decision for the devices an advisory names (critique40_scope B3), for record_decision (under its locks, the
+    advisory's rows read after its row) and refusal_for (without locks), in this order: the devices a decision for it would govern
+    recorded now in place of `old` (_would_govern over the advisory's need key: never one a more specific live decision of the advisory
+    governs), their lines that need a response now (`needs`: rules.AdvisoryLine; rules.needs_now: the line names the device and no patches
+    record answers it), and why there is none:
+    - GONE: a release or model with no device of ours on site (slice 39's NO_DEVICE_OURS, NO_MODEL_DEVICE; a device retired or returned
+      is refused before, as slice 39's);
+    - NOT_NEEDED: the advisory names no row for the scope's model (MODEL_NOT_NAMED; a device's: DEVICE_MODEL_NOT_NAMED); a release it
+      names as the fix (RELEASE_IS_FIX) or, listing its releases, does not name (RELEASE_NOT_NAMED); a device on the fix (ON_FIX), on a
+      release it does not name (NOT_NAMED), or with the patches recorded that answer it (PATCHED, PATCHED_LIST); every device of ours in
+      a release's or a model's scope under a more specific decision of the advisory (GOVERNED_ELSEWHERE); devices in the scope that need
+      a response only under a more specific decision (ADVISORY_NEEDED_ELSEWHERE); none needing a response now (NONE_NEEDS).
+    Never UNKNOWN: a release not recorded is a need. A device with an open update to the fix still needs a response (interim controls).
+    `row`: the advisory's row naming the scope's model (rules.rows_of's), or None. Fixed queries (rules.standings, _would_govern, the
+    updates recorded on the lines: rules.line_updates)."""
+    number = advisory.number
+    if not members:
+        if kind == rules.RELEASE_SCOPE:
+            return _ScopeRead([], [], Refusal(NO_DEVICE_OURS.format(version=release.version), KIND_GONE))
+        return _ScopeRead([], [], Refusal(NO_MODEL_DEVICE.format(model=_model_words(model_id)), KIND_GONE))
+    if row is None:
+        if kind == rules.DEVICE_SCOPE:
+            words = DEVICE_MODEL_NOT_NAMED.format(number=number, tag=device.tag, model=_model_words(device.device_model_id))
+        else:
+            words = MODEL_NOT_NAMED.format(number=number, model=_model_words(model_id))
+        return _ScopeRead([], [], Refusal(words, KIND_NOT_NEEDED))
+    if kind == rules.RELEASE_SCOPE:
+        if release.pk == row.fix_release_id:
+            return _ScopeRead([], [], Refusal(RELEASE_IS_FIX.format(version=release.version, number=number), KIND_NOT_NEEDED))
+        if row.versions == AdvisoryVersions.LISTED and release.pk not in row.listed_ids:
+            return _ScopeRead([], [], Refusal(RELEASE_NOT_NAMED.format(number=number, version=release.version), KIND_NOT_NEEDED))
+    governed, elsewhere = _would_govern(kind, members, model_id=model_id, release=release, old=old, key=rules.advisory_key(advisory))
+    held = rules.standings(members, today)
+    lines = {pk: line for (pk, _advisory), line in rules.lines_for(members, held, [row]).items()}
+    updates = rules.line_updates(lines.values())
+    needing = [lines[a.pk] for a in governed if rules.needs_now(lines.get(a.pk), updates)]
+    if needing:
+        return _ScopeRead(governed, needing, None)
+    if kind == rules.DEVICE_SCOPE:
+        return _ScopeRead(governed, [], _advisory_device_refusal(device, lines[device.pk], updates, number))
+    if not governed:
+        return _ScopeRead([], [], Refusal(GOVERNED_ELSEWHERE.format(numbers=_numbers(elsewhere.values())), KIND_NOT_NEEDED))
+    needed = [d for pk, d in elsewhere.items() if rules.needs_now(lines.get(pk), updates)]
+    if needed:
+        words = ADVISORY_NEEDED_ELSEWHERE.format(tags=rules._tags(a.tag for a in governed), number=number, numbers=_numbers(needed))
+        return _ScopeRead(governed, [], Refusal(words, KIND_NOT_NEEDED))
+    return _ScopeRead(governed, [], Refusal(NONE_NEEDS.format(number=number), KIND_NOT_NEEDED))
 
 
 def _check_reasons(needs: list, given: list) -> None:
