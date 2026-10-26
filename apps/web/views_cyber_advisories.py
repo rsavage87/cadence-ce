@@ -107,6 +107,7 @@ SOURCE_SAVED = "Source saved on {number}."
 SOURCE_REMOVED = "Source removed from {number}."
 REVISION_RECORDED = "Revision recorded on {number}."
 REVISION_TO_CONFIRM = "Revision recorded on {number}: confirm the models it names."
+REVISION_REOPEN_TO_CONFIRM = "Revision recorded on {number}: reopen it to confirm the models it names."  # closed stays closed (its Check's words)
 REVISION_REOPENED = "Revision recorded on {number}: it is open again, with the models it names to confirm."
 MODEL_NAMED = "{number} names the {model}."
 MODEL_SAVED = "{number}: the {model} saved."
@@ -123,7 +124,10 @@ CONFIRM_WORDS = ("Confirm that {number} names no other model of this facility's 
 ALREADY_CONFIRMED = "{number}'s models were confirmed on {day}."
 CLOSE_WORDS = ("Close {number}: each device it names on a release it names, or with no release recorded, has a response recorded now. "
                "A device it names later is listed under Needs attention again.")
-REOPEN_WORDS = "Reopen {number}: the devices it names are listed again, and the models it names can be changed. Its models stay confirmed."
+REOPEN_WORDS = "Reopen {number}: the devices it names are listed again, and the models it names can be changed."
+# Reopening keeps the confirmation as it is: the last sentence follows it (a revision or a new day received may have cleared it)
+REOPEN_CONFIRMED = " Its models stay confirmed."
+REOPEN_TO_CONFIRM = " Its models are then to confirm."
 IN_ERROR_WORDS = ("Mark {number} entered in error: it stays on record, marked, with its history; the devices it names are no longer "
                   "listed under it, and its sources' references are free for another advisory.")
 REMOVE_MODEL_WORDS = "{number} stops naming the {model}: the releases it lists for it go with it, and its devices are no longer listed under it."
@@ -336,7 +340,10 @@ def filtered(f: ListFilters):
 
 
 def _row(a, counts, name: str) -> dict:
+    """A row of the list. An advisory entered in error reads no count (rules.advisory_counts): `counted` False, and its count cells say
+    nothing about the devices on site (never "None on site")."""
     return {"a": a, "url": advisory_url(a.number), "name": name, "words": counts.words, "tone": _tone(a), "cves": _cves_short(a.cves),
+            "counted": a.removed_on is None,
             "lines": _counted(counts.lines, rules.LINE_KINDS), "updates": _counted(counts.updates, UPDATE_KINDS),
             "answers": _counted(counts.answers, RESPONSE_KINDS) if counts.answers is not None else None}
 
@@ -395,7 +402,8 @@ def _source_words(s) -> str:
 @web_view(MODULE, VIEW)
 def advisories_csv(request):
     """The list (its filters, every row) as CSV: each advisory's number, CVE IDs, sources, models, day received, status words, and its
-    counts by line kind and update; for a reader of devices also by what answers each line (tokens and choices only: no link)."""
+    counts by line kind and update; for a reader of devices also by what answers each line (tokens and choices only: no link). An
+    advisory entered in error reads no count: its count cells blank, never 0."""
     today = timezone.localdate()
     devices_visible = cyber_perms.can_view_devices(request.user)
     items = list(filtered(parse_filters(request.GET)))
@@ -411,11 +419,13 @@ def advisories_csv(request):
     def rows():
         for a in items:
             c = counts[a.pk]
-            row = [a.number, ", ".join(a.cves or ()), "; ".join(sources.get(a.pk, [])), "; ".join(models.get(a.pk, [])), a.received_on,
-                   c.words, *(c.lines.get(k, 0) for k in rules.LINE_KINDS), *(c.updates.get(k, 0) for k in UPDATE_KINDS)]
+            figures = [*(c.lines.get(k, 0) for k in rules.LINE_KINDS), *(c.updates.get(k, 0) for k in UPDATE_KINDS)]
             if devices_visible:
-                row += [c.answers.get(k, 0) for k in RESPONSE_KINDS]
-            yield row
+                figures += [c.answers.get(k, 0) for k in RESPONSE_KINDS]
+            if a.removed_on is not None:
+                figures = [""] * len(figures)
+            yield [a.number, ", ".join(a.cves or ()), "; ".join(sources.get(a.pk, [])), "; ".join(models.get(a.pk, [])), a.received_on,
+                   c.words, *figures]
 
     return csv_response(f"cadence-security-advisories-{today:%Y-%m-%d}.csv", columns, rows())
 
@@ -472,11 +482,22 @@ def _line_row(a, ln, answer, who: _Reader) -> dict:
             "open_url": opener}
 
 
-def _ours_waiting(entries) -> bool:
-    """A device of ours among `entries` (line, answer) that needs a response and has none that covers it (no decision covering it, no
-    patches recorded): a release's or the model's decision would be for it."""
+def _more_specific(decision, scope: str) -> bool:
+    """Whether the governing decision is more specific than a release's (`scope` rules.RELEASE_SCOPE: its own device's) or the model's
+    (rules.MODEL_SCOPE: its own or its release's): read from the decision's scope, never from the answer's kind."""
+    if decision is None:
+        return False
+    return decision.asset_id is not None or (scope == rules.MODEL_SCOPE and decision.release_id is not None)
+
+
+def _ours_waiting(entries, scope: str) -> bool:
+    """A device of ours among `entries` (line, answer) that needs a response, has none that answers it (no decision covering it, no
+    patches recorded: rules.ANSWERED), and that a decision for `scope` (rules.RELEASE_SCOPE or MODEL_SCOPE) would govern: never one a
+    more specific decision governs, past its review or not (decisions._would_govern gives a release's decision none under its own device
+    decision, the model's none under its own or its release's, and record_decision refuses a scope left with none). A decision of the
+    scope itself past review leaves the button: its Record decision says to review and renew it."""
     return any(ln.asset.ownership == Ownership.OWNED and ln.needs_response and ans is not None and ans.kind
-               and ans.kind not in rules.ANSWERED for ln, ans in entries)
+               and ans.kind not in rules.ANSWERED and not _more_specific(ans.decision, scope) for ln, ans in entries)
 
 
 def _model_row(a, row, rc, lines, answers, who: _Reader) -> dict:
@@ -493,12 +514,12 @@ def _model_row(a, row, rc, lines, answers, who: _Reader) -> dict:
     for rel in listed:
         on_it = [(ln, ans) for ln, ans in needing if ln.release is not None and ln.release.pk == rel.pk]
         releases.append({"version": rel.version, "record_url": (_record_url(advisory=a.number, release=rel.pk)
-                                                                if who.decide and _ours_waiting(on_it) else "")})
+                                                                if who.decide and _ours_waiting(on_it, rules.RELEASE_SCOPE) else "")})
     unopened = any(ans is not None and ans.kind and ans.kind not in NO_OPENER and not any(r.kind in OPEN_SHOWN for r in ans.responses)
                    for _ln, ans in needing)
     counts_lines = rc.lines if rc is not None else {}
     found = {
-        "row": row, "model": f"{dm.manufacturer} {dm.model}", "versions": row.get_versions_display(),
+        "row": row, "model": f"{dm.manufacturer} {dm.model}", "versions": row.get_versions_display(), "counted": rc is not None,
         "listed": releases, "remedy": row.get_remedy_display(),
         "fix": rules.release_name(row.fix_release) if row.fix_release_id else "", "patches": row.patches_reference,
         "lines": _counted(counts_lines, rules.LINE_KINDS), "updates": _counted(rc.updates if rc is not None else {}, UPDATE_KINDS),
@@ -511,7 +532,8 @@ def _model_row(a, row, rc, lines, answers, who: _Reader) -> dict:
         "open_url": (_door("web:cybersecurity_release_open_updates", [row.fix_release_id], a)
                      if who.open_updates and row.remedy == AdvisoryRemedy.RELEASE and row.fix_release_id and unopened else ""),
         "fix_version": row.fix_release.version if row.fix_release_id else "",
-        "model_record_url": _record_url(advisory=a.number, model=dm.pk) if who.decide and _ours_waiting(needing) else "",
+        "model_record_url": (_record_url(advisory=a.number, model=dm.pk)
+                             if who.decide and _ours_waiting(needing, rules.MODEL_SCOPE) else ""),
         "releases_url": (_door("web:cybersecurity_set_release", [dm.pk], a)
                          if who.edit_devices and counts_lines.get(rules.LINE_NOT_RECORDED, 0) else ""),
     }
@@ -669,6 +691,14 @@ def _without(error, *keys) -> ValidationError | None:
     return ValidationError(left) if left else None
 
 
+def _parsed_cves(text) -> list | None:
+    """The CVE IDs as typed (advisories._cves), or None when the text is not a list of them: the writer's refusal of it under `cves`
+    is then the format's (said as it is), never an overlap to note."""
+    problems: dict = {}
+    found = advisories._cves(text, problems)
+    return None if problems else found
+
+
 def _seen(request) -> list:
     return [n.strip().upper() for n in request.POST.getlist("seen") if n.strip()]
 
@@ -714,8 +744,9 @@ def advisory_new(request):
         try:
             saved = advisories.record_advisory(**kwargs, seen=seen, by=request.user, today=today)
         except (ValidationError, PermissionDenied) as e:
-            if hasattr(e, "error_dict") and "cves" in e.error_dict:
-                found = advisories.overlaps(advisories._cves(kwargs["cves"], {}), source=kwargs["source"], reference=kwargs["reference"])
+            parsed = _parsed_cves(kwargs["cves"])
+            if hasattr(e, "error_dict") and "cves" in e.error_dict and parsed is not None:
+                found = advisories.overlaps(parsed, source=kwargs["source"], reference=kwargs["reference"])
                 notes = _overlap_notes(found, seen)
                 if notes:
                     seen = sorted({*seen, *found})
@@ -750,8 +781,9 @@ def advisory_edit(request, number):
         try:
             saved = advisories.update_advisory(a, **kwargs, seen=seen, by=request.user, today=timezone.localdate())
         except (ValidationError, PermissionDenied) as e:
-            if hasattr(e, "error_dict") and "cves" in e.error_dict:
-                added = [c for c in advisories._cves(kwargs["cves"], {}) if c not in (a.cves or [])]
+            parsed = _parsed_cves(kwargs["cves"])
+            if hasattr(e, "error_dict") and "cves" in e.error_dict and parsed is not None:
+                added = [c for c in parsed if c not in (a.cves or [])]
                 found = advisories.overlaps(added, exclude=a)
                 notes = _overlap_notes(found, seen)
                 if notes:
@@ -865,7 +897,8 @@ def source_revision(request, number, source_id):
     if was[0] == AdvisoryStatus.NOT_APPLICABLE and now[0] == AdvisoryStatus.OPEN:
         message = REVISION_REOPENED
     elif was[1] is not None and now[1] is None:
-        message = REVISION_TO_CONFIRM
+        # Confirm models is an open advisory's: a closed one stays closed, and reopening it comes first (its Check says so)
+        message = REVISION_REOPEN_TO_CONFIRM if now[0] == AdvisoryStatus.CLOSED else REVISION_TO_CONFIRM
     else:
         message = REVISION_RECORDED
     return advisory_saved(request, a, message.format(number=a.number))
@@ -935,7 +968,9 @@ def advisory_models(request, number):
     operating system" narrows the choice, ?os=1), then which releases it names (each with its devices on site and OS name), what it
     offers, the fix or the patch list, and "These are all the models it names that are here". "Add a version not on file" posts
     `add_version` here: services.add_release alone (Edit), then this form again from the POST with the new release ticked (releases
-    listed) or chosen as the fix (a release remedy with none chosen); nothing else is saved. Refused on an advisory not open."""
+    listed) or chosen as the fix (a release remedy with none chosen); nothing else is saved. A save posted with a version in that box
+    (Enter pressed in it) is the same: the version is added and the form comes back to be saved, never saved without it. Refused on an
+    advisory not open."""
     _need_edit(request.user)
     a = _advisory(number)
     if request.method != "POST" and not request.htmx:
@@ -958,7 +993,8 @@ def advisory_models(request, number):
         rows = [r for r in rules.rows_of([a]) if r.device_model_id == dm.pk]
         form = ModelForm(initial=model_initial(rows[0] if rows else None), releases=_model_releases(dm, today))
         return _models_modal(request, a, dm, form)
-    if request.POST.get("action") == "add_version":
+    if request.POST.get("action") == "add_version" or str(request.POST.get("add_version", "")).strip():
+        # The button, or Enter in its box (the browser submits through Save, without `action`): a version typed is added, never dropped
         return _add_version(request, a, dm, today)
     form = ModelForm(request.POST, releases=_model_releases(dm, today))
     row = None
@@ -1115,7 +1151,8 @@ def advisory_reopen(request, number):
     a = _advisory(number)
     if request.method != "POST" and not request.htmx:
         return _opened_directly(request, a)
-    return _confirming(request, a, title=f"{a.number}: reopen it", words=REOPEN_WORDS.format(number=a.number), button="Reopen it",
+    words = REOPEN_WORDS.format(number=a.number) + (REOPEN_CONFIRMED if a.models_confirmed_on is not None else REOPEN_TO_CONFIRM)
+    return _confirming(request, a, title=f"{a.number}: reopen it", words=words, button="Reopen it",
                        tone="primary", blocker=advisories.reopen_refusal(a, user=request.user) or "",
                        write=lambda: advisories.reopen(a, by=request.user, today=timezone.localdate()),
                        message=REOPENED.format(number=a.number))

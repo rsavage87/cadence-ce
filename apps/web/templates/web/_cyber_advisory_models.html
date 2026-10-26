@@ -5,8 +5,10 @@
    releases listed, with each release's devices on site and OS name; every release; releases not stated), what it offers, the fix (a
    release of the model) or the patch list, and "These are all the models it names that are here". "Add a version not on file" adds the
    version to the model's releases at once (services.add_release) and brings this form back with it ticked, or chosen as the fix. The
-   releases and the fix show while their choice is made (CSS :has; without it every field shows, and the writer refuses what does not
-   fit, in its words). An advisory not open gets the modal saying so. Each refusal comes back under its field.{% endcomment %}
+   releases and the fix show while their choice is made (CSS :has; without it every field shows), and only what the choices show is
+   sent (ModelForm.service_kwargs: a hidden field never brings a refusal nobody sees). A version typed in "Add a version not on file" is
+   added whether its button or Save sent it (Enter in the box). An advisory not open gets the modal saying so. Each refusal comes back
+   under its field.{% endcomment %}
 {% if step == "choose" %}
 <div class="modal-h"><h2>{{ a.number }}: set models</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
 {% if blocker %}
