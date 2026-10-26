@@ -26,10 +26,12 @@ The contract (as updates.py words its own):
   IntegrityError or a lock conflict as RACE keyed device_model. Every writer answers a lock conflict PostgreSQL ends it for
   (services._lock_conflict) as RACE in words, never a 500.
 - Close and Not applicable are checks at that moment: equipment's writers (a new device, a model change, a reinstate) and work order
-  status moves never take the register, so a device named since surfaces in Needs attention through the same predicates
-  (close_refusal, not_applicable_refusals: rules.close_blockers and rules.not_applicable_blocks), never here. Every register writer
-  that moves a device's release or response (services.record_facts, updates.record and confirm, a completion that records, decisions)
-  takes the register first, so Close and Not applicable read them settled.
+  status moves never take the register, so a device named since surfaces in Needs attention through the rules readers, never here: a
+  closed advisory's through rules.named_since_lines (rules.close_blockers, close_refusal's predicate, but the lines under a decision
+  past its review date, which surface under Needs attention's advisory decisions past their review date), a not-applicable one's
+  through rules.not_applicable_blocks (not_applicable_refusals' predicate). Every register writer that moves a device's release or
+  response (services.record_facts, updates.record and confirm, a completion that records, decisions) takes the register first, so
+  Close and Not applicable read them settled.
 - History reasons are fixed sentences with AD numbers only (never an SD number, a work order number, or a tag: the advisory areas are
   Device security View's).
 - Tokens (a source's reference and revision, a model row's patch list): `core.validators.reference_token` plus
@@ -481,12 +483,13 @@ def _close_words(blockers: dict, *, tags: bool) -> str:
 
 def close_refusal(advisory, today: date, *, user=None) -> str | None:
     """Why the advisory cannot be closed now (words naming up to 10 tags, then "and N more", for `user` with can_view_devices; counts
-    otherwise), or None. Also the predicate Needs attention lists a closed advisory by ("devices named since"). In order: entered in
-    error; marked not applicable (reopen it first); for an open one, no model named (NAME_A_MODEL), its models to confirm; then each line
-    that needs a response and is not answered (rules.close_blockers: no response recorded, a decision past its review date, patches
-    naming another list, an update done with the version not confirmed, an update open), worded with what answers it. For a closed one,
-    only the lines (what would refuse closing it again now: its devices named since, rules.named_since_lines, and those under a decision
-    past its review date, which Needs attention lists under the decisions to review). Fixed queries: rules.advisory_reading's."""
+    otherwise), or None. In order: entered in error; marked not applicable (reopen it first); for an open one, no model named
+    (NAME_A_MODEL), its models to confirm; then each line that needs a response and is not answered (rules.close_blockers: no response
+    recorded, a decision past its review date, patches naming another list, an update done with the version not confirmed, an update
+    open), worded with what answers it. For a closed one, only the lines: what would refuse closing it again now, its devices named
+    since and those under a decision past its review date. Needs attention lists a closed advisory by rules.named_since_lines, never by
+    this reader: the same lines but those under a decision past its review date, which it lists under the advisory decisions past their
+    review date. Fixed queries: rules.advisory_reading's."""
     if advisory.removed_on is not None:
         return ENTERED_IN_ERROR.format(number=advisory.number)
     if advisory.status == AdvisoryStatus.NOT_APPLICABLE:
