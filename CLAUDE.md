@@ -453,7 +453,8 @@ it (DECISION_LIVE_READ otherwise). Reading any decision (the Decisions tab, a de
   by its writer under the locks (`close_refusal`, `not_applicable_refusals` / `not_applicable_refusal`, `reopen_refusal`,
   `entered_in_error_refusal`, `model_removal_refusal`, `source_removal_refusal`, `set_model_refusal`: never select_for_update). Close and
   Not applicable are checks at that moment: equipment's writers and work order moves never take the register, so a device named since
-  surfaces through the same predicates (`rules.close_blockers`, `rules.not_applicable_blocks`). `rules.py`'s slice 40 section the one
+  surfaces through the same predicates (`rules.close_blockers`, read as `rules.named_since_lines`, and
+  `rules.not_applicable_blocks`). `rules.py`'s slice 40 section the one
   place for its words and readers: `advisory_name`, `rows_of`, `advisory_lines` (`AdvisoryLine`: each device on site of a row's model,
   ours and temporary, from its recorded release only: ON_FIX, NAMED, LINE_NOT_RECORDED, OTHER_RELEASE; `needs_response` named or not
   recorded, "Not connected here" too: network_removed is its decision), `answers_row` (where an update leaves the device, never a link),
