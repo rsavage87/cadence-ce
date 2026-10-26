@@ -39,7 +39,7 @@
       </li>
       {% endwith %}{% endfor %}
     </ul>
-    {% if source_new_url %}<p class="cy-act"><button class="link" type="button" hx-get="{{ source_new_url }}" hx-target="#modal-card">{% icon "plus" %} Add source</button></p>{% endif %}
+    {% if source_new_url %}<p class="cy-act"><button class="btn sm" type="button" hx-get="{{ source_new_url }}" hx-target="#modal-card">{% icon "plus" %} Add source</button></p>{% endif %}
   </div>
 
   <div class="sec"><h3>Models it names <span>{{ ad_rows|length }}</span></h3>
@@ -78,7 +78,7 @@
       {% endfor %}
     </div>
     {% else %}<div class="empty">No model of this facility's catalog is named on it.{% if models_url %} Set models to name the ones here, or mark it not applicable.{% endif %}</div>{% endif %}
-    {% if models_url %}<p class="cy-act"><button class="link" type="button" hx-get="{{ models_url }}" hx-target="#modal-card">{% icon "plus" %} Name a model</button></p>{% endif %}
+    {% if models_url %}<p class="cy-act"><button class="btn sm" type="button" hx-get="{{ models_url }}" hx-target="#modal-card">{% icon "plus" %} Name a model</button></p>{% endif %}
   </div>
 
   {% if ad_decisions is not None %}<div class="sec"><h3>Decisions for this advisory <span>{{ ad_decisions|length }}</span></h3>
