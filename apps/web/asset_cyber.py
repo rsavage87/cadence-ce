@@ -27,6 +27,19 @@ owner (its facts stay as they were, with its history).
   with its number linking to its page and its state; or "No decision recorded"), and, for permissions.can_decide with a need a decision
   answers, Record decision for this device (Review and renew when its own decision governs it).
 
+- Slice 40, the advisories naming the device's model (`advisory_lines`, web/_cyber_advisory_device.html, under its own "Advisories"
+  after the support decision; build40 section 7.8, critique40_scope N5): each advisory listed when it is open, when this device needs a
+  response under it (its line names the device and no patches record answers it), when a live decision of it governs the device, or,
+  marked not applicable, when the device is named since (its reason no longer holds for it: rules.not_applicable_blocks); with its name
+  (a link to its page), its status words (rules.advisory_counts'), its CVE IDs (three, then "and N more"), the device's line, its
+  responses (updates and patches recorded, each work order's number a link with Work orders View; the governing decision's number, a link,
+  its state, and its sentence; or "No response recorded"); Record decision for this device under it (permissions.can_decide, while it
+  needs a response and no decision covers it; Review and renew for its own device decision past review), Open software update with the
+  advisory (permissions.can_open_updates, a release or patches remedy, no update open, not held as evidence), Reopen it for a
+  not-applicable one where the device is named since (Device security Edit, advisories.reopen_refusal). The rest are counted ("2 other
+  advisories name this model: closed or not applicable, with nothing listed for this device."); none: rules.DEVICE_ADVISORIES_EMPTY. A
+  fixed number of queries however many advisories, rows, devices, and decisions.
+
 Words: never the ones rules.NEVER_WORDS lists (tests/test_cyber_never.py scans the tab with it); the decision's lines never the ones
 rules.DECISION_NEVER_WORDS lists either (tests/test_cyber_decisions_web.py).
 """
@@ -34,8 +47,10 @@ from __future__ import annotations
 
 from urllib.parse import urlencode
 
+from django.db.models import Q
 from django.urls import reverse
 
+from apps.accounts.models import Level, Module
 from apps.cybersecurity import permissions as cyber_perms
 from apps.cybersecurity import rules
 from apps.cybersecurity.models import (
@@ -201,6 +216,143 @@ def decision_lines(request, asset, dl: rules.DeviceLines, today) -> dict | None:
             "renew_url": record_decision_url(supersedes=dl.decision.number) if dl.can_record and own else ""}
 
 
+# --- slice 40: the advisories naming the device's model ------------------------------------------------------------------------------
+
+CVES_SHOWN = 3
+REST_WORDS = "{count} {other}{noun} this model: closed or not applicable, with nothing listed for this device."
+UPDATE_REMEDIES = ("release", "patches")  # models.AdvisoryRemedy: what an update from the advisory can install
+OPEN_KINDS = (rules.UPDATE_OPEN, rules.UPDATE_ELSEWHERE)  # an update open on the device, answering the line or not
+_ADVISORY_DECISION_RELATED = ("asset", "device_model", "release", "plan_owner", "recorded_by", "advisory")
+
+
+def cves_words(cves) -> str:
+    """ "CVE-YYYY-NNNN, CVE-YYYY-NNNN, CVE-YYYY-NNNN and 2 more" (the first three), or rules.NO_CVES_WORDS."""
+    cves = list(cves or ())
+    if not cves:
+        return rules.NO_CVES_WORDS
+    more = len(cves) - CVES_SHOWN
+    return ", ".join(cves[:CVES_SHOWN]) + (f" and {more} more" if more > 0 else "")
+
+
+def rest_words(count: int, *, listed: bool) -> str:
+    """ "2 other advisories name this model: closed or not applicable, with nothing listed for this device." ("1 advisory names ..."
+    when none is listed above it), or "" for none."""
+    if not count:
+        return ""
+    return REST_WORDS.format(count=count, other="other " if listed else "", noun="advisory names" if count == 1 else "advisories name")
+
+
+def _decision_row(number: str, words: str, decision, covering: bool, today) -> dict:
+    return {"kind": rules.ANSWER_DECIDED if covering else rules.ANSWER_REVIEW_DUE,
+            "line": {"before": "", "number": number, "after": f" · {words}", "url": decision_url(number)},
+            "state": rules.DECISION_STATE_WORDS[rules.decision_state(decision, today)], "tone": "ok" if covering else "warn"}
+
+
+def _response_rows(answer, governing, today, *, can_wo: bool, fy) -> list:
+    """The device's responses under one advisory: an answer's (rules.advisory_answers: its updates and patches recorded, each work
+    order's number a link with Work orders View; the governing decision with its state and sentence; or "No response recorded"); for a
+    line that needs no response, the decision that governs the device still, if one does (its sentence)."""
+    rows = []
+    for r in (answer.responses if answer is not None else ()):
+        if r.kind in (rules.ANSWER_DECIDED, rules.ANSWER_REVIEW_DUE):
+            rows.append(_decision_row(r.number, r.words, r.decision, r.covers, today))
+        else:
+            url = reverse("web:wo", args=[r.number]) if can_wo and r.number else ""
+            rows.append({"kind": r.kind, "line": _split(r.words, r.number, url), "state": "", "tone": ""})
+    if governing is not None and not any(r["kind"] in (rules.ANSWER_DECIDED, rules.ANSWER_REVIEW_DUE) for r in rows):
+        covering = rules.covers(governing, today)
+        rows.append(_decision_row(governing.number, rules.decision_words(governing, today, fy_start=fy()), governing, covering, today))
+    return rows
+
+
+def _governing(asset, advisories, today) -> dict:
+    """{advisory id: the live decision of that advisory governing the device} (rules.decisions_now over the live advisory decisions
+    whose scope may hold it: its own, or its model's release and model scopes; the most specific of each advisory's key). Fixed
+    queries: the decisions (one), decisions_now's (none without one)."""
+    from apps.cybersecurity.models import AppliesTo, DeviceSecurityDecision
+
+    found = list(DeviceSecurityDecision.objects.filter(applies_to=AppliesTo.ADVISORY, ended_on__isnull=True,
+                                                       advisory_id__in=[a.pk for a in advisories])
+                 .filter(Q(asset_id=asset.pk) | Q(asset__isnull=True, device_model_id=asset.device_model_id))
+                 .select_related(*_ADVISORY_DECISION_RELATED).order_by("number"))
+    if not found:
+        return {}
+    now = rules.decisions_now(found, today)
+    return {d.advisory_id: d for d in found if any(a.pk == asset.pk for a in now[d.pk][0])}
+
+
+def advisory_lines(request, asset, today) -> dict:
+    """The Security tab's "Advisories" (slice 40, build40 section 7.8; the module docstring): {"items": [{"number", "url", "name",
+    "status", "cves", "line", "responses" (each {"kind", "line" split around its number, "state", "tone"}), "record_url", "renew_url",
+    "open_url", "reopen_url"}], "rest", "empty"}. One reading of every advisory not entered in error naming the model (rules.advisory_reading
+    for this device), the decisions governing it (decisions_now), the listed advisories' status words (rules.advisory_counts) and sources
+    (the names): a fixed number of queries however many advisories, rows, devices, and decisions; one with no advisory naming the model."""
+    from apps.cybersecurity import advisories as cyber_advisories
+    from apps.cybersecurity.models import AdvisorySource, AdvisoryStatus, NotApplicableReason, SecurityAdvisory
+    from apps.facility import fiscal
+
+    user = request.user
+    found = list(SecurityAdvisory.objects.filter(removed_on__isnull=True, model_rows__device_model_id=asset.device_model_id)
+                 .order_by("-received_on", "-number"))
+    if not found:
+        return {"items": [], "rest": "", "empty": rules.DEVICE_ADVISORIES_EMPTY}
+    reading = rules.advisory_reading(found, today, assets=[asset])
+    rows_by: dict = {}
+    for r in reading.rows:
+        rows_by.setdefault(r.advisory_id, []).append(r)
+    line_by = {ln.row.advisory_id: ln for ln in reading.lines if ln.asset.pk == asset.pk}
+    governing = _governing(asset, found, today)
+    listed = []
+    for adv in found:
+        line = line_by.get(adv.pk)
+        answer = reading.answers.get((asset.pk, line.row.pk)) if line is not None else None
+        needs = answer is not None and answer.kind not in ("", rules.PATCHES_RECORDED)
+        named_since = (adv.status == AdvisoryStatus.NOT_APPLICABLE and line is not None
+                       and rules.not_applicable_blocks(adv.not_applicable_reason, rows_by.get(adv.pk, []), [line])
+                       and (adv.not_applicable_reason == NotApplicableReason.NONE_HERE or line.needs_response))
+        if adv.status == AdvisoryStatus.OPEN or needs or adv.pk in governing or named_since:
+            listed.append((adv, line, answer, needs, named_since))
+    rest = len(found) - len(listed)
+    if not listed:
+        return {"items": [], "rest": rest_words(rest, listed=False), "empty": ""}
+    counts = rules.advisory_counts([adv for adv, *_ in listed], today=today, devices_visible=True)
+    sources: dict = {}
+    for s in AdvisorySource.objects.filter(advisory_id__in=[adv.pk for adv, *_ in listed]).order_by("created_at", "pk"):
+        sources.setdefault(s.advisory_id, []).append(s)
+    fy_read: list = []
+
+    def fy():  # the facility's fiscal year start, read once and only for a decision's words outside an answer
+        if not fy_read:
+            fy_read.append(fiscal.start_month())
+        return fy_read[0]
+
+    can_wo = user.has_level(Module.WORKORDERS, Level.VIEW)
+    can_decide = cyber_perms.can_decide(user)
+    can_open = cyber_perms.can_open_updates(user) and asset.status != AssetStatus.RETIRED and not asset.incident_hold
+    can_edit = cyber_perms.can_edit(user)
+    items = []
+    for adv, line, answer, needs, named_since in listed:
+        gov = governing.get(adv.pk)
+        responses = _response_rows(answer, gov, today, can_wo=can_wo, fy=fy)
+        covered = answer is not None and answer.covers
+        own = gov is not None and gov.asset_id == asset.pk
+        decide = can_decide and needs and not covered
+        update_open = answer is not None and any(r.kind in OPEN_KINDS for r in answer.responses)
+        items.append({
+            "number": adv.number, "url": reverse("web:security_advisory", args=[adv.number]),
+            "name": rules.advisory_name(adv, rows=rows_by.get(adv.pk, []), sources=sources.get(adv.pk, [])),
+            "status": counts[adv.pk].words, "cves": cves_words(adv.cves), "line": line.words if line is not None else "",
+            "responses": responses,
+            "record_url": record_decision_url(advisory=adv.number, asset=asset.tag) if decide and not own else "",
+            "renew_url": record_decision_url(supersedes=gov.number) if decide and own else "",
+            "open_url": (f"{reverse('web:cybersecurity_update_open', args=[asset.tag])}?{urlencode({'advisory': adv.number})}"
+                         if can_open and needs and line.row.remedy in UPDATE_REMEDIES and not update_open else ""),
+            "reopen_url": (reverse("web:security_advisory_reopen", args=[adv.number])
+                           if named_since and can_edit and cyber_advisories.reopen_refusal(adv, user=user) is None else ""),
+        })
+    return {"items": items, "rest": rest_words(rest, listed=True), "empty": ""}
+
+
 def tab_context(request, asset, today) -> dict:
     """{"cyber": ...} for the device drawer's Security tab (the caller offers the tab only to can_view_devices, never scoped). The
     device's standing is rules.device_lines' (slice 39), read once for its facts and its support decision."""
@@ -218,4 +370,5 @@ def tab_context(request, asset, today) -> dict:
                       "mds2_sentence": rules.MDS2_SENTENCE, "gone": gone, "can_record": cyber_perms.can_edit_devices(user) and not gone,
                       "facts_url": facts_url(asset), "model_url": reverse("web:cybersecurity_model", args=[asset.device_model_id]),
                       "hist": hist, "updates": asset_cyber_updates.context(request, asset, today),  # slice 38
-                      "decision": decision_lines(request, asset, dl, today)}}  # slice 39
+                      "decision": decision_lines(request, asset, dl, today),  # slice 39
+                      "advisories": advisory_lines(request, asset, today)}}  # slice 40
