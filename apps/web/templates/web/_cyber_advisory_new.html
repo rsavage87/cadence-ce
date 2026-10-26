@@ -7,7 +7,7 @@
 <div class="modal-h"><h2>Record advisory</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
 <form id="ad-new-form" class="ad-form" hx-post="{{ action }}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
   <div class="form">
-    <p class="full hint">Cadence keeps no advisory text: the day your team took it in, its CVE IDs, and where it was published. Name the models it names here next.</p>
+    <p class="full hint">Cadence keeps no advisory text: the day your team took it in, its CVE IDs, and where it was published. Then name the models of this facility's catalog it names.</p>
     {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
     {% if overlaps %}
     <div class="full note warn ad-overlap" role="status">

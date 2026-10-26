@@ -21,6 +21,7 @@ import json
 import re
 from datetime import timedelta
 from html import unescape
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -841,8 +842,10 @@ def test_open_updates_to_the_fix_from_an_advisory(client, signed_in, floor):
 
 # --- fixed queries ----------------------------------------------------------------------------------------------------------------------
 
-def test_fixed_queries_as_advisories_rows_devices_decisions_and_updates_grow(client, signed_in, floor, vent_model, dept):
-    signed_in("manager")
+def test_fixed_queries_as_advisories_rows_devices_decisions_and_updates_grow(client, make_user, tenant, floor, vent_model, dept):
+    """For the CE manager (every part) and Device security View alone (the model rows only): before == after."""
+    manager = make_user("manager")
+    view_only = custom_user(client, tenant, "view-only", {Module.CYBERSECURITY: Level.VIEW}, login=False)
     n = floor.a.number
     update_wo(floor.d["P-1"], floor.r56)
     decide(floor.a, asset=floor.d["P-2"])
@@ -850,17 +853,22 @@ def test_fixed_queries_as_advisories_rows_devices_decisions_and_updates_grow(cli
     urls = [("/security/advisories/", {}), ("/security/advisories/", {**HX, "HTTP_HX_TARGET": "cy-advisories"}),
             ("/security/advisories/export.csv", {}), (f"/security/advisories/{n}/", HX), (f"/security/advisories/{n}/", {}),
             (f"/security/advisories/{n}/devices.csv", {}), (f"/security/advisories/{n}/models/?model={floor.model.pk}", MODAL),
-            (f"/security/advisories/{n}/not-applicable/", MODAL), (f"/security/advisories/{n}/close/", MODAL)]
+            (f"/security/advisories/{n}/not-applicable/", MODAL), (f"/security/advisories/{n}/close/", MODAL),
+            ("/security/advisories/new/", MODAL), (f"/security/advisories/{n}/models/{floor.row.pk}/remove/", MODAL),
+            *((url, MODAL) for url in update_door_urls(floor))]
+    reads = [("/security/advisories/", {}), ("/security/advisories/export.csv", {}), (f"/security/advisories/{n}/", HX)]
 
     def counts() -> list:
         out = []
-        for url, headers in urls:
-            with CaptureQueriesContext(connection) as q:
-                r = client.get(url, **headers)
-                if r.streaming:
-                    b"".join(r.streaming_content)
-            assert r.status_code == 200, url
-            out.append(len(q))
+        for user, which in ((manager, urls), (view_only, reads)):
+            client.force_login(user)
+            for url, headers in which:
+                with CaptureQueriesContext(connection) as q:
+                    r = client.get(url, **headers)
+                    if r.streaming:
+                        b"".join(r.streaming_content)
+                assert r.status_code == 200, url
+                out.append(len(q))
         return out
 
     before = counts()
@@ -879,6 +887,20 @@ def test_fixed_queries_as_advisories_rows_devices_decisions_and_updates_grow(cli
     decide(floor.a, release=floor.r52)
     release(floor.model, "5.8 (demo)")
     assert counts() == before
+
+
+def test_tables_scroll_in_their_frame_and_the_css_block(client, signed_in, floor):
+    decide(floor.a, release=floor.r52)
+    signed_in("manager")
+    for url, headers in (("/security/advisories/", {}), (f"/security/advisories/{floor.a.number}/", HX)):
+        body = html(client.get(url, **headers))
+        assert body.count("<table") == body.count('<div class="tbl-wrap">') >= 1, url
+    css = Path("apps/web/static/web/cadence.css").read_text()
+    start, end, prints = css.index("/* Slice 40: security advisories"), css.index("/* Slice 40: end */"), css.index(
+        "/* Slice 11: printing app pages */")
+    block = css[start:end]
+    assert start < end < prints and block.count("{") == block.count("}") and "@media (max-width:760px)" in block
+    assert css.count("{") == css.count("}")
 
 
 # --- words ------------------------------------------------------------------------------------------------------------------------------

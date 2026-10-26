@@ -43,7 +43,8 @@ REVISION_HELP = "As its publisher prints it, e.g. UpdateA or 3."
 UPDATED_HELP = "The day the publisher dated the revision: not before the day published."
 CHANGE_HELP = ("What the revision says changed. Products or releases changed, vulnerabilities added, or a fix named again asks to confirm "
                "the models it names.")
-VERSIONS_HELP = "As the advisory states it for this model."
+VERSIONS_HELP = ("The releases listed: a device on another release, or on the fix, is not named. Every release, or releases not stated: "
+                 "every device of the model on site is.")
 RELEASES_HELP = "The model's releases on file, each with its devices on site. A device with no release recorded is listed apart."
 REMEDY_HELP = "As the advisory states it, never Cadence's judgment."
 FIX_HELP = "For A release from the manufacturer: the release the advisory names as the fix, never one it lists."
