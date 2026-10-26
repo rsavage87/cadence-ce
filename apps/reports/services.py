@@ -256,8 +256,8 @@ def nav_counts(user=None) -> dict:
     """The nav's badges. For a scoped user (apps.workorders.scoping: a vendor's company, a requester's unit) only the screens they may
     open, counted over their own devices and work orders; Equipment and Work orders never hot (the portal requests waiting are a CE
     manager's to assign). Everyone else (and no user) gets the facility's. Slice 24: whoever has My work also gets its badge, what is
-    due today or late, hot when something is late (a vendor's company's work included). Slice 28's Incidents and slice 39's Device
-    security badges only for their readers (_incidents_badge, _cyber_badge): nothing for them with no user. A badge may carry a title
+    due today or late, hot when something is late (a vendor's company's work included). Slice 28's Incidents and slices 39 and 40's
+    Device security badges only for their readers (_incidents_badge, _cyber_badge): nothing for them with no user. A badge may carry a title
     for its count ("<key>_title": the nav's tooltip)."""
     mine = _my_work_badge(user)
     if user is not None and scoping.is_scoped(user):
@@ -296,20 +296,35 @@ def _incidents_badge(user) -> dict:
 
 
 def _cyber_badge(user) -> dict:
-    """Slice 39: Device security's badge, live security decisions past their review date that still govern a device on site
-    (apps.cybersecurity.rules.badge, one aggregate query), hot while there are any; its title the rules' (BADGE_TITLE, "Decisions past
-    their review date"), shown only beside a count. Only for a reader of decisions (permissions.can_view_devices: Device security View
-    and Equipment View, never a scoped user), else nothing: no user, a scoped user (nav_counts answers one before), or a role without
-    those levels. Never in the Overview's attention list or any email."""
+    """Device security's badge, one count of two halves (build40 section 7.9), each for its own readers:
+    - slice 39's: live security decisions of any need key past their review date that still govern a device on site
+      (apps.cybersecurity.rules.badge, one aggregate query), for a reader of decisions (permissions.can_view_devices: Device security View
+      and Equipment View);
+    - slice 40's: open advisories with models to confirm (rules.advisory_badge, one aggregate query on stored rows), for whoever confirms
+      them (permissions.can_edit: Device security Edit, Equipment View or not).
+    The count is their sum; hot only from decisions (an advisory to confirm is never hot); the title names the halves that count
+    (rules.BADGE_TITLE, ADVISORY_BADGE_TITLE, BOTH_BADGE_TITLE), shown only beside a count. A reader of either half with nothing counted
+    reads no count; nothing at all for no user, a scoped user (nav_counts answers one before; the predicates refuse one too), or a role
+    reading neither half. Never in the Overview's attention list or any email."""
     from apps.cybersecurity import permissions as cyber_perms
     from apps.cybersecurity import rules as cyber_rules
 
-    if user is None or not cyber_perms.can_view_devices(user):
+    if user is None:
         return {}
-    found = cyber_rules.badge(timezone.localdate())
-    if not found["count"]:
+    reads_decisions, confirms = cyber_perms.can_view_devices(user), cyber_perms.can_edit(user)
+    if not reads_decisions and not confirms:
+        return {}
+    today = timezone.localdate()
+    decided = cyber_rules.badge(today) if reads_decisions else {"count": 0, "hot": False}
+    to_confirm = cyber_rules.advisory_badge(today)["count"] if confirms else 0
+    count = decided["count"] + to_confirm
+    if not count:
         return {"cybersecurity": None, "cybersecurity_hot": False}
-    return {"cybersecurity": found["count"], "cybersecurity_hot": found["hot"], "cybersecurity_title": cyber_rules.BADGE_TITLE}
+    if decided["count"] and to_confirm:
+        title = cyber_rules.BOTH_BADGE_TITLE
+    else:
+        title = cyber_rules.BADGE_TITLE if decided["count"] else cyber_rules.ADVISORY_BADGE_TITLE
+    return {"cybersecurity": count, "cybersecurity_hot": bool(decided["hot"]), "cybersecurity_title": title}
 
 
 def _my_work_badge(user) -> dict:

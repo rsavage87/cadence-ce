@@ -6,9 +6,9 @@ and PostgreSQL.
   Decisions tab's "Decisions past their review date"), hot while there are any, with its title (rules.BADGE_TITLE) beside the count.
 - Its gates: only a reader of decisions (Device security View and Equipment View, never a scoped user): nothing for no user, the analyst,
   the requester, the vendor, a scoped role with Full everywhere, a technician without Device security View, or Device security without
-  Equipment View.
-- One query as decisions grow (rules.badge's aggregate); nav_counts() with no user has no Device security key; never in the Overview's
-  attention list; the nav shows the count and its title.
+  Equipment View (slice 40 re-pin: with Device security Edit it reads the badge's advisory half, so no count rather than no badge).
+- One query as decisions grow (rules.badge's aggregate; slice 40 re-pin: two for a reader of both halves); nav_counts() with no user has
+  no Device security key; never in the Overview's attention list; the nav shows the count and its title.
 """
 import re
 from datetime import timedelta
@@ -100,10 +100,13 @@ def test_the_gates(floor, tenant):
         custom_user(tenant, "companyfull", full, scope=DataScope.COMPANY, company="BD"),
         custom_user(tenant, "unitfull", full, scope=DataScope.DEPARTMENT, department="ICU"),
         custom_user(tenant, "tech-no-cyber", no_device_security),
-        custom_user(tenant, "models-only", {Module.CYBERSECURITY: Level.FULL}),  # no Equipment View: a decision can name a device
     ]
     for user in refused:
         assert cyber_keys(nav_counts(user)) == set() and _cyber_badge(user) == {}, user.username
+    # slice 40 re-pin: Device security Full without Equipment View reads no decision (a decision can name a device) but confirms
+    # advisories' models (the badge's advisory half, Device security Edit): with none to confirm, no count
+    models_only = custom_user(tenant, "models-only", {Module.CYBERSECURITY: Level.FULL})
+    assert _cyber_badge(models_only) == {"cybersecurity": None, "cybersecurity_hot": False}
     itsec = custom_user(tenant, "itsec", {Module.CYBERSECURITY: Level.VIEW, Module.EQUIPMENT: Level.VIEW})
     assert _cyber_badge(itsec) == {"cybersecurity": 1, "cybersecurity_hot": True, "cybersecurity_title": rules.BADGE_TITLE}
 
@@ -113,7 +116,8 @@ def test_nav_counts_with_no_user_has_no_device_security_badge(floor):
 
 
 def test_one_query_as_decisions_grow(floor, dept, today):
-    """The levels read once (the role's permissions prefetched), the badge is one aggregate query however many decisions."""
+    """The levels read once (the role's permissions prefetched), the badge is one aggregate query however many decisions (slice 40
+    re-pin: two for a reader of both halves, the advisories' its own aggregate: tests/test_cyber_advisories_badge.py)."""
     user = User.objects.select_related("role").prefetch_related("role__permissions").get(pk=floor["kim"].pk)
 
     def counted():
@@ -121,7 +125,7 @@ def test_one_query_as_decisions_grow(floor, dept, today):
             found = _cyber_badge(user)
         return len(q.captured_queries), found["cybersecurity"]
 
-    assert counted() == (1, 1)
+    assert counted() == (2, 1)
     for i in range(4):
         model = DeviceModel.objects.create(manufacturer="Demo", model=f"Bed {i}", description="Bed", category="Beds",
                                            support_ends_on=today - 30 * DAY)
@@ -134,7 +138,7 @@ def test_one_query_as_decisions_grow(floor, dept, today):
                                       accepted_by=AcceptedBy.CE_LEADER, by=None, today=today)
         decisions.record_decision(**scope, reasons=["security_updates"], response=DecisionResponse.TAKE_OUT_OF_USE,
                                   accepted_by=AcceptedBy.CE_LEADER, decided_on=today - 60 * DAY, review_by=today - DAY, by=None, today=today)
-    assert counted() == (1, 5)
+    assert counted() == (2, 5)
 
 
 def test_never_in_the_overview_attention_list(floor):

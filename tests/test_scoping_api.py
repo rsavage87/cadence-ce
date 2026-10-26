@@ -17,7 +17,7 @@ from apps.api import urls as api_urls
 from apps.api.permissions import ModulePermission, PersonPermission
 from apps.api.views import AssetViewSet, WorkOrderViewSet
 from apps.api.views_all_facilities import AllFacilitiesViewSet
-from apps.api.views_cybersecurity import SecurityDecisionViewSet
+from apps.api.views_cybersecurity import SecurityAdvisoryViewSet, SecurityDecisionViewSet
 from apps.api.views_evaluations import ProgramEvaluationViewSet
 from apps.api.views_facilities import FacilityViewSet
 from apps.api.views_incidents import IncidentViewSet
@@ -26,8 +26,9 @@ from apps.api.views_testequipment import TestEquipmentViewSet
 from apps.api.views_vendor_reviews import VendorReviewViewSet
 from apps.api.views_work import WorkOrderLaborViewSet, WorkOrderNoteViewSet, WorkOrderPartViewSet
 from apps.contracts.models import Contract, ContractType
+from apps.cybersecurity import advisories as cyber_advisories
 from apps.cybersecurity import decisions as cyber_decisions
-from apps.cybersecurity.models import AcceptedBy, DecisionResponse, DeviceSecurityDecision, Network
+from apps.cybersecurity.models import AcceptedBy, AdvisoryModel, DecisionResponse, DeviceSecurityDecision, Network, SecurityAdvisory
 from apps.equipment.models import Asset, AssetStatus, Department, DeviceModel, RiskClass
 from apps.evaluations import vendor_reviews
 from apps.evaluations.models import ProgramEvaluation, VendorReview
@@ -101,9 +102,14 @@ def world(ctx, dept, vent, pump, pump_model, techs):
     security_decision = cyber_decisions.record_decision(asset=pump, reasons=["security_updates"],
                                                         response=DecisionResponse.KEEP_WITHOUT_ADDED_CONTROLS,
                                                         accepted_by=AcceptedBy.CE_LEADER, by=None)
+    # Slice 40: a security advisory naming the pumps on that release (its device lines: the ICU pump, the Cardiology one)
+    security_advisory = cyber_advisories.record_advisory(received_on=timezone.localdate(), cves="CVE-2026-1111", source="other",
+                                                         reference="DEMO-ADV-0001", by=None)
+    cyber_advisories.set_model(security_advisory, device_model=pump_model, versions="listed", release_ids=[pump_release.pk],
+                               remedy="mitigations", confirm=True, by=None)
     return {"assets": {"vent": vent, "pump": pump, "card_mon": card_mon, "card_pump": card_pump}, "wos": wos, "cardio": cardio,
             "icu": dept, "monitor": monitor, "contract": contract, "incident": incident, "evaluation": evaluation,
-            "vendor_review": vendor_review, "security_decision": security_decision}
+            "vendor_review": vendor_review, "security_decision": security_decision, "security_advisory": security_advisory}
 
 
 @pytest.fixture
@@ -411,7 +417,21 @@ def closed_endpoints(world, pump_recall, techs):
         *evaluation_endpoints(world),
         *vendor_review_endpoints(world),
         *security_decision_endpoints(world),
+        *security_advisory_endpoints(world),
     ]
+
+
+def security_advisory_endpoints(world):
+    """Slice 40: the security advisory endpoints (apps/api/views_cybersecurity.py), read-only and never a scoped user's, even for a
+    device in the share (an advisory's device lines name devices of the whole facility)."""
+    a, pump = world["security_advisory"], world["assets"]["pump"]
+    return [("get", f"{API}security-advisories/", None), ("get", f"{API}security-advisories/{a.id}/", None),
+            ("get", f"{API}security-advisories/{a.number}/", None),
+            ("get", f"{API}security-advisories/?model={pump.device_model_id}&cve=CVE-2026-1111", None),
+            ("post", f"{API}security-advisories/", {"received_on": TODAY.isoformat(), "source": "other", "reference": "DEMO-ADV-0002"}),
+            ("patch", f"{API}security-advisories/{a.id}/", {"status": "closed"}),
+            ("delete", f"{API}security-advisories/{a.id}/", None),
+            ("get", f"{API}security-decisions/?applies_to=advisory&advisory={a.number}", None)]
 
 
 def security_decision_endpoints(world):
@@ -486,6 +506,8 @@ def test_every_other_endpoint_refuses_a_scoped_role_with_full_levels(client, per
     assert ProgramEvaluation.objects.get(pk=world["evaluation"].pk).summary == "" and ProgramEvaluation.objects.count() == 1  # slice 32
     assert VendorReview.objects.get(pk=world["vendor_review"].pk).summary == "" and VendorReview.objects.count() == 1  # slice 34
     assert list(DeviceSecurityDecision.objects.values_list("pk", "ended_on")) == [(world["security_decision"].pk, None)]  # slice 39
+    assert list(SecurityAdvisory.objects.values_list("pk", "status", "removed_on")) == [(world["security_advisory"].pk, "open", None)]
+    assert AdvisoryModel.objects.count() == 1  # slice 40
 
 
 @pytest.mark.parametrize("who", ["vendor", "requester"])
@@ -541,3 +563,5 @@ def test_only_work_orders_and_devices_opt_in():
     assert TestEquipmentViewSet.scoped_actions == frozenset()
     # Slice 39: nor a security decision (it names devices of the whole facility)
     assert SecurityDecisionViewSet.scoped_actions == frozenset()
+    # Slice 40: nor a security advisory (its device lines name devices of the whole facility)
+    assert SecurityAdvisoryViewSet.scoped_actions == frozenset()
