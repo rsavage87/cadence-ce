@@ -454,10 +454,10 @@ def _ours_waiting(entries) -> bool:
                and ans.kind not in rules.ANSWERED for ln, ans in entries)
 
 
-def _model_row(a, rc, lines, answers, who: _Reader) -> dict:
+def _model_row(a, row, rc, lines, answers, who: _Reader) -> dict:
     """A model the advisory names: what it states (versions, the releases it lists, its remedy, the fix or patch list), the counts for
-    every reader, and for a reader of devices its devices (those that need a response first) and the actions where they can act."""
-    row = rc.row if rc is not None else None
+    every reader, and for a reader of devices its devices (those that need a response first) and the actions where they can act. `rc`
+    its RowCounts (None for an advisory entered in error: it reads no count)."""
     dm = row.device_model
     entries = [(ln, answers.get((ln.asset.pk, row.pk))) for ln in lines]
     needing = [(ln, ans) for ln, ans in entries if ln.needs_response]
@@ -547,7 +547,7 @@ def _page_context(request, a) -> dict:
         "checks": rules.advisory_checks(a, today=today, devices_visible=who.devices),
         "sources": [_source_row(a, s, may_edit=who.edit, removable=len(live_sources) > 1) for s in live_sources],
         "source_new_url": reverse("web:security_advisory_source_new", args=[a.number]) if who.edit else "",
-        "ad_rows": [_model_row(a, by_row.get(r.pk), lines_by.get(r.pk, []), reading.answers, who) for r in rows],
+        "ad_rows": [_model_row(a, r, by_row.get(r.pk), lines_by.get(r.pk, []), reading.answers, who) for r in rows],
         "ad_decisions": _decision_rows(a, today) if who.devices else None,
         "who": who, "today": today,
         "edit_url": reverse("web:security_advisory_edit", args=[a.number]) if who.edit else "",
@@ -871,7 +871,8 @@ def _model_choices(os_only: bool) -> list:
     from apps.cybersecurity.models import OsFamily, SoftwareRelease
 
     found: dict = {}
-    for pk, maker, model, family, os_name in (SoftwareRelease.objects.filter(removed_on__isnull=True).exclude(os_family="")
+    for pk, maker, model, family, os_name in (SoftwareRelease.objects.filter(removed_on__isnull=True)
+                                              .exclude(os_family__in=["", OsFamily.NONE])
                                               .order_by("device_model__manufacturer", "device_model__model", "version_key")
                                               .values_list("device_model_id", "device_model__manufacturer", "device_model__model",
                                                            "os_family", "os_name")):
