@@ -186,9 +186,9 @@ def test_closed_not_applicable_and_entered_in_error_words(ctx, floor, make_user)
     a.refresh_from_db()
     full = counts(a)
     assert (full.named_since, full.reviews_due) == (1, 1)
-    assert full.words == (f"Closed ({kim}, {day}) · 1 device named since · models to confirm since a revision · 1 decision past its "
+    assert full.words == (f"Closed ({kim}, {day}) · 1 device named since · models to confirm since a change · 1 decision past its "
                           "review date")
-    assert counts(a, devices_visible=False).words == f"Closed ({kim}, {day}) · models to confirm since a revision"
+    assert counts(a, devices_visible=False).words == f"Closed ({kim}, {day}) · models to confirm since a change"
     na = make_advisory(reference="DEMO-ADV-0002", status=AdvisoryStatus.NOT_APPLICABLE,
                        not_applicable_reason=NotApplicableReason.NO_MODEL_HERE, status_on=TODAY)
     assert counts(na).words == f"Not applicable here ({rules.day_words(TODAY)}): It names no model in this facility's catalog"

@@ -341,7 +341,7 @@ def test_a_revision_moves_a_not_applicable_advisory_back_to_open_and_keeps_a_clo
     shut.refresh_from_db()
     assert (shut.status, shut.models_confirmed_on, shut.changes) == (AdvisoryStatus.CLOSED, None, 1)  # closed stays closed
     assert rules.status_words(shut, devices_visible=False) == (f"Closed ({people.manager}, {rules.day_words(TODAY)}) · models to confirm "
-                                                               "since a revision")
+                                                               "since a change")
 
 
 def decision_for(adv, floor, tag, n=None):

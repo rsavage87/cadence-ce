@@ -63,7 +63,7 @@ def today(ctx):
 def floor(ctx, dept, pump_model, make_user, today):
     """The pumps on 5.2 (demo), past its security updates, P-1 to P-3 of ours; a support decision for 5.2 past its review 5 days ago (the
     decisions half's one); two open advisories with models to confirm (AD-1 naming no model yet, AD-2 naming the pumps unconfirmed), and
-    three that never count: one confirmed, one closed (to confirm since a revision: Needs attention's, never the badge's), one entered in
+    three that never count: one confirmed, one closed (to confirm since a change: Needs attention's, never the badge's), one entered in
     error."""
     release(pump_model, connects=Connects.WIRELESS, segmented=Segmented.ALL)
     r52 = release(pump_model, "5.2 (demo)", security_updates_end_on=today - 30 * DAY)
