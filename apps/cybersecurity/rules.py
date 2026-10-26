@@ -904,7 +904,7 @@ SEGMENT_BLANK_WORDS = "The model's record does not say whether its devices are o
 NO_DEVICE_WORDS = "Governs no device here now: end it"
 PLAN_PASSED_WORDS = "The plan's date ({day}) has passed"
 OWNER_INACTIVE_WORDS = "The plan owner's account is deactivated"
-# Slice 40, an advisory decision's Check lines (build40 section 5.4), beside slice 39's but ALSO_ENDED (support reasons only): the advisory
+# Slice 40, an advisory decision's Check lines (build40 section 5.4), beside slice 39's, never ALSO_ENDED (support reasons only): the advisory
 # changed since it was recorded (by its change count, never a day: a same-day revision counts; the words read the advisory's changed_on),
 # a plan to wait for the manufacturer while the advisory names a release fix for the model, a device it governs no longer recorded "Not
 # connected here" while it relies on network_removed, and devices in its scope none of which it governs needs a response now (End)
