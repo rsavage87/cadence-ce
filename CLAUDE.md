@@ -32,7 +32,7 @@ security tests, `tests/test_postgres_rls.py`).
    `apps/accounts/services.py`, `apps/credentials/services.py`, `apps/recalls/services.py`, `apps/facility/services.py`, `apps/equipment/services.py`,
    `apps/pm/aem.py`, `apps/pm/procedures.py`, `apps/workorders/costs.py`, `apps/workorders/completion.py`, `apps/workorders/legacy.py`, `apps/reports/custom.py`,
    `apps/imports/services.py`, `apps/incidents/services.py`, `apps/vendors/services.py`, `apps/evaluations/services.py`,
-   `apps/testequipment/services.py`, `apps/cybersecurity/services.py`, `apps/cybersecurity/updates.py`, `apps/cybersecurity/decisions.py`; slice 36's model support through `apps/equipment/services.py`), never by setting fields in a
+   `apps/testequipment/services.py`, `apps/cybersecurity/services.py`, `apps/cybersecurity/updates.py`, `apps/cybersecurity/decisions.py`, `apps/cybersecurity/advisories.py`; slice 36's model support through `apps/equipment/services.py`), never by setting fields in a
    view or calling model helpers like
    `Contract.add_assets` directly. Services validate, write status history, and keep the asset in sync.
 6. **No PHI by design.** The portal never asks for patient identifiers. Don't add free-text fields that invite them, and never offer
@@ -220,7 +220,9 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   several devices' work takes all of it first, in one number order: `lock_devices_work`), then the work order numbering (`lock_numbering`,
   before any device's row: a batch numbers first and takes each device at its COMMIT), then device rows; a model's row is locked FOR NO KEY
   UPDATE (a deferred foreign key takes it FOR KEY SHARE at COMMIT; a rename's save holds it FOR UPDATE, so a devices import chunk takes
-  the models its rows name FOR KEY SHARE before its devices' work)
+  the models its rows name FOR KEY SHARE before its devices' work; slice 40: `AdvisoryModel.device_model` takes the model KEY SHARE at
+  COMMIT, so only a rename or a delete waits on it, and set_model answers RACE; the register's writers take the register, then an
+  advisory's row, before any of these)
 - `apps/pm` PmProcedure, PM generation, on-time math (`pm_due_queryset`; `RETIRED_AND_CANCELLED` excuses a cancelled PM only when its
   device was retired on the PM's due date, from the device's history; `missed_pms`, the PMs not on time as of a
   day; slice 27, `windows.py` the PM completion window, the one rule every compliance figure uses: `Window` / `Windows` from Settings'
@@ -325,14 +327,15 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   door's words and readers (`facts`, `connected`, `release_standing` (slice 36's model support when the release has no date) and
   `os_standing` (two lines, never merged; last days), `standings`, `fleet`, `changes_for_it` (devices added, missing, retired, returned,
   from equipment's history), `QUESTIONS`, `NEVER_WORDS`; every device on site, ours and temporary; fixed queries); `services.py` every
-  write (level checks inside; locks: the facility's register lock (`lock_register`), a release, the devices FOR KEY SHARE in tag order
-  (as contracts and Recorded in error keep them; an import chunk locks in its file's order: the bulk set then answers RACE), then
-  security rows; `model_changed` from equipment.update_asset, never taking the register lock,
+  write (level checks inside; locks: the facility's register lock (`lock_register`), an advisory's row (slice 40, `_locked_advisory`, FOR
+  UPDATE of its own row), a release, the devices FOR KEY SHARE in tag order (as contracts and Recorded in error keep them; an import chunk
+  locks in its file's order: the bulk set then answers RACE), then security rows; `model_changed` from equipment.update_asset, never taking the register lock,
   clears a release of the old model); `filters.py` the Fleet's filters (`FleetFilters`, `parse`, `parse_strict` for the API's 400s, `within` for a head figure's link) shared by the screen and the API; `services.running` / `removal_refusal` count devices on site only (a retired device keeps naming a release entered in error). Never kept: credentials, network
   identifiers, SBOM contents, the MDS2 file, advisory text, free text; never in an email, a custom report, the device's own CSV or API
-  record, the portal, labels, or Scan. Slice 40: advisories (advisory decisions, the advisory batch, the multi-need Record decision);
-  slice 41: register upkeep and readers (the version at every completion, the import, hardening facts, the binder section, evaluation
-  indicators, the capital line); slice 42: the CISA CSAF feed.
+  record, the portal, labels, or Scan. Slice 40: advisories and their decisions (below; the advisory batch's link to an update and the
+  multi-need Record decision cut); slice 41: register upkeep and readers (the version at every completion, the import, hardening facts,
+  the binder section, evaluation indicators, the capital line; the update link and "for AD-…" words if ever); slice 42: the CISA CSAF
+  feed (KEV, CVSS).
   Slice 38, software updates (FDA 2016: a routine update is "not considered a repair"; no rule requires any of it): `SoftwareUpdate`
   (one per update work order, made when it is opened, holding its target: a release of the model (`target_release`) or the
   manufacturer's patches (`target_reference`, a token); or an install recorded by hand (no work order, `installed_by`); `outcome`
@@ -353,9 +356,10 @@ CADENCE_TEST_DATABASE_URL=postgres://cadence:cadence@localhost:5432/cadence pyte
   model, already on a release target names the target; patches never take a release: they name the recorded one when the facts are
   written); the facts written: installed moves the release since that day, already a release the record does not name (found), patches
   only the day checked; `open_number` (an open update work order, with its
-  record or not: a reopened imported one counts); the lock contract in its docstring (register, lock_work, numbering, releases, devices,
-  security rows, update rows; nothing takes the register after a work order's or a device's row; a completion takes the register only
-  when its choice records). Django creates PostgreSQL foreign keys DEFERRABLE INITIALLY DEFERRED: an INSERT naming a row locks nothing
+  record or not: a reopened imported one counts); the lock contract in its docstring (register, an advisory's row (slice 40's writers only),
+  lock_work, releases, numbering, devices, security rows, update rows (the openers take the release before numbering; a completion that
+  records holds its device FOR UPDATE before the release, under the register); nothing takes the register after a work order's or a
+  device's row; a completion takes the register only when its choice records). Django creates PostgreSQL foreign keys DEFERRABLE INITIALLY DEFERRED: an INSERT naming a row locks nothing
   until COMMIT, so the openers take the device explicitly FOR KEY SHARE after numbering (`services._locked_devices`) and read its model,
   status, and hold there; an IntegrityError at commit (a device deleted meanwhile) answers RACE; `rules.py` `release_offer` / `offer_or_why`
   (the one predicate: an update with its record, the device on site, can_edit_devices; None is the system), `update_state` (open,
@@ -388,7 +392,8 @@ joined since, by identity); `supersedes`; `ended_on` / `ended_by` / `end_reason`
   NO_RELEASE_OS), SCOPE_NOT_RECORDED; a release's or model's reasons read from the devices it would govern (`decisions.would_govern`,
   `_scope_read`; `rules.holding_lines` / `under` for "What holds now"), GOVERNED_ELSEWHERE / NEEDED_ELSEWHERE refusing a scope whose
   devices (needing one) all have a more specific decision; a release's or model's updates continuing in EXTENDED's words); the lock order: the register, the decision superseded or ended FOR UPDATE of its own row, the
-  release (release scope), the number, the device FOR KEY SHARE (device scope: its model, status, and ownership read there), the insert;
+  advisory's row (an advisory decision: `services._locked_advisory`, FOR UPDATE of its own row), the release (release scope), the number,
+  the device FOR KEY SHARE (device scope: its model, status, and ownership read there), the insert;
   an IntegrityError or a lock conflict answers RACE; history reasons fixed sentences with Cadence numbers only; equipment's writers never
   write here nor take the register lock: the readers re-derive); `rules.py`'s slice 39 section the one place for needs and words:
   `support_need` (`Need`: NEEDS, on site and connected or able to, the release's security updates or the model's support ended, or the
@@ -420,7 +425,65 @@ it (DECISION_LIVE_READ otherwise). Reading any decision (the Decisions tab, a de
   error need can_decide. The nav badge (`reports.services._cyber_badge`, nav_counts' `cybersecurity` / `cybersecurity_hot`) never on the
   Overview's attention list or in an email. `services.removal_refusal` refuses a release with a live decision (`DECISION_LIVE`);
   `update_release` refuses a version change while any decision names it, live or ended (`DECISION_NAMES`). Never in an email, a digest, a
-  custom report, the portal, labels, or Scan
+  custom report, the portal, labels, or Scan.
+  Slice 40, security advisories (HHS 405(d) HICP 2023 recommends taking in advisories, finding the devices they concern, and choosing a
+  response with the manufacturer; no rule requires any of it, and Cadence receives none by itself): `SecurityAdvisory` (AD-<yy>-<nnnn> by
+  the year received, Sequence "advisory-<yy>"; `cves` upper-cased CVE IDs, a JSON list matched in Python; received_on; `AdvisoryStatus`
+  open / not_applicable (`NotApplicableReason`: no_model_here, none_here, releases_not_here, every one checked against the records) /
+  closed, with `status_on` / `status_by`; `models_confirmed_on` / `_by` (null: "Models to confirm"); `changed_on` and the counter
+  `changes` (the decisions' "changed since" Check compares counts, never days); entered in error marked, never deleted; no title, no
+  text), `AdvisorySource` (`AdvisorySourceKind`; a token `reference`, unique per kind among live sources by `reference_key`; an https link
+  to a public host (`services._url(field=)`: no IP literal, port, single-label or internal host; the MDS2 link takes the same checks);
+  published and updated days, `revision`, `last_change` (`AdvisoryChange`; `advisories.REOPENING`, products, vulnerabilities, or a fix
+  named, clears the confirmation and moves a not-applicable one back to open; a closed one stays closed: "models to confirm since a
+  revision"); `advisory_removed`, set only by the advisory's entered in error, hidden in history), `AdvisoryModel` (a model of the catalog
+  it names: `versions` listed / all / not_stated, `remedy` (`AdvisoryRemedy`: a release, the manufacturer's validated patches,
+  mitigations only, no fix yet, no fix planned, each "as the advisory states"), `fix_release` (a release remedy with versions listed
+  only, never a listed one: never "fixed"), `patches_reference`, `seen_release_ids` (the "Release added since" Check, by identity)),
+  `AdvisoryRelease` (a listed release; its `advisory` the row's); the decision gains `advisory`, `advisory_changes`, `AppliesTo.ADVISORY`,
+  `DecisionResponse.NOT_IN_USE_HERE` (an advisory's only, a CheckConstraint; with no plan, the service's NOT_IN_USE_PLAN), and three
+  advisory live uniques beside the support ones. `advisories.py` every write of the four (levels inside: Edit records advisories, sources, revisions, Set models, Remove
+  model, Confirm models, Not applicable, and Reopen from not applicable; Close needs can_decide; Reopen from closed and Entered in error
+  `can_correct_advisories`; field shape before any lock, every problem at once, keyed by field, never "required"; history reasons with
+  AD numbers only; locks: record_advisory the register, then the number; set_model the register, the advisory's row, its releases in pk
+  order, the model only at COMMIT (a delete or a lock conflict answers RACE keyed device_model); every other the register, then the
+  advisory's row; every cross-row check read there; the locked row saved, never the caller's copy (`services._sync`); a CVE ID or
+  reference on another live advisory offered (`overlaps`), refused only when `seen` does not name it; the same kind and reference
+  refused; Edit never reshapes an advisory not open, `set_model_refusal`) and the lock-free readers the GET doors show, each called again
+  by its writer under the locks (`close_refusal`, `not_applicable_refusals` / `not_applicable_refusal`, `reopen_refusal`,
+  `entered_in_error_refusal`, `model_removal_refusal`, `source_removal_refusal`, `set_model_refusal`: never select_for_update). Close and
+  Not applicable are checks at that moment: equipment's writers and work order moves never take the register, so a device named since
+  surfaces through the same predicates (`rules.close_blockers`, `rules.not_applicable_blocks`). `rules.py`'s slice 40 section the one
+  place for its words and readers: `advisory_name`, `rows_of`, `advisory_lines` (`AdvisoryLine`: each device on site of a row's model,
+  ours and temporary, from its recorded release only: ON_FIX, NAMED, LINE_NOT_RECORDED, OTHER_RELEASE; `needs_response` named or not
+  recorded, "Not connected here" too: network_removed is its decision), `answers_row` (where an update leaves the device, never a link),
+  `advisory_answers` (`LineAnswer`: an update open or done with the version not confirmed that answers, the patches recorded on the
+  list it names on any day or, with none named, since received, another list, the governing advisory decision covering or past review,
+  else none; ANSWER_ORDER; one query over SoftwareUpdate), `advisory_reading`, `advisory_counts` (`AdvisoryCounts` / `RowCounts`: line
+  kinds and update counts for View; the decision-derived kinds and words only with `devices_visible`), `status_words` ("Models to
+  confirm", "Open: 4 devices with no response recorded", ... "Open: ready to close"; a View-only reader "Open"; never "done", "resolved",
+  "clear"), `advisory_checks`, `advisory_attention` (`AdvisoryRow`, ADVISORY_ATTENTION_HEADINGS, ATTENTION_VIEW the View reader's;
+  temporary devices their own rows; `decisions_due` links `?why=advisory&state=review_due&here=1`), `advisory_badge` (open, not entered
+  in error, models to confirm: one query, never hot), HICP_ADVISORIES, HICP_ADVISORY_DECISIONS; fixed queries as advisories, rows, and
+  devices grow. Slice 39's readers keyed by need (`key_of`, `SUPPORT_KEY`, `advisory_key`; `_live(key)`, `_live_all`, `_governing`
+  refusing mixed keys, `governing_decisions(..., key=)`): an advisory decision never governs a support need, nor a support decision an
+  advisory's; `needs_attention`'s device headings stay support's, its decision rows run over every key ("For AD-…: ", FOR_ADVISORY);
+  `badge` counts any key; `decision_devices` / `decisions_now` / `decision_checks` / `holding_lines` branch on the key
+  (`DecisionDevice.line`; the advisory Checks ADVISORY_CHANGED_WORDS, FIX_NAMED_WORDS, NETWORK_BACK_WORDS, NO_NEED_WORDS, never
+  ALSO_ENDED); `who_verb` ("Decided by" to take out of use and for not in use here). decisions.py takes `applies_to` / `advisory`
+  (support by default: every slice 39 caller unchanged): no reasons, the four responses, rules.CONTROLS with network_removed only while
+  every device it would govern is recorded "Not connected here" (`network_refusal`), the scope read under the advisory's row
+  (`_advisory_scope_read`: not applicable or entered in error refused, decided not before received, GONE and NOT_NEEDED kinds, never
+  unknown; `refusal_for`'s KIND_ADVISORY, which End never answers). Release refusals: `removal_refusal` while an advisory not entered in
+  error names the release, listed or the fix (ADVISORY_NAMES), `update_release` while any advisory names the version
+  (ADVISORY_NAMES_VERSION), the number only for `can_view`. Permissions: `can_view` the advisories, their rows, line-kind and update
+  counts, stored statuses; `can_view_devices` device lines, responses, decision-derived words, the devices CSV; the update doors from an
+  advisory `can_open_updates` (slice 38's modals as doors only: updates.py and SoftwareUpdate unchanged). History areas
+  `security_advisories`, `advisory_sources`, `advisory_models`, `advisory_releases` (Device security View: they name models, never
+  devices; the advisory's History carries the rest through RELATED). The nav badge by halves (`reports.services._cyber_badge`):
+  decisions past review for can_view_devices (hot), advisories with models to confirm for can_edit (never hot), one count titled
+  BADGE_TITLE, ADVISORY_BADGE_TITLE, or BOTH_BADGE_TITLE. NEVER_WORDS gains affected, fixed, exploited, zero-day, uncontrolled. Never kept:
+  advisory text, a title, free text; never in an email, a digest, a custom report, the portal, labels, or Scan
 - `apps/recalls` Alert (global), AlertMatch (per tenant), matching, openFDA importer; `services.py` dispositions and recall work-order batches,
   `permissions.py` (review at Edit, close/reopen at Approve); `feeds.py` the openFDA fetch shared by `import_openfda` and the Recalls
   screen's Check FDA feed (one fetch per 15 minutes for everyone, kept in apps.jobs' `JobRun`; a check matches only its own facility).
@@ -514,6 +577,27 @@ it (DECISION_LIVE_READ otherwise). Reading any decision (the Decisions tab, a de
   `__init__`; never network_removed: rules.NETWORK_REMOVED_HINT), the Security tab's need, responses, and governing decision
   (rules.device_lines), a release row's live decision or Record decision (`_cyber_release_actions.html`), and the nav item's badge
   (rules.BADGE_TITLE);
+  slice 40: `views_cyber_advisories.py` with `forms_cyber_advisories.py` and `urls_cyber_advisories.py` (mounted at
+  `/security/advisories/` before `/security/`, `new/` before `<str:number>/`; `cyber_advisories.html`, `_cyber_advisor*.html`; the
+  Advisories tab between Models and Decisions in `_cyber_tabs.html`, Device security View): the tab (Needs attention from
+  rules.advisory_attention as data, the HICP sentence, the list filtered by status, models to confirm, and `q` (a CVE ID or a source
+  reference), its CSV), an advisory's page (`web:security_advisory`, `/security/advisories/<number>/` in any letter case; drawer partial
+  and full page: the header with the CVE IDs and those also on another advisory, sources, model rows with their counts and, for
+  can_view_devices, the device lines and what answers each, the Checks, "Decisions for this advisory", History with its children
+  through RELATED, the devices CSV), every modal (Record advisory with the CVE overlap note, its `seen` marker, and its two buttons; Edit;
+  Add, Edit, Record revision, and Remove source; Set models with "Add a version not on file", which calls services.add_release alone and
+  re-renders from the POST; Remove model, Confirm models, Not applicable here with each reason's refusal, Close, Reopen, Entered in
+  error: fields set in `__init__`, the lock-free readers' refusals shown before trying, the writers' after) answering through
+  `advisory_saved` (the page into #drawer, CHANGED, a toast, the modal closed), and slice 38's two update modals opened
+  `?advisory=<number>&from=advisory` (preselected from the row, answering with the advisory page; `advisory` and `from` never carried
+  forward); each per-line action offered only where it can act. `views_cyber_decisions.py` keyed by need: Record decision takes
+  `advisory=<number>` with a scope (SCOPE_PARAMS, ORIGINS; `supersedes` first, `advisory` alone a 404), its responses, controls, hints,
+  HICP sentence, and `review_help` by key, "Not connected here" lines preselecting network_removed, `from=advisory` answering through
+  `advisory_saved`; the prefill (`forms_cyber_decisions.prefill_initial`, door only: the live decision of exactly this scope of the other
+  key, its response, controls, plan, and owner, never who accepted it or IT's number, with its note); the decision page, print, and CSVs
+  naming the advisory ("For: AD-…", "What holds now" from its lines), the Why filter and columns (`why=`, LIST_COLUMNS 16), the verb
+  from rules.who_verb; `asset_cyber.py` and `_cyber_advisory_device.html` the Security tab's Advisories section (each advisory naming
+  the device's model that is open, needs a response from it, or governs it; the rest counted);
   `views_temporary.py` loaners and rentals (slice 29, with `forms_temporary.py`: Add rental or
   loaner, the drawer's temporary section (`asset_tabs.temporary_box`), Change details, Return to owner, Keep it, Vendor loaner arrived,
   Return the loaner; the Equipment "Whose" filter through `forms.equipment_assets`), `views_incidents.py` Incidents (slice 28, with
@@ -566,7 +650,13 @@ it (DECISION_LIVE_READ otherwise). Reading any decision (the Decisions tab, a de
   `serializers_cybersecurity.py`), read only, by id or number (can_view_devices; no scoped actions; ?scope=device|release|model,
   ?state=in_force|review_soon|review_due|ended, ?device= id or tag; each decision's fields with their words, the sentence, plan words,
   governed device ids, and Check lines; fixed queries a page through rules.decisions_now), and a device's or a model's destroy refused while a decision names it, in words for
-  the reader (a Device security reader reads the decision's number); serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
+  the reader (a Device security reader reads the decision's number); slice 40: `/api/v1/security-advisories/`
+  (`views_cybersecurity.SecurityAdvisoryViewSet`), read only, by id or number (Device security View; no scoped actions; each advisory's
+  name, status and its words for the reader, sources, model rows with their counts split as the screens split them; retrieve adds the
+  device lines and responses for can_view_devices; ?status, ?model, ?cve, ?reference with 400 words; fixed queries a page through
+  rules.advisory_counts), a decision's `advisory` ({id, number} or null) with ?applies_to=support_ended|advisory and ?advisory= (id or
+  number), and the device model destroy locked FOR UPDATE before its delete, refused while an advisory names the model (its number for
+  a Device security reader), an IntegrityError answered in words; serializers next to them (`serializers_*.py`). Each endpoint has the door of the screen that does the
   same thing and calls the same service; the API never imports apps.web. `tenancy.py` (`TenantAPIMixin`: the tenant from the session or
   token user, set after authentication and restored once the response is rendered), `authentication.py` (DRF's token check plus the
   deactivated-facility refusal sign-in has)
@@ -612,4 +702,18 @@ it (DECISION_LIVE_READ otherwise). Reading any decision (the Decisions tab, a de
   planned by the last day of last month, Kim its owner, reviewed that day: past review, the badge hot, its Check that the plan's date
   passed, its pumps' open updates beside it) and a number of its own year for the other C-arm (device scope, OS support ended, controls its profile
   allows, a replacement planned in the fiscal year after next, in force); the rental bed T-0101 on the beds' "2.0 (demo)" (security
-  updates ended last month), connected (wireless), no decision: Needs attention's rentals row; DEMO-EX- numbers, no link, no CVE)
+  updates ended last month), connected (wireless), no decision: Needs attention's rentals row; DEMO-EX- numbers, no link, no CVE;
+  slice 40, `_security_advisories` after the decisions and before the vendor review, by the CE manager through advisories.py in the order
+  received, each recorded with its day as today (`ADVISORIES`; AD numbers by the year received, its decisions' SD numbers after slice
+  39's by the year decided): the monitors' "3.1 (demo)" with mitigations only, its monitors of ours on it decided not in use here 21 days
+  ago (release scope, by the CE leader, no plan, no IT exception) and its bulletin's revision "2" recorded today (mitigations only:
+  nothing reopens), reading "Open: ready to close"; every release of the C-arms with the manufacturer's patches on `_c_arm_patches`'
+  list (the other C-arm's "the list the advisory names"), the C-arm kept off the network decided today (keep with controls,
+  network_removed and physical controls, the replacement in the fiscal year after next, by the CE leader), then closed; one naming no
+  model marked not applicable by a technician; the pumps' "5.2 (demo)" with "5.6 (demo)" the fix, confirmed (on the fix, slice 38's
+  open updates to it, the one not confirmed, the rest "No response recorded": Close refused in words; Record decision for 5.2 prefilled
+  from the pumps' support decision); the beds, releases not stated, no fix yet, models not confirmed (the badge's advisory half: Kim's nav
+  reads 2, hot, BOTH_BADGE_TITLE; the rental bed its own row). Slice 39's pins count support decisions only (applies_to), and the
+  Decisions tab's rows stay as they were. Not shown: an advisory decision past review, an update to a listed release, a patches work
+  order, entered in error. Sources a bulletin, a portal notice, or other only, DEMO-ADV- references, no link, no CVE; no release, fact,
+  update, or work order added)
