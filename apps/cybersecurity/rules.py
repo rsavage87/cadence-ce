@@ -40,6 +40,12 @@ only; every reader a fixed number of queries however many devices and decisions.
 in scope (the devices on site its scope holds: a device-scope decision's device; a release's or a model's devices of ours) for the badge,
 the past-review and govern-no-device lists, and the Check that says to end it; governed (in scope and this the most specific live decision)
 for the device list's responses, joined since, and the other Checks.
+
+Slice 40 keys every decision reader by need (rules.key_of: (applies_to, advisory id)): a decision governs only the need of its own key, a
+support decision a device past support, an advisory decision the devices its advisory names (read from their advisory lines, the slice 40
+section's AdvisoryLine, and the updates recorded on them: line_updates, needs_now). The device headings of the Decisions tab and the
+Security tab's support lines read support decisions only; the decision headings, the badge, a decision's devices and Check lines read
+each decision by its own key.
 """
 from __future__ import annotations
 
@@ -1679,7 +1685,7 @@ def decision_devices(decision, today: date) -> list:
     update responses, and the decision of its need key governing it (this one, `governed`, or a more specific one). Fixed queries however
     many devices: the devices with their rows, their models' profiles, the live decisions of its key that may govern them, the update
     responses (four for a support decision); for an advisory decision, the advisory's rows and the updates recorded on its lines in place
-    of the update responses (six); one when the scope holds no device on site."""
+    of the update responses (six at most); one when the scope holds no device on site."""
     devices = list(_scope_of(decision).select_related(*_WITH_RECORD).order_by("tag"))
     if not devices:
         return []
@@ -2057,7 +2063,8 @@ def needs_attention(today: date, *, user) -> Attention:
     advisory now (needs_now: its line names it and no patches record answers it), else End (no "not recorded" case: a release not
     recorded is a need); its Checks are _checks' for its key.
     Fixed queries however many devices and decisions: the devices on site with their rows, the live decisions, the models' profiles, the
-    update responses (four); with a live advisory decision, also its advisories' rows and the updates recorded on their lines (seven)."""
+    update responses (four); with a live advisory decision, also its advisories' rows and the updates recorded on their lines (seven at
+    most)."""
     from apps.accounts.models import Level, Module
 
     from . import permissions as perms
