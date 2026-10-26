@@ -23,9 +23,11 @@ device's row: a completion that records what an update did takes it first, befor
 
 Nothing here is deleted: a release entered in error is marked (removed_on, removed_by) and refused while a device on site names it
 (rules.on_site, of the release's model: the devices the Models panel counts, review fix C4), (slice 38) while an open software update
-work order is to install it (OPEN_TO_INSTALL), or (slice 39) while a live security decision is for it (DECISION_LIVE); its version is
-not changed while any decision names it, live or ended (DECISION_NAMES); both name the decision's number only to a reader of decisions
-(permissions.can_view_devices), anyone else reads that a security decision holds it (DECISION_LIVE_UNREAD, DECISION_NAMES_UNREAD); a
+work order is to install it (OPEN_TO_INSTALL), (slice 39) while a live security decision is for it (DECISION_LIVE), or (slice 40) while
+a security advisory not entered in error names it, listed or as the fix (ADVISORY_NAMES); its version is not changed while any decision
+names it, live or ended (DECISION_NAMES), or any advisory of any status (ADVISORY_NAMES_VERSION); they name the decision's number only to
+a reader of decisions (permissions.can_view_devices), the advisory's only to a reader of advisories (permissions.can_view), anyone else
+reads that a security decision or advisory holds it (DECISION_LIVE_UNREAD, DECISION_NAMES_UNREAD, ADVISORY_NAMES_UNREAD); a
 retired or returned device's record keeps naming it, as an update's record that is not open does (its history reads it as it was; the
 rules read a release entered in error as not recorded, an update's words as "<version> (entered in error since)"); adding the same
 version again restores it. A device's facts stay with its history when it is retired; a retired device (or a returned temporary one) is
@@ -465,7 +467,9 @@ def update_release(release, *, by, today: date | None = None, **fields):
     """Change a release's (or the profile's) fields; the version only while no device on site names it (running: a retired or returned
     device's record follows the correction; a new spelling of the same version, by version_key, any time) and (slice 39) no security
     decision names the release, live or ended (DECISION_NAMES, its number only for a reader of decisions, else DECISION_NAMES_UNREAD: a
-    decision is immutable, so its version never changes under it), never on the profile, never to a version already on file. The same
+    decision is immutable, so its version never changes under it) and (slice 40) no security advisory of any status names it, listed or
+    as the fix (ADVISORY_NAMES_VERSION, its number only for a reader of advisories), never on the profile, never to a version already on
+    file. The same
     checks as add_release, on the row as it is now (locked) with the change applied. History "Edited" (nothing saved when nothing
     changes). Returns the row; the caller's copy follows it."""
     _check(by, perms.can_edit, EDIT_PERMISSION)
@@ -493,6 +497,9 @@ def update_release(release, *, by, today: date | None = None, **fields):
                     errors["version"] = VERSION_NAMED
                 elif named:  # slice 39: a decision names this version, live or ended (immutable: its words keep the version)
                     errors["version"] = DECISION_NAMES.format(number=named) if _reads_decisions(by) else DECISION_NAMES_UNREAD
+                elif advisory := _advisory_number(locked):  # slice 40: an advisory row of any status names it (locks S4)
+                    errors["version"] = (ADVISORY_NAMES_VERSION.format(number=advisory) if _reads_advisories(by)
+                                         else ADVISORY_NAMES_VERSION_UNREAD)
                 elif other is not None:
                     errors["version"] = _taken(other, given["version"])
         _check_row({**{f: getattr(locked, f) for f in RELEASE_FIELDS}, **given}, versioned=not locked.is_profile, errors=errors)
@@ -539,6 +546,12 @@ DECISION_NAMES = "{number} names this version: add the new version instead."  # 
 # without the decision's number, as the API's destroy refusals word them (review 39 F7)
 DECISION_LIVE_UNREAD = "A security decision is in force for this release: ending it needs Device security Approve and Equipment View."
 DECISION_NAMES_UNREAD = "A security decision names this version: add the new version instead."
+# Slice 40: an advisory not entered in error names the release (listed, or as the fix), and any advisory names the version; the advisory's
+# number for a reader of advisories (permissions.can_view: Device security View), else that an advisory names it (locks S4)
+ADVISORY_NAMES = "{number} names this release: change it there first."
+ADVISORY_NAMES_UNREAD = "A security advisory names this release."
+ADVISORY_NAMES_VERSION = "{number} names this version: add the new version instead."
+ADVISORY_NAMES_VERSION_UNREAD = "A security advisory names this version: add the new version instead."
 
 
 def _reads_decisions(by) -> bool:
@@ -568,12 +581,33 @@ def _decision_number(release, *, live: bool = False) -> str:
     return rows.order_by("number").values_list("number", flat=True).first() or ""
 
 
+def _reads_advisories(by) -> bool:
+    """Whether a refusal may name a security advisory's number to `by` (slice 40: permissions.can_view); None is the system."""
+    return by is None or perms.can_view(by)
+
+
+def _advisory_number(release, *, live: bool = False) -> str:
+    """The lowest number of a security advisory (slice 40) naming `release`, as a release it lists or as the fix, or "" (only one not
+    entered in error with `live`: the release removal's refusal; any, for a version change). Two queries (one per way of naming it)."""
+    from .models import AdvisoryModel, AdvisoryRelease
+
+    listed = AdvisoryRelease.objects.filter(release_id=release.pk)
+    fixes = AdvisoryModel.objects.filter(fix_release_id=release.pk)
+    if live:
+        listed, fixes = listed.filter(advisory__removed_on__isnull=True), fixes.filter(advisory__removed_on__isnull=True)
+    numbers = [rows.order_by("advisory__number").values_list("advisory__number", flat=True).first() for rows in (listed, fixes)]
+    return min((n for n in numbers if n), default="")
+
+
 def removal_refusal(release, *, by=None) -> str:
     """Why Entered in error is refused for `release` now, in remove_release's words (a screen says it before it is tried), or "": already
     removed, the profile, devices on site naming it, (slice 38) an open software update work order to install it (OPEN_TO_INSTALL), or
     (slice 39) a live security decision for it (DECISION_LIVE, its number only when `by` reads decisions, else DECISION_LIVE_UNREAD; and
-    "end it first" only when `by` may end it, else DECISION_LIVE_READ; None is the system). A cancelled, completed, or recorded update
-    naming it never stops it, nor an ended decision: those read the release as it was ("(entered in error since)")."""
+    "end it first" only when `by` may end it, else DECISION_LIVE_READ; None is the system), or (slice 40) a security advisory not entered
+    in error naming it, listed or as the fix, whatever its status (ADVISORY_NAMES, its number only when `by` reads advisories, else
+    ADVISORY_NAMES_UNREAD: an advisory then names only versioned, live releases, whichever writer runs). A cancelled, completed, or
+    recorded update naming it never stops it, nor an ended decision, nor an advisory entered in error: those read the release as it was
+    ("(entered in error since)")."""
     if release.removed_on is not None:
         return ALREADY_REMOVED
     if release.is_profile:
@@ -585,11 +619,14 @@ def removal_refusal(release, *, by=None) -> str:
     if number:
         return OPEN_TO_INSTALL.format(number=number)
     decided = _decision_number(release, live=True)
-    if not decided:
-        return ""
-    if not _reads_decisions(by):
-        return DECISION_LIVE_UNREAD
-    return DECISION_LIVE.format(number=decided) if by is None or perms.can_decide(by) else DECISION_LIVE_READ.format(number=decided)
+    if decided:
+        if not _reads_decisions(by):
+            return DECISION_LIVE_UNREAD
+        return DECISION_LIVE.format(number=decided) if by is None or perms.can_decide(by) else DECISION_LIVE_READ.format(number=decided)
+    named = _advisory_number(release, live=True)  # slice 40: whatever its status (reopening one re-checks nothing: locks S4)
+    if named:
+        return ADVISORY_NAMES.format(number=named) if _reads_advisories(by) else ADVISORY_NAMES_UNREAD
+    return ""
 
 
 def remove_release(release, *, by, today: date | None = None):
