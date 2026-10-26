@@ -270,6 +270,8 @@ def test_view_with_equipment_view_reads_the_devices_and_acts_on_none(client, ten
                  "Open updates to"):
         assert word not in body, word
     assert client.get(f"/security/advisories/{floor.a.number}/devices.csv").status_code == 200
+    for url in (*modal_urls(floor), *approve_urls(floor), *update_door_urls(floor)):
+        assert client.get(url, **MODAL).status_code == 403, url
 
 
 def test_edit_records_and_sets_models_and_never_closes_or_decides(client, signed_in, floor):
@@ -781,6 +783,19 @@ def test_entered_in_error(client, signed_in, floor):
     assert toast_of(r) == f"{n} marked entered in error." and '<span class="chip neutral">Entered in error</span>' in body
     assert "/edit/" not in body and "/in-error/" not in body and "P-1" not in body
     assert html(client.get("/security/advisories/?status=all")).count(n) >= 1 and n not in html(client.get("/security/advisories/"))
+
+
+def test_advisory_saved_takes_the_advisorys_number_too(rf, make_user, tenant, floor):
+    """The answer Record decision `from=advisory` gives (slice 39's door, by the advisory's number, any letter case): the page into
+    #drawer, the lists told, the toast, the modal closed after settle."""
+    from django_htmx.middleware import HtmxDetails
+
+    request = rf.post(f"/security/decisions/new/?advisory={floor.a.number}&asset=P-2&from=advisory", HTTP_HX_REQUEST="true")
+    request.user, request.tenant = make_user("manager"), tenant
+    request.htmx = HtmxDetails(request)
+    r = views_ad.advisory_saved(request, floor.a.number.lower(), "SD-26-0001 recorded for P-2.")
+    body = saved_page(r, floor.a.number)
+    assert toast_of(r) == "SD-26-0001 recorded for P-2." and "P-2" in body
 
 
 def test_a_modal_opened_directly_shows_the_advisory(client, signed_in, floor):
