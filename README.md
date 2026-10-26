@@ -550,7 +550,8 @@ names", "Release not recorded: it may run a release the advisory names", "On 5.6
 without stating releases"), and a device on a release it names, or with no release recorded, needs a response, connected or not.
 
 A response is an update open to the fix or to a release it does not name, the manufacturer's patches recorded, or a decision. An update
-is judged by where it leaves the device: one to a release the advisory names is shown but answers nothing. Patches count when recorded on
+is judged by where it leaves the device: one to a release the advisory names, or to another model's release, is shown but answers
+nothing. Patches count when recorded on
 the list the advisory names (on any day) or, when it names none, since it was received; patches naming another list are a state of
 their own, as is an update done with the version not confirmed. A decision for an advisory's devices is recorded as a security decision
 is (above), for one device, a release's devices of ours, or every device of ours of a model, with no reasons: keep in use with controls
@@ -559,7 +560,7 @@ without added controls, take out of use, or "Decided the part it names is not in
 is keep in use with controls). A rental, loaner, or demo unit is covered only by its own. Each need has its own decisions: a support
 decision never answers an advisory, nor the reverse. Record decision for an advisory's scope that already has a live decision of
 another kind (a support decision first) starts from its response, controls, and plan, with the plan's day only when it has not
-passed (a passed day is asked for again); who accepted it and IT's exception number are recorded for this advisory. The Decisions tab
+passed (a passed day is asked for again; a decision that the part is not in use here gives nothing to start from); who accepted it and IT's exception number are recorded for this advisory. The Decisions tab
 lists both kinds, with a Why filter and column ("Support ended, or its end announced", or "Security advisory AD-…"), and a
 decision's page, print, and CSVs name its advisory.
 
@@ -569,13 +570,14 @@ decision past its review date", "Open: 1 device with patches naming another list
 device that needs a response answered, and says which are not. Not applicable here takes one of three reasons, each checked against the
 records: it names no model in this facility's catalog; no device of the models it names is recorded on site; no device is recorded on a
 release it names. Both are checks at that moment: a device named since is listed again ("Closed or not applicable, devices named
-since"), and a closed advisory whose models need confirming after a revision says so. Reopen and Entered in error correct one (Entered in
+since"; a device whose decision has passed its review date is listed with the decisions to review instead), and a closed advisory
+whose models need confirming after a revision, or a change of the day received, says so ("models to confirm since a change"). Reopen and Entered in error correct one (Entered in
 error is refused while a decision under it is in force).
 
 The Advisories tab opens with Needs attention: advisories with models to confirm; devices of ours on a release an advisory names, or
 with no release recorded, with no response (per advisory and model, with Record decision); each rental, loaner, or demo unit with no
 response (ask its owner to update it, or return it); updates done with the version not confirmed; patches naming another list;
-advisories closed or not applicable with devices named since; closed ones with models to confirm since a revision; releases added since
+advisories closed or not applicable with devices named since; closed ones with models to confirm since a change; releases added since
 the models were set; and advisory decisions past their review date (opening the Decisions tab narrowed to them). With nothing listed it
 reads "Nothing listed from what is recorded here." Below, the advisories filtered by status (open by default), models to confirm, or a
 CVE ID, reference, or number, with their counts, download as CSV. An advisory's page shows its sources, the models it names with their

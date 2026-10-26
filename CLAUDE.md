@@ -436,7 +436,7 @@ it (DECISION_LIVE_READ otherwise). Reading any decision (the Decisions tab, a de
   to a public host (`services._url(field=)`: no IP literal, port, single-label or internal host; the MDS2 link takes the same checks);
   published and updated days, `revision`, `last_change` (`AdvisoryChange`; `advisories.REOPENING`, products, vulnerabilities, or a fix
   named, clears the confirmation and moves a not-applicable one back to open; a closed one stays closed: "models to confirm since a
-  revision"); `advisory_removed`, set only by the advisory's entered in error, hidden in history), `AdvisoryModel` (a model of the catalog
+  change", as after a day received changed once confirmed); `advisory_removed`, set only by the advisory's entered in error, hidden in history), `AdvisoryModel` (a model of the catalog
   it names: `versions` listed / all / not_stated, `remedy` (`AdvisoryRemedy`: a release, the manufacturer's validated patches,
   mitigations only, no fix yet, no fix planned, each "as the advisory states"), `fix_release` (a release remedy with versions listed
   only, never a listed one: never "fixed"), `patches_reference`, `seen_release_ids` (the "Release added since" Check, by identity)),
@@ -459,7 +459,10 @@ it (DECISION_LIVE_READ otherwise). Reading any decision (the Decisions tab, a de
   recorded, "Not connected here" too: network_removed is its decision), `answers_row` (where an update leaves the device, never a link),
   `advisory_answers` (`LineAnswer`: an update open or done with the version not confirmed that answers, the patches recorded on the
   list it names on any day or, with none named, since received, another list, the governing advisory decision covering or past review,
-  else none; ANSWER_ORDER; one query over SoftwareUpdate), `advisory_reading`, `advisory_counts` (`AdvisoryCounts` / `RowCounts`: line
+  else none; ANSWER_ORDER, a decision past review right after the answered kinds; an update counts only to a release of the row's model
+  (`_of_row_model`), one done with the version not confirmed on a patches row naming no list only since received (`_done_answers`);
+  `nothing_to_open` the per-line opener's one rule, read from the responses; one query over SoftwareUpdate), `named_since_lines` (a closed
+  advisory's devices named since: Close's blockers but those under a decision past review, counted apart), `advisory_reading`, `advisory_counts` (`AdvisoryCounts` / `RowCounts`: line
   kinds and update counts for View; the decision-derived kinds and words only with `devices_visible`), `status_words` ("Models to
   confirm", "Open: 4 devices with no response recorded", ... "Open: ready to close"; a View-only reader "Open"; never "done", "resolved",
   "clear"), `advisory_checks`, `advisory_attention` (`AdvisoryRow`, ADVISORY_ATTENTION_HEADINGS, ATTENTION_VIEW the View reader's;
@@ -472,7 +475,8 @@ it (DECISION_LIVE_READ otherwise). Reading any decision (the Decisions tab, a de
   (`DecisionDevice.line`; the advisory Checks ADVISORY_CHANGED_WORDS, FIX_NAMED_WORDS, NETWORK_BACK_WORDS, NO_NEED_WORDS, never
   ALSO_ENDED); `who_verb` ("Decided by" to take out of use and for not in use here). decisions.py takes `applies_to` / `advisory`
   (support by default: every slice 39 caller unchanged): no reasons, the four responses, rules.CONTROLS with network_removed only while
-  every device it would govern is recorded "Not connected here" (`network_refusal`), the scope read under the advisory's row
+  every device it would govern is recorded "Not connected here" (`network_refusal`: those recorded connected, then those
+  as their model discloses with no fact of their own (`NETWORK_DISCLOSED`), then none recorded), the scope read under the advisory's row
   (`_advisory_scope_read`: not applicable or entered in error refused, decided not before received, GONE and NOT_NEEDED kinds, never
   unknown; `refusal_for`'s KIND_ADVISORY, which End never answers). Release refusals: `removal_refusal` while an advisory not entered in
   error names the release, listed or the fix (ADVISORY_NAMES), `update_release` while any advisory names the version
@@ -607,12 +611,14 @@ it (DECISION_LIVE_READ otherwise). Reading any decision (the Decisions tab, a de
   (`forms_cyber_decisions.prefill_initial` / `prefill_note`, door only: the live decision of exactly this scope of another need key,
   support first, else the latest advisory decision, past review or not; its response (never not_in_use_here), the controls the form
   offers, plan and owner, the plan's day only when not passed (else blank: the service's PLAN_DAY asks for a new one), never who
-  accepted it or IT's number; PREFILL_NOTE), else, every device it would govern recorded "Not connected here", Keep in use with
+  accepted it or IT's number; PREFILL_NOTE only when it copied something, `prefill_copies`: a source copying nothing is no source), else, every device it would govern recorded "Not connected here", Keep in use with
   controls and network_removed; the decision page, print, and CSVs naming the advisory ("For: AD-…", "What holds now" from its lines),
-  `why=support|advisory` (the API's ?applies_to=) and the CSV's "Why" and "Advisory" last (LIST_COLUMNS 16), the verb from
+  `why=support|advisory` (the API's ?applies_to=) and the CSV's "Why" and "Advisory" last (LIST_COLUMNS 16), the tab's advisory HICP
+  sentence without the last sentence it shares with the support one (`hicp_second`), the verb from
   rules.who_verb; `asset_cyber.py` and `_cyber_advisory_device.html` the Security tab's Advisories section (each advisory naming the
   device's model that is open, needs a response from it, or governs it, or, not applicable, names it since with Reopen it; the rest
-  counted; Record decision `from=device`, Open software update `?advisory=<number>` alone);
+  counted; Record decision `from=device`, Open software update `?advisory=<number>` alone, offered by rules.nothing_to_open as on the
+  advisory's page);
   `views_temporary.py` loaners and rentals (slice 29, with `forms_temporary.py`: Add rental or
   loaner, the drawer's temporary section (`asset_tabs.temporary_box`), Change details, Return to owner, Keep it, Vendor loaner arrived,
   Return the loaner; the Equipment "Whose" filter through `forms.equipment_assets`), `views_incidents.py` Incidents (slice 28, with
