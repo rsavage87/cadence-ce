@@ -461,7 +461,8 @@ it (DECISION_LIVE_READ otherwise). Reading any decision (the Decisions tab, a de
   list it names on any day or, with none named, since received, another list, the governing advisory decision covering or past review,
   else none; ANSWER_ORDER, a decision past review right after the answered kinds; an update counts only to a release of the row's model
   (`_of_row_model`), one done with the version not confirmed on a patches row naming no list only since received (`_done_answers`);
-  `nothing_to_open` the per-line opener's one rule, read from the responses; one query over SoftwareUpdate), `named_since_lines` (a closed
+  `nothing_to_open` the per-line opener's one rule, read from the responses; `unanswered_responses` an unanswered line's responses of a
+  kind whatever its kind (Needs attention's not confirmed and other list, the other-list Check; the status words and Close read the kind); one query over SoftwareUpdate), `named_since_lines` (a closed
   advisory's devices named since: Close's blockers but those under a decision past review, counted apart), `advisory_reading`, `advisory_counts` (`AdvisoryCounts` / `RowCounts`: line
   kinds and update counts for View; the decision-derived kinds and words only with `devices_visible`), `status_words` ("Models to
   confirm", "Open: 4 devices with no response recorded", ... "Open: ready to close"; a View-only reader "Open"; never "done", "resolved",
