@@ -14,7 +14,7 @@ import uuid
 
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import ProtectedError
 from django.utils import timezone
 from rest_framework import routers, status
@@ -119,6 +119,20 @@ def _decision_numbers(decisions) -> str:
     return f"a security decision ({numbers[0]})" if len(numbers) == 1 else f"security decisions ({', '.join(numbers)})"
 
 
+def _advisory_numbers(rows) -> str:
+    """Slice 40: the security advisories naming a model (its AdvisoryModel rows), by number, for a reader of advisories: "a security
+    advisory naming it (AD-26-0002)", "security advisories naming it (AD-26-0002, AD-26-0005)". One query."""
+    from apps.cybersecurity.models import AdvisoryModel
+
+    numbers = sorted(set(AdvisoryModel.objects.filter(pk__in=[r.pk for r in rows]).values_list("advisory__number", flat=True)))
+    if len(numbers) == 1:
+        return f"a security advisory naming it ({numbers[0]})"
+    return f"security advisories naming it ({', '.join(numbers)})"
+
+
+MODEL_KEPT = "{} is in use, so it cannot be deleted."  # slice 40: a row naming the model committed meanwhile (the backstop's words)
+
+
 class DeviceModelViewSet(EquipmentWrites, TenantViewSet):
     model, module, serializer_class = DeviceModel, "equipment", s.DeviceModelSerializer
     search_fields = ["manufacturer", "model", "description", "category"]
@@ -143,42 +157,59 @@ class DeviceModelViewSet(EquipmentWrites, TenantViewSet):
         (round 2: whether a profile or releases are on file is the register's). Slice 39: a security decision for the model's devices
         (DeviceSecurityDecision.device_model, PROTECT: a release's or the model's) holds it too, ended or not (a decision is never
         deleted); its number is named only for a reader of decisions (permissions.can_view_devices), anyone else reads only that the
-        register holds records."""
+        register holds records.
+
+        Slice 40: a security advisory naming the model (AdvisoryModel.device_model, PROTECT; whatever the advisory's status, entered in
+        error too: it keeps the models it named) holds it as well, its number named for a reader of advisories (permissions.can_view:
+        an advisory names models, never devices; with a decision too, a reader of decisions). The model's row is locked FOR UPDATE
+        first, in this transaction (critique40_locks S1, as the device's destroy): an advisory's Set models takes the model KEY SHARE
+        only at its COMMIT (a deferred foreign key), so one committing meanwhile is read by the collector after it, never between the
+        collector's read and the DELETE; one waiting on the lock fails at its COMMIT and answers in its own words (advisories.RACE). An
+        IntegrityError at this COMMIT (a row naming the model committed meanwhile, the backstop) answers MODEL_KEPT, never a 500."""
         try:
-            instance.delete()
+            with transaction.atomic():
+                DeviceModel.objects.select_for_update().filter(pk=instance.pk).first()
+                instance.delete()
         except ProtectedError as e:
-            from apps.cybersecurity.models import DeviceSecurityDecision
+            self._refuse_protected(instance, list(e.protected_objects))
+        except IntegrityError:
+            raise DRFValidationError({"detail": MODEL_KEPT.format(instance)}) from None
 
-            protected = list(e.protected_objects)
-            register = [o for o in protected if isinstance(o, SoftwareRelease)]
-            decided = [o for o in protected if isinstance(o, DeviceSecurityDecision)]
-            if not register and not decided:
-                raise DRFValidationError({"detail": self.in_use.format(instance)}) from None
-            from apps.cybersecurity import permissions as cyber_perms
+    def _refuse_protected(self, instance, protected: list):
+        """The 400 for what holds a model (perform_destroy's ProtectedError), in words for this reader."""
+        from apps.cybersecurity.models import AdvisoryModel, DeviceSecurityDecision
 
-            user = self.request.user
-            reads = cyber_perms.can_view_devices(user) if decided else cyber_perms.can_view(user)
-            if not reads:  # round 2: what the register holds is its readers' only (slice 39: a decision's, can_view_devices)
-                held = "devices, and records" if any(isinstance(o, Asset) for o in protected) else "records"
-                raise DRFValidationError({"detail": f"{instance} has {held} in the Device security register, so it cannot be "
-                                                    "deleted."}) from None
-            versions = [r for r in register if not r.is_profile]
-            parts = []
-            if versions:
-                parts.append("a software release" if len(versions) == 1 else "software releases")
-                if all(r.removed_on is not None for r in versions):
-                    parts[-1] += " entered in error"
-            if any(r.is_profile for r in register):
-                parts.append("a profile")
-            held = ["devices"] if any(isinstance(o, Asset) for o in protected) else []
-            why = []
-            if parts:
-                held.append(f"{' and '.join(parts)} in the Device security register")
-                why.append("the register keeps a model's releases and profile, with their history, even a release entered in error")
-            if decided:
-                held.append(_decision_numbers(decided))
-                why.append("a security decision stays as recorded, ended or not")
-            raise DRFValidationError({"detail": f"{instance} has {', and '.join(held)}, so it cannot be deleted: {'; '.join(why)}."}) from None
+        register = [o for o in protected if isinstance(o, SoftwareRelease)]
+        decided = [o for o in protected if isinstance(o, DeviceSecurityDecision)]
+        named = [o for o in protected if isinstance(o, AdvisoryModel)]
+        if not register and not decided and not named:
+            raise DRFValidationError({"detail": self.in_use.format(instance)}) from None
+        user = self.request.user
+        reads = cyber_perms.can_view_devices(user) if decided else cyber_perms.can_view(user)
+        if not reads:  # round 2: what the register holds is its readers' only (slice 39: a decision's, can_view_devices)
+            held = "devices, and records" if any(isinstance(o, Asset) for o in protected) else "records"
+            raise DRFValidationError({"detail": f"{instance} has {held} in the Device security register, so it cannot be "
+                                                "deleted."}) from None
+        versions = [r for r in register if not r.is_profile]
+        parts = []
+        if versions:
+            parts.append("a software release" if len(versions) == 1 else "software releases")
+            if all(r.removed_on is not None for r in versions):
+                parts[-1] += " entered in error"
+        if any(r.is_profile for r in register):
+            parts.append("a profile")
+        held = ["devices"] if any(isinstance(o, Asset) for o in protected) else []
+        why = []
+        if parts:
+            held.append(f"{' and '.join(parts)} in the Device security register")
+            why.append("the register keeps a model's releases and profile, with their history, even a release entered in error")
+        if decided:
+            held.append(_decision_numbers(decided))
+            why.append("a security decision stays as recorded, ended or not")
+        if named:
+            held.append(_advisory_numbers(named))
+            why.append("an advisory keeps the models it names as recorded, even one entered in error")
+        raise DRFValidationError({"detail": f"{instance} has {', and '.join(held)}, so it cannot be deleted: {'; '.join(why)}."}) from None
 
     def perform_create(self, serializer):
         # Through create_device_model, which needs a risk class and never takes an AEM interval: that is set only by approving an

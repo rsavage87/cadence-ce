@@ -53,7 +53,8 @@ DECISION_FIELDS = {"id", "number", "applies_to", "applies_to_label", "scope", "r
                    "controls", "control_words", "controls_reference", "plan", "plan_label", "plan_by", "plan_words", "plan_owner",
                    "accepted_by", "accepted_by_label", "exception_reference", "recorded_by", "decided_on", "review_by", "state",
                    "state_label", "review_words", "ended_on", "end_reason", "end_reason_label", "supersedes", "superseded_by", "sentence",
-                   "governed_ids", "governs", "checks"}
+                   "governed_ids", "governs", "checks",
+                   "advisory"}  # slice 40 re-pin: an advisory decision's {id, number}, null here (tests/test_cyber_advisories_api.py)
 KEEPS = "the register keeps a model's releases and profile, with their history, even a release entered in error"
 STAYS = "a security decision stays as recorded, ended or not"
 
@@ -144,6 +145,7 @@ def test_every_decision_reads_in_the_rules_words(client, world, today):
 
     new = rows[world["new"].number]
     assert new["applies_to"] == "support_ended" and new["applies_to_label"] == AppliesTo.SUPPORT_ENDED.label
+    assert all(r["advisory"] is None for r in rows.values())  # slice 40: none of these is an advisory's
     assert new["scope"] == {"kind": "release", "label": rules.SCOPE_LABELS["release"], "words": "Alaris 8015 PCU on 5.2 (demo)", "asset": None,
                             "device_model": {"id": str(world["pump_model"].pk), "manufacturer": "BD", "model": "Alaris 8015 PCU"},
                             "release": {"id": str(r52.pk), "version": "5.2 (demo)"}}

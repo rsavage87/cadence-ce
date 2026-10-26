@@ -44,9 +44,11 @@ GET software-updates/               Slice 38. Device security View AND Equipment
                                     (and its count).
 GET software-updates/<id>/          One of them, by id.
 GET security-decisions/             Slice 39. Device security View AND Equipment View (a decision can name a device). The facility's
-                                    decisions for devices past support (security updates or the OS vendor's support ended), live and
-                                    ended (never deleted: an ended one stays as recorded), by number, 50 a page
-                                    (serializers_cybersecurity.decision_data): id, number, applies_to and its label, scope {kind (device,
+                                    decisions for devices past support (security updates or the OS vendor's support ended) and, slice
+                                    40, for the devices a security advisory names, live and ended (never deleted: an ended one stays
+                                    as recorded), by number, 50 a page (serializers_cybersecurity.decision_data): id, number,
+                                    applies_to (support_ended, advisory) and its label, advisory {id, number} (an advisory decision's;
+                                    null for one for devices past support), scope {kind (device,
                                     release, model), label, words, asset {id, tag}, device_model {id, manufacturer, model}, release {id,
                                     version}} (the stored shape: null where the scope names none), reasons (kinds) and reason_words,
                                     response and response_label, controls (slugs) and control_words, controls_reference, plan,
@@ -56,13 +58,44 @@ GET security-decisions/             Slice 39. Device security View AND Equipment
                                     ended_on, end_reason and end_reason_label, supersedes and superseded_by (numbers), sentence (the
                                     decision in the rules' words), governed_ids (the devices it governed when recorded), governs [{id,
                                     tag}] (the devices on site it governs now), checks [{key, words, info, action, tags}] (information,
-                                    never a refusal). ?scope= device | release | model; ?state= in_force | review_soon | review_due |
-                                    ended (as the row's state reads, on the facility's today); ?device= a device's id, or its tag in any
-                                    letter case (its own decisions, a retired one's too, and those of a release or a model whose scope
-                                    holds it now). An unknown scope or state is a 400 naming the parameter. A fixed number of queries
-                                    for a page. Recording, renewing, ending, and entered in error are the Decisions tab's (Device security
-                                    Approve): below Approve a write is a 403 in those words, at it a 405.
+                                    never a refusal; an advisory decision's read its advisory's lines, never a support need's).
+                                    ?scope= device | release | model; ?state= in_force | review_soon | review_due | ended (as the
+                                    row's state reads, on the facility's today); ?device= a device's id, or its tag in any letter case
+                                    (its own decisions, a retired one's too, and those of a release or a model whose scope holds it
+                                    now); slice 40, ?applies_to= support_ended | advisory, and ?advisory= an advisory's id or its number
+                                    in any letter case (an unknown one lists none). An unknown scope, state, or applies_to is a 400
+                                    naming the parameter. A fixed number of queries for a page. Recording, renewing, ending, and entered
+                                    in error are the Decisions tab's (Device security Approve): below Approve a write is a 403 in those
+                                    words, at it a 405.
 GET security-decisions/<id or number>/  One of them, by id or by number in any letter case.
+GET security-advisories/            Slice 40. Device security View (an advisory names models and releases). The security advisories
+                                    this facility recorded (Cadence receives none by itself), newest received first, 50 a page
+                                    (serializers_cybersecurity.advisory_data): id, number, name (its number, first source's reference,
+                                    and the models it names: no title or text is kept), status (open, not_applicable, closed) with its
+                                    label and status_words (the Advisories tab's: a reader without Equipment View never reads a word
+                                    derived from a decision), received_on, recorded_by, cves, models_confirmed_on and _by (null: models to
+                                    confirm), status_on and status_by, not_applicable_reason and its label, changed_on, removed_on and
+                                    removed_by, sources [{id, source and its label, reference, url, published_on, updated_on, revision,
+                                    last_change and its words}], models [{id, device_model, versions and its label, releases [{id,
+                                    version}], remedy and its label, fix_release {id, version} or null, patches_reference, counts}],
+                                    counts (the rows' totals, with reviews_due and named_since), url. Counts are split by reader: lines
+                                    (devices per line kind: named, not_recorded, on_fix, other) and updates (update_open,
+                                    update_not_confirmed) for Device security View; answers (devices per answer kind: update_open,
+                                    update_not_confirmed, patches_recorded, patches_other_list, decided, review_due, none), reviews_due,
+                                    and named_since only with Equipment View too (permissions.can_view_devices), else null; each count
+                                    a [{kind, label, devices}] list. Advisories entered in error are left out unless ?removed=1 (then
+                                    read as recorded, with no counts). ?status= open | not_applicable | closed; ?model= a device model's
+                                    id (the advisories naming it); ?cve= a CVE ID (exact, any letter case); ?reference= a live source's
+                                    reference (exact, any letter case). An unknown status, a malformed model id or CVE ID is a 400
+                                    naming the parameter. A fixed number of queries for a page (rules.advisory_counts). Every write is
+                                    the Advisories tab's (Device security Edit; Close Approve): below Edit a 403 in those words, at it a
+                                    405.
+GET security-advisories/<id or number>/  One of them, by id or by number in any letter case (one entered in error too), and its
+                                    devices: each device on site of a model it names, its line, and what answers it [{model_row, asset
+                                    {id, tag}, serial, department, ownership and its label, connection, release, line and line_label,
+                                    words, needs_response, answer and answer_label, responses [{kind, words, number}], decision {id,
+                                    number} or null, covers, url}], for a reader with Equipment View (else null; none for one entered in
+                                    error).
 
 Another facility's row is a 404 (as an unknown one), a retired device too (but on software-updates/, which keeps a retired device's
 updates); a level missing a 403 in plain words; any write a 405 naming the Device security screen (with Device security Edit) or a 403
@@ -85,13 +118,18 @@ from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.response import Response
 
 from apps.accounts.models import Level, Module
-from apps.cybersecurity import filters, rules
+from apps.cybersecurity import advisories, filters, rules
 from apps.cybersecurity import permissions as perms
 from apps.cybersecurity.models import (
     RECORDED_OUTCOMES,
+    AdvisoryModel,
+    AdvisorySource,
+    AdvisoryStatus,
+    AppliesTo,
     DecisionPlan,
     DeviceSecurity,
     DeviceSecurityDecision,
+    SecurityAdvisory,
     SoftwareRelease,
     SoftwareUpdate,
 )
@@ -365,6 +403,7 @@ DECISION_NOT_FOUND = "No security decision with that id or number in this facili
 SCOPES = (rules.DEVICE_SCOPE, rules.RELEASE_SCOPE, rules.MODEL_SCOPE)
 SCOPE_WORDS = f"One of {', '.join(SCOPES)}."
 DECISION_STATE_WORDS = f"One of {', '.join(rules.DECISION_STATES)}."
+APPLIES_TO_WORDS = f"One of {', '.join(AppliesTo.values)}."  # slice 40: why a decision was recorded (its need key's first part)
 
 
 def scope_q(kind: str) -> Q:
@@ -387,10 +426,10 @@ def decision_state_q(state: str, today) -> Q:
 
 
 class SecurityDecisionViewSet(_ReadOnly):
-    """Slice 39: the facility's security decisions for devices past support (the module docstring), read only, in the rules' words.
-    Device security View and Equipment View (permissions.can_view_devices: a decision can name a device); never a scoped user. Every
-    write is the Decisions tab's, at Device security Approve (permissions.can_decide): below it a write is a 403 naming that level, at it
-    a 405 naming the screen."""
+    """The facility's security decisions (the module docstring), read only, in the rules' words: for devices past support (slice 39) and
+    for the devices a security advisory names (slice 40: its advisory's number beside it). Device security View and Equipment View
+    (permissions.can_view_devices: a decision can name a device); never a scoped user. Every write is the Decisions tab's, at Device
+    security Approve (permissions.can_decide): below it a write is a 403 naming that level, at it a 405 naming the screen."""
 
     permission_classes = [IsAuthenticated, ModulePermission, EquipmentView]
     serializer_class = scs.SecurityDecisionSerializer
@@ -404,23 +443,33 @@ class SecurityDecisionViewSet(_ReadOnly):
         raise MethodNotAllowed(request.method, detail=DECISIONS_READ_ONLY)
 
     def get_queryset(self):
+        # slice 40: with the advisory (an advisory decision's Checks and the row's `advisory` read it: never one query a row)
         qs = DeviceSecurityDecision.objects.select_related("asset", "device_model", "release", "plan_owner", "recorded_by", "supersedes",
-                                                           "superseded_by")
+                                                           "superseded_by", "advisory")
         if self.action == "list":
             params, errors = self.request.query_params, {}
             scope = params.get("scope") or ""
             state = params.get("state") or ""
             device = params.get("device") or ""
+            applies_to = params.get("applies_to") or ""
+            advisory = (params.get("advisory") or "").strip()
             if scope and scope not in SCOPES:
                 errors["scope"] = [SCOPE_WORDS]
             if state and state not in rules.DECISION_STATES:
                 errors["state"] = [DECISION_STATE_WORDS]
+            if applies_to and applies_to not in AppliesTo.values:
+                errors["applies_to"] = [APPLIES_TO_WORDS]
             if errors:
                 raise DRFValidationError(errors)
             if scope:
                 qs = qs.filter(scope_q(scope))
             if state:
                 qs = qs.filter(decision_state_q(state, self._today()))
+            if applies_to:
+                qs = qs.filter(applies_to=applies_to)
+            if advisory:  # an advisory's id, or its number in any letter case (an unknown one lists nothing, as ?device=)
+                pk = _uuid(advisory)
+                qs = qs.filter(advisory_id=pk) if pk is not None else qs.filter(advisory__number__iexact=advisory)
             if device:
                 qs = qs.filter(pk__in=self._for_device(device))
         return qs.order_by("number", "pk")
@@ -473,8 +522,114 @@ class SecurityDecisionViewSet(_ReadOnly):
         return Response(scs.SecurityDecisionSerializer(decision, context=self._context([decision])).data)
 
 
+ADVISORIES_REFUSAL = "Reading security advisories needs Device security View."
+ADVISORIES_READ_ONLY = ("The API reads security advisories only: record one, its sources, and the models it names, confirm them, mark it "
+                        "not applicable, or close it on the Device security screen's Advisories tab.")
+ADVISORIES_WRITE_REFUSAL = ("The API reads security advisories only. Recording them is done on the Device security screen's Advisories "
+                            "tab, and needs Device security Edit.")
+ADVISORY_NOT_FOUND = "No security advisory with that id or number in this facility."
+ADVISORY_STATUS_WORDS = f"One of {', '.join(AdvisoryStatus.values)}."
+CVE_FILTER_WORDS = "A CVE ID, as CVE-YYYY-NNNN."
+REMOVED_ADVISORIES_WORDS = "1 to list advisories entered in error too."
+
+
+class SecurityAdvisoryViewSet(_ReadOnly):
+    """Slice 40: the security advisories this facility recorded (the module docstring), read only, in the rules' words. Device security
+    View: an advisory names models and releases. Each device it names (its line, its responses, its decisions) and every count or word
+    derived from a decision only for a reader of devices (permissions.can_view_devices: Device security View and Equipment View); never a
+    scoped user. Recording, Set models, Confirm models, Not applicable here, Close, Reopen, and Entered in error are the Advisories tab's:
+    below Device security Edit a write is a 403 naming that level, at it a 405 naming the tab."""
+
+    serializer_class = scs.SecurityAdvisorySerializer
+    view_refusal = ADVISORIES_REFUSAL
+    write_refusal = ADVISORIES_WRITE_REFUSAL
+    lookup_value_regex = "[^/]+"  # an id or a number (AD-26-0003)
+
+    def http_method_not_allowed(self, request, *args, **kwargs):
+        raise MethodNotAllowed(request.method, detail=ADVISORIES_READ_ONLY)
+
+    def get_queryset(self):
+        qs = SecurityAdvisory.objects.select_related("recorded_by", "status_by", "models_confirmed_by", "removed_by")
+        if self.action == "list":
+            params, errors = self.request.query_params, {}
+            status = params.get("status") or ""
+            model = _id_filter(params, "model", "A device model's id.", errors)
+            cve = (params.get("cve") or "").strip().upper()
+            reference = (params.get("reference") or "").strip().casefold()
+            removed = params.get("removed") or ""
+            if status and status not in AdvisoryStatus.values:
+                errors["status"] = [ADVISORY_STATUS_WORDS]
+            if cve and not advisories.CVE_PATTERN.match(cve):
+                errors["cve"] = [CVE_FILTER_WORDS]
+            if removed not in ("", "0", "1"):
+                errors["removed"] = [REMOVED_ADVISORIES_WORDS]
+            if errors:
+                raise DRFValidationError(errors)
+            if removed != "1":
+                qs = qs.filter(removed_on__isnull=True)
+            if status:
+                qs = qs.filter(status=status)
+            if model is not None:
+                qs = qs.filter(pk__in=AdvisoryModel.objects.filter(device_model_id=model).values("advisory_id"))
+            if reference:  # a live source's reference, in any letter case (the publication's own key)
+                qs = qs.filter(pk__in=AdvisorySource.objects.filter(reference_key=reference, removed_on__isnull=True).values("advisory_id"))
+            if cve:  # matched in Python over one query, never a JSON lookup (SQLite has none)
+                qs = qs.filter(pk__in=[pk for pk, cves in qs.values_list("pk", "cves") if cve in (cves or ())])
+        return qs.order_by("-received_on", "-number", "pk")
+
+    def _context(self, rows) -> dict:
+        """What the page's advisories read, in a fixed number of queries however many advisories, model rows, and devices: their counts
+        and status words for this reader (rules.advisory_counts), the rows of those entered in error (two, only with one on the page),
+        and their sources (one)."""
+        visible = perms.can_view_devices(self.request.user)
+        counts = rules.advisory_counts(rows, today=self._today(), devices_visible=visible) if rows else {}
+        by_advisory = {pk: [c.row for c in found.rows] for pk, found in counts.items()}
+        removed = [a for a in rows if a.removed_on is not None]
+        for r in rules.rows_of(removed) if removed else ():
+            by_advisory.setdefault(r.advisory_id, []).append(r)
+        sources: dict = {}
+        if rows:
+            for s in AdvisorySource.objects.filter(advisory_id__in=[a.pk for a in rows]).order_by("created_at", "pk"):
+                sources.setdefault(s.advisory_id, []).append(s)
+        return {**self.get_serializer_context(), "counts": counts, "rows": by_advisory, "sources": sources, "devices_visible": visible}
+
+    def list(self, request, *args, **kwargs):
+        qs = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(qs)
+        rows = list(page if page is not None else qs)
+        data = scs.SecurityAdvisorySerializer(rows, many=True, context=self._context(rows)).data
+        return self.get_paginated_response(data) if page is not None else Response(data)
+
+    def get_object(self):
+        """By id, or by number in any letter case (one entered in error too). Another facility's is a 404, as an unknown one."""
+        value = str(self.kwargs.get(self.lookup_url_kwarg or self.lookup_field) or "").strip()
+        qs = self.get_queryset()
+        pk = _uuid(value)
+        found = qs.filter(pk=pk).first() if pk is not None else None
+        if found is None and value:
+            found = qs.filter(number__iexact=value).first()
+        if found is None:
+            raise NotFound(ADVISORY_NOT_FOUND)
+        self.check_object_permissions(self.request, found)
+        return found
+
+    def retrieve(self, request, *args, **kwargs):
+        """The advisory as a row of the list, and its device lines with what answers each (rules.advisory_reading: a fixed number of
+        queries however many devices) for a reader of devices; null for anyone else, and none for one entered in error."""
+        advisory = self.get_object()
+        ctx = self._context([advisory])
+        lines, answers = [], {}
+        if ctx["devices_visible"] and advisory.removed_on is None:
+            reading = rules.advisory_reading([advisory], self._today())
+            lines, answers = reading.lines, reading.answers
+        return Response(scs.advisory_data(advisory, counts=ctx["counts"].get(advisory.pk), rows=ctx["rows"].get(advisory.pk, []),
+                                          sources=ctx["sources"].get(advisory.pk, []), devices_visible=ctx["devices_visible"],
+                                          lines=lines, answers=answers))
+
+
 def register(router) -> None:
     router.register("software-releases", SoftwareReleaseViewSet, basename="software-release")
     router.register("device-security", DeviceSecurityViewSet, basename="device-security")
     router.register("software-updates", SoftwareUpdateViewSet, basename="software-update")  # slice 38
     router.register("security-decisions", SecurityDecisionViewSet, basename="security-decision")  # slice 39
+    router.register("security-advisories", SecurityAdvisoryViewSet, basename="security-advisory")  # slice 40

@@ -20,7 +20,11 @@ are their own endpoint, behind Device security View and Equipment View, never a 
   (serializers.WorkOrderSerializer, slice 38), only for Device security View and Equipment View (shows_updates) and only where
   rules.release_offer offers a choice: never a version, a reference, or a target to anyone else.
 - decision_data(decision, ...) with rules.decisions_now(decisions, today): one row of GET security-decisions/ (slice 39), every word the rules'
-  (decision_words, scope_words, plan_words, control_words, reason_words, review_words, decision_state, the Check lines).
+  (decision_words, scope_words, plan_words, control_words, reason_words, review_words, decision_state, the Check lines); slice 40, an
+  advisory decision's advisory {id, number}.
+- advisory_data(advisory, ...) with rules.advisory_counts(advisories, ...): one row of GET security-advisories/ (slice 40), its sources,
+  the models it names with their counts split by reader (counts_data: line kinds and update counts at Device security View, answer kinds
+  only for a reader of devices), and on retrieve its device lines (advisory_line_data, a reader of devices only).
 """
 from django.urls import reverse
 from rest_framework import serializers
@@ -254,9 +258,11 @@ def _superseded_by(decision):
 
 
 def decision_data(decision, *, today, fy_start=None, governs=(), checks=()) -> dict:
-    """GET security-decisions/ (slice 39): one decision for devices past support, read with its device, model, release, plan owner,
-    recorder, and the decisions it supersedes and was superseded by (the viewset's select_related: no query), every word the rules':
-    id, number; applies_to and its label; scope {kind (device, release, model), label, words (rules.scope_words), asset {id, tag} or
+    """GET security-decisions/ (slice 39): one decision for devices past support or, slice 40, for the devices a security advisory names,
+    read with its device, model, release, plan owner, recorder, advisory, and the decisions it supersedes and was superseded by (the
+    viewset's select_related: no query), every word the rules':
+    id, number; applies_to and its label; advisory {id, number} (an advisory decision's; null for one for devices past support: its
+    scope words stay the scope's, the advisory named here); scope {kind (device, release, model), label, words (rules.scope_words), asset {id, tag} or
     null, device_model {id, manufacturer, model} or null, release {id, version} or null} (the stored shape: a device's own decision names
     no model); reasons (kinds, rules.REASONS) and reason_words; response and response_label; controls (slugs, rules.CONTROLS) and
     control_words (IT's reference beside recorded_elsewhere); controls_reference; plan, plan_label, plan_by, plan_words ("Plan: replace,
@@ -276,6 +282,7 @@ def decision_data(decision, *, today, fy_start=None, governs=(), checks=()) -> d
     later = _superseded_by(decision)
     return {"id": str(decision.pk), "number": decision.number,
             "applies_to": decision.applies_to, "applies_to_label": label(AppliesTo, decision.applies_to),
+            "advisory": {"id": str(decision.advisory_id), "number": decision.advisory.number} if decision.advisory_id else None,
             "scope": {"kind": kind, "label": rules.SCOPE_LABELS[kind], "words": rules.scope_words(decision),
                       "asset": {"id": str(decision.asset_id), "tag": decision.asset.tag} if decision.asset_id else None,
                       "device_model": {"id": str(dm.pk), "manufacturer": dm.manufacturer, "model": dm.model} if dm is not None else None,
@@ -309,3 +316,124 @@ class SecurityDecisionSerializer(serializers.BaseSerializer):
         ctx = self.context
         governs, checks = ctx["now"].get(decision.pk, ((), ()))
         return decision_data(decision, today=ctx["today"], fy_start=ctx.get("fy_start"), governs=governs, checks=checks)
+
+
+# --- slice 40: security advisories (GET security-advisories/) ------------------------------------------------------------------------
+
+UPDATE_KINDS = (rules.UPDATE_OPEN, rules.UPDATE_NOT_CONFIRMED)  # the update counts every Device security reader sees
+
+
+def _name(user):
+    return str(user) if user is not None else None
+
+
+def _kinds(found: dict, labels: dict, order) -> list:
+    """Counts as [{kind, label, devices}] in the rules' order: the slug, its words (rules.LINE_KINDS, ANSWER_KINDS), the devices."""
+    return [{"kind": kind, "label": labels[kind], "devices": found.get(kind, 0)} for kind in order]
+
+
+def counts_data(lines: dict, updates: dict, answers: dict | None) -> dict:
+    """A model row's or an advisory's counts, split by reader (build40 section 3; critique40_rules S2): lines (devices per line kind) and
+    updates (devices with an answering update open, or done with the version not confirmed) for Device security View; answers (devices per
+    answer kind, the first that holds: decided, past review, no response recorded, ...) only for a reader of devices, else null."""
+    return {"lines": _kinds(lines, rules.LINE_KINDS, rules.LINE_KINDS),
+            "updates": _kinds(updates, rules.ANSWER_KINDS, UPDATE_KINDS),
+            "answers": _kinds(answers, rules.ANSWER_KINDS, rules.ANSWER_KINDS) if answers is not None else None}
+
+
+def advisory_source_data(source) -> dict:
+    """One live source of an advisory: who published it (a choice), its reference (a token), its link (https, a pointer never fetched),
+    its days, its revision, and what its last revision changed (AdvisoryChange slugs, with their words)."""
+    from apps.cybersecurity.models import AdvisoryChange, AdvisorySourceKind
+
+    changes = [c for c in AdvisoryChange.values if c in (source.last_change or ())]
+    return {"id": str(source.pk), "source": source.source, "source_label": label(AdvisorySourceKind, source.source),
+            "reference": source.reference, "url": source.url, "published_on": _day(source.published_on),
+            "updated_on": _day(source.updated_on), "revision": source.revision, "last_change": changes,
+            "last_change_words": [AdvisoryChange(c).label for c in changes]}
+
+
+def advisory_model_data(row, counts) -> dict:
+    """One model an advisory names (rules.rows_of's row: its model, fix, and listed releases read): which releases (versions and its
+    label; releases [{id, version}], the listed ones), what the advisory offers (remedy and its label), the fix release {id, version} or
+    null, the patch list (a token), and its counts (counts_data; null for an advisory entered in error, which reads no row)."""
+    from apps.cybersecurity.models import AdvisoryRemedy, AdvisoryVersions
+
+    return {"id": str(row.pk), "device_model": model_data(row.device_model), "versions": row.versions,
+            "versions_label": label(AdvisoryVersions, row.versions), "releases": [release_ref(r) for r in row.listed],
+            "remedy": row.remedy, "remedy_label": label(AdvisoryRemedy, row.remedy),
+            "fix_release": release_ref(row.fix_release if row.fix_release_id else None), "patches_reference": row.patches_reference,
+            "counts": counts_data(counts.lines, counts.updates, counts.answers) if counts is not None else None}
+
+
+def advisory_line_data(line, answer) -> dict:
+    """One device under a model row (a rules.AdvisoryLine, read for a reader of devices only): its model row, the device {id, tag},
+    serial, department, ownership, connection {key, words, here}, recorded release {id, version} or null, the line's kind and label
+    (rules.LINE_KINDS) and words, whether it needs a response, and what answers it (`answer`, rules.LineAnswer, or None for an advisory
+    with no needs: not applicable): answer and answer_label (the first that holds, rules.ANSWER_KINDS; "" when it needs none), responses
+    [{kind, words, number}] (updates open, versions not confirmed, the manufacturer's patches recorded, the governing decision's sentence:
+    the rules' words; a work order's or decision's number, never a link), and the governing decision {id, number} or null and whether
+    it covers the line now; url its Security tab on the web."""
+    a, standing = line.asset, line.standing
+    kind = answer.kind if answer is not None else ""
+    decision = answer.decision if answer is not None else None
+    return {"model_row": str(line.row.pk), "asset": {"id": str(a.pk), "tag": a.tag}, "serial": a.serial,
+            "department": a.department.name if a.department_id else None, "ownership": a.ownership,
+            "ownership_label": label(Ownership, a.ownership),
+            "connection": {"key": standing.connection.key, "words": standing.connection.words, "here": standing.connection.here},
+            "release": release_ref(line.release), "line": line.kind, "line_label": rules.LINE_KINDS[line.kind], "words": line.words,
+            "needs_response": line.needs_response, "answer": kind, "answer_label": rules.ANSWER_KINDS.get(kind, ""),
+            "responses": [{"kind": r.kind, "words": r.words, "number": r.number or None} for r in (answer.responses if answer else ())],
+            "decision": {"id": str(decision.pk), "number": decision.number} if decision is not None else None,
+            "covers": bool(answer.covers) if answer is not None else False,
+            "url": _facility_url(reverse("web:asset", args=[a.tag]) + "?tab=security", a.tenant_id)}
+
+
+def advisory_data(advisory, *, counts, rows, sources, devices_visible: bool, lines=None, answers=None) -> dict:
+    """GET security-advisories/ (slice 40): one advisory as the Advisories tab reads it, every word the rules': id, number, name
+    (rules.advisory_name: number, its first live source's reference, the models it names; no title is kept); status and status_label
+    (the stored choice) and status_words (rules.status_words for this reader: a Device security View reader never reads a word derived from
+    a decision); received_on, recorded_by; cves (CVE IDs as recorded); models_confirmed_on and models_confirmed_by (null: models to
+    confirm); status_on and status_by (the last move out of open); not_applicable_reason and its label; changed_on; removed_on and
+    removed_by (entered in error); sources [advisory_source_data] (live ones, oldest first); models [advisory_model_data] (its rows, as
+    recorded); counts (its rows' totals, counts_data) with reviews_due and named_since (decisions past review governing a line, devices
+    named since it left open: for a reader of devices, else null; counts null for one entered in error); url its page on the web.
+    `counts` advisory_counts' AdvisoryCounts (None for one entered in error), `rows` its rows (rules.rows_of's), `sources` its sources
+    (every one, oldest first: the name reads the first live one). `lines` (retrieve, a reader of devices): its AdvisoryLines, and
+    `answers` the reading's {(asset id, row id): LineAnswer}; then devices [advisory_line_data] (null for a reader without them)."""
+    from apps.cybersecurity.models import AdvisoryStatus, NotApplicableReason
+
+    live = counts is not None and advisory.removed_on is None
+    per_row = {c.row.pk: c for c in counts.rows} if live else {}
+    total = None
+    if live:
+        total = {**counts_data(counts.lines, counts.updates, counts.answers),
+                 "reviews_due": counts.reviews_due if devices_visible else None,
+                 "named_since": counts.named_since if devices_visible else None}
+    words = counts.words if counts is not None else rules.status_words(advisory, devices_visible=False)
+    out = {"id": str(advisory.pk), "number": advisory.number, "name": rules.advisory_name(advisory, rows=rows, sources=sources),
+           "status": advisory.status, "status_label": label(AdvisoryStatus, advisory.status), "status_words": words,
+           "received_on": _day(advisory.received_on), "recorded_by": _name(advisory.recorded_by), "cves": list(advisory.cves or ()),
+           "models_confirmed_on": _day(advisory.models_confirmed_on), "models_confirmed_by": _name(advisory.models_confirmed_by),
+           "status_on": _day(advisory.status_on), "status_by": _name(advisory.status_by),
+           "not_applicable_reason": advisory.not_applicable_reason,
+           "not_applicable_reason_label": label(NotApplicableReason, advisory.not_applicable_reason),
+           "changed_on": _day(advisory.changed_on), "removed_on": _day(advisory.removed_on), "removed_by": _name(advisory.removed_by),
+           "sources": [advisory_source_data(s) for s in sources if s.removed_on is None],
+           "models": [advisory_model_data(r, per_row.get(r.pk)) for r in rows],
+           "counts": total,
+           "url": _facility_url(reverse("web:security_advisory", args=[advisory.number]), advisory.tenant_id)}
+    if lines is not None:
+        out["devices"] = ([advisory_line_data(ln, (answers or {}).get((ln.asset.pk, ln.row.pk))) for ln in lines]
+                          if devices_visible else None)
+    return out
+
+
+class SecurityAdvisorySerializer(serializers.BaseSerializer):
+    """GET security-advisories/: context holds "counts" ({advisory id: AdvisoryCounts}, rules.advisory_counts for the page), "rows"
+    ({advisory id: [rows]}), "sources" ({advisory id: [sources]}), and "devices_visible" (permissions.can_view_devices)."""
+
+    def to_representation(self, advisory):
+        ctx = self.context
+        return advisory_data(advisory, counts=ctx["counts"].get(advisory.pk), rows=ctx["rows"].get(advisory.pk, []),
+                             sources=ctx["sources"].get(advisory.pk, []), devices_visible=ctx["devices_visible"])
