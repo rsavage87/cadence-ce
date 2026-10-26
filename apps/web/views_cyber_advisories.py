@@ -126,7 +126,7 @@ REOPEN_WORDS = "Reopen {number}: the devices it names are listed again, and the 
 IN_ERROR_WORDS = ("Mark {number} entered in error: it stays on record, marked, with its history; the devices it names are no longer "
                   "listed under it, and its sources' references are free for another advisory.")
 REMOVE_MODEL_WORDS = "{number} stops naming the {model}: the releases it lists for it go with it, and its devices are no longer listed under it."
-REMOVE_MODEL_CONFIRMED = " Its models are to confirm again."
+REMOVE_MODEL_CONFIRMED = " The models it names then need confirming again."
 REMOVE_SOURCE_WORDS = "Remove {source} from {number}. It stays in the advisory's history."
 OVERLAP_WORDS = "{items} {verb} on {number} ({source})."
 OVERLAP_HINT = ("The same issue can have several publications: add this one as a source of that advisory, or record it as its own (a "
