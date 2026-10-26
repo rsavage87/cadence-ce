@@ -249,8 +249,8 @@ def test_update_advisory(ctx, floor):
     model_row(a, floor.model, releases=[floor.r52], fix=floor.r56)  # confirmed
     decision(a, decided_on=TODAY - 2 * DAY, review_by=TODAY + 30 * DAY, release=floor.r52, device_model=floor.model)
     assert refused(update_advisory, a, received_on=TODAY - DAY, by=None, today=TODAY) == {
-        "received_on": f"A decision under this advisory was decided {rules.day_words(TODAY - 2 * DAY)}: the day received cannot be after "
-                       "it."}
+        "received_on": f"SD-{YY}-0001 under this advisory was decided {rules.day_words(TODAY - 2 * DAY)}: the day received cannot be "
+                       "after it."}
     a = update_advisory(a, received_on=TODAY - 9 * DAY, by=None, today=TODAY)
     assert (a.received_on, a.models_confirmed_on, a.changed_on, a.changes) == (TODAY - 9 * DAY, None, TODAY, 1)  # rules B1
     assert reasons_of(a)[-1] == "Edited"

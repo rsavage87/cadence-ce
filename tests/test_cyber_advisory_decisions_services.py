@@ -352,7 +352,8 @@ def test_refusal_for_and_would_govern_take_no_lock(floor, monkeypatch):
 def test_network_removed_needs_each_devices_own_fact(floor):
     keep = {"response": KEEP_WITH, "controls": ["network_removed", "physical_controls"]}
     assert refused(record, floor.adv, asset=floor.d["P-1"], **keep) == {
-        "controls": "P-1 has no connection recorded here: record Not connected here on it first (Record facts), or choose other controls."}
+        "controls": "P-1 is recorded as its model discloses (can connect, wireless), with no fact of its own here: record Not connected "
+                    "here on it first (Record facts), or choose other controls."}
     facts(floor.d["P-1"], floor.r52, network=Network.WIRELESS)
     assert refused(record, floor.adv, asset=floor.d["P-1"], **keep) == {
         "controls": "P-1 is recorded connected (wireless): record Not connected here on it first (Record facts), or choose other controls."}
