@@ -294,7 +294,7 @@ def test_the_list_its_filters_and_its_csv(client, signed_in, floor):
     rows = csv_rows(client.get("/security/decisions/export.csv?state=all"))
     SEEN.append(csv_text(client.get("/security/decisions/export.csv?state=all")))
     assert rows[0] == ["Number", "State", "Scope", "Reasons", "Decision", "Controls", "IT's reference for the controls", "Plan", "Accepted by",
-                       "IT exception number", "Recorded by", "Decided on", "Review by", "Ended"]
+                       "IT exception number", "Recorded by", "Decided on", "Review by", "Ended", "Why", "Advisory"]  # slice 40: 14 -> 16
     by_number = {row[0]: row for row in rows[1:]}
     assert set(by_number) == {a.number, b.number, c.number, e.number}
     assert by_number[a.number][1:6] == ["In force", "Alaris 8015 PCU on 5.2 (demo)", rules.REASONS["security_updates"],

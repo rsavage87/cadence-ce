@@ -6,11 +6,14 @@
    its response: update lines with their work orders, then this decision or the one governing it instead), and History. Review and
    renew, End, and Entered in error for permissions.can_decide on a live one: Review and renew only while its renewal would be taken,
    else the refusal's words (decisions.refusal_for: a fact to record first, or nothing it governs needing one, End then the primary
-   action); Print (a new tab) and the devices' CSV for every reader. Device security View and Equipment View only.{% endcomment %}
+   action); Print (a new tab) and the devices' CSV for every reader. Device security View and Equipment View only.
+   Slice 40, a decision for an advisory's devices: why it was recorded names the advisory (a link to its page), "For" its name in place of
+   the reasons, what holds now from its devices' lines under the advisory, each device's line beside its response, and HHS 405(d) HICP
+   2023's sentence for advisories.{% endcomment %}
 <div class="dr-h cy-panel-h">
   <div>
     <h2>{{ d.number }} · {{ scope_words }}</h2>
-    <div class="sub">{{ scope_label }} · {{ applies }}</div>
+    <div class="sub">{{ scope_label }} · {% with a=applies %}{{ a.before }}{% if a.url %}<a class="link" href="{{ a.url }}" hx-get="{{ a.url }}" hx-target="#drawer">{{ a.number }}</a>{% endif %}{{ a.after }}{% endwith %}</div>
     <div class="chips"><span class="chip {{ sd_state.tone }}">{{ sd_state.words }}</span>{% if end %}<span class="chip neutral">{{ end }}</span>{% endif %}</div>
   </div>
   <button class="iconbtn" type="button" data-act="close-drawer" aria-label="Close">{% icon "x" %}</button>
@@ -26,7 +29,8 @@
   <div class="sec"><h3>What was decided</h3>
     <dl class="dl">
       <div class="inc-wide"><dt>Scope</dt><dd>{{ scope_words }}</dd></div>
-      <div class="inc-wide"><dt>Reasons recorded</dt><dd>{% for r in reasons %}{{ r }}{% if not forloop.last %}<br>{% endif %}{% endfor %}</dd></div>
+      {% if sd_advisory %}<div class="inc-wide"><dt>For</dt><dd data-advisory-name><a class="link" href="{{ advisory_url }}" hx-get="{{ advisory_url }}" hx-target="#drawer">{{ advisory_name }}</a></dd></div>
+      {% else %}<div class="inc-wide"><dt>Reasons recorded</dt><dd>{% for r in reasons %}{{ r }}{% if not forloop.last %}<br>{% endif %}{% endfor %}</dd></div>{% endif %}
       {% if now_lines %}<div class="inc-wide"><dt>What holds now</dt><dd>{% for line in now_lines %}{{ line }}{% if not forloop.last %}<br>{% endif %}{% endfor %}</dd></div>{% endif %}
       <div class="inc-wide"><dt>Decision</dt><dd>{{ d.get_response_display }}</dd></div>
       {% if controls %}<div class="inc-wide"><dt>Controls</dt><dd><ul class="cy-rels">{% for c in controls %}<li>{{ c }}</li>{% endfor %}</ul></dd></div>{% endif %}
@@ -50,6 +54,7 @@
       <li class="cy-dev">
         <div class="cy-dev-h"><a class="tag" href="{% url 'web:asset' a.tag %}?tab=security" hx-get="{% url 'web:asset' a.tag %}?tab=security" hx-target="#drawer">{{ a.tag }}</a> {% whose_chip a %}<span class="muted">{{ row.model }} · {{ row.department }}{% if a.serial %} · serial {{ a.serial }}{% endif %}</span></div>
         <div class="cy-dev-s">{{ row.release }} · {{ row.connection }}</div>
+        {% if row.line %}<div class="cy-dev-s">{{ row.line }}</div>{% endif %}
         <div class="cy-dev-s">{% for u in row.updates %}{{ u.before }}{% if u.url %}<a class="link" href="{{ u.url }}" hx-get="{{ u.url }}" hx-target="#drawer">{{ u.number }}</a>{% else %}{{ u.number }}{% endif %}{{ u.after }}{% if not forloop.last or row.tail.before %}; {% endif %}{% endfor %}{% with t=row.tail %}{{ t.before }}{% if t.url %}<a class="link" href="{{ t.url }}" hx-get="{{ t.url }}" hx-target="#drawer">{{ t.number }}</a>{% endif %}{{ t.after }}{% endwith %}</div>
       </li>
       {% endwith %}{% endfor %}
@@ -57,6 +62,7 @@
     <p class="cy-csv"><a class="link" href="{{ csv_url }}" download>These devices as CSV</a></p>
     {% else %}<div class="empty">No device on site in its scope now.</div>{% endif %}
   </div>
+  {% if sd_hicp %}<div class="sec"><p class="hint cy-hicp">{{ sd_hicp }}</p></div>{% endif %}
   {% if can_history %}{% include "web/_history_section.html" %}{% endif %}
 </div>
 <div class="dr-f">

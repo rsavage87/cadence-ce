@@ -2,19 +2,22 @@
 {% comment %}Slice 39: the Decisions tab's body (views_cyber_decisions._list_context). HICP 2023's recommendation once, small; Needs attention
    (rules.needs_attention: web/_cyber_decision_attention.html); then the decisions the filters keep, each row's number opening its page in
    the drawer, with its state, scope, decision, review, who accepted it, IT's exception number, and who recorded it. Re-fetches itself on
-   cyber-changed (a decision recorded, renewed, ended, or marked entered in error; a register change).{% endcomment %}
+   cyber-changed (a decision recorded, renewed, ended, or marked entered in error; a register change). Slice 40: HICP's sentence for
+   advisories beside the support one, and each row's why (support ended, or the security advisory it is for).{% endcomment %}
 <div id="cy-decisions" class="cy-decisions" hx-get="{{ list_url }}{% query request.GET %}" hx-trigger="cyber-changed from:body" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap hx-target">
   <p class="hint cy-hicp">{{ hicp }}</p>
+  <p class="hint cy-hicp">{{ hicp_advisories }}</p>
   {% include "web/_cyber_decision_attention.html" %}
   <div class="sec"><h3>Decisions <span>{{ page.paginator.count }} in this list</span></h3>
-  {% if f.here %}<p class="hint">Only the decisions whose scope still holds a device here, as Needs attention counts them. <a class="link" href="{{ list_url }}?state={{ f.state }}">Show every one in this state</a></p>{% endif %}
+  {% if f.here %}<p class="hint">Only the decisions whose scope still holds a device here, as Needs attention counts them. <a class="link" href="{{ list_url }}?state={{ f.state }}{% if f.why %}&amp;why={{ f.why }}{% endif %}">Show every one in this state</a></p>{% endif %}
   <div class="tbl-wrap">
     <table class="cy-tbl">
-      <thead><tr><th>Number</th><th>Scope</th><th>Decision</th><th>Review</th><th>Accepted by</th><th>IT exception</th><th>Recorded by</th></tr></thead>
+      <thead><tr><th>Number</th><th>Why</th><th>Scope</th><th>Decision</th><th>Review</th><th>Accepted by</th><th>IT exception</th><th>Recorded by</th></tr></thead>
       <tbody>
         {% for row in rows %}{% with d=row.d %}
         <tr class="row" hx-get="{{ row.url }}" hx-target="#drawer">
           <td class="two"><a class="tag" href="{{ row.url }}">{{ d.number }}</a><small><span class="chip {{ row.state.tone }}">{{ row.state.words }}</span></small></td>
+          <td class="cy-wrap">{{ row.why }}</td>
           <td class="cy-wrap">{{ row.scope }}</td>
           <td class="cy-wrap">{{ row.response }}</td>
           <td class="cy-wrap">{{ row.review }}</td>
@@ -23,7 +26,7 @@
           <td class="cy-wrap">{{ row.recorded_by|default:"—" }}</td>
         </tr>
         {% endwith %}{% empty %}
-        <tr><td colspan="7"><div class="empty">{% if f.any %}No decision matches these filters. <a class="link" href="{{ list_url }}">Clear the filters</a>{% else %}No decision recorded yet. Record one from Needs attention, a release on the Models tab, or a device's Security tab.{% endif %}</div></td></tr>
+        <tr><td colspan="8"><div class="empty">{% if f.any %}No decision matches these filters. <a class="link" href="{{ list_url }}">Clear the filters</a>{% else %}No decision recorded yet. Record one from Needs attention, a release on the Models tab, or a device's Security tab.{% endif %}</div></td></tr>
         {% endfor %}
       </tbody>
     </table>
