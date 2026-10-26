@@ -2633,7 +2633,7 @@ class AdvisoryRow(AttentionRow):
     open_update: Link | None = None
 
 
-def _advisory_link(advisory) -> Link:
+def _advisory_page_link(advisory) -> Link:
     return Link(URLS["advisory"], (advisory.number,))
 
 
@@ -2678,7 +2678,7 @@ def _no_response_row(advisory, row, found: list, *, may_decide: bool) -> Advisor
     else:
         words += f"; {_lower_first(found[0].line.words)}"
     record = (Link(URLS["record"], (), (("advisory", advisory.number), ("model", row.device_model_id))) if may_decide else None)
-    return AdvisoryRow(words, count=n, link=_advisory_link(advisory), record=record, tags=tuple(a.line.asset.tag for a in found),
+    return AdvisoryRow(words, count=n, link=_advisory_page_link(advisory), record=record, tags=tuple(a.line.asset.tag for a in found),
                        advisory=advisory)
 
 
@@ -2687,7 +2687,7 @@ def _named_since_row(advisory, name: str, count: int, tags) -> AdvisoryRow:
         head = f"{name}: closed {day_words(advisory.status_on)}"
     else:
         head = f"{name}: not applicable here since {day_words(advisory.status_on)}"
-    return AdvisoryRow(f"{head}; {_plural(count, 'device', 'devices')} named since", count=count, link=_advisory_link(advisory),
+    return AdvisoryRow(f"{head}; {_plural(count, 'device', 'devices')} named since", count=count, link=_advisory_page_link(advisory),
                        tags=tuple(tags), advisory=advisory)
 
 
@@ -2750,13 +2750,13 @@ def advisory_attention(today: date, *, user) -> Attention:
         rows = rows_by.get(adv.pk, [])
         name = advisory_name(adv, rows=rows, sources=sources.get(adv.pk, []))
         if adv.status == AdvisoryStatus.OPEN and adv.models_confirmed_on is None:
-            out["to_confirm"].append(AdvisoryRow(name, link=_advisory_link(adv), advisory=adv))
+            out["to_confirm"].append(AdvisoryRow(name, link=_advisory_page_link(adv), advisory=adv))
         if adv.status == AdvisoryStatus.CLOSED and adv.models_confirmed_on is None:
-            out["changed"].append(AdvisoryRow(f"{name}: closed {day_words(adv.status_on)}", link=_advisory_link(adv), advisory=adv))
+            out["changed"].append(AdvisoryRow(f"{name}: closed {day_words(adv.status_on)}", link=_advisory_page_link(adv), advisory=adv))
         lines, answers = lines_by.get(adv.pk, []), answers_by.get(adv.pk, {})
         for check in _checks_of(adv, rows, lines, answers, current, devices_visible=False):
             if check.key == CHECK_RELEASE_ADDED:
-                out["checks"].append(AdvisoryRow(f"{adv.number} · {check.words}", link=_advisory_link(adv), advisory=adv))
+                out["checks"].append(AdvisoryRow(f"{adv.number} · {check.words}", link=_advisory_page_link(adv), advisory=adv))
         if not devices_visible:
             continue
         if adv.status == AdvisoryStatus.OPEN:
@@ -2776,7 +2776,7 @@ def advisory_attention(today: date, *, user) -> Attention:
                         held[1].append(adv.number)
                 elif a.kind == PATCHES_OTHER_LIST:
                     words = next(r.words for r in a.responses if r.kind == PATCHES_OTHER_LIST)
-                    out["other_list"].append(AdvisoryRow(f"{adv.number} · {asset.tag}: {words}", link=_advisory_link(adv), asset=asset,
+                    out["other_list"].append(AdvisoryRow(f"{adv.number} · {asset.tag}: {words}", link=_advisory_page_link(adv), asset=asset,
                                                          tags=(asset.tag,), advisory=adv))
         elif adv.status in (AdvisoryStatus.CLOSED, AdvisoryStatus.NOT_APPLICABLE):
             for check in _checks_of(adv, rows, lines, answers, current, devices_visible=True):

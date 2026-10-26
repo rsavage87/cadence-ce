@@ -1017,12 +1017,12 @@ def remove_model(row, *, by, today=None):
         raise ValidationError({"device_model": CHOOSE_ROW})
     with _writing("device_model"):
         locked = _lock(advisory_id)
+        now = AdvisoryModel.objects.filter(pk=pk, advisory_id=locked.pk).first()  # model_removal_refusal's order: the row first
+        if now is None:
+            raise ValidationError({"device_model": ROW_GONE.format(number=locked.number)})
         refusal = set_model_refusal(locked)
         if refusal:
             raise ValidationError({"advisory": refusal})
-        now = AdvisoryModel.objects.filter(pk=pk, advisory_id=locked.pk).first()
-        if now is None:
-            raise ValidationError({"device_model": ROW_GONE.format(number=locked.number)})
         now.advisory = locked
         decision = _model_decision(now)
         if decision is not None:
