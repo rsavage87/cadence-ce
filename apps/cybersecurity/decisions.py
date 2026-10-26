@@ -419,7 +419,8 @@ def network_refusal(devices, today: date) -> str:
     or "": each needs its own fact "Not connected here" (critique40_rules S8; a connection as the model discloses, or none recorded, is
     not that fact). Words for those recorded connected first, then for those with none recorded, up to five tags. The modal says it
     before it is tried; record_decision checks it again under its locks. Fixed queries (rules.standings)."""
-    held = rules.standings(list(devices), today)
+    devices = list(devices)
+    held = rules.standings(devices, today)
     connected = [a for a in devices if held[a.pk].connection.key == rules.CONNECTED]
     if len(connected) == 1:
         return NETWORK_CONNECTED.format(tag=connected[0].tag, connection=rules._lower_first(held[connected[0].pk].connection.words))
