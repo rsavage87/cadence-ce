@@ -898,6 +898,17 @@ SEGMENT_BLANK_WORDS = "The model's record does not say whether its devices are o
 NO_DEVICE_WORDS = "Governs no device here now: end it"
 PLAN_PASSED_WORDS = "The plan's date ({day}) has passed"
 OWNER_INACTIVE_WORDS = "The plan owner's account is deactivated"
+# Slice 40, an advisory decision's Check lines (build40 section 5.4), beside slice 39's but ALSO_ENDED (support reasons only): the advisory
+# changed since it was recorded (by its change count, never a day: a same-day revision counts; the words read the advisory's changed_on),
+# a plan to wait for the manufacturer while the advisory names a release fix for the model, a device it governs no longer recorded "Not
+# connected here" while it relies on network_removed, and devices in its scope none of which it governs needs a response now (End)
+CHECK_ADVISORY_CHANGED, CHECK_FIX_NAMED, CHECK_NETWORK_BACK, CHECK_NO_NEED = "advisory_changed", "fix_named", "network_back", "no_need"
+ADVISORY_CHANGED_WORDS = "The advisory changed since this decision ({day})"
+ADVISORY_CHANGED_NO_DAY = "The advisory changed since this decision"
+FIX_NAMED_WORDS = "Plan: wait for the manufacturer, while the advisory now names a fix ({version}): open updates"
+NETWORK_BACK_WORDS = "{tags} {verb} no longer recorded Not connected here"
+NO_NEED_WORDS = "Governs no device that needs a response to {number} now: end it"
+FOR_ADVISORY = "For {number}: "  # a mixed list's row for an advisory decision (Needs attention: "For AD-26-0003: SD-26-0004 · ...")
 
 # Needs attention (build39 section 7): each heading's words, in the panel's order
 ATTENTION_HEADINGS = {
@@ -1251,17 +1262,20 @@ def reason_words(decision) -> list:
     return [words for kind, words in REASONS.items() if kind in (decision.reasons or ())]
 
 
-def scope_words(decision, count: int | None = None) -> str:
+def scope_words(decision, count: int | None = None, *, advisory: bool = False) -> str:
     """ "CE-10002" (a device), "Alaris 8015 PCU on 5.2 (demo)" (a release: ": 11 devices of ours on site" with `count`), "Every Alaris
-    8015 PCU of ours" (a model: ": 23 on site" with `count`)."""
+    8015 PCU of ours" (a model: ": 23 on site" with `count`). `advisory` (slice 40; off by default, so slice 39's words stay): on a list
+    mixing decisions of several needs, an advisory decision's scope after its advisory's number: "AD-26-0003 · Alaris 8015 PCU on 5.2
+    (demo)" (reads decision.advisory); a support decision's words unchanged."""
     kind = scope_kind(decision)
+    prefix = f"{decision.advisory.number} · " if advisory and decision.advisory_id else ""
     if kind == DEVICE_SCOPE:
-        return decision.asset.tag
+        return f"{prefix}{decision.asset.tag}"
     model = decision.device_model.model
     if kind == RELEASE_SCOPE:
-        text = f"{model} on {release_name(decision.release)}"
+        text = f"{prefix}{model} on {release_name(decision.release)}"
         return text if count is None else f"{text}: {_plural(count, 'device', 'devices')} of ours on site"
-    text = f"Every {model} of ours"
+    text = f"{prefix}Every {model} of ours"
     return text if count is None else f"{text}: {count} on site"
 
 
@@ -1441,13 +1455,15 @@ def in_scope(decision, asset) -> bool:
 
 def decisions_now(decisions, today) -> dict:
     """{decision id: (governs, checks)} for a page of decisions (the API's list), as decision_devices and decision_checks read one: `governs`
-    the devices on site it governs now (in its scope, and it the most specific live decision there: rules' governing), in tag order;
-    `checks` its Check lines (rules.Check). An ended decision governs nothing and has no Check line: ((), ()). Composed of the rules' own
-    pieces as needs_attention composes them (the scope, the governing decision, the standings, the Check lines; the update
+    the devices on site it governs now (in its scope, and it the most specific live decision of its need key there: rules' governing), in
+    tag order; `checks` its Check lines (rules.Check). An ended decision governs nothing and has no Check line: ((), ()). Composed of the
+    rules' own pieces as needs_attention composes them (the scope, the governing decision, the standings, the Check lines; the update
     responses are not read: neither answer reads them), so a page reads a fixed number of queries however many decisions and devices:
-    the devices on site of the live decisions' models with their rows (one), the models' profiles (one), the live decisions that may
-    govern those devices (one); none when no decision on the page is live. A test holds every row to decision_devices and
-    decision_checks."""
+    the devices on site of the live decisions' models with their rows (one), the models' profiles (one), the live support decisions that
+    may govern those devices (one, with a live support decision on the page); none when no decision on the page is live. With a live
+    advisory decision on the page (slice 40), also the live advisory decisions of the page's advisories that may govern those devices
+    (one), the advisories' model rows (two), and the patches recorded that answer their lines (one: a device needs a response now; none
+    when no line needs one). A test holds every row to decision_devices and decision_checks."""
     out = {d.pk: ((), ()) for d in decisions}
     live = [d for d in decisions if d.ended_on is None]
     if not live:
@@ -1455,16 +1471,24 @@ def decisions_now(decisions, today) -> dict:
     model_ids = {_model_of(d) for d in live}
     devices = _devices_with_records(on_site().filter(device_model_id__in=model_ids).order_by("tag", "pk"))
     profiles = _profiles(model_ids)
-    governing = _governing(devices, _decisions_for(devices)) if devices else {}
+    support = any(key_of(d) == SUPPORT_KEY for d in live)
+    governing = _governing(devices, _decisions_for(devices)) if devices and support else {}
     by_model: dict = {}
     for a in devices:
         by_model.setdefault(a.device_model_id, []).append(a)
+    standings = {a.pk: _standing(a, _cached_record(a), profiles.get(a.device_model_id), today) for a in devices}
+    advisory_ids = {d.advisory_id for d in live if key_of(d) != SUPPORT_KEY}
+    ruling, keyed = {}, _NO_ADVISORY_READS
+    if advisory_ids:
+        ruling = _keyed_governing(_advisory_decisions_for(devices, advisory_ids), by_model)
+        keyed = _advisory_reads(advisory_ids, devices, standings)
     for d in live:
         model_id = _model_of(d)
         held = [a for a in by_model.get(model_id, ()) if _in_scope(d, a)]
-        found = [_decision_device(a, _standing(a, _cached_record(a), profiles.get(a.device_model_id), today), today,
-                                        governing, d, {}) for a in held]
-        out[d.pk] = (tuple(dd.asset for dd in found if dd.governed), tuple(_checks(d, found, profiles.get(model_id), today)))
+        rule = governing if key_of(d) == SUPPORT_KEY else ruling.get(key_of(d), {})
+        found = [_decision_device(a, standings[a.pk], today, rule, d, {}, keyed) for a in held]
+        out[d.pk] = (tuple(dd.asset for dd in found if dd.governed),
+                     tuple(_checks(d, found, profiles.get(model_id), today, row=keyed.row_for(d))))
     return out
 
 
@@ -1482,7 +1506,9 @@ def _in_scope(decision, a) -> bool:
 @dataclass(frozen=True)
 class DecisionDevice:
     """A device on site in a decision's scope (decision_devices): its standing, its need (or None), its update responses, the decision
-    governing it, and whether that is this decision (`governed`; else a more specific one governs it)."""
+    governing it, and whether that is this decision (`governed`; else a more specific one governs it). Slice 40, an advisory decision's
+    device: `need` None (a support need is another key's), `line` its line under the advisory (rules.AdvisoryLine; None when the advisory
+    names no row for its model), and `updates` the updates and patches records shown on that line (line_updates: never the decision)."""
 
     asset: object
     standing: DeviceStanding
@@ -1490,6 +1516,14 @@ class DecisionDevice:
     updates: tuple
     governing: object | None
     governed: bool
+    line: object | None = None
+
+    @property
+    def needs_response(self) -> bool:
+        """An advisory decision's device needs a response now: its line names it (a release the advisory names, every release, or no
+        release recorded) and no patches record answers it (PATCHES_RECORDED). Always False for a support decision's device."""
+        return (self.line is not None and self.line.needs_response
+                and not any(r.kind == PATCHES_RECORDED for r in self.updates))
 
     def words(self, today: date) -> str:
         """The device's response on the decision's page: its update lines, then "This decision" (or "Review due since ..."), or the
@@ -1503,25 +1537,161 @@ class DecisionDevice:
         return "; ".join(parts)
 
 
-def _decision_device(a, standing, today, governing: dict, decision, responses: dict) -> DecisionDevice:
+# --- slice 40: the advisory key in these readers (build40 section 5) ------------------------------------------------------------------
+#
+# An advisory decision is read beside its advisory's lines (the slice 40 section's AdvisoryLine, from each device's recorded release) and
+# the updates and patches recorded on them, never a support need: a device needs a response to the advisory when its line names it and
+# no patches record answers it (the one rule decisions._advisory_scope_read, Needs attention's renew or End, and the Check "governs no
+# device that needs a response now" read).
+
+@dataclass(frozen=True)
+class LineUpdates:
+    """A line's updates and patches records (line_updates): `responses` as advisory_answers words and orders them, without the governing
+    decision (open updates, answering or not; updates done with the version not confirmed that answer; the manufacturer's patches recorded
+    on the list the advisory names or since it was received, or on another list since); `patched` the patches record that answers the
+    line (PATCHES_RECORDED: it needs no response now), or None."""
+
+    responses: tuple = ()
+    patched: object | None = None
+
+
+def line_updates(lines) -> dict:
+    """{(asset id, row id): LineUpdates} for the lines of `lines` that need a response (AdvisoryLine.needs_response): advisory_answers'
+    update half, with its predicates and words (answers_row, _patches_kind, _open_update_words, _patches_words; a test holds the two
+    equal), without the governing decision or its words (so no fiscal year is read). One query (none when no line needs a response)."""
+    from apps.workorders.models import OPEN_STATUSES
+
+    needing = [ln for ln in lines if ln.needs_response]
+    if not needing:
+        return {}
+    by_device: dict = {}
+    for u in _update_rows(needing):
+        by_device.setdefault(u.asset_id, []).append(u)
+    out = {}
+    for ln in needing:
+        shown, patched = [], None
+        for u in by_device.get(ln.asset.pk, ()):
+            wo = u.work_order
+            if wo is not None and wo.status in OPEN_STATUSES:
+                kind = UPDATE_OPEN if answers_row(u, ln.row) else UPDATE_ELSEWHERE
+                shown.append(Response(kind, _open_update_words(u, ln.row), wo.number, update=u))
+            elif wo is not None and not u.outcome:
+                if answers_row(u, ln.row):
+                    day = f" {day_words(wo.completed_on)}" if wo.completed_on else ""
+                    shown.append(Response(UPDATE_NOT_CONFIRMED, f"Update done{day}, version not confirmed: Confirm version ({wo.number})",
+                                          wo.number, update=u))
+            else:
+                kind = _patches_kind(u, ln.row)
+                if kind:
+                    shown.append(Response(kind, _patches_words(u, ln.row), wo.number if wo is not None else "", update=u))
+                    if kind == PATCHES_RECORDED and patched is None:
+                        patched = u
+        out[(ln.asset.pk, ln.row.pk)] = LineUpdates(tuple(shown), patched)
+    return out
+
+
+def needs_now(line, updates: dict) -> bool:
+    """Whether a device needs a response to the advisory now: `line` (or None: the advisory names no row for its model) names it, and no
+    patches record answers it (`updates`: line_updates'). No query."""
+    if line is None or not line.needs_response:
+        return False
+    found = updates.get((line.asset.pk, line.row.pk))
+    return found is None or found.patched is None
+
+
+def lines_for(devices, standings: dict, rows) -> dict:
+    """{(asset id, advisory id): AdvisoryLine} for the devices of `devices` (their standings read: `standings`) under the rows of `rows`
+    (rows_of's) naming their models (an advisory names a model once). No query."""
+    by_model: dict = {}
+    for a in devices:
+        by_model.setdefault(a.device_model_id, []).append(a)
+    return {(a.pk, row.advisory_id): _line(a, row, standings[a.pk]) for row in rows for a in by_model.get(row.device_model_id, ())}
+
+
+@dataclass(frozen=True)
+class _AdvisoryReads:
+    """What a reader of advisory decisions reads once for its devices (_advisory_reads): their lines under the advisories, the updates
+    and patches recorded on them, and the advisories' rows by model."""
+
+    lines: dict  # {(asset id, advisory id): AdvisoryLine}
+    updates: dict  # {(asset id, row id): LineUpdates}
+    rows: dict  # {(advisory id, model id): the advisory's row naming the model}
+
+    def row_for(self, decision):
+        """The row of the decision's advisory naming the decision's model, or None (a support decision; or no such row)."""
+        if key_of(decision) == SUPPORT_KEY:
+            return None
+        return self.rows.get((decision.advisory_id, _model_of(decision)))
+
+
+_NO_ADVISORY_READS = _AdvisoryReads({}, {}, {})
+
+
+def _advisory_reads(advisory_ids, devices, standings: dict) -> _AdvisoryReads:
+    """The advisories' rows (rows_of: two queries), the devices' lines under them (lines_for), and the updates recorded on those that
+    need a response (line_updates: one); none without an advisory."""
+    if not advisory_ids:
+        return _NO_ADVISORY_READS
+    rows = rows_of(list(advisory_ids))
+    lines = lines_for(devices, standings, rows)
+    return _AdvisoryReads(lines, line_updates(lines.values()), {(r.advisory_id, r.device_model_id): r for r in rows})
+
+
+def _advisory_decisions_for(devices, advisory_ids) -> list:
+    """The live decisions of the advisories `advisory_ids` that may govern `devices` (their own, or their models' release and model
+    scopes), with what their words read. One query."""
+    return list(DeviceSecurityDecision.objects.filter(applies_to=AppliesTo.ADVISORY.value, ended_on__isnull=True,
+                                                      advisory_id__in=list(advisory_ids))
+                .filter(Q(asset_id__in=[a.pk for a in devices]) | Q(asset__isnull=True, device_model_id__in={a.device_model_id for a in devices}))
+                .select_related(*_DECISION_RELATED).order_by("number"))
+
+
+def _keyed_governing(decisions, by_model: dict) -> dict:
+    """{need key: {asset id: the governing live decision of that key, or None}} for the live advisory decisions `decisions` (every live
+    one of each key), over the devices on site of their models (`by_model`): _governing for each key apart, never one key's decision read
+    as another's. No query."""
+    out = {}
+    for key, found in _by_key(decisions).items():
+        members = list({a.pk: a for model_id in {_model_of(d) for d in found} for a in by_model.get(model_id, ())}.values())
+        out[key] = _governing(members, found)
+    return out
+
+
+def _decision_device(a, standing, today, governing: dict, decision, responses: dict,
+                     keyed: _AdvisoryReads = _NO_ADVISORY_READS) -> DecisionDevice:
+    """A DecisionDevice by the decision's need key: a support decision's device with its support need and update responses
+    (`responses`: update_responses'); an advisory decision's with its line under the advisory and the updates recorded on it (`keyed`).
+    `governing` is the decision's key's."""
     gov = governing.get(a.pk)
-    return DecisionDevice(asset=a, standing=standing, need=support_need(standing, today), updates=tuple(responses.get(a.pk, ())),
-                          governing=gov, governed=gov is not None and gov.pk == decision.pk)
+    governed = gov is not None and gov.pk == decision.pk
+    if key_of(decision) == SUPPORT_KEY:
+        return DecisionDevice(asset=a, standing=standing, need=support_need(standing, today), updates=tuple(responses.get(a.pk, ())),
+                              governing=gov, governed=governed)
+    line = keyed.lines.get((a.pk, decision.advisory_id))
+    found = keyed.updates.get((a.pk, line.row.pk)) if line is not None else None
+    return DecisionDevice(asset=a, standing=standing, need=None, updates=found.responses if found is not None else (), governing=gov,
+                          governed=governed, line=line)
 
 
 def decision_devices(decision, today: date) -> list:
     """The devices on site in the decision's scope (scope_devices), in tag order, each a DecisionDevice: its standing (tag, serial,
-    model, department, connection, release), its need, its update responses, and the decision governing it (this one, `governed`, or a
-    more specific one). Fixed queries however many devices: the devices with their rows, their models' profiles, the live decisions
-    that may govern them, the update responses (four; one when the scope holds no device on site)."""
+    model, department, connection, release), its need (a support decision's) or its line under the advisory (an advisory decision's), its
+    update responses, and the decision of its need key governing it (this one, `governed`, or a more specific one). Fixed queries however
+    many devices: the devices with their rows, their models' profiles, the live decisions of its key that may govern them, the update
+    responses (four for a support decision); for an advisory decision, the advisory's rows and the updates recorded on its lines in place
+    of the update responses (six); one when the scope holds no device on site."""
     devices = list(_scope_of(decision).select_related(*_WITH_RECORD).order_by("tag"))
     if not devices:
         return []
     profiles = _profiles(a.device_model_id for a in devices)
-    governing = _governing(devices, _decisions_for(devices))
-    responses = update_responses(devices, today)
-    return [_decision_device(a, _standing(a, _cached_record(a), profiles.get(a.device_model_id), today), today, governing, decision,
-                             responses) for a in devices]
+    key = key_of(decision)
+    governing = _governing(devices, _decisions_for(devices, key))
+    standings = {a.pk: _standing(a, _cached_record(a), profiles.get(a.device_model_id), today) for a in devices}
+    if key == SUPPORT_KEY:
+        responses, keyed = update_responses(devices, today), _NO_ADVISORY_READS
+    else:
+        responses, keyed = {}, _advisory_reads({decision.advisory_id}, devices, standings)
+    return [_decision_device(a, standings[a.pk], today, governing, decision, responses, keyed) for a in devices]
 
 
 _SPECIFIC = {MODEL_SCOPE: 0, RELEASE_SCOPE: 1, DEVICE_SCOPE: 2}  # how specific a scope is: the most specific live decision governs
@@ -1529,8 +1699,8 @@ _SPECIFIC = {MODEL_SCOPE: 0, RELEASE_SCOPE: 1, DEVICE_SCOPE: 2}  # how specific 
 
 def under(decision, devices: list) -> list:
     """The DecisionDevices of `devices` (decision_devices') the decision governs, or, ended, would govern recorded again for its scope
-    now (none governing them, or a live decision no more specific than its scope): never a device a more specific live decision
-    governs, as Record decision reads a scope (decisions.would_govern; skeptics T0). No query."""
+    now (none of its need key governing them, or a live decision of its key no more specific than its scope): never a device a more
+    specific live decision governs, as Record decision reads a scope (decisions.would_govern; skeptics T0). No query."""
     if decision.ended_on is None:
         return [dd for dd in devices if dd.governed]
     rank = _SPECIFIC[scope_kind(decision)]
@@ -1538,11 +1708,18 @@ def under(decision, devices: list) -> list:
 
 
 def holding_lines(decision, devices: list) -> list:
-    """A decision's "What holds now" (its page and print): the standing lines of the needs of the devices it governs (under), each once,
-    in tag order; never a line that holds only for a device a more specific live decision governs (skeptics T0). No query."""
+    """A decision's "What holds now" (its page and print): for a support decision, the standing lines of the needs of the devices it
+    governs (under); for an advisory decision (slice 40), the lines of those devices that need a response to the advisory now ("On 5.2
+    (demo), a release the advisory names"); each once, in tag order; never a line that holds only for a device a more specific live
+    decision governs (skeptics T0). No query."""
+    support = key_of(decision) == SUPPORT_KEY
     out: list = []
     for dd in under(decision, devices):
-        for line in dd.need.lines if dd.need is not None else ():
+        if support:
+            lines = dd.need.lines if dd.need is not None else ()
+        else:
+            lines = (dd.line.words,) if dd.needs_response else ()
+        for line in lines:
             if line not in out:
                 out.append(line)
     return out
@@ -1565,17 +1742,43 @@ def _model_of(decision):
     return decision.asset.device_model_id if decision.asset_id else decision.device_model_id
 
 
-def _checks(decision, devices: list, profile_row, today: date) -> list:
+def _advisory_checks(decision, governed: list, row) -> list:
+    """An advisory decision's own Check lines (build40 section 5.4): the advisory changed since it was recorded (its change count, the
+    words its changed_on), a plan to wait for the manufacturer while the advisory's row for the model (`row`) names a release fix, a
+    device it governs no longer recorded "Not connected here" (its own fact) while it relies on network_removed. Reads decision.advisory."""
+    out = []
+    advisory = decision.advisory
+    if advisory.changes != decision.advisory_changes:
+        out.append(Check(CHECK_ADVISORY_CHANGED, ADVISORY_CHANGED_WORDS.format(day=day_words(advisory.changed_on))
+                         if advisory.changed_on else ADVISORY_CHANGED_NO_DAY))
+    if decision.plan == DecisionPlan.WAIT_FOR_MANUFACTURER and row is not None and row.fix_release_id:
+        out.append(Check(CHECK_FIX_NAMED, FIX_NAMED_WORDS.format(version=release_name(row.fix_release))))
+    if NETWORK_REMOVED in (decision.controls or ()):
+        back = [dd.asset.tag for dd in governed if not (dd.standing.connection.key == NOT_CONNECTED and dd.standing.connection.here)]
+        if back:
+            out.append(Check(CHECK_NETWORK_BACK, NETWORK_BACK_WORDS.format(tags=_tags(back), verb="is" if len(back) == 1 else "are"),
+                             tags=tuple(back)))
+    return out
+
+
+def _checks(decision, devices: list, profile_row, today: date, *, row=None) -> list:
     """The Check lines from the decision's devices on site (DecisionDevices) and its model's profile row (or None). No query but the
-    plan owner's row when the decision has not read it. A reason ended counts only from a decidable need (review 39 F0): the reasons a
-    decision may name (decisions._check_reasons) are those; an extended one (the OS ended, the manufacturer's updates continuing) names
-    none, so its end is information on the device, never a Check nobody could answer."""
+    plan owner's row (and an advisory decision's advisory) when the decision has not read it. A reason ended counts only from a decidable
+    need (review 39 F0): the reasons a decision may name (decisions._check_reasons) are those; an extended one (the OS ended, the
+    manufacturer's updates continuing) names none, so its end is information on the device, never a Check nobody could answer. An
+    advisory decision (slice 40) names no reason (never ALSO_ENDED): its own Checks first (_advisory_checks, with `row`: its advisory's
+    row for its model, or None), and, while its scope holds a device on site, "Governs no device that needs a response to AD-26-0003 now:
+    end it" when none it governs needs one (End answers it, as decisions.refusal_for's NOT_NEEDED)."""
     out = []
     governed = [dd for dd in devices if dd.governed]
-    ended_now = {kind for dd in governed if dd.need is not None and dd.need.decidable for kind in dd.need.ended}
-    for kind in REASONS:
-        if kind in ended_now and kind not in (decision.reasons or ()):
-            out.append(Check(CHECK_ALSO_ENDED, ALSO_ENDED[kind]))
+    advisory = key_of(decision) != SUPPORT_KEY
+    if advisory:
+        out += _advisory_checks(decision, governed, row)
+    else:
+        ended_now = {kind for dd in governed if dd.need is not None and dd.need.decidable for kind in dd.need.ended}
+        for kind in REASONS:
+            if kind in ended_now and kind not in (decision.reasons or ()):
+                out.append(Check(CHECK_ALSO_ENDED, ALSO_ENDED[kind]))
     if SEGMENTED_CONTROL in (decision.controls or ()):
         segmented = profile_row.segmented if profile_row is not None else ""
         if segmented == Segmented.NONE:
@@ -1586,6 +1789,8 @@ def _checks(decision, devices: list, profile_row, today: date) -> list:
             out.append(Check(CHECK_SEGMENT_BLANK, SEGMENT_BLANK_WORDS, info=True))
     if not devices:
         out.append(Check(CHECK_NO_DEVICE, NO_DEVICE_WORDS, action="end"))
+    elif advisory and not any(dd.needs_response for dd in governed):
+        out.append(Check(CHECK_NO_NEED, NO_NEED_WORDS.format(number=decision.advisory.number), action="end"))
     if scope_kind(decision) != DEVICE_SCOPE:
         known = {str(i) for i in (decision.governed_ids or ())}
         joined = [dd.asset.tag for dd in governed if str(dd.asset.pk) not in known]
@@ -1616,10 +1821,12 @@ def decision_checks(decision, today: date, *, devices=None) -> list:
     device on site in its scope ("Governs no device here now: end it"); devices it governs that it did not when recorded (release or
     model scope: "2 devices joined since: CE-10017, CE-10021", by identity from governed_ids); the plan's date passed ("The plan's date
     (Mar 1, 2027) has passed"); take out of use with a device it governs still in service a day or more after ("Still in service since
-    the decision to take it out of use (Oct 21, 2026)"); the plan owner's account deactivated. An ended decision has none. `devices`:
-    decision_devices' result when the caller has it (else read here). Fixed queries: decision_devices' (when not given), the model's
-    profile (only when no device of its model was read and it relies on `segmented`), the decision's device and plan owner (when not
-    read)."""
+    the decision to take it out of use (Oct 21, 2026)"); the plan owner's account deactivated. An advisory decision (slice 40): no reason
+    ended, and its own (_checks: the advisory changed since, a fix named while waiting for the manufacturer, a device no longer recorded
+    "Not connected here", no device it governs needing a response now). An ended decision has none. `devices`: decision_devices' result
+    when the caller has it (else read here). Fixed queries: decision_devices' (when not given), the model's profile (only when no device of
+    its model was read and it relies on `segmented`), an advisory decision's row for its model (only when its scope holds no device on
+    site and it plans to wait for the manufacturer), the decision's device, plan owner, and advisory (when not read)."""
     if decision.ended_on is not None:
         return []
     if devices is None:
@@ -1628,7 +1835,13 @@ def decision_checks(decision, today: date, *, devices=None) -> list:
     profile_row = next((dd.standing.facts.profile for dd in devices if dd.asset.device_model_id == model_id), _UNREAD)
     if profile_row is _UNREAD:
         profile_row = profile(model_id) if SEGMENTED_CONTROL in (decision.controls or ()) else None
-    return _checks(decision, devices, profile_row, today)
+    row = None
+    if key_of(decision) != SUPPORT_KEY:
+        # decision_devices read every row of the advisory: with devices on site, a line's row is the model's, and none means no row
+        row = next((dd.line.row for dd in devices if dd.line is not None), None)
+        if not devices and decision.plan == DecisionPlan.WAIT_FOR_MANUFACTURER:
+            row = next(iter(r for r in rows_of([decision.advisory_id]) if r.device_model_id == model_id), None)
+    return _checks(decision, devices, profile_row, today, row=row)
 
 
 # --- the device drawer's Security tab --------------------------------------------------------------------------------------------------
@@ -1805,9 +2018,14 @@ def _group_rows(groups: dict, needs: dict, *, may_decide: bool, standings: dict,
     return rows
 
 
+def _lead(d) -> str:
+    """ "For AD-26-0003: " before an advisory decision's row on a list mixing needs (Needs attention); "" for a support decision."""
+    return FOR_ADVISORY.format(number=d.advisory.number) if d.advisory_id else ""
+
+
 def _decision_row(d, words: str, *, held: int, may_decide: bool, renew: bool = False, end: bool = False) -> AttentionRow:
     scope = scope_words(d, held if scope_kind(d) != DEVICE_SCOPE and held else None)
-    return AttentionRow(f"{d.number} · {scope}; {_lower_first(words)}", link=Link(URLS["decision"], (d.number,)), decision=d,
+    return AttentionRow(f"{_lead(d)}{d.number} · {scope}; {_lower_first(words)}", link=Link(URLS["decision"], (d.number,)), decision=d,
                         record=Link(URLS["record"], (), (("supersedes", d.number),)) if may_decide and renew else None,
                         end=Link(URLS["end"], (d.number,)) if may_decide and end else None)
 
@@ -1833,8 +2051,13 @@ def needs_attention(today: date, *, user) -> Attention:
     - no_device: live decisions whose scope holds no device on site, End.
     - checks: the other Check lines of live decisions whose scope holds a device on site (decision_checks', not the information ones).
     A device with a need and a decision past review is listed under its decision (review_due), never as "no decision recorded".
+    Slice 40 (build40 section 5.1): the device headings read the support need and support decisions only (the advisories' are the
+    Advisories tab's, rules.advisory_attention); the decision headings read every live decision, each governed by its own need key. An
+    advisory decision's rows start "For AD-26-0003:"; it offers Review and renew while a device it governs needs a response to its
+    advisory now (needs_now: its line names it and no patches record answers it), else End (no "not recorded" case: a release not
+    recorded is a need); its Checks are _checks' for its key.
     Fixed queries however many devices and decisions: the devices on site with their rows, the live decisions, the models' profiles, the
-    update responses (four)."""
+    update responses (four); with a live advisory decision, also its advisories' rows and the updates recorded on their lines (seven)."""
     from apps.accounts.models import Level, Module
 
     from . import permissions as perms
@@ -1844,8 +2067,9 @@ def needs_attention(today: date, *, user) -> Attention:
     may_decide = user is None or perms.can_decide(user)
     sees_work = user is None or user.has_level(Module.WORKORDERS, Level.VIEW)
     devices = _devices_with_records(on_site())
-    decisions = list(_live().select_related(*_DECISION_RELATED).order_by("number"))
-    model_ids = {a.device_model_id for a in devices} | {_model_of(d) for d in decisions}
+    every = list(_live_all().select_related(*_DECISION_RELATED).order_by("number"))
+    decisions = [d for d in every if key_of(d) == SUPPORT_KEY]  # the support need's: the device headings read only these
+    model_ids = {a.device_model_id for a in devices} | {_model_of(d) for d in every}
     profiles = _profiles(model_ids) if model_ids else {}
     standings = {a.pk: _standing(a, _cached_record(a), profiles.get(a.device_model_id), today) for a in devices}
     needs = {pk: support_need(s, today) for pk, s in standings.items()}
@@ -1878,7 +2102,11 @@ def needs_attention(today: date, *, user) -> Attention:
     for key in ("no_decision", "ending"):
         rows[key] = _group_rows(groups[key], needs, may_decide=may_decide, standings=standings, by_model=by_model) + rows[key]
 
-    for d in decisions:
+    advisory = [d for d in every if key_of(d) != SUPPORT_KEY]
+    ruling = _keyed_governing(advisory, by_model)  # every live advisory decision: no query
+    keyed = _advisory_reads({d.advisory_id for d in advisory}, devices, standings)  # none without one
+    for d in every:
+        support = key_of(d) == SUPPORT_KEY
         if d.asset_id:
             held = [by_pk[d.asset_id]] if d.asset_id in by_pk else []
         else:
@@ -1886,22 +2114,28 @@ def needs_attention(today: date, *, user) -> Attention:
         if not held:
             rows["no_device"].append(_decision_row(d, review_words(d, today), held=0, may_decide=may_decide, end=True))
             continue
+        dds = [_decision_device(a, standings[a.pk], today, governing if support else ruling.get(key_of(d), {}), d, responses, keyed)
+               for a in held]
         state = decision_state(d, today)
         if state in (REVIEW_DUE, REVIEW_SOON):
-            # Review and renew while a device it governs has a decidable need (a renewal governs the same devices; never one a more
-            # specific live decision governs: skeptics T0); End only when none needs one as recorded; neither while one has no need
-            # only because what it, or a reason the decision names, turns on is not recorded (need_unknown with its reasons: its page
-            # says what to record first; skeptics S3, T2). decisions.refusal_for's kinds, in the same order.
-            ruled = [a for a in held if governing.get(a.pk) is not None and governing[a.pk].pk == d.pk]
-            renewable = any(needs[a.pk] is not None and needs[a.pk].decidable for a in ruled)
-            unknown = not renewable and any(need_unknown(standings[a.pk], d.reasons) for a in ruled)
+            if support:
+                # Review and renew while a device it governs has a decidable need (a renewal governs the same devices; never one a more
+                # specific live decision governs: skeptics T0); End only when none needs one as recorded; neither while one has no need
+                # only because what it, or a reason the decision names, turns on is not recorded (need_unknown with its reasons: its
+                # page says what to record first; skeptics S3, T2). decisions.refusal_for's kinds, in the same order.
+                ruled = [a for a in held if governing.get(a.pk) is not None and governing[a.pk].pk == d.pk]
+                renewable = any(needs[a.pk] is not None and needs[a.pk].decidable for a in ruled)
+                unknown = not renewable and any(need_unknown(standings[a.pk], d.reasons) for a in ruled)
+            else:
+                # An advisory decision: Review and renew while a device it governs needs a response now; End otherwise
+                # (decisions._advisory_scope_read's NOT_NEEDED and GONE); never "not recorded" (a release not recorded is a need)
+                renewable, unknown = any(dd.needs_response for dd in dds if dd.governed), False
             rows[state].append(_decision_row(d, review_words(d, today), held=len(held), may_decide=may_decide, renew=renewable,
                                              end=not renewable and not unknown))
-        dds = [_decision_device(a, standings[a.pk], today, governing, d, responses) for a in held]
-        for check in _checks(d, dds, profiles.get(_model_of(d)), today):
+        for check in _checks(d, dds, profiles.get(_model_of(d)), today, row=keyed.row_for(d)):
             if not check.info and check.key != CHECK_NO_DEVICE:
-                rows["checks"].append(AttentionRow(f"{d.number} · {check.words}", link=Link(URLS["decision"], (d.number,)), decision=d,
-                                                   tags=check.tags))
+                rows["checks"].append(AttentionRow(f"{_lead(d)}{d.number} · {check.words}", link=Link(URLS["decision"], (d.number,)),
+                                                   decision=d, tags=check.tags))
     headings = tuple(Heading(key, words, sum(r.count for r in rows[key]), tuple(rows[key]), info=key in ATTENTION_INFO)
                      for key, words in ATTENTION_HEADINGS.items() if rows[key])
     return Attention(headings=headings)
@@ -1927,10 +2161,11 @@ def holds_device_q() -> Q:
 
 
 def badge(today: date) -> dict:
-    """{"count": n, "hot": n > 0}: live support decisions past their review (review_by before today) whose scope still holds a device on
-    site (holds_device_q), as Needs attention's review_due counts them. One aggregate query; never reads standings. The caller gates it
+    """{"count": n, "hot": n > 0}: live decisions of any need key (support, or an advisory's: slice 40) past their review (review_by
+    before today) whose scope still holds a device on site (holds_device_q), as Needs attention's review_due counts them (the Decisions
+    tab's `?state=review_due&here=1` lists the same). One aggregate query; never reads standings. The caller gates it
     (permissions.can_view_devices, never a scoped user)."""
-    count = _live().filter(review_by__lt=today).filter(holds_device_q()).count()
+    count = (DeviceSecurityDecision.objects.filter(ended_on__isnull=True, review_by__lt=today).filter(holds_device_q()).count())
     return {"count": count, "hot": count > 0}
 
 
