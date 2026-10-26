@@ -35,7 +35,8 @@ owner (its facts stay as they were, with its history).
   responses (updates and patches recorded, each work order's number a link with Work orders View; the governing decision's number, a link,
   its state, and its sentence; or "No response recorded"); Record decision for this device under it (permissions.can_decide, while it
   needs a response and no decision covers it; Review and renew for its own device decision past review), Open software update with the
-  advisory (permissions.can_open_updates, a release or patches remedy, no update open, not held as evidence), Reopen it for a
+  advisory (permissions.can_open_updates, a release or patches remedy, no update open, nor one done with the version not confirmed
+  (NO_OPENER, as the advisory's page: Confirm version first), not held as evidence), Reopen it for a
   not-applicable one where the device is named since (Device security Edit, advisories.reopen_refusal). The rest are counted ("2 other
   advisories name this model: closed or not applicable, with nothing listed for this device."); none: rules.DEVICE_ADVISORIES_EMPTY. A
   fixed number of queries however many advisories, rows, devices, and decisions.
@@ -222,6 +223,9 @@ CVES_SHOWN = 3
 REST_WORDS = "{count} {other}{noun} this model: closed or not applicable, with nothing listed for this device."
 UPDATE_REMEDIES = ("release", "patches")  # models.AdvisoryRemedy: what an update from the advisory can install
 OPEN_KINDS = (rules.UPDATE_OPEN, rules.UPDATE_ELSEWHERE)  # an update open on the device, answering the line or not
+# What answers the line leaves nothing to open, as on the advisory's page (views_cyber_advisories.NO_OPENER): patches recorded, or an
+# update done with the version not confirmed (Confirm version on its work order first; review 40 #18)
+NO_OPENER = (rules.PATCHES_RECORDED, rules.UPDATE_NOT_CONFIRMED)
 _ADVISORY_DECISION_RELATED = ("asset", "device_model", "release", "plan_owner", "recorded_by", "advisory")
 
 
@@ -346,7 +350,8 @@ def advisory_lines(request, asset, today) -> dict:
             "record_url": record_decision_url(advisory=adv.number, asset=asset.tag) if decide and not own else "",
             "renew_url": record_decision_url(supersedes=gov.number) if decide and own else "",
             "open_url": (f"{reverse('web:cybersecurity_update_open', args=[asset.tag])}?{urlencode({'advisory': adv.number})}"
-                         if can_open and needs and line.row.remedy in UPDATE_REMEDIES and not update_open else ""),
+                         if can_open and needs and answer.kind not in NO_OPENER and line.row.remedy in UPDATE_REMEDIES
+                         and not update_open else ""),
             "reopen_url": (reverse("web:security_advisory_reopen", args=[adv.number])
                            # the reader's state checks (user None); the level once above (Edit reopens one not applicable)
                            if named_since and can_edit and cyber_advisories.reopen_refusal(adv, user=None) is None else ""),

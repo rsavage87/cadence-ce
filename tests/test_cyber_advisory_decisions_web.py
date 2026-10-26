@@ -413,9 +413,10 @@ def test_the_prefill_reads_the_latest_advisory_decision_and_copies_only_what_the
     latest = decide(newer, asset=floor.d["P-1"], response=NOT_IN_USE, decided_on=today - 25 * DAY)
     r = client.get(new_url(floor, asset="P-1"), **MODAL)
     body = html(r)
-    assert r.context["prefill_note"] == forms_cyber_decisions.PREFILL_NOTE.format(
-        number=latest.number, review=f"review by {rules.day_words(latest.review_by)}")
-    assert checked(body, "response") == [] and checked(body, "controls") == []  # "not in use here" is never another advisory's judgment
+    # the latest is the source (never the older one): "not in use here" is never another advisory's judgment, so it copies nothing and
+    # no prefill is noted (review 40 #11)
+    assert r.context["prefill_note"] == "" and latest.number not in body
+    assert checked(body, "response") == [] and checked(body, "controls") == []
     facts(floor.d["P-2"], floor.r52, network=Network.NOT_CONNECTED)  # network_removed needs the device's own fact
     source = decide(newer, asset=floor.d["P-2"], response=KEEP_WITH, controls=["network_removed", "recorded_elsewhere"],
                     controls_reference="CHG-77", plan=DecisionPlan.REPLACE_PLANNED, plan_by=today + 200 * DAY, plan_owner=kim)
@@ -480,7 +481,8 @@ def test_the_decisions_tab_says_why_and_lists_by_it(client, signed_in, floor):
     s = decide(device_model=floor.model, decided_on=today - 400 * DAY, review_by=today + 100 * DAY)
     r = client.get("/security/decisions/")
     body = html(r)
-    assert rules.HICP_DECISIONS in body and rules.HICP_ADVISORY_DECISIONS in body
+    # both sentences, their shared last one said once (smoke S2)
+    assert rules.HICP_DECISIONS in body and views_cyber_decisions.hicp_second(rules.HICP_DECISIONS, rules.HICP_ADVISORY_DECISIONS) in body
     assert "devices past their support, and every decision to review" in body
     rows = {row["d"].number: row for row in r.context["rows"]}
     assert rows[a.number]["why"] == f"Security advisory {floor.adv.number}" and rows[s.number]["why"] == AppliesTo.SUPPORT_ENDED.label

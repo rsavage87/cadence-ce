@@ -34,10 +34,13 @@ advisory decision is read and recorded only beside its own advisory, never a sup
   it before it is tried. A scope whose devices are each recorded "Not connected here" starts at Keep in use with controls, taken off the
   network (critique40_practice S1). A new advisory decision is prefilled (forms_cyber_decisions.prefill_initial, its note) from the live
   decision of exactly this scope of another need key (support first, else the most recently decided advisory decision), past its review
-  or not. `from=advisory` answers with the advisory's page (views_cyber_advisories.advisory_saved); opened directly, it goes there.
+  or not; a source that copies nothing (another advisory's "not in use here": prefill_copies) prefills nothing, with no note, and the
+  "Not connected here" start holds as with none. `from=advisory` answers with the advisory's page (views_cyber_advisories.advisory_saved);
+  opened directly, it goes there.
 - The list's "Why" filter (`why=support|advisory`) and columns (the CSV's "Why" and "Advisory" at the end); a decision's page and print
   name the advisory ("For: AD-26-0003 · DEMO-ADV-0001 · Alaris 8015 PCU", a link to its page), what holds now from its devices' lines
-  under the advisory, the verb from rules.who_verb, and HICP's sentence by key; the tab shows both sentences.
+  under the advisory, the verb from rules.who_verb, and HICP's sentence by key; the tab shows both sentences, the second without the
+  last sentence they share (IT's exception stays in IT's system: HICP_TAIL, said once; hicp_second).
 
 Who: reading needs permissions.can_view_devices (Device security View and Equipment View: a decision names devices); recording, renewing,
 ending, and marking one entered in error need permissions.can_decide (Device security Approve and Equipment View). Anyone else gets a
@@ -78,7 +81,7 @@ from . import history_tabs, views_cybersecurity
 from .decorators import web_view
 from .exports import csv_response
 from .forms import parse_uuid
-from .forms_cyber_decisions import EndForm, RecordDecisionForm, prefill_initial, prefill_note, renew_initial
+from .forms_cyber_decisions import EndForm, RecordDecisionForm, prefill_copies, prefill_initial, prefill_note, renew_initial
 from .htmx import PAGE_SIZE, is_partial, toast
 from .views import asset_drawer_context, get_asset
 
@@ -111,6 +114,18 @@ IN_ERROR_WORDS = ("Mark {number} entered in error: it stays on record, marked, w
 # The print's closing lines
 SYSTEM_OF_RECORD = "As recorded in Cadence; IT's exception record ({reference}) is the system of record."
 NO_EXCEPTION = "As recorded in Cadence; no IT exception number is recorded for it."
+# The last sentence HICP's two sentences share (rules.HICP_DECISIONS, rules.HICP_ADVISORY_DECISIONS): the Decisions tab, showing both,
+# says it once, after the first (hicp_second; smoke S2). A page showing one sentence shows it whole.
+HICP_TAIL = "IT's exception stays in IT's system; record its number here."
+
+
+def hicp_second(first: str, second: str) -> str:
+    """The second of two HICP sentences shown together: without HICP_TAIL when both end with it (said once, by the first), else whole
+    (a later edit of either never drops words the first does not say)."""
+    if first.endswith(HICP_TAIL) and second.endswith(HICP_TAIL):
+        return second.removesuffix(HICP_TAIL).rstrip()
+    return second
+
 
 # The list's filters, in words (the values are rules' and the models' own slugs)
 LIVE, ALL = "", "all"
@@ -301,7 +316,7 @@ def _list_context(request) -> dict:
     return {**_shell(request), "list_url": reverse("web:security_decisions"), "f": f,
             "options": {"states": STATE_FILTERS, "scopes": SCOPE_FILTERS, "responses": RESPONSE_FILTERS, "whys": WHY_FILTERS},
             "page": page, "rows": [_row(d, today) for d in page.object_list], "attention": _attention(request, today),
-            "hicp": rules.HICP_DECISIONS, "hicp_advisories": rules.HICP_ADVISORY_DECISIONS,
+            "hicp": rules.HICP_DECISIONS, "hicp_advisories": hicp_second(rules.HICP_DECISIONS, rules.HICP_ADVISORY_DECISIONS),
             "can_decide": cyber_perms.can_decide(request.user)}
 
 
@@ -757,8 +772,9 @@ def decision_new(request):
     """Record decision (GET the modal, POST it): permissions.can_decide; decisions.record_decision for the scope in the address, the
     reasons that hold now (sent with the form, so a change meanwhile is refused under them), and the decision superseded (Review and
     renew). Saved, it answers where it was opened from (`from`), else with the new decision's page. Slice 40, an advisory's scope
-    (`advisory=`): its own need key throughout; a new decision prefilled from the scope's live decision of another need key (its note),
-    else, when every device it would govern is recorded "Not connected here", Keep in use with controls, taken off the network."""
+    (`advisory=`): its own need key throughout; a new decision prefilled from the scope's live decision of another need key (its note)
+    when that copies anything (prefill_copies), else, when every device it would govern is recorded "Not connected here", Keep in use
+    with controls, taken off the network."""
     _need_decide(request.user)
     scope = _scope(request)
     if request.method != "POST" and not request.htmx:
@@ -777,8 +793,11 @@ def decision_new(request):
             initial = renew_initial(scope.old, today)
         elif scope.advisory is not None:
             source = _prefill_source(scope)
-            if source is not None:
-                initial, prefill = prefill_initial(source, today, scope.key), prefill_note(source, today)
+            copied = prefill_initial(source, today, scope.key) if source is not None else {}
+            if prefill_copies(copied):
+                initial, prefill = copied, prefill_note(source, today)
+            # A source that copies nothing (another advisory's "not in use here": no controls, no plan) prefills nothing: no note, and
+            # the scope's own starting values (review 40 #11)
             elif not network:  # every device it would govern recorded "Not connected here" (critique40_practice S1)
                 initial = {"response": DecisionResponse.KEEP_WITH_CONTROLS, "controls": [rules.NETWORK_REMOVED]}
         return _record_modal(request, scope, now, RecordDecisionForm(initial=initial, **options), prefill=prefill, network=network)

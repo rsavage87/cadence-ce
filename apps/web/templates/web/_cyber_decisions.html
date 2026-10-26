@@ -3,7 +3,8 @@
    (rules.needs_attention: web/_cyber_decision_attention.html); then the decisions the filters keep, each row's number opening its page in
    the drawer, with its state, scope, decision, review, who accepted it, IT's exception number, and who recorded it. Re-fetches itself on
    cyber-changed (a decision recorded, renewed, ended, or marked entered in error; a register change). Slice 40: HICP's sentence for
-   advisories beside the support one, and each row's why (support ended, or the security advisory it is for).{% endcomment %}
+   advisories beside the support one (without the last sentence they share: views_cyber_decisions.hicp_second), and each row's why
+   (support ended, or the security advisory it is for).{% endcomment %}
 <div id="cy-decisions" class="cy-decisions" hx-get="{{ list_url }}{% query request.GET %}" hx-trigger="cyber-changed from:body" hx-target="this" hx-swap="outerHTML" hx-disinherit="hx-swap hx-target">
   <p class="hint cy-hicp">{{ hicp }}</p>
   <p class="hint cy-hicp">{{ hicp_advisories }}</p>

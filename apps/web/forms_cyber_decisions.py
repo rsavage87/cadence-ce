@@ -27,7 +27,8 @@ a new advisory decision starts from the live decision of exactly this scope of a
 decided advisory decision of the scope; the view finds it, lock-free), past its review or not: its response (unless not in use here, or
 one this form does not offer), controls (those this form offers), IT's reference for them, plan, plan owner, and the plan's day only when
 it is on or after today; decided today, the review day blank (the default), who accepted it and IT's exception number blank (PREFILL_NOTE
-says so: an act of IT or a committee is recorded for this advisory, never inherited).
+says so: an act of IT or a committee is recorded for this advisory, never inherited). A source that copies nothing (another advisory's
+"not in use here": prefill_copies) prefills nothing: no note, and the form starts as with no source.
 
 Choices are set in __init__ from what the view read, never a class-level queryset. Never "required" (a field the service needs says so
 in its refusal: "Choose ...", "Enter ..."), never a never word (rules.DECISION_NEVER_WORDS).
@@ -216,6 +217,14 @@ def prefill_initial(source, today, key) -> dict:
             "plan_by": source.plan_by.isoformat() if source.plan_by is not None and source.plan_by >= today else "",
             "plan_owner": str(source.plan_owner_id) if source.plan_owner_id else "", "accepted_by": "", "exception_reference": "",
             "decided_on": today.isoformat(), "review_by": ""}
+
+
+def prefill_copies(initial: dict) -> bool:
+    """Whether prefill_initial's values carry anything from their source: a response, controls, a plan, its day, or its owner. A source
+    that gives none (another advisory's "not in use here", which holds no controls and no plan) prefills nothing: the view shows no note
+    and starts the form as it would with no source (review 40 #11). No query."""
+    return bool(initial.get("response") or initial.get("controls") or initial.get("plan", DecisionPlan.NONE) != DecisionPlan.NONE
+                or initial.get("plan_by") or initial.get("plan_owner"))
 
 
 def prefill_note(source, today) -> str:
