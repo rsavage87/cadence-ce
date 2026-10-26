@@ -1,4 +1,5 @@
 """The demo seed is what every screenshot and smoke test starts from; make sure it still builds every state the screens show."""
+from collections import Counter
 from datetime import date, timedelta
 from io import StringIO
 
@@ -438,14 +439,15 @@ def test_seed_demo_records_two_security_decisions(db):
     from django.utils import timezone
 
     from apps.cybersecurity import rules
-    from apps.cybersecurity.models import DeviceSecurityDecision, SoftwareUpdate
+    from apps.cybersecurity.models import AppliesTo, DeviceSecurityDecision, SoftwareUpdate
     from apps.evaluations.models import ProgramEvaluation, VendorReview
 
     call_command("seed_demo", stdout=StringIO())
     with tenant_context(Tenant.objects.get(slug="riverside")):
         today = timezone.localdate()
         manager = User.objects.get(username=f"{seed_demo.SECURITY_RECORDED_BY}@riverside.example")
-        rows = list(DeviceSecurityDecision.objects.order_by("created_at"))
+        # slice 40's advisory decisions apart (test_seed_demo_records_five_security_advisories)
+        rows = list(DeviceSecurityDecision.objects.filter(applies_to=AppliesTo.SUPPORT_ENDED).order_by("created_at"))
         assert [(d.exception_reference, rules.scope_kind(d), rules.decision_state(d, today)) for d in rows] == [
             ("DEMO-EX-1037", rules.RELEASE_SCOPE, rules.REVIEW_DUE), ("DEMO-EX-1042", rules.DEVICE_SCOPE, rules.IN_FORCE)]
         assert {d.recorded_by for d in rows} == {manager} and manager.role.slug == "manager"
@@ -458,7 +460,55 @@ def test_seed_demo_records_two_security_decisions(db):
         assert not DeviceSecurityDecision.objects.exists()
     call_command("seed_demo", stdout=StringIO())  # a second run adds nothing
     with tenant_context(Tenant.objects.get(slug="riverside")):
-        assert DeviceSecurityDecision.objects.count() == 2
+        assert DeviceSecurityDecision.objects.filter(applies_to=AppliesTo.SUPPORT_ENDED).count() == 2
+
+
+def _numbered(prefix: str, days) -> list:
+    """The numbers a sequence gives records recorded in this order on these days, counted per year (<prefix>-<yy>-<nnnn>)."""
+    counted, out = Counter(), []
+    for d in days:
+        counted[d.year] += 1
+        out.append(f"{prefix}-{d:%y}-{counted[d.year]:04d}")
+    return out
+
+
+def test_seed_demo_records_five_security_advisories(db):
+    """Slice 40: five advisories recorded by the CE manager through apps.cybersecurity.advisories in the order received (numbered by the
+    year received), with two advisory decisions (numbered after slice 39's, by the year decided), after the security decisions and before
+    the vendor review and the program evaluation (which stays made last, so neither counts anything new); the badge's two halves;
+    Riverside only; a second run adds nothing. tests/test_cyber_seed.py reads them in full."""
+    from django.utils import timezone
+
+    from apps.cybersecurity import rules
+    from apps.cybersecurity.models import AdvisorySource, AppliesTo, DeviceSecurityDecision, SecurityAdvisory
+    from apps.evaluations.models import ProgramEvaluation, VendorReview
+
+    call_command("seed_demo", stdout=StringIO())
+    with tenant_context(Tenant.objects.get(slug="riverside")):
+        today = timezone.localdate()
+        manager = User.objects.get(username=f"{seed_demo.SECURITY_RECORDED_BY}@riverside.example")
+        ads = list(SecurityAdvisory.objects.order_by("created_at"))
+        received = [today - timedelta(days=ago) for ago, *_rest in seed_demo.ADVISORIES]
+        assert [a.received_on for a in ads] == received and [a.number for a in ads] == _numbered("AD", received)
+        assert [a.status for a in ads] == ["open", "closed", "not_applicable", "open", "open"]
+        assert {a.recorded_by for a in ads} == {manager} and not [a for a in ads if a.cves or a.removed_on]
+        sources = list(AdvisorySource.objects.all())
+        assert {s.source for s in sources} <= {"manufacturer_bulletin", "manufacturer_portal", "other"} and len(sources) == 6
+        assert all(s.reference.startswith("DEMO-ADV-") and not s.url for s in sources)
+        decisions = list(DeviceSecurityDecision.objects.order_by("created_at"))
+        assert [d.applies_to for d in decisions] == [AppliesTo.SUPPORT_ENDED] * 2 + [AppliesTo.ADVISORY] * 2
+        assert [d.advisory for d in decisions[2:]] == ads[:2]
+        decided = today - timedelta(days=seed_demo.ADVISORY_MONITORS_DECIDED_DAYS_AGO)
+        assert [d.number for d in decisions] == _numbered("SD", [decisions[0].decided_on, today, decided, today])
+        assert [rules.decision_state(d, today) for d in decisions[2:]] == [rules.IN_FORCE] * 2
+        review, evaluation = VendorReview.objects.get(), ProgramEvaluation.objects.get()
+        assert decisions[1].created_at < ads[0].created_at and decisions[-1].created_at < review.created_at < evaluation.created_at
+        assert rules.badge(today) == {"count": 1, "hot": True} and rules.advisory_badge(today) == {"count": 1}
+    with tenant_context(Tenant.objects.get(slug="riverside-north")):
+        assert not SecurityAdvisory.objects.exists()
+    call_command("seed_demo", stdout=StringIO())  # a second run adds nothing
+    with tenant_context(Tenant.objects.get(slug="riverside")):
+        assert SecurityAdvisory.objects.count() == 5 and DeviceSecurityDecision.objects.count() == 4
 
 
 def rows_of_table(section, key) -> list:
