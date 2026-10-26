@@ -7,16 +7,11 @@ _fleet_in_cadence), never the whole fleet. Nothing the seed records names a real
 and none of the words the register never says is on a seeded page. On PostgreSQL the register reads the same as the runtime role and
 the screens answer.
 
-Wave 2 builds the screens (A), the drawer's tab and the API (B) beside this seed: a page whose view is still the scaffold's stub (or an
-API route not registered yet, or a drawer without the Security tab) is pending, and a test with pages pending is an expected failure
-once everything else in it passed; it runs in full the moment they are merged.
-
 Slice 38's software updates (_software_updates) and slice 39's security decisions (_security_decisions) follow the register: the pumps'
 decision past its review (the nav badge hot, its Check that the plan's date has passed, its pumps' open updates beside it), the C-arm's
 in force with controls its profile allows, and the rental bed on a release past its security updates with no decision (Needs attention's
 rentals row); the Fleet's head figures count the bed too. The decision pages, the device drawer's decision lines, and the decisions API
-are slice 39 wave 2's: pending (as above) until merged, and read with rules.DECISION_NEVER_WORDS (the drawer with rules.NEVER_WORDS: it
-carries Equipment's own PM words).
+are read with rules.DECISION_NEVER_WORDS (the drawer with rules.NEVER_WORDS: it carries Equipment's own PM words).
 
 Slice 40's security advisories (_security_advisories) follow the decisions, in the order received: the patient monitors' older release
 decided not in use here ("Open: ready to close"), the C-arms' patches (the list the other C-arm's patches came from) with the C-arm kept
@@ -24,22 +19,18 @@ off the network decided and the advisory closed, one naming no model marked not 
 the newer one the fix (slice 38's updates to it answer, the rest "No response recorded": Close refused in words), and the beds with their
 models to confirm (the badge's advisory half, the rental bed as its own row). Slice 39's pins count support decisions only
 (applies_to=support_ended: the advisory decisions never move them), and the Decisions tab reads as before. The Advisories tab, the advisory
-pages, the keyed decision doors, the device drawer's Advisories section, the advisories API, and the nav badge's two halves are slice 40
-wave 2's: pending (as above) until merged.
+pages, the keyed decision doors, the device drawer's Advisories section, and the advisories API are read the same way; Kim's nav badge
+counts both halves; Record decision for the pumps' older release under their advisory begins from the pumps' support decision (its plan's
+day, passed, comes in blank: who accepted it alone is refused under the plan's day, until a new day is given).
 """
-import importlib.util
 import re
 from collections import Counter
 from datetime import timedelta
 from html import unescape
 from io import StringIO
-from urllib.parse import urlsplit
 
 import pytest
 from django.core.management import call_command
-from django.template import TemplateDoesNotExist
-from django.template.loader import get_template
-from django.urls import NoReverseMatch, Resolver404, resolve, reverse
 from django.utils import timezone
 from pg_helpers import as_app_role, needs_postgres
 
@@ -734,34 +725,17 @@ def test_the_seeded_security_advisories(seeded):
 def test_kims_nav_badge_counts_both_halves(seeded):
     """Slice 40: Kim (the director: a reader of decisions and an editor of advisories) reads Device security's badge as the sum of its two
     halves (rules.badge: the pumps' decision past its review, hot; rules.advisory_badge: the beds' advisory with models to confirm, never
-    hot), titled for both. The nav's advisory half is slice 40 wave 2C's (reports.services._cyber_badge): pending until merged."""
+    hot), titled for both (reports.services._cyber_badge)."""
     from apps.reports.services import nav_counts
 
     with tenant_context(seeded):
         today = timezone.localdate()
         assert (rules.badge(today), rules.advisory_badge(today)) == ({"count": 1, "hot": True}, {"count": 1})
         counts = nav_counts(User.objects.get(username="kim@riverside.example"))
-    if (counts["cybersecurity"], counts.get("cybersecurity_title")) == (1, rules.BADGE_TITLE):
-        pytest.xfail("slice 40 wave 2C's badge (the advisory half) is not merged here yet")
     assert (counts["cybersecurity"], counts["cybersecurity_hot"], counts["cybersecurity_title"]) == (2, True, rules.BOTH_BADGE_TITLE)
 
 
 # --- the seeded pages -----------------------------------------------------------------------------------------------------------
-
-def _pending(client, url: str) -> bool:
-    """A page wave 2 has not built here yet: a URL whose view is the scaffold's stub, an API route not registered, a drawer with no
-    Security tab."""
-    path = urlsplit(url).path
-    try:
-        view = resolve(path).func
-    except Resolver404:
-        return True
-    if getattr(view, "__name__", "") == "_todo":
-        return True
-    if "tab=security" in url:
-        return importlib.util.find_spec("apps.web.asset_cyber") is None or client.get(url, HTTP_HX_REQUEST="true").context["tab"] != "security"
-    return False
-
 
 def _body(response) -> str:
     if hasattr(response, "streaming_content"):
@@ -813,14 +787,9 @@ def _pages(seeded) -> tuple[list, dict]:
     return list(shows), {"shows": shows, "never": never}
 
 
-def _read(client, urls, expect, *, pending=_pending, words=lambda url: rules.NEVER_WORDS) -> list:
-    """Each page as the signed-in client, answering 200 with what it shows and none of the words `words(url)` names. Returns the
-    pages still pending."""
-    left = []
+def _read(client, urls, expect, *, words=lambda url: rules.NEVER_WORDS) -> None:
+    """Each page as the signed-in client, answering 200 with what it shows and none of the words `words(url)` names."""
     for url in urls:
-        if pending(client, url):
-            left.append(url)
-            continue
         # the drawer's tab, a model's panel, a decision's or an advisory's page, and a modal as the screens fetch them (a partial); every
         # other page whole
         partial = ("tab=" in url or re.search(r"/security/models/[0-9a-f-]{36}/$", url) or re.search(r"/security/decisions/SD-[0-9-]+/$", url)
@@ -834,14 +803,12 @@ def _read(client, urls, expect, *, pending=_pending, words=lambda url: rules.NEV
             assert text in body or text in shown, (url, text)
         for text in expect["never"].get(url, []):
             assert text not in body, (url, text)
-    return left
 
 
-def _read_pages(client, seeded) -> list:
-    """Each seeded register page as Kim (the director: every level), answering 200 with what it shows and none of the never-words.
-    Returns the pages still pending."""
+def _read_pages(client, seeded) -> None:
+    """Each seeded register page as Kim (the director: every level), answering 200 with what it shows and none of the never-words."""
     urls, expect = _pages(seeded)
-    return _read(client, urls, expect)
+    _read(client, urls, expect)
 
 
 def _decision_pages(seeded) -> tuple[list, dict]:
@@ -867,37 +834,23 @@ def _decision_pages(seeded) -> tuple[list, dict]:
     return list(shows), {"shows": shows, "never": {}}
 
 
-def _decision_pending(client, url: str) -> bool:
-    """A slice 39 page not built here yet: its route not there (as _pending), or, for the drawer's tab (built in slice 37), the
-    decision page its lines link to not there."""
-    if "tab=security" in url:
-        try:
-            reverse(rules.URLS["decision"], args=["SD-00-0000"])
-        except NoReverseMatch:
-            return True
-    return _pending(client, url)
-
-
-def _read_decision_pages(client, seeded) -> list:
+def _read_decision_pages(client, seeded) -> None:
     """Slice 39's seeded pages as Kim, a decision's doors read with rules.DECISION_NEVER_WORDS and the drawer with rules.NEVER_WORDS
-    (it carries Equipment's own PM words). Returns the pages still pending."""
+    (it carries Equipment's own PM words)."""
     urls, expect = _decision_pages(seeded)
-    return _read(client, urls, expect, pending=_decision_pending,
-                 words=lambda url: rules.NEVER_WORDS if "tab=security" in url else rules.DECISION_NEVER_WORDS)
+    _read(client, urls, expect, words=lambda url: rules.NEVER_WORDS if "tab=security" in url else rules.DECISION_NEVER_WORDS)
 
 
 def test_the_seeded_pages_show_the_register_and_never_say_the_words(client, seeded):
     client.force_login(User.objects.get(username="kim@riverside.example"))
-    pending = _read_pages(client, seeded)
-    assert not pending, f"pages not built: {pending}"
+    _read_pages(client, seeded)
 
 
 def test_the_seeded_decision_pages_show_the_decisions_and_never_say_the_words(client, seeded):
     """Slice 39: the Decisions tab (the pumps' decision past its review, the C-arm's, the rental in Needs attention), each decision's
     page (its exception number, its Check, its devices with their updates), the decisions API, and the drawer's decision lines."""
     client.force_login(User.objects.get(username="kim@riverside.example"))
-    pending = _read_decision_pages(client, seeded)
-    assert not pending, f"pages not built: {pending}"
+    _read_decision_pages(client, seeded)
 
 
 def _advisory_pages(seeded) -> tuple[list, dict]:
@@ -935,49 +888,59 @@ def _advisory_pages(seeded) -> tuple[list, dict]:
     return list(shows), {"shows": shows, "never": never}
 
 
-def _advisory_pending(client, url: str) -> bool:
-    """A slice 40 page not built here yet: an Advisories tab page still the scaffold's stub, or an API route not registered (as
-    _pending); a decision door not keyed by need yet (wave 2B: views_cyber_decisions.SCOPE_PARAMS without "advisory"), Record decision
-    without its prefill (forms_cyber_decisions.prefill_initial); the drawer without the Security tab's Advisories section
-    (web/_cyber_advisory_device.html); the decisions API without its ?applies_to= filter (wave 2C)."""
-    path = urlsplit(url).path
-    if path.startswith("/security/decisions/"):
-        from apps.web import forms_cyber_decisions, views_cyber_decisions
-
-        if "advisory" not in views_cyber_decisions.SCOPE_PARAMS:
-            return True
-        if path.endswith("/new/") and not hasattr(forms_cyber_decisions, "prefill_initial"):
-            return True
-    if "tab=security" in url:
-        try:
-            get_template("web/_cyber_advisory_device.html")
-        except TemplateDoesNotExist:
-            return True
-    if "applies_to=" in url:
-        r = client.get(url)
-        data = r.json() if r.status_code == 200 else []
-        rows = data.get("results", []) if isinstance(data, dict) else data
-        if rows and "advisory" not in rows[0]:  # a decision's advisory (wave 2C) not served yet, nor its filter
-            return True
-    return _pending(client, url)
-
-
-def _read_advisory_pages(client, seeded) -> list:
+def _read_advisory_pages(client, seeded) -> None:
     """Slice 40's seeded pages as Kim, every door read with rules.DECISION_NEVER_WORDS and the drawer with rules.NEVER_WORDS (it carries
-    Equipment's own PM words). Returns the pages still pending."""
+    Equipment's own PM words)."""
     urls, expect = _advisory_pages(seeded)
-    return _read(client, urls, expect, pending=_advisory_pending,
-                 words=lambda url: rules.NEVER_WORDS if "tab=security" in url else rules.DECISION_NEVER_WORDS)
+    _read(client, urls, expect, words=lambda url: rules.NEVER_WORDS if "tab=security" in url else rules.DECISION_NEVER_WORDS)
 
 
 def test_the_seeded_advisory_pages_show_the_advisories_and_never_say_the_words(client, seeded):
     """Slice 40: the Advisories tab (Needs attention, the list with each one's status words), each advisory's page (its sources, model
     rows, device lines and what answers them, its decisions), the devices CSV, the advisory decisions' pages, Record decision's prefill
-    from the pumps' support decision, the drawer's Advisories section, and the APIs. Wave 2's: pending until merged."""
+    from the pumps' support decision, the drawer's Advisories section, and the APIs."""
     client.force_login(User.objects.get(username="kim@riverside.example"))
-    pending = _read_advisory_pages(client, seeded)
-    if pending:
-        pytest.xfail(f"slice 40 wave 2's pages are not merged here yet: {pending}")
+    _read_advisory_pages(client, seeded)
+
+
+def test_record_decision_for_the_pumps_advisory_begins_from_their_support_decision(client, seeded):
+    """build40 section 7.5 on the seeded pumps (release scope, the older release, from the advisory's page): the modal begins from the
+    pumps' support decision (its note, response, controls, plan, and plan owner), its plan's day blank (it passed:
+    forms_cyber_decisions.prefill_initial copies the day only when it is on or after today), who accepted it and IT's exception number
+    blank. Adding who accepted it alone is refused under the plan's day (decisions.PLAN_DAY: a new day is asked for); with a new day the
+    advisory decision is recorded, answering with the advisory's page, and the support decision stays as it was."""
+    from apps.web import forms_cyber_decisions
+
+    modal = {"HTTP_HX_REQUEST": "true", "HTTP_HX_TARGET": "modal-card"}
+    kim = User.objects.get(username="kim@riverside.example")
+    with tenant_context(seeded):
+        today = timezone.localdate()
+        pumps = _advisories()[3]
+        support, _c_arm = _decisions()
+        older = SoftwareRelease.objects.get(device_model__model=PUMP, version=seed_demo.PUMP_OLDER)
+        note = forms_cyber_decisions.prefill_note(support, today)
+    assert support.plan_by < today and support.plan_owner == kim
+    client.force_login(kim)
+    url = f"/security/decisions/new/?advisory={pumps.number}&release={older.pk}&from=advisory"
+    r = client.get(url, **modal)
+    form = r.context["form"]
+    assert r.status_code == 200 and r.context["prefill_note"] == note and note in unescape(r.content.decode())
+    shown = {name: form[name].value() for name in ("response", "controls", "plan", "plan_owner", "plan_by", "accepted_by",
+                                                   "exception_reference", "decided_on", "review_by")}
+    assert shown == {"response": support.response, "controls": support.controls, "plan": support.plan, "plan_owner": str(kim.pk),
+                     "plan_by": "", "accepted_by": "", "exception_reference": "", "decided_on": today.isoformat(), "review_by": ""}
+    data = {**{k: v for k, v in shown.items() if v}, "accepted_by": "ce_leader"}
+    r = client.post(url, data, **modal)
+    assert r.status_code == 200 and "HX-Retarget" not in r and r.context["form"].errors == {"plan_by": [decisions.PLAN_DAY[support.plan]]}
+    r = client.post(url, {**data, "plan_by": (today + 30 * DAY).isoformat()}, **modal)
+    assert r.status_code == 200 and r["HX-Retarget"] == "#drawer" and f"<h2>{pumps.number}" in r.content.decode()
+    with tenant_context(seeded):
+        (recorded,) = DeviceSecurityDecision.objects.filter(applies_to=AppliesTo.ADVISORY, advisory=pumps)
+        assert (recorded.release, recorded.response, recorded.controls, recorded.plan, recorded.plan_by, recorded.plan_owner,
+                recorded.accepted_by, recorded.exception_reference) == (older, support.response, support.controls, support.plan,
+                                                                        today + 30 * DAY, kim, "ce_leader", "")
+        again = DeviceSecurityDecision.objects.get(pk=support.pk)
+        assert (again.ended_on, again.plan_by, again.exception_reference) == (None, support.plan_by, support.exception_reference)
 
 
 # --- under row-level security ---------------------------------------------------------------------------------------------------
@@ -1003,8 +966,7 @@ def test_the_seeded_register_reads_the_same_under_the_policies(client, seeded):
     as_app_role()
     with tenant_context(seeded):
         assert read() == before
-    pending = _read_pages(client, seeded)
-    assert not pending, f"pages not built: {pending}"
+    _read_pages(client, seeded)
 
 
 @needs_postgres
@@ -1027,8 +989,7 @@ def test_the_seeded_decisions_read_the_same_under_the_policies(client, seeded):
     as_app_role()
     with tenant_context(seeded):
         assert read() == before
-    pending = _read_decision_pages(client, seeded)
-    assert not pending, f"pages not built: {pending}"
+    _read_decision_pages(client, seeded)
 
 
 @needs_postgres
@@ -1062,9 +1023,7 @@ def test_the_seeded_advisories_read_the_same_under_the_policies(client, seeded):
     as_app_role()
     with tenant_context(seeded):
         assert read() == before
-    pending = _read_advisory_pages(client, seeded)
-    if pending:
-        pytest.xfail(f"slice 40 wave 2's pages are not merged here yet: {pending}")
+    _read_advisory_pages(client, seeded)
 
 
 @needs_postgres
