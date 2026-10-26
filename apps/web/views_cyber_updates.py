@@ -19,13 +19,14 @@ Who: Open software update and the batch: permissions.can_open_updates (Device se
 update and Confirm version: can_edit_devices; Entered in error: can_correct_updates (Device security Approve). Another facility's
 device, update, or release (or a hand-recorded update entered in error, or the model's profile for the batch) is a 404.
 
-Slice 40, from a security advisory's page (`?advisory=<number>&from=advisory`; build40 section 7.6, doors only: apps.cybersecurity.
-updates and SoftwareUpdate know nothing of advisories): Open software update begins on the advisory's remedy for the device's model
-(its fix, or the manufacturer's patches with the list it names), and Open updates to this release on the releases the advisory lists
-with Release not recorded ticked; saved, either answers with the advisory's page (views_cyber_advisories.advisory_saved, the work order
-lists told too); opened directly, the advisory's page. The advisory is read from the address only, without a lock, never posted (an
-unknown one is a 404); `advisory` and `from` are never carried forward (the panel's address, the device's). The skip words are slice
-38's.
+Slice 40, with a security advisory (build40 section 7.6, doors only: apps.cybersecurity.updates and SoftwareUpdate know nothing of
+advisories): `?advisory=<number>` alone (the device's Security tab) begins Open software update on the advisory's remedy for the device's
+model (its fix, or the manufacturer's patches with the list it names), and Open updates to this release on the releases the advisory
+lists with Release not recorded ticked, each answering as the plain door does (the drawer, the panel). `from=advisory` beside it (the
+advisory's page) decides only the answer: saved, the advisory's page (views_cyber_advisories.advisory_saved, the work order lists told
+too); opened directly, the advisory's page. The advisory is read from the address only (views_cyber_advisories.opened_with), without a
+lock, never posted; an unknown one, or one entered in error, is a 404, while one not applicable or closed still begins the form.
+`advisory` and `from` are never carried forward (the panel's address, the device's). The skip words are slice 38's.
 """
 from types import SimpleNamespace
 
@@ -42,7 +43,7 @@ from apps.credentials.services import qualified_technicians
 from apps.cybersecurity import permissions as cyber_perms
 from apps.cybersecurity import rules, updates
 from apps.cybersecurity import services as cyber
-from apps.cybersecurity.models import AdvisoryRemedy, SecurityAdvisory, SoftwareRelease, SoftwareUpdate, UpdateTarget
+from apps.cybersecurity.models import AdvisoryRemedy, SoftwareRelease, SoftwareUpdate, UpdateTarget
 from apps.equipment.models import Department
 from apps.equipment.services import owner_maintains, service_vendor
 
@@ -145,20 +146,16 @@ def _open_number(asset) -> str:
 
 # --- opened from a security advisory (slice 40) ---------------------------------------------------------------------------------------
 
-ADVISORY_ORIGIN = views_cyber_advisories.ORIGIN  # `from=advisory`: the save answers with the advisory's page
 NOT_CARRIED = ("advisory", "from")  # the advisory door's own parameters: never carried forward
 
 
 def _from_advisory(request):
-    """The advisory a door was opened from (`?advisory=<number>&from=advisory`, any letter case), read without a lock, or None for any
-    other origin; an unknown number (another facility's) is a 404. Read from the address only, never posted."""
-    if request.GET.get("from") != ADVISORY_ORIGIN:
-        return None
-    number = str(request.GET.get("advisory", "")).strip()
-    found = SecurityAdvisory.objects.filter(number__iexact=number).first() if number and "\x00" not in number else None
-    if found is None:
-        raise Http404
-    return found
+    """(the advisory the door was opened with, or None; whether its save answers with the advisory's page): `?advisory=<number>` begins
+    the form on the advisory's remedy wherever it was opened (the advisory's page, the device's Security tab), and only `from=advisory`
+    answers with the advisory's page (views_cyber_advisories.opened_with and answers_here: read from the address without a lock; an
+    unknown number, or one entered in error, a 404)."""
+    advisory = views_cyber_advisories.opened_with(request)
+    return advisory, advisory is not None and views_cyber_advisories.answers_here(request)
 
 
 def _advisory_row(advisory, model_id):
@@ -268,15 +265,15 @@ def _open_form(request, asset, today, data=None, initial=None) -> tuple[OpenUpda
 @require_http_methods(["GET", "POST"])
 @web_view(MODULE, Level.EDIT)
 def update_open(request, tag):
-    """Open software update for the device `tag` (GET the modal, POST it): permissions.can_open_updates; updates.open_update. From an
-    advisory's page (`?advisory=<number>&from=advisory`, slice 40) it begins on the advisory's remedy for the model and answers with
-    the advisory's page (the modal posts to its own address, so the origin comes with it)."""
+    """Open software update for the device `tag` (GET the modal, POST it): permissions.can_open_updates; updates.open_update. With an
+    advisory (`?advisory=<number>`, slice 40: its page, the device's Security tab) it begins on the advisory's remedy for the model;
+    `from=advisory` also answers with the advisory's page (the modal posts to its own address, so the origin comes with it)."""
     if not cyber_perms.can_open_updates(request.user):
         raise PermissionDenied(updates.OPEN_PERMISSION)
     asset = get_asset(request, tag)
-    advisory = _from_advisory(request)
+    advisory, answer_there = _from_advisory(request)
     if request.method != "POST" and not request.htmx:
-        return redirect(views_cyber_advisories.advisory_url(advisory.number) if advisory is not None else _drawer_url(asset))
+        return redirect(views_cyber_advisories.advisory_url(advisory.number) if answer_there else _drawer_url(asset))
     today = timezone.localdate()
     action = request.get_full_path()
     if request.method != "POST":
@@ -298,7 +295,7 @@ def update_open(request, tag):
     message = OPENED.format(number=wo.number, tag=asset.tag, words=rules.update_words(row))
     if batch.unassigned_reason:
         message += " " + _left_unassigned(batch.unassigned, batch.unassigned_reason, batch=False)
-    if advisory is not None:
+    if answer_there:
         return _advisory_answer(request, advisory, message)
     return _saved(request, asset, message)
 
@@ -482,16 +479,16 @@ def _batch_message(release, batch) -> str:
 @web_view(MODULE, Level.EDIT)
 def release_open_updates(request, pk):
     """Open updates to the release `pk` (the batch, from the model panel's release row): permissions.can_open_updates;
-    updates.open_updates. Saved, the model's panel comes back with the filters it was opened with (they are in this address). From an
-    advisory's page (`?advisory=<number>&from=advisory`, slice 40: "Open updates to <the fix>") it begins on the releases the advisory
-    lists with Release not recorded ticked, and answers with the advisory's page."""
+    updates.open_updates. Saved, the model's panel comes back with the filters it was opened with (they are in this address). With an
+    advisory (`?advisory=<number>`, slice 40) it begins on the releases the advisory lists with Release not recorded ticked;
+    `from=advisory` (its page's "Open updates to <the fix>") also answers with the advisory's page."""
     if not cyber_perms.can_open_updates(request.user):
         raise PermissionDenied(updates.OPEN_PERMISSION)
     release = _target(pk)
     dm = release.device_model
-    advisory = _from_advisory(request)
+    advisory, answer_there = _from_advisory(request)
     if request.method != "POST" and not request.htmx:
-        if advisory is not None:
+        if answer_there:
             return redirect(views_cyber_advisories.advisory_url(advisory.number))
         carried = request.GET.copy()
         for key in NOT_CARRIED:
@@ -512,7 +509,7 @@ def release_open_updates(request, pk):
             form.add_service_errors(e)
     if batch is None:
         return _modal(request, BATCH, {**ctx, "blocker": ""})
-    if advisory is not None:
+    if answer_there:
         return _advisory_answer(request, advisory, _batch_message(release, batch))
     return _panel_saved(request, dm, _batch_message(release, batch))
 

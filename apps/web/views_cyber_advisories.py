@@ -22,12 +22,13 @@ security advisories (rules.HICP_ADVISORIES, said as a recommendation): no rule r
   device decision past review, Open software update (slice 38's door, can_open_updates) only where one can open (a release or patches
   remedy, no update open on the device, no patches recorded or version to confirm: practice N3). Per model row: Set models, Remove
   model, Open updates to the fix (a release remedy), Record decision for a release it lists or every device of ours of the model, and
-  "Record their releases" beside a count of devices with none recorded.
+  "Record their releases" (slice 37's Set devices to this release, opened `from=advisory`) beside a count of devices with none
+  recorded.
 
 Every refusal a GET shows is read with apps.cybersecurity.advisories' lock-free readers (never a writer's helper: FOR UPDATE outside a
 transaction is an error on PostgreSQL); every save calls the writer, which reads the same refusal again under its locks. Saves answer with
-the advisory's page into #drawer, CHANGED, a toast, and the modal closed (advisory_saved: also the answer of Record decision and slice 38's
-update doors opened `from=advisory`).
+the advisory's page into #drawer, CHANGED, a toast, and the modal closed (advisory_saved: also the answer of Record decision, slice 38's
+update doors, and Set devices to this release opened `from=advisory`; opened_with reads the advisory such a door names).
 
 Who: Device security View reads the tab, the page, the list, and the CSV (the line kinds and update counts, the stored statuses); every
 device line, response, decision-derived count or word, "Decisions for this advisory", and the devices CSV also need Equipment View
@@ -96,7 +97,7 @@ NOT_APPLICABLE = "web/_cyber_advisory_not_applicable.html"
 CONFIRM = "web/_cyber_advisory_confirm.html"
 CHANGED = views_cybersecurity.CHANGED  # the screen's lists (and this tab's body) re-fetch themselves on it
 DEVICES_WORDS = "Device lines need Device security View and Equipment View."
-ORIGIN = "advisory"  # `from=advisory`: Record decision and slice 38's update doors answer with the advisory's page (advisory_saved)
+ORIGIN = "advisory"  # `from=advisory`: Record decision, the update doors, and Set devices answer with the advisory's page (advisory_saved)
 
 # The toasts (numbers and models only)
 RECORDED = "{number} recorded."
@@ -179,6 +180,29 @@ def advisory_url(number: str) -> str:
     return reverse("web:security_advisory", args=[number])
 
 
+def opened_with(request) -> SecurityAdvisory | None:
+    """The advisory another screen's door was opened with (slice 38's Open software update and Open updates to this release, slice 37's
+    Set devices to this release): `?advisory=<number>`, in any letter case, read from the address only (never posted, never carried
+    forward) and without a lock; None when the address names none. An unknown number (another facility's, or none), an advisory entered
+    in error, and `from=advisory` without a number are 404s. Whether the save answers with its page is answers_here's."""
+    number = str(request.GET.get("advisory", "")).strip()
+    if not number:
+        if answers_here(request):
+            raise Http404
+        return None
+    found = (SecurityAdvisory.objects.filter(number__iexact=number, removed_on__isnull=True).first()
+             if "\x00" not in number else None)
+    if found is None:
+        raise Http404
+    return found
+
+
+def answers_here(request) -> bool:
+    """`from=advisory`: a door opened from the advisory's page answers with it (advisory_saved), and its address opened directly shows
+    the page."""
+    return request.GET.get("from") == ORIGIN
+
+
 def link_url(link) -> str:
     """A rules.Link reversed (its query appended), or "" for none."""
     if link is None:
@@ -201,7 +225,8 @@ def _from_here(url: str) -> str:
 
 
 def _door(name: str, args, advisory) -> str:
-    """Slice 38's update doors opened from the advisory (`?advisory=<number>&from=advisory`): they answer with its page."""
+    """Slice 38's update doors and slice 37's Set devices to this release opened from the advisory (`?advisory=<number>&from=advisory`):
+    they answer with its page."""
     return f"{reverse(name, args=args)}?{urlencode({'advisory': advisory.number, 'from': ORIGIN})}"
 
 
@@ -487,7 +512,7 @@ def _model_row(a, row, rc, lines, answers, who: _Reader) -> dict:
                      if who.open_updates and row.remedy == AdvisoryRemedy.RELEASE and row.fix_release_id and unopened else ""),
         "fix_version": row.fix_release.version if row.fix_release_id else "",
         "model_record_url": _record_url(advisory=a.number, model=dm.pk) if who.decide and _ours_waiting(needing) else "",
-        "releases_url": (reverse("web:cybersecurity_set_release", args=[dm.pk])
+        "releases_url": (_door("web:cybersecurity_set_release", [dm.pk], a)
                          if who.edit_devices and counts_lines.get(rules.LINE_NOT_RECORDED, 0) else ""),
     }
     found["acts"] = bool(found["set_url"] or found["remove_url"] or found["open_url"] or found["model_record_url"]
@@ -613,10 +638,10 @@ def advisory_devices_csv(request, number):
 # --- answers -------------------------------------------------------------------------------------------------------------------------
 
 def advisory_saved(request, advisory, message: str):
-    """The answer of a save made from the advisory's page (this module's modals, Record decision `from=advisory`, slice 38's update
-    doors `from=advisory`): the advisory's page into #drawer, freshly read, CHANGED (the lists refresh), a toast with `message`, then the
-    modal closes after settle (closing it first would detach the form that sent this request and cancel the swap). `advisory` an
-    instance or its number."""
+    """The answer of a save made from the advisory's page (this module's modals; Record decision, slice 38's update doors, and Set
+    devices to this release, each `from=advisory`): the advisory's page into #drawer, freshly read, CHANGED (the lists refresh), a
+    toast with `message`, then the modal closes after settle (closing it first would detach the form that sent this request and cancel
+    the swap). `advisory` an instance or its number."""
     a = _advisory(getattr(advisory, "number", advisory))
     response = retarget(render(request, DRAWER, _page_context(request, a)), "#drawer")
     trigger_client_event(response, CHANGED, {})

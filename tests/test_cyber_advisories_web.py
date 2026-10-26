@@ -184,9 +184,12 @@ def approve_urls(floor) -> list:
 
 
 def update_door_urls(floor) -> list:
+    """Slice 38's update doors and slice 37's Set devices to this release from the advisory's page, and Open software update from the
+    device's Security tab (the advisory alone)."""
     n = floor.a.number
     return [f"/security/devices/P-2/updates/open/?advisory={n}&from=advisory",
-            f"/security/releases/{floor.r56.pk}/open-updates/?advisory={n}&from=advisory"]
+            f"/security/releases/{floor.r56.pk}/open-updates/?advisory={n}&from=advisory",
+            f"/security/devices/P-2/updates/open/?advisory={n}", f"/security/models/{floor.model.pk}/set-release/?advisory={n}&from=advisory"]
 
 
 def line_tags(body: str) -> tuple[list, list]:
@@ -450,7 +453,7 @@ def test_each_model_row_offers_only_what_can_act(client, signed_in, floor):
     assert f'hx-get="/security/releases/{floor.r56.pk}/open-updates/?advisory={n}&from=advisory"' in body
     assert f'hx-get="/security/decisions/new/?advisory={n}&release={floor.r52.pk}&from=advisory"' in body
     assert f'hx-get="/security/decisions/new/?advisory={n}&model={floor.model.pk}&from=advisory"' in body
-    assert f'hx-get="/security/models/{floor.model.pk}/set-release/"' in body and "Record their releases" in body
+    assert f'hx-get="/security/models/{floor.model.pk}/set-release/?advisory={n}&from=advisory"' in body and "Record their releases" in body
     # every device needing a response has an update open: nothing more to open; ours covered by the model's decision: no decision
     for tag in ("P-1", "P-2", "P-5", "T-1"):
         update_wo(floor.d[tag], floor.r56)
@@ -822,8 +825,66 @@ def test_open_software_update_from_an_advisory(client, signed_in, floor):
     assert SoftwareUpdate.objects.filter(asset=floor.d["P-2"], target_release=floor.r56).exists()
     assert client.get(url)["Location"] == f"/security/advisories/{n}/"
     assert client.get("/security/devices/P-5/updates/open/?advisory=AD-99-9999&from=advisory", **MODAL).status_code == 404
-    r = client.get(f"/security/devices/P-5/updates/open/?advisory={n}", **MODAL)  # no from=advisory: slice 38's door as it was
+    assert client.get("/security/devices/P-5/updates/open/?from=advisory", **MODAL).status_code == 404
+    r = client.get("/security/devices/P-5/updates/open/", **MODAL)  # no advisory: slice 38's door as it was
     assert r.context["form"]["target_release"].value() in (None, "")
+
+
+def test_open_software_update_from_the_security_tab_begins_on_the_advisory_and_answers_with_the_drawer(client, signed_in, floor):
+    """The Security tab's door (`?advisory=<number>` without from=): the same start as from the advisory's page, the plain door's
+    answers (saved: the device's drawer on its Security tab; opened directly: the drawer), the advisory never carried forward."""
+    signed_in("technician")
+    n = floor.a.number
+    tab = client.get("/equipment/P-2/?tab=security", **HX)
+    x = next(x for x in tab.context["cyber"]["advisories"]["items"] if x["number"] == n)
+    url = x["open_url"]
+    assert url == f"/security/devices/P-2/updates/open/?advisory={n}"
+    r = client.get(url.replace(n, n.lower()), **MODAL)
+    form = r.context["form"]
+    assert (form["target"].value(), form["target_release"].value()) == ("release", str(floor.r56.pk))
+    assert f'hx-post="{url.replace(n, n.lower())}"' in html(r)
+    assert client.get(url)["Location"] == "/equipment/P-2/?tab=security"
+    r = client.post(url, {"target": "release", "target_release": str(floor.r56.pk), "due_on": (TODAY + 30 * DAY).isoformat(),
+                          "priority": "normal"}, **MODAL)
+    assert r.status_code == 200 and r["HX-Retarget"] == "#drawer" and r.context["tab"] == "security"
+    t = triggers(r)
+    assert {"cyber-changed", "wo-changed", "modal-close"} <= set(t) and " opened for P-2. " in toast_of(r)
+    assert "from=advisory" not in r.content.decode()  # the drawer (never SEEN: it carries Equipment's own PM words)
+    assert SoftwareUpdate.objects.filter(asset=floor.d["P-2"], target_release=floor.r56).exists()
+
+
+def test_the_update_doors_read_the_advisory_whatever_its_status_but_entered_in_error(client, signed_in, floor):
+    """Not applicable or closed: still the advisory's start; entered in error: an unknown advisory (404) at both doors, from either
+    origin, opened by HTMX or directly, GET or POST."""
+    signed_in("technician")
+    n = floor.a.number
+    one = f"/security/devices/P-2/updates/open/?advisory={n}"
+    batch = f"/security/releases/{floor.r56.pk}/open-updates/?advisory={n}"
+    for status in (AdvisoryStatus.NOT_APPLICABLE, AdvisoryStatus.CLOSED):
+        SecurityAdvisory.objects.filter(pk=floor.a.pk).update(
+            status=status, status_on=TODAY, not_applicable_reason="releases_not_here" if status == AdvisoryStatus.NOT_APPLICABLE else "")
+        assert client.get(one, **MODAL).context["form"]["target_release"].value() == str(floor.r56.pk), status
+        form = client.get(f"{batch}&from=advisory", **MODAL).context["form"]
+        assert form["from_releases"].value() == [str(floor.r52.pk)] and form["include_not_recorded"].value() is True, status
+    SecurityAdvisory.objects.filter(pk=floor.a.pk).update(removed_on=TODAY)
+    for url in (one, batch):
+        for address in (url, f"{url}&from=advisory"):
+            assert client.get(address, **MODAL).status_code == 404, address
+            assert client.get(address).status_code == 404, address
+            assert client.post(address, {"due_on": (TODAY + 30 * DAY).isoformat(), "priority": "normal"}, **MODAL).status_code == 404
+    assert not WorkOrder.objects.exists()
+
+
+def test_open_updates_to_this_release_with_the_advisory_alone_answers_with_the_panel(client, signed_in, floor):
+    signed_in("technician")
+    n = floor.a.number
+    url = f"/security/releases/{floor.r56.pk}/open-updates/?advisory={n}&whose=ours"
+    form = client.get(url, **MODAL).context["form"]
+    assert form["from_releases"].value() == [str(floor.r52.pk)] and form["include_not_recorded"].value() is True
+    r = client.post(url, {"from_releases": [str(floor.r52.pk)], "include_not_recorded": "on", "due_on": (TODAY + 30 * DAY).isoformat(),
+                          "priority": "normal"}, **MODAL)
+    assert r.status_code == 200 and r["HX-Retarget"] == "#drawer" and r.context["dm"] == floor.model and r.context["query"] == "?whose=ours"
+    assert toast_of(r).startswith("4 software updates opened to install 5.6 (demo).") and "advisory=" not in html(r)
 
 
 def test_open_software_update_from_an_advisory_naming_patches(client, signed_in, floor, vent_model, dept):
@@ -853,6 +914,31 @@ def test_open_updates_to_the_fix_from_an_advisory(client, signed_in, floor):
     # the panel's door carries the panel's filters, never the advisory's
     r = client.get(f"/security/releases/{floor.r56.pk}/open-updates/?advisory={n}&whose=ours")
     assert r["Location"] == f"/security/models/{floor.model.pk}/?whose=ours"
+
+
+def test_set_devices_to_this_release_from_an_advisory(client, signed_in, floor):
+    """"Record their releases" (slice 37's door `?advisory=<number>&from=advisory`): saved, the advisory's page with the toast; opened
+    directly, the advisory's page; an unknown advisory, or one entered in error, a 404; the plain door answers with the panel as before."""
+    signed_in("technician")
+    n = floor.a.number
+    base = f"/security/models/{floor.model.pk}/set-release/"
+    url = f"{base}?advisory={n}&from=advisory"
+    r = client.get(url, **MODAL)
+    assert r.status_code == 200 and f'hx-post="{url}"' in html(r).replace("&amp;", "&")
+    assert client.get(url)["Location"] == f"/security/advisories/{n}/"
+    r = client.post(url, {"release": str(floor.r54.pk), "department": "", "release_since": TODAY.isoformat(), "network": "keep"}, **MODAL)
+    body = saved_page(r, n)
+    assert toast_of(r) == f"6 devices of {floor.model.manufacturer} {floor.model.model} set to 5.4 (demo)"
+    assert "Record their releases" not in body
+    for bad in ("AD-99-9999", ""):
+        assert client.get(f"{base}?advisory={bad}&from=advisory", **MODAL).status_code == 404, bad
+    SecurityAdvisory.objects.filter(pk=floor.a.pk).update(removed_on=TODAY)
+    for address in (url, f"{base}?advisory={n}"):
+        assert client.get(address, **MODAL).status_code == 404 and client.get(address).status_code == 404, address
+        assert client.post(address, {"release": str(floor.r52.pk), "release_since": TODAY.isoformat(), "network": "keep"},
+                           **MODAL).status_code == 404
+    r = client.post(f"{base}?whose=ours", {"release": str(floor.r52.pk), "release_since": TODAY.isoformat(), "network": "keep"}, **MODAL)
+    assert r.status_code == 200 and r["HX-Retarget"] == "#drawer" and r.context["dm"] == floor.model and r.context["query"] == "?whose=ours"
 
 
 # --- fixed queries ----------------------------------------------------------------------------------------------------------------------

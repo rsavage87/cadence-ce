@@ -4,7 +4,7 @@
    reference), the due day, the priority (normal or high), and Assign to where the service would use it, else the line saying where the
    update goes. Each refusal comes back under its field; one about the device at the top. A device that cannot take one now (not on
    site, held as evidence, an open update already) gets the modal saying why. It posts to the address it was opened at (`action`), so
-   the origin of slice 40's advisory door (`?advisory=<number>&from=advisory`) comes with it, never as a field.{% endcomment %}
+   slice 40's advisory (`?advisory=<number>`, with `from=advisory` from its page) comes with it, never as a field.{% endcomment %}
 {% with dm=asset.device_model %}
 <div class="modal-h"><h2>{{ asset.tag }}: open software update</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
 {% if blocker %}

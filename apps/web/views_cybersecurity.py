@@ -21,7 +21,8 @@ card (each group with its source and words, the MDS2 sentence), the releases (ea
 groups merged with the profile by group), and its devices on site (tag, location, release, since, connection, the two standing lines),
 narrowed by the Fleet's filters when it was opened from a filtered Fleet. Add release, Record the profile, Edit, Entered in error, and
 Set devices to this release are modals; a save answers with the panel into #drawer, the toast, `cyber-changed` (the tab's body
-re-fetches itself), and the modal's close.
+re-fetches itself), and the modal's close (Set devices to this release opened from an advisory's page answers with that page instead:
+slice 40, set_release).
 
 Who: Device security View sees the model-level parts (Models, a panel's profile and releases). Every list naming devices (the Fleet, a
 panel's devices, devices.csv, Changes for IT) also needs Equipment View (permissions.can_view_devices): without it `/security/` opens
@@ -507,10 +508,19 @@ def _set_choices(dm) -> tuple[list, list]:
 def set_release(request, pk):
     """Set devices to this release (services.record_facts_for): every device of the model on site, or one department's, to one of its
     versioned releases, since a day, with a network fact when chosen. Refusals come back under their fields; saved, the toast counts
-    the devices that changed."""
+    the devices that changed. From an advisory's page (`?advisory=<number>&from=advisory`, slice 40: "Record their releases" beside a
+    count of devices with none recorded), saved, it answers with the advisory's page (views_cyber_advisories.advisory_saved) instead of
+    the panel, and opened directly it shows that page; the advisory is read from the address only (opened_with: without a lock, never
+    posted or carried forward; unknown, or entered in error, a 404)."""
+    from . import views_cyber_advisories  # imported here: that module reads this one's helpers
+
     if not cyber_perms.can_edit_devices(request.user):
         raise PermissionDenied(cyber.FACTS_PERMISSION)
     dm = _model(pk)
+    advisory = views_cyber_advisories.opened_with(request)
+    answer_there = advisory is not None and views_cyber_advisories.answers_here(request)
+    if answer_there and request.method != "POST" and not request.htmx:
+        return redirect(views_cyber_advisories.advisory_url(advisory.number))
     releases, departments = _set_choices(dm)
     ctx = {"dm": dm, "releases": releases, "action": request.get_full_path(), "on_site": rules.on_site().filter(device_model=dm).count()}
     if request.method != "POST":
@@ -543,6 +553,8 @@ def set_release(request, pk):
         message = f"{_plural(changed, 'device')} of {dm.manufacturer} {dm.model} set to {version}"
         if total > changed:
             message += f" ({total - changed} already were)"
+    if answer_there:
+        return views_cyber_advisories.advisory_saved(request, advisory, message)
     return _saved(request, dm, message)
 
 
