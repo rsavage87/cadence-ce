@@ -109,7 +109,11 @@ RECEIVED_NEEDED = "Enter the day it was received."
 REVISION_NEEDED = "Enter the revision or the day updated, as the publisher prints them."
 UPDATED_BEFORE = "The day updated cannot be before the day published ({day})."
 PUBLISHED_AFTER = "The day published cannot be after the day updated ({day})."
-RECEIVED_AFTER_DECISION = "A decision under this advisory was decided {day}: the day received cannot be after it."
+# The day received after a decision's day decided (live or ended), in two readers' words: a reader of decisions (services._reads_decisions:
+# permissions.can_view_devices, or the system) reads the earliest one's number and day; anyone else neither (critique40_rules S2/S3)
+RECEIVED_AFTER_DECISION = "{decision} under this advisory was decided {day}: the day received cannot be after it."
+RECEIVED_AFTER_DECISION_UNREAD = ("A security decision under this advisory was decided before that day: the day received cannot be after "
+                                  "its day decided. Reading it needs Device security View and Equipment View.")
 LENGTH_WORDS = "Keep it to {limit} characters."
 LAST_SOURCE = "An advisory keeps at least one source: add another first."
 CHOOSE_SOURCE = "Choose a source of this advisory."
@@ -692,7 +696,8 @@ def record_advisory(*, received_on, cves, source, reference="", url="", publishe
 
 def update_advisory(advisory, *, received_on=KEEP, cves=KEEP, seen=(), by, today=None):
     """Change the day received or the CVE IDs (KEEP leaves one as it is). The day received is never after a decision's day decided under
-    it (live or ended: RECEIVED_AFTER_DECISION); a change of it after the models were confirmed clears the confirmation, sets changed_on,
+    it (live or ended: RECEIVED_AFTER_DECISION, the earliest one's number and day for a reader of decisions, else
+    RECEIVED_AFTER_DECISION_UNREAD); a change of it after the models were confirmed clears the confirmation, sets changed_on,
     and counts a change (patches with no list named count from it: rules B1). CVE IDs added that another live advisory holds are refused
     unless `seen` names it (CVES_ON_OTHER). Refused on an advisory entered in error. History "Edited" (nothing saved when nothing
     changes). Locks: the register, the advisory. Returns the row; the caller's copy follows it."""
@@ -710,10 +715,11 @@ def update_advisory(advisory, *, received_on=KEEP, cves=KEEP, seen=(), by, today
         problems = {}
         new_day = received is not KEEP and received != locked.received_on
         if new_day:
-            first = (DeviceSecurityDecision.objects.filter(advisory_id=locked.pk).order_by("decided_on")
-                     .values_list("decided_on", flat=True).first())
-            if first is not None and received > first:
-                problems["received_on"] = RECEIVED_AFTER_DECISION.format(day=rules.day_words(first))
+            first = (DeviceSecurityDecision.objects.filter(advisory_id=locked.pk).order_by("decided_on", "number")
+                     .values_list("number", "decided_on").first())
+            if first is not None and received > first[1]:
+                problems["received_on"] = (RECEIVED_AFTER_DECISION.format(decision=first[0], day=rules.day_words(first[1]))
+                                           if services._reads_decisions(by) else RECEIVED_AFTER_DECISION_UNREAD)
         added = [] if cve_list is KEEP else [c for c in cve_list if c not in (locked.cves or [])]
         if added:
             refusal = _overlap_refusal(overlaps(added, exclude=locked), seen)

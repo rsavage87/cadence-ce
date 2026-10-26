@@ -185,7 +185,7 @@ def test_the_scope_readers_take_no_lock_outside_a_transaction(tenant):
         assert refusal_for(release=s.r56, **kw).kind == decisions.KIND_GONE
         members = list(rules.scope_devices(device_model=s.model).select_related(*rules._WITH_RECORD))
         assert decisions.would_govern(members, device_model=s.model, applies_to=AppliesTo.ADVISORY, advisory=s.adv.number) == []
-        assert decisions.network_refusal(members, s.today).startswith("CE-1 has no connection recorded here")
+        assert decisions.network_refusal(members, s.today).startswith("CE-1 is recorded as its model discloses (can connect, wireless)")
 
 
 # --- 4. under the policies -------------------------------------------------------------------------------------------------------------

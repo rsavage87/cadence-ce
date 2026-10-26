@@ -260,7 +260,7 @@ def test_record_for_an_advisory_release_reads_its_own_need_and_records_it(client
     assert offered(body, "controls") == list(rules.CONTROLS) and checked(body, "controls") == [] and checked(body, "response") == []
     assert "Not in use here: " in body and f"Record decision · {floor.adv.number} · Alaris 8015 PCU on 5.2 (demo): 3 devices of ours" in body
     # network_removed: each device it would govern needs its own fact "Not connected here", said beside it before it is tried
-    words = decisions.NETWORK_NOT_RECORDED_MANY.format(tags="P-1, P-2, P-3")
+    words = decisions.NETWORK_DISCLOSED_MANY.format(tags="P-1, P-2, P-3", disclosed=" (can connect, wireless)")
     assert r.context["network_note"] == words and f'data-network-note>{words}</span>' in body
     refused = html(client.post(url, {"response": KEEP_WITH, "controls": ["network_removed"], "accepted_by": "ce_leader",
                                      "decided_on": today.isoformat()}, **MODAL))

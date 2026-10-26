@@ -88,6 +88,7 @@ from .models import (
     AdvisoryStatus,
     AdvisoryVersions,
     AppliesTo,
+    Connects,
     DecisionEnd,
     DecisionPlan,
     DecisionResponse,
@@ -191,6 +192,14 @@ NONE_NEEDS = "No device it would govern needs a response to {number} now."
 NETWORK_CONNECTED = "{tag} is recorded {connection}: record Not connected here on it first (Record facts), or choose other controls."
 NETWORK_CONNECTED_MANY = ("{tags} are recorded connected: record Not connected here on them first (Record facts), or choose other "
                           "controls.")
+# A device read as its model discloses (can connect, or does not connect: rules.connected with no fact of its own), apart from one with
+# nothing recorded at all (smoke S1): the disclosure named for one device, and for several when they all read the same one
+NETWORK_DISCLOSED = ("{tag} is recorded as its model discloses ({disclosed}), with no fact of its own here: record Not connected here on it "
+                     "first (Record facts), or choose other controls.")
+NETWORK_DISCLOSED_MANY = ("{tags} are recorded as their model discloses{disclosed}, with no fact of their own here: record Not connected "
+                          "here on them first (Record facts), or choose other controls.")
+DISCLOSED_WORDS = {Connects.WIRED: "can connect, wired", Connects.WIRELESS: "can connect, wireless",
+                   Connects.BOTH: "can connect, wired and wireless", Connects.NONE: "does not connect"}
 NETWORK_NOT_RECORDED = ("{tag} has no connection recorded here: record Not connected here on it first (Record facts), or choose other "
                         "controls.")
 NETWORK_NOT_RECORDED_MANY = ("{tags} have no connection recorded here: record Not connected here on them first (Record facts), or choose "
@@ -417,8 +426,9 @@ def _advisory_row(advisory, model_id):
 def network_refusal(devices, today: date) -> str:
     """Why an advisory decision governing `devices` (the devices it would govern: decisions.would_govern's) cannot name network_removed,
     or "": each needs its own fact "Not connected here" (critique40_rules S8; a connection as the model discloses, or none recorded, is
-    not that fact). Words for those recorded connected first, then for those with none recorded, up to five tags. The modal says it
-    before it is tried; record_decision checks it again under its locks. Fixed queries (rules.standings)."""
+    not that fact). Words for those recorded connected first, then for those read as their model discloses (NETWORK_DISCLOSED: can
+    connect, or does not connect, with no fact of their own), then for those with nothing recorded at all, up to five tags. The modal
+    says it before it is tried; record_decision checks it again under its locks. Fixed queries (rules.standings)."""
     devices = list(devices)
     held = rules.standings(devices, today)
     connected = [a for a in devices if held[a.pk].connection.key == rules.CONNECTED]
@@ -426,6 +436,13 @@ def network_refusal(devices, today: date) -> str:
         return NETWORK_CONNECTED.format(tag=connected[0].tag, connection=rules._lower_first(held[connected[0].pk].connection.words))
     if connected:
         return NETWORK_CONNECTED_MANY.format(tags=rules._tags(a.tag for a in connected))
+    disclosed = [a for a in devices if not held[a.pk].connection.here and held[a.pk].connection.key in (rules.CAN_CONNECT, rules.NOT_CONNECTED)]
+    if disclosed:
+        words = {DISCLOSED_WORDS.get(held[a.pk].facts.get("connects"), "") for a in disclosed}
+        shared = words.pop() if len(words) == 1 else ""  # several readings (a model's releases disclosing otherwise): none named
+        if len(disclosed) == 1:
+            return NETWORK_DISCLOSED.format(tag=disclosed[0].tag, disclosed=shared)
+        return NETWORK_DISCLOSED_MANY.format(tags=rules._tags(a.tag for a in disclosed), disclosed=f" ({shared})" if shared else "")
     missing = [a for a in devices if not (held[a.pk].connection.key == rules.NOT_CONNECTED and held[a.pk].connection.here)]
     if len(missing) == 1:
         return NETWORK_NOT_RECORDED.format(tag=missing[0].tag)
