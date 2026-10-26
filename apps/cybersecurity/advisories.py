@@ -43,6 +43,7 @@ offered on Record advisory, never refused once `seen` names the advisories shown
 from __future__ import annotations
 
 import re
+import uuid
 from contextlib import contextmanager
 from datetime import date
 
@@ -282,7 +283,7 @@ def _ids(values, field: str, words: str, errors: dict) -> list:
     """Release ids (instances, UUIDs, or their text), each once, in the order given."""
     if values is None:
         return []
-    if isinstance(values, (str, SoftwareRelease)):
+    if isinstance(values, (str, uuid.UUID, SoftwareRelease)):
         values = [values]
     if not hasattr(values, "__iter__"):
         errors[field] = words

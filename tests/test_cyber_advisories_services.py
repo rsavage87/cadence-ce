@@ -403,6 +403,16 @@ def test_set_model_names_a_model_with_its_releases_and_fix(ctx, floor, make_user
     assert (a.models_confirmed_on, a.changes) == (TODAY, 1) and reasons_of(a)[-1] == "Models confirmed"
 
 
+def test_set_model_takes_ids_as_a_door_or_the_api_sends_them(ctx, floor):
+    a = record()
+    row = set_model(str(a.number).lower(), device_model=str(floor.model.pk), versions=LISTED, release_ids=floor.r52.pk, remedy="release",
+                    fix_release=floor.r56.pk, by=None, today=TODAY)  # a single UUID each, the advisory by its number
+    assert (row.fix_release_id, list(row.releases.values_list("release_id", flat=True))) == (floor.r56.pk, [floor.r52.pk])
+    row = set_model(a.pk, device_model=floor.model.pk, versions=LISTED, release_ids=[str(floor.r54.pk)], remedy="release",
+                    fix_release=str(floor.r56.pk), by=None, today=TODAY)
+    assert list(row.releases.values_list("release_id", flat=True)) == [floor.r54.pk]
+
+
 def test_set_model_refuses_each_shape_at_once(ctx, floor, vent_model):
     a = record()
     base = {"device_model": floor.model, "by": None, "today": TODAY}
