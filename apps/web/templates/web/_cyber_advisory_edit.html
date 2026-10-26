@@ -1,0 +1,25 @@
+{% load web %}
+{% comment %}Slice 40: Edit advisory (views_cyber_advisories.advisory_edit; advisories.update_advisory; Device security Edit): the day received
+   and the CVE IDs, as one list. CVE IDs added that another live advisory holds come back as a note naming it; saving again keeps them
+   (`seen`). An advisory entered in error gets the modal saying so. Each refusal comes back under its field.{% endcomment %}
+<div class="modal-h"><h2>{{ a.number }}: edit</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note" role="alert">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="ad-edit-form" class="ad-form" hx-post="{{ action }}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    {% if overlaps %}
+    <div class="full note warn ad-overlap" role="status">
+      {% for o in overlaps %}<p>{{ o.words }}</p>{% endfor %}
+      <p class="hint">{{ overlap_hint }}</p>
+    </div>
+    {% endif %}
+    {% for n in seen %}<input type="hidden" name="seen" value="{{ n }}">{% endfor %}
+    {% include "web/_asset_field.html" with field=form.received_on %}
+    {% include "web/_asset_field.html" with field=form.cves cls="full" %}
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Save</button></div>
+</form>
+{% endif %}

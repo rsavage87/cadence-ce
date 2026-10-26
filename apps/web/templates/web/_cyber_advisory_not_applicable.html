@@ -1,0 +1,27 @@
+{% load web %}
+{% comment %}Slice 40: Not applicable here (views_cyber_advisories.advisory_not_applicable; advisories.mark_not_applicable; Device security
+   Edit). Each of the three reasons is checked against what is recorded here: a reason that does not hold now is shown with why
+   (advisories.not_applicable_refusals) and cannot be chosen. With no model named, the note says what marking it records. Refused as a
+   whole while a decision is in force under it, or on an advisory not open (the modal says so). The writer reads every check again under
+   its locks; its refusal comes back at the top or under the reasons.{% endcomment %}
+<div class="modal-h"><h2>{{ a.number }}: not applicable here</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note" role="alert" data-blocker>{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="ad-na-form" class="ad-form" hx-post="{{ action }}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    {% if note %}<p class="full note" role="status">{{ note }}</p>{% endif %}
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    <fieldset class="full cy-fs"{% if form.not_applicable_reason.errors %} aria-describedby="ad-not_applicable_reason_error"{% endif %}>
+      <legend>Why it is not applicable here</legend>
+      <div class="radio ad-reasons">
+        {% for r in reasons %}<label for="ad-reason-{{ r.value }}"{% if r.refusal %} class="ad-refused"{% endif %}><input type="radio" id="ad-reason-{{ r.value }}" name="not_applicable_reason" value="{{ r.value }}"{% if r.refusal %} disabled{% elif form.not_applicable_reason.value == r.value %} checked{% endif %}><span>{{ r.label }}{% if r.refusal %}<small class="ad-why" data-refusal="{{ r.value }}">{{ r.refusal }}</small>{% endif %}</span></label>{% endfor %}
+      </div>
+      <span class="hint">Each is checked against what is recorded here now; a device named later lists the advisory under Needs attention again.</span>
+      {% if form.not_applicable_reason.errors %}<span class="err" id="ad-not_applicable_reason_error">{{ form.not_applicable_reason.errors|striptags }}</span>{% endif %}
+    </fieldset>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit"{% if not open_reasons %} disabled{% endif %}>Mark not applicable here</button></div>
+</form>
+{% endif %}

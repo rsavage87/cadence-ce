@@ -1,0 +1,114 @@
+{% load web %}
+{% comment %}Slice 40: a security advisory's page (views_cyber_advisories._page_context), in the drawer. Its name and status words (for this
+   reader), the day received and who recorded it, its CVE IDs and the other advisories sharing them, its Check lines (information, never
+   refusals), its sources (who published each, its reference, link, days, revision, and what changed; Edit, Record revision, Remove for
+   Edit), the models it names (which releases, what it offers, the fix or patch list, the devices by line kind and updates; for a reader
+   of devices each device's line and responses, those that need a response first, the rest behind Show, with Record decision and Open
+   software update where they can act), "Decisions for this advisory" (a reader of devices), and History (its sources', models', and
+   releases' changes too). The actions by level in the footer; the devices' CSV for a reader of devices. Device security View.{% endcomment %}
+<div class="dr-h cy-panel-h">
+  <div>
+    <h2>{{ ad_name }}</h2>
+    <div class="sub">Received {{ a.received_on|date:"M j, Y" }}{% if a.recorded_by %} · recorded by {{ a.recorded_by }}{% endif %}</div>
+    <div class="chips"><span class="chip {{ ad_tone }}">{{ ad_words }}</span></div>
+  </div>
+  <button class="iconbtn" type="button" data-act="close-drawer" aria-label="Close">{% icon "x" %}</button>
+</div>
+<div class="dr-b cy-panel ad-page">
+  <div class="sec"><h3>CVE IDs</h3>
+    {% if ad_cves %}<p class="ad-cve-list">{% for c in ad_cves %}<span class="ad-cve">{{ c }}</span>{% endfor %}</p>{% else %}<p class="muted">{{ no_cves }}</p>{% endif %}
+    {% for o in also %}<p class="hint ad-also">Also on <a class="link" href="{{ o.url }}" hx-get="{{ o.url }}" hx-target="#drawer">{{ o.number }}</a>: {{ o.cves }}</p>{% endfor %}
+  </div>
+
+  {% if checks %}<div class="sec"><h3>Checks <span>information from what is recorded here</span></h3>
+    <ul class="cy-up-list">{% for c in checks %}<li class="cy-up"><div class="cy-up-s">{{ c.words }}</div></li>{% endfor %}</ul>
+  </div>{% endif %}
+
+  <div class="sec"><h3>Sources <span>{{ sources|length }}</span></h3>
+    <ul class="cy-up-list ad-sources">
+      {% for x in sources %}{% with s=x.s %}
+      <li class="cy-up">
+        <div class="cy-up-h"><span class="cy-up-n">{{ x.label }}</span>{% if s.reference %}<span class="ad-ref">{{ s.reference }}</span>{% endif %}</div>
+        <div class="cy-up-s">{% if s.published_on %}Published {{ s.published_on|date:"M j, Y" }}{% else %}Day published not recorded{% endif %}{% if s.revision or s.updated_on %} · revision{% if s.revision %} {{ s.revision }}{% endif %}{% if s.updated_on %}, updated {{ s.updated_on|date:"M j, Y" }}{% endif %}{% endif %}{% if x.changed %} · what changed: {{ x.changed|join:"; " }}{% endif %}</div>
+        {% if s.url %}<div class="cy-up-s"><a class="link ad-url" href="{{ s.url }}" target="_blank" rel="noopener noreferrer">{{ s.url }}</a></div>{% endif %}
+        {% if x.edit_url %}<div class="cy-up-f">
+          <button class="link" type="button" hx-get="{{ x.edit_url }}" hx-target="#modal-card">Edit</button>
+          <button class="link" type="button" hx-get="{{ x.revision_url }}" hx-target="#modal-card">Record revision</button>
+          {% if x.remove_url %}<button class="link" type="button" hx-get="{{ x.remove_url }}" hx-target="#modal-card">Remove</button>{% endif %}
+        </div>{% endif %}
+      </li>
+      {% endwith %}{% endfor %}
+    </ul>
+    {% if source_new_url %}<p class="cy-act"><button class="link" type="button" hx-get="{{ source_new_url }}" hx-target="#modal-card">{% icon "plus" %} Add source</button></p>{% endif %}
+  </div>
+
+  <div class="sec"><h3>Models it names <span>{{ ad_rows|length }}</span></h3>
+    {% if ad_rows %}
+    <div class="cy-releases">
+      {% for m in ad_rows %}
+      <article class="cy-card ad-row" aria-label="{{ m.model }}">
+        <div class="cy-release-h"><span class="t">{{ m.model }}</span><span class="muted">{{ m.versions }}{% if m.listed %}: {% for r in m.listed %}{{ r.version }}{% if not forloop.last %}, {% endif %}{% endfor %}{% endif %}</span></div>
+        <p class="cy-dev-s">{{ m.remedy }}{% if m.fix %} · the fix it names: {{ m.fix }}{% endif %}{% if m.patches %} · the patch list it names: {{ m.patches }}{% endif %}</p>
+        <ul class="ad-counts">
+          {% for label, n in m.lines %}<li>{{ label }}: <b>{{ n }}</b></li>{% empty %}<li class="muted">No device of this model on site</li>{% endfor %}
+          {% for label, n in m.updates %}<li>{{ label }}: <b>{{ n }}</b></li>{% endfor %}
+          {% for label, n in m.answers %}<li>{{ label }}: <b>{{ n }}</b></li>{% endfor %}
+        </ul>
+        {% if m.releases_url %}<p class="cy-act"><button class="link" type="button" hx-get="{{ m.releases_url }}" hx-target="#modal-card" title="Set devices to a release (the model's panel answers)">Record their releases</button></p>{% endif %}
+        {% if who.devices %}
+        {% if m.needing %}
+        <ul class="cy-devs ad-lines">
+          {% for d in m.needing %}{% include "web/_cyber_advisory_line.html" %}{% endfor %}
+        </ul>
+        {% endif %}
+        {% if m.rest %}
+        <details class="cy-more"><summary>Show {{ m.rest|length }} more: on the fix it names, or on a release it does not name</summary>
+          <ul class="cy-devs ad-lines">{% for d in m.rest %}{% include "web/_cyber_advisory_line.html" %}{% endfor %}</ul>
+        </details>
+        {% endif %}
+        {% endif %}
+        {% if m.set_url or m.remove_url or m.open_url or m.model_record_url or m.listed %}<div class="cy-release-f">
+          {% if m.set_url %}<button class="link" type="button" hx-get="{{ m.set_url }}" hx-target="#modal-card">Set models</button>{% endif %}
+          {% if m.open_url %}<button class="link" type="button" hx-get="{{ m.open_url }}" hx-target="#modal-card">Open updates to {{ m.fix_version }}</button>{% endif %}
+          {% for r in m.listed %}{% if r.record_url %}<button class="link" type="button" hx-get="{{ r.record_url }}" hx-target="#modal-card">Record decision for {{ r.version }}</button>{% endif %}{% endfor %}
+          {% if m.model_record_url %}<button class="link" type="button" hx-get="{{ m.model_record_url }}" hx-target="#modal-card">Record decision for every {{ m.row.device_model.model }} of ours</button>{% endif %}
+          {% if m.remove_url %}<button class="link" type="button" hx-get="{{ m.remove_url }}" hx-target="#modal-card">Remove model</button>{% endif %}
+        </div>{% endif %}
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}<div class="empty">No model of this facility's catalog is named on it.{% if models_url %} Set models to name the ones here, or mark it not applicable.{% endif %}</div>{% endif %}
+    {% if models_url %}<p class="cy-act"><button class="link" type="button" hx-get="{{ models_url }}" hx-target="#modal-card">{% icon "plus" %} Name a model</button></p>{% endif %}
+  </div>
+
+  {% if ad_decisions is not None %}<div class="sec"><h3>Decisions for this advisory <span>{{ ad_decisions|length }}</span></h3>
+    {% if ad_decisions %}
+    <div class="tbl-wrap">
+      <table class="cy-tbl">
+        <thead><tr><th>Number</th><th>Scope</th><th>Decision</th><th>IT exception</th><th>Review</th></tr></thead>
+        <tbody>
+          {% for row in ad_decisions %}
+          <tr>
+            <td class="two"><a class="tag" href="{{ row.url }}" hx-get="{{ row.url }}" hx-target="#drawer">{{ row.d.number }}</a><small><span class="chip {{ row.state.tone }}">{{ row.state.words }}</span></small></td>
+            <td class="cy-wrap">{{ row.scope }}</td>
+            <td class="cy-wrap">{{ row.response }}</td>
+            <td>{{ row.d.exception_reference|default:"None recorded" }}</td>
+            <td class="cy-wrap">{{ row.review }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}<div class="empty">No decision recorded for it.</div>{% endif %}
+  </div>{% endif %}
+  {% if can_history %}{% include "web/_history_section.html" %}{% endif %}
+</div>
+<div class="dr-f">
+  {% if confirm_url %}<button class="btn primary" type="button" hx-get="{{ confirm_url }}" hx-target="#modal-card">Confirm models</button>{% endif %}
+  {% if close_url %}<button class="btn{% if not confirm_url %} primary{% endif %}" type="button" hx-get="{{ close_url }}" hx-target="#modal-card">Close</button>{% endif %}
+  {% if edit_url %}<button class="btn" type="button" hx-get="{{ edit_url }}" hx-target="#modal-card">Edit</button>{% endif %}
+  {% if na_url %}<button class="btn" type="button" hx-get="{{ na_url }}" hx-target="#modal-card">Not applicable here</button>{% endif %}
+  {% if reopen_url %}<button class="btn" type="button" hx-get="{{ reopen_url }}" hx-target="#modal-card">Reopen</button>{% endif %}
+  {% if in_error_url %}<button class="btn danger" type="button" hx-get="{{ in_error_url }}" hx-target="#modal-card">Entered in error</button>{% endif %}
+  {% if csv_url %}<a class="btn" href="{{ csv_url }}" download title="Every device on site of a model it names, one row each, for IT's record">{% icon "dl" %} Devices CSV</a>{% endif %}
+</div>

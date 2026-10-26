@@ -18,6 +18,14 @@ drawer or the panel and a toast in rules' words; the levels are checked here and
 Who: Open software update and the batch: permissions.can_open_updates (Device security Edit, Equipment View, Work orders Edit); Record
 update and Confirm version: can_edit_devices; Entered in error: can_correct_updates (Device security Approve). Another facility's
 device, update, or release (or a hand-recorded update entered in error, or the model's profile for the batch) is a 404.
+
+Slice 40, from a security advisory's page (`?advisory=<number>&from=advisory`; build40 section 7.6, doors only: apps.cybersecurity.
+updates and SoftwareUpdate know nothing of advisories): Open software update begins on the advisory's remedy for the device's model
+(its fix, or the manufacturer's patches with the list it names), and Open updates to this release on the releases the advisory lists
+with Release not recorded ticked; saved, either answers with the advisory's page (views_cyber_advisories.advisory_saved, the work order
+lists told too); opened directly, the advisory's page. The advisory is read from the address only, without a lock, never posted (an
+unknown one is a 404); `advisory` and `from` are never carried forward (the panel's address, the device's). The skip words are slice
+38's.
 """
 from types import SimpleNamespace
 
@@ -34,11 +42,11 @@ from apps.credentials.services import qualified_technicians
 from apps.cybersecurity import permissions as cyber_perms
 from apps.cybersecurity import rules, updates
 from apps.cybersecurity import services as cyber
-from apps.cybersecurity.models import SoftwareRelease, SoftwareUpdate
+from apps.cybersecurity.models import AdvisoryRemedy, SecurityAdvisory, SoftwareRelease, SoftwareUpdate, UpdateTarget
 from apps.equipment.models import Department
 from apps.equipment.services import owner_maintains, service_vendor
 
-from . import asset_cyber, views_cybersecurity
+from . import asset_cyber, views_cyber_advisories, views_cybersecurity
 from .decorators import web_view
 from .forms_cyber_updates import ConfirmForm, OpenUpdateForm, OpenUpdatesForm, RecordUpdateForm, RemoveForm, batch_routing, routing
 from .htmx import toast
@@ -135,6 +143,56 @@ def _open_number(asset) -> str:
     return updates.open_number(asset)
 
 
+# --- opened from a security advisory (slice 40) ---------------------------------------------------------------------------------------
+
+ADVISORY_ORIGIN = views_cyber_advisories.ORIGIN  # `from=advisory`: the save answers with the advisory's page
+NOT_CARRIED = ("advisory", "from")  # the advisory door's own parameters: never carried forward
+
+
+def _from_advisory(request):
+    """The advisory a door was opened from (`?advisory=<number>&from=advisory`, any letter case), read without a lock, or None for any
+    other origin; an unknown number (another facility's) is a 404. Read from the address only, never posted."""
+    if request.GET.get("from") != ADVISORY_ORIGIN:
+        return None
+    number = str(request.GET.get("advisory", "")).strip()
+    found = SecurityAdvisory.objects.filter(number__iexact=number).first() if number and "\x00" not in number else None
+    if found is None:
+        raise Http404
+    return found
+
+
+def _advisory_row(advisory, model_id):
+    """The advisory's row for the model (rules.rows_of: the releases it lists read), or None when it names no such model."""
+    return next((r for r in rules.rows_of([advisory]) if r.device_model_id == model_id), None)
+
+
+def _open_initial(advisory, asset) -> dict:
+    """Open software update's start from the advisory's row for the device's model: the release it names as the fix, or the
+    manufacturer's patches with the list it names; nothing for another remedy (or no row)."""
+    row = _advisory_row(advisory, asset.device_model_id)
+    if row is not None and row.remedy == AdvisoryRemedy.RELEASE and row.fix_release_id:
+        return {"target": UpdateTarget.RELEASE, "target_release": str(row.fix_release_id)}
+    if row is not None and row.remedy == AdvisoryRemedy.PATCHES:
+        return {"target": UpdateTarget.PATCHES, "target_reference": row.patches_reference}
+    return {}
+
+
+def _batch_initial(advisory, release) -> dict:
+    """Open updates to this release's start from the advisory's row for the model: the releases it lists (versioned, not entered in
+    error, never the one to install), and Release not recorded ticked (critique39_practice N7)."""
+    row = _advisory_row(advisory, release.device_model_id)
+    if row is None:
+        return {}
+    listed = [str(r.pk) for r in row.listed if r.version_key and r.removed_on is None and r.pk != release.pk]
+    return {"from_releases": listed, "include_not_recorded": True}
+
+
+def _advisory_answer(request, advisory, message: str):
+    """Saved from the advisory's page: the page into #drawer with the toast (views_cyber_advisories.advisory_saved), the work order
+    lists told too."""
+    return trigger_client_event(views_cyber_advisories.advisory_saved(request, advisory, message), WO_CHANGED, {})
+
+
 # --- answers ------------------------------------------------------------------------------------------------------------------------
 
 def _changed(response):
@@ -193,8 +251,9 @@ def _open_blocker(asset) -> str:
     return updates.ALREADY_OPEN.format(tag=asset.tag, number=number) if number else ""
 
 
-def _open_form(request, asset, today, data=None) -> tuple[OpenUpdateForm, str]:
-    """The form, with Assign to where open_update would use it, and the line saying where the update goes otherwise."""
+def _open_form(request, asset, today, data=None, initial=None) -> tuple[OpenUpdateForm, str]:
+    """The form, with Assign to where open_update would use it, and the line saying where the update goes otherwise; `initial` (from an
+    advisory) laid over its defaults."""
     user = request.user
     profile = rules.profile(asset.device_model_id)
     kind = asset.get_ownership_display().lower() if owner_maintains(asset) else ""
@@ -202,24 +261,29 @@ def _open_form(request, asset, today, data=None) -> tuple[OpenUpdateForm, str]:
     dm = asset.device_model
     form = OpenUpdateForm(data, releases=rules.releases(asset.device_model_id), recorded=rules.release_of(asset),
                           model_name=f"{dm.manufacturer} {dm.model}", today=today, assign=assign,
-                          qualified=qualified_technicians(asset, today) if assign else ())
+                          qualified=qualified_technicians(asset, today) if assign else (), initial=initial)
     return form, route
 
 
 @require_http_methods(["GET", "POST"])
 @web_view(MODULE, Level.EDIT)
 def update_open(request, tag):
-    """Open software update for the device `tag` (GET the modal, POST it): permissions.can_open_updates; updates.open_update."""
+    """Open software update for the device `tag` (GET the modal, POST it): permissions.can_open_updates; updates.open_update. From an
+    advisory's page (`?advisory=<number>&from=advisory`, slice 40) it begins on the advisory's remedy for the model and answers with
+    the advisory's page (the modal posts to its own address, so the origin comes with it)."""
     if not cyber_perms.can_open_updates(request.user):
         raise PermissionDenied(updates.OPEN_PERMISSION)
     asset = get_asset(request, tag)
+    advisory = _from_advisory(request)
     if request.method != "POST" and not request.htmx:
-        return redirect(_drawer_url(asset))
+        return redirect(views_cyber_advisories.advisory_url(advisory.number) if advisory is not None else _drawer_url(asset))
     today = timezone.localdate()
+    action = request.get_full_path()
     if request.method != "POST":
         blocker = _open_blocker(asset)
-        form, route = _open_form(request, asset, today) if not blocker else (None, "")
-        return _modal(request, OPEN, {"asset": asset, "form": form, "route": route, "blocker": blocker})
+        initial = _open_initial(advisory, asset) if advisory is not None else None
+        form, route = _open_form(request, asset, today, initial=initial) if not blocker else (None, "")
+        return _modal(request, OPEN, {"asset": asset, "form": form, "route": route, "blocker": blocker, "action": action})
     form, route = _open_form(request, asset, today, request.POST)
     batch = None
     if form.is_valid():
@@ -228,12 +292,14 @@ def update_open(request, tag):
         except (ValidationError, PermissionDenied) as e:
             form.add_service_errors(e)
     if batch is None:
-        return _modal(request, OPEN, {"asset": asset, "form": form, "route": route, "blocker": ""})
+        return _modal(request, OPEN, {"asset": asset, "form": form, "route": route, "blocker": "", "action": action})
     wo = batch.work_orders[0]
     row = _fresh(work_order_id=wo.pk)
     message = OPENED.format(number=wo.number, tag=asset.tag, words=rules.update_words(row))
     if batch.unassigned_reason:
         message += " " + _left_unassigned(batch.unassigned, batch.unassigned_reason, batch=False)
+    if advisory is not None:
+        return _advisory_answer(request, advisory, message)
     return _saved(request, asset, message)
 
 
@@ -370,10 +436,10 @@ def update_remove(request, pk):
 
 # --- Open updates to this release (the batch) -----------------------------------------------------------------------------------------
 
-def _batch_context(request, release, today, data=None) -> dict:
+def _batch_context(request, release, today, data=None, initial=None) -> dict:
     """The batch's modal: the model's other releases with their devices on site (rules.standings: a fixed number of queries), the
     devices with none recorded, those already on the release, the departments with devices of the model on site, and Assign to and the
-    routing lines (forms_cyber_updates.batch_routing)."""
+    routing lines (forms_cyber_updates.batch_routing); `initial` (from an advisory) laid over the form's defaults."""
     user = request.user
     dm = release.device_model
     on = rules.on_site().filter(device_model=dm)
@@ -390,7 +456,7 @@ def _batch_context(request, release, today, data=None) -> dict:
     # credentials name a model, its manufacturer, or its category: the model's devices share one answer (qualification reads only that)
     qualified = qualified_technicians(SimpleNamespace(device_model=dm), today) if assign else ()
     form = OpenUpdatesForm(data, others=others, not_recorded=running.get(None, 0), departments=[(str(d), n) for d, n in departments],
-                           today=today, assign=assign, qualified=qualified)
+                           today=today, assign=assign, qualified=qualified, initial=initial)
     on_it = running.get(release.pk, 0)
     blocker = NO_DEVICES if not read else ALL_ON_IT.format(version=rules.release_name(release)) if on_it == len(read) else ""
     already = (ALREADY_ON_IT.format(on_site=_plural(len(read), "device"), count=on_it, verb="runs" if on_it == 1 else "run",
@@ -416,17 +482,26 @@ def _batch_message(release, batch) -> str:
 @web_view(MODULE, Level.EDIT)
 def release_open_updates(request, pk):
     """Open updates to the release `pk` (the batch, from the model panel's release row): permissions.can_open_updates;
-    updates.open_updates. Saved, the model's panel comes back with the filters it was opened with (they are in this address)."""
+    updates.open_updates. Saved, the model's panel comes back with the filters it was opened with (they are in this address). From an
+    advisory's page (`?advisory=<number>&from=advisory`, slice 40: "Open updates to <the fix>") it begins on the releases the advisory
+    lists with Release not recorded ticked, and answers with the advisory's page."""
     if not cyber_perms.can_open_updates(request.user):
         raise PermissionDenied(updates.OPEN_PERMISSION)
     release = _target(pk)
     dm = release.device_model
+    advisory = _from_advisory(request)
     if request.method != "POST" and not request.htmx:
-        query = request.GET.urlencode()
+        if advisory is not None:
+            return redirect(views_cyber_advisories.advisory_url(advisory.number))
+        carried = request.GET.copy()
+        for key in NOT_CARRIED:
+            carried.pop(key, None)
+        query = carried.urlencode()
         return redirect(reverse("web:cybersecurity_model", args=[dm.pk]) + (f"?{query}" if query else ""))
     today = timezone.localdate()
     if request.method != "POST":
-        return _modal(request, BATCH, _batch_context(request, release, today))
+        initial = _batch_initial(advisory, release) if advisory is not None else None
+        return _modal(request, BATCH, _batch_context(request, release, today, initial=initial))
     ctx = _batch_context(request, release, today, request.POST)
     form = ctx["form"]
     batch = None
@@ -437,5 +512,7 @@ def release_open_updates(request, pk):
             form.add_service_errors(e)
     if batch is None:
         return _modal(request, BATCH, {**ctx, "blocker": ""})
+    if advisory is not None:
+        return _advisory_answer(request, advisory, _batch_message(release, batch))
     return _panel_saved(request, dm, _batch_message(release, batch))
 

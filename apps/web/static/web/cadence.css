@@ -1759,6 +1759,50 @@ a.cy-fig:hover{background:var(--surface-2)}
 }
 /* Slice 38: end */
 
+/* Slice 40: security advisories (web/cyber_advisories.html, _cyber_advisor*.html; wave 2A owns this block, up to its end marker) */
+/* The Advisories tab's list: a row's name wraps with its CVE IDs under it; its status words a chip that wraps (the words are the record);
+   its counts a short list, label then number. An advisory's page: its CVE IDs as tokens that wrap, its sources and the models it names
+   as the panel's cards and lists (.cy-card, .cy-up, .cy-dev), each device's responses under its line. The modals: the release and
+   change checkboxes one per line, the reasons with why each does not hold now, "Add a version not on file" a box and its button on one
+   line (stacked on a phone); the fields that depend on a choice shown while it is made (CSS :has; without :has every field shows, and
+   the writer refuses what does not fit, in its words). Theme tokens only. */
+.ad-tbl td.ad-name{min-width:200px;max-width:320px;white-space:normal;overflow-wrap:anywhere}
+.ad-tbl .ad-cves{display:block;margin-top:2px;font-size:11.5px;color:var(--ink-3);overflow-wrap:anywhere}
+.ad-status{white-space:normal;line-height:1.35;padding-top:2px;padding-bottom:2px;max-width:100%}
+.ad-counts{list-style:none;margin:0;padding:0;font-size:12.5px;line-height:1.45;color:var(--ink-2)}
+.ad-counts b{font-weight:600;color:var(--ink)}
+.ad-row .ad-counts{display:flex;flex-wrap:wrap;gap:2px 14px;margin:6px 0 4px}
+.ad-cve-list{display:flex;flex-wrap:wrap;gap:4px 10px;margin:0;font-size:12.5px}
+.ad-cve{font-weight:500;letter-spacing:.01em;overflow-wrap:anywhere}
+.ad-also{margin:6px 0 0}
+.ad-ref{font-size:12.5px;color:var(--ink-2);overflow-wrap:anywhere}
+.ad-url{overflow-wrap:anywhere;word-break:break-word}
+.ad-lines{margin:6px 0 0}
+.ad-response{color:var(--ink)}
+.ad-overlap p{margin:0 0 6px;display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+.ad-overlap p:last-child{margin-bottom:0}
+.ad-checks{display:grid;gap:6px}
+.ad-checks .check-row{display:flex;flex-direction:row;align-items:center;gap:8px;font-size:13px;color:var(--ink)}
+.ad-form .radio input,.ad-checks input{padding:0;border:0;width:auto}
+.ad-form .radio label span{display:block;min-width:0}
+.ad-reasons label.ad-refused{color:var(--ink-3)}
+.ad-why{display:block;margin-top:2px;font-size:12px;color:var(--ink-2);line-height:1.4}
+.ad-add-row{display:flex;gap:8px;align-items:center}
+.ad-add-row input{flex:1;min-width:0}
+@supports selector(:has(*)){
+  .ad-form .ad-if-isac{display:none}
+  .ad-form:has(select[name="source"] option[value="isac"]:checked) .ad-if-isac{display:block}
+  .ad-form:has(input[name="versions"]:not([value="listed"]):checked) .ad-if-listed,
+  .ad-form:has(input[name="remedy"]:not([value="release"]):checked) .ad-if-release,
+  .ad-form:has(input[name="remedy"]:not([value="patches"]):checked) .ad-if-patches{display:none}
+}
+@media (max-width:760px){
+  .ad-tbl td.ad-name{min-width:160px}
+  .ad-add-row{flex-direction:column;align-items:stretch}
+  .ad-row .cy-release-f .link,.ad-line .cy-up-f .link{display:inline-block;padding:6px 0}
+}
+/* Slice 40: end */
+
 /* Slice 11: printing app pages */
 /* What the browser prints of an app page (the Overview's Export button calls window.print(); any other screen prints from the
    browser's menu): the page's content on white, in the light theme whatever the screen shows, with chart and chip colours kept.

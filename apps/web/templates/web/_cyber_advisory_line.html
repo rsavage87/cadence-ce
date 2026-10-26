@@ -1,0 +1,17 @@
+{% load web %}
+{% comment %}Slice 40: one device under a model an advisory names (views_cyber_advisories._line_row; a reader of devices only): its tag (its
+   Security tab in the drawer), whose, serial, department and connection, the line in rules' words, and, where it needs a response, each
+   response (a work order's number a link with Work orders View; a decision's number its page), then Record decision, Review and renew,
+   and Open software update where they can act.{% endcomment %}
+{% with x=d.asset %}
+<li class="cy-dev ad-line" data-kind="{{ d.kind }}">
+  <div class="cy-dev-h"><a class="tag" href="{% url 'web:asset' x.tag %}?tab=security" hx-get="{% url 'web:asset' x.tag %}?tab=security" hx-target="#drawer">{{ x.tag }}</a> {% whose_chip x %}<span class="muted">{% if x.serial %}serial {{ x.serial }} · {% endif %}{{ d.place }}</span></div>
+  <div class="cy-dev-s">{{ d.words }}</div>
+  {% for r in d.responses %}<div class="cy-dev-s ad-response" data-response="{{ r.kind }}">{{ r.before }}{% if r.url %}<a class="link" href="{{ r.url }}" hx-get="{{ r.url }}" hx-target="#drawer">{{ r.number }}</a>{% else %}{{ r.number }}{% endif %}{{ r.after }}</div>{% endfor %}
+  {% if d.record_url or d.renew_url or d.open_url %}<div class="cy-up-f">
+    {% if d.record_url %}<button class="link" type="button" hx-get="{{ d.record_url }}" hx-target="#modal-card">Record decision</button>{% endif %}
+    {% if d.renew_url %}<button class="link" type="button" hx-get="{{ d.renew_url }}" hx-target="#modal-card">Review and renew</button>{% endif %}
+    {% if d.open_url %}<button class="link" type="button" hx-get="{{ d.open_url }}" hx-target="#modal-card">Open software update</button>{% endif %}
+  </div>{% endif %}
+</li>
+{% endwith %}

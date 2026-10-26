@@ -1,0 +1,28 @@
+{% load web %}
+{% comment %}Slice 40: Record advisory (views_cyber_advisories.advisory_new; advisories.record_advisory; Device security Edit): the day
+   received, the CVE IDs (pasted), and its first source (who published it, its reference, its https link, the day published). A CVE ID (or
+   the reference under another kind of source) already on a live advisory comes back as a note naming it, with "Add as a source of AD-…"
+   (Add source there, posting these fields) and "Record as its own advisory" (posting again with the advisories shown: `seen`). The same
+   kind and reference as a live source is refused under the reference. Each refusal comes back under its field.{% endcomment %}
+<div class="modal-h"><h2>Record advisory</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+<form id="ad-new-form" class="ad-form" hx-post="{{ action }}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    <p class="full hint">Cadence keeps no advisory text: the day your team took it in, its CVE IDs, and where it was published. Name the models it names here next.</p>
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    {% if overlaps %}
+    <div class="full note warn ad-overlap" role="status">
+      {% for o in overlaps %}<p>{{ o.words }} <button class="btn sm" type="button" hx-post="{{ o.add_url }}" hx-target="#modal-card">Add as a source of {{ o.number }}</button></p>{% endfor %}
+      <p class="hint">{{ overlap_hint }}</p>
+    </div>
+    {% endif %}
+    {% for n in seen %}<input type="hidden" name="seen" value="{{ n }}">{% endfor %}
+    {% include "web/_asset_field.html" with field=form.received_on %}
+    {% include "web/_asset_field.html" with field=form.source %}
+    {% include "web/_asset_field.html" with field=form.cves cls="full" %}
+    {% include "web/_asset_field.html" with field=form.reference %}
+    {% include "web/_asset_field.html" with field=form.published_on %}
+    {% include "web/_asset_field.html" with field=form.url cls="full" %}
+    <p class="full hint ad-if-isac">{{ isac_help }}</p>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">{% if overlaps %}Record as its own advisory{% else %}Record the advisory{% endif %}</button></div>
+</form>

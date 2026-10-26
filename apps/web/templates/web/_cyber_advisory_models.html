@@ -1,0 +1,65 @@
+{% load web %}
+{% comment %}Slice 40: Set models (views_cyber_advisories.advisory_models; advisories.set_model; Device security Edit), in two steps. First the
+   model of this facility's catalog it names ("Models recorded with an operating system" narrows the list to models whose profile or a
+   release records one, with it: an operating system advisory names no device model). Then, for that model: which releases it names (the
+   releases listed, with each release's devices on site and OS name; every release; releases not stated), what it offers, the fix (a
+   release of the model) or the patch list, and "These are all the models it names that are here". "Add a version not on file" adds the
+   version to the model's releases at once (services.add_release) and brings this form back with it ticked, or chosen as the fix. The
+   releases and the fix show while their choice is made (CSS :has; without it every field shows, and the writer refuses what does not
+   fit, in its words). An advisory not open gets the modal saying so. Each refusal comes back under its field.{% endcomment %}
+{% if step == "choose" %}
+<div class="modal-h"><h2>{{ a.number }}: set models</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note" role="alert" data-blocker>{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="ad-choose-form" hx-get="{{ choose_url }}" hx-target="#modal-card" novalidate>
+  <div class="form">
+    <p class="full hint">The models of this facility's catalog it names, one at a time. An advisory about an operating system names no device model: narrow the list to the models recorded with one.</p>
+    <div class="fld full"><label for="ad-model">Model</label>
+      <select id="ad-model" name="model" autofocus>
+        {% for value, label in choices %}<option value="{{ value }}">{{ label }}{% if value in named %} (named on it){% endif %}</option>{% empty %}<option value="">No model recorded with an operating system</option>{% endfor %}
+      </select>
+    </div>
+    <div class="fld full"><label class="check-row" for="ad-os"><input type="checkbox" id="ad-os" name="os" value="1"{% if os_only %} checked{% endif %} hx-get="{{ choose_url }}" hx-target="#modal-card" hx-include="this"> Models recorded with an operating system</label></div>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit"{% if not choices %} disabled{% endif %}>Next</button></div>
+</form>
+{% endif %}
+{% else %}
+<div class="modal-h"><h2>{{ a.number }}: {{ dm.manufacturer }} {{ dm.model }}</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+<form id="ad-models-form" class="ad-form" hx-post="{{ action }}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    <p class="full hint">As the advisory states it for this model. Which devices it names follows from each device's recorded release.</p>
+    {% if note %}<p class="full note" role="status">{{ note }}</p>{% endif %}
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    <fieldset class="full cy-fs"{% if form.versions.errors %} aria-describedby="ad-versions_error"{% endif %}>
+      <legend>{{ form.versions.label }}</legend>
+      <div class="radio">{% for radio in form.versions %}<label for="{{ radio.id_for_label }}">{{ radio.tag }}<span>{{ radio.choice_label }}</span></label>{% endfor %}</div>
+      <span class="hint">{{ form.versions.help_text }}</span>
+      {% if form.versions.errors %}<span class="err" id="ad-versions_error">{{ form.versions.errors|striptags }}</span>{% endif %}
+    </fieldset>
+    <fieldset class="full cy-fs ad-if-listed"{% if form.release_ids.errors %} aria-describedby="ad-release_ids_error"{% endif %}>
+      <legend>{{ form.release_ids.label }}</legend>
+      <div class="ad-checks">{% for box in form.release_ids %}<label class="check-row" for="{{ box.id_for_label }}">{{ box.tag }} {{ box.choice_label }}</label>{% empty %}<span class="muted">No release of this model is on file yet: add the version below.</span>{% endfor %}</div>
+      <span class="hint" id="ad-release_ids_helptext">{{ form.release_ids.help_text }}</span>
+      {% if form.release_ids.errors %}<span class="err" id="ad-release_ids_error">{{ form.release_ids.errors|striptags }}</span>{% endif %}
+    </fieldset>
+    <div class="fld full ad-add"><label for="{{ form.add_version.id_for_label }}">{{ form.add_version.label }}</label>
+      <div class="ad-add-row">{{ form.add_version }}<button class="btn sm" type="button" hx-post="{{ action }}" hx-target="#modal-card" hx-vals='{"action": "add_version"}'>Add the version</button></div>
+      <span class="hint" id="ad-add_version_helptext">{{ form.add_version.help_text }}</span>
+      {% if form.add_version.errors %}<span class="err" id="ad-add_version_error">{{ form.add_version.errors|striptags }}</span>{% endif %}
+    </div>
+    <fieldset class="full cy-fs"{% if form.remedy.errors %} aria-describedby="ad-remedy_error"{% endif %}>
+      <legend>{{ form.remedy.label }}</legend>
+      <div class="radio">{% for radio in form.remedy %}<label for="{{ radio.id_for_label }}">{{ radio.tag }}<span>{{ radio.choice_label }}</span></label>{% endfor %}</div>
+      <span class="hint">{{ form.remedy.help_text }}</span>
+      {% if form.remedy.errors %}<span class="err" id="ad-remedy_error">{{ form.remedy.errors|striptags }}</span>{% endif %}
+    </fieldset>
+    {% include "web/_asset_field.html" with field=form.fix_release cls="full ad-if-release" %}
+    {% include "web/_asset_field.html" with field=form.patches_reference cls="full ad-if-patches" %}
+    <div class="fld full"><label class="check-row" for="{{ form.confirm.id_for_label }}">{{ form.confirm }} {{ form.confirm.label }}</label><span class="hint">{{ form.confirm.help_text }}</span></div>
+  </div>
+  <div class="modal-f">{% if not editing %}<button class="btn" type="button" hx-get="{{ back_url }}" hx-target="#modal-card">Another model</button>{% endif %}<button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">{% if editing %}Save{% else %}Name the model{% endif %}</button></div>
+</form>
+{% endif %}

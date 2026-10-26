@@ -1,0 +1,26 @@
+{% load web %}
+{% comment %}Slice 40: Record revision (views_cyber_advisories.source_revision; advisories.record_revision; Device security Edit): the
+   revision as its publisher prints it, the day updated, and what changed. Products or releases changed, vulnerabilities added, or a fix
+   named asks to confirm the models it names again (an advisory marked not applicable opens again); the toast says which. Refused on an
+   advisory entered in error or a source removed. Each refusal comes back under its field.{% endcomment %}
+<div class="modal-h"><h2>{{ a.number }}: record a revision</h2><button class="iconbtn" type="button" data-act="close-modal" aria-label="Close">{% icon "x" %}</button></div>
+{% if blocker %}
+<div class="form"><div class="full note" role="alert">{{ blocker }}</div></div>
+<div class="modal-f"><button class="btn" type="button" data-act="close-modal">Close</button></div>
+{% else %}
+<form id="ad-revision-form" class="ad-form" hx-post="{{ action }}" hx-target="#modal-card" hx-disabled-elt="find button[type=submit]" novalidate>
+  <div class="form">
+    <p class="full hint">{{ source.get_source_display }}{% if source.reference %} {{ source.reference }}{% endif %}. The revision recorded replaces the last one here; History keeps each.</p>
+    {% if form.non_field_errors %}<div class="full"><span class="err" role="alert">{{ form.non_field_errors|striptags }}</span></div>{% endif %}
+    {% include "web/_asset_field.html" with field=form.revision %}
+    {% include "web/_asset_field.html" with field=form.updated_on %}
+    <fieldset class="full cy-fs"{% if form.last_change.errors %} aria-describedby="ad-last_change_error"{% endif %}>
+      <legend>{{ form.last_change.label }}</legend>
+      <div class="ad-checks">{% for box in form.last_change %}<label class="check-row" for="{{ box.id_for_label }}">{{ box.tag }} {{ box.choice_label }}</label>{% endfor %}</div>
+      <span class="hint" id="ad-last_change_helptext">{{ form.last_change.help_text }}</span>
+      {% if form.last_change.errors %}<span class="err" id="ad-last_change_error">{{ form.last_change.errors|striptags }}</span>{% endif %}
+    </fieldset>
+  </div>
+  <div class="modal-f"><button class="btn" type="button" data-act="close-modal">Cancel</button><button class="btn primary" type="submit">Record the revision</button></div>
+</form>
+{% endif %}
