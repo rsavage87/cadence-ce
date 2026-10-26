@@ -171,7 +171,8 @@ def test_tokens_under_the_policies(client, tenant, other_roles, token_for, depar
                 "/api/v1/overview/", "/api/v1/vendor-engineers/", "/api/v1/vendor-trainings/", "/api/v1/vendor-attestations/",  # slice 31
                 "/api/v1/program-evaluations/", "/api/v1/vendor-reviews/",  # slices 32 and 34
                 "/api/v1/test-equipment/",  # slice 35
-                "/api/v1/security-decisions/"]:  # slice 39
+                "/api/v1/security-decisions/",  # slice 39
+                "/api/v1/security-advisories/"]:  # slice 40
         r = client.get(url, **auth(mine))
         assert r.status_code == 200, (url, r.status_code)
     assert client.get("/api/v1/assets/", HTTP_ACCEPT="text/html", **auth(mine)).status_code == 200
