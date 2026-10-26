@@ -262,3 +262,24 @@ def test_never_words_on_what_these_fixes_show(client, signed_in, floor):  # noqa
     SEEN.extend([views_cyber_decisions.hicp_second(rules.HICP_DECISIONS, rules.HICP_ADVISORY_DECISIONS), views_cyber_decisions.HICP_TAIL])
     hits = [(w, re.search(rf"(?i).{{0,80}}{re.escape(w)}.{{0,80}}", text).group(0)) for text in SEEN for w in never(text)]
     assert hits == [] and len(SEEN) > 10
+
+
+def test_an_update_done_to_confirm_beside_a_decision_past_review_offers_no_opener_on_either_door(client, signed_in, floor):  # noqa: F811
+    """The line reads its decision past review first (rules.ANSWER_ORDER), and the update done with the version not confirmed beside it
+    still leaves nothing to open: rules.nothing_to_open reads the responses, never the line's kind (lead's integration of review 40 #1)."""
+    from apps.cybersecurity.models import DeviceSecurityDecision
+
+    signed_in("director")
+    n = floor.adv.number
+    wo, _u = update_wo(floor.d["P-2"], floor.r56)
+    WorkOrder.objects.filter(pk=wo.pk).update(status=WoStatus.COMPLETED, completed_on=floor.today)
+    d = decide(floor.adv, asset=floor.d["P-2"])
+    DeviceSecurityDecision.objects.filter(pk=d.pk).update(decided_on=floor.today - 30 * DAY, review_by=floor.today - DAY)
+    x = _tab_items(client, "P-2")[n]
+    assert [r["kind"] for r in x["responses"]] == [rules.UPDATE_NOT_CONFIRMED, rules.ANSWER_REVIEW_DUE]
+    assert x["open_url"] == "" and x["renew_url"]
+    page = _page_openers(client, n)
+    assert page["P-2"] == "" and page["P-1"]
+    r = client.get(f"/security/advisories/{n}/", **HX)
+    line = next(ln for row in r.context["ad_rows"] for ln in row["needing"] if ln["asset"].tag == "P-2")
+    assert line["renew_url"] and line["open_url"] == ""

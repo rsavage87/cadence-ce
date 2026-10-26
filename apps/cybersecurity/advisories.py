@@ -485,7 +485,8 @@ def close_refusal(advisory, today: date, *, user=None) -> str | None:
     error; marked not applicable (reopen it first); for an open one, no model named (NAME_A_MODEL), its models to confirm; then each line
     that needs a response and is not answered (rules.close_blockers: no response recorded, a decision past its review date, patches
     naming another list, an update done with the version not confirmed, an update open), worded with what answers it. For a closed one,
-    only the lines (what would refuse closing it again now: its devices named since). Fixed queries: rules.advisory_reading's."""
+    only the lines (what would refuse closing it again now: its devices named since, rules.named_since_lines, and those under a decision
+    past its review date, which Needs attention lists under the decisions to review). Fixed queries: rules.advisory_reading's."""
     if advisory.removed_on is not None:
         return ENTERED_IN_ERROR.format(number=advisory.number)
     if advisory.status == AdvisoryStatus.NOT_APPLICABLE:
@@ -838,8 +839,9 @@ def record_revision(source_row, *, revision="", updated_on=None, last_change=(),
     changed, AdvisoryChange slugs), replacing the last one recorded (History keeps each). A change in REOPENING (products or releases
     changed, vulnerabilities added, the advisory now names a fix) clears the models' confirmation, sets changed_on to today, and counts a
     change; on an advisory marked not applicable it also moves it back to open (its reason, day, and person cleared; history "Reopened: a
-    revision changed what it names"). A closed one stays closed: it then reads "models to confirm since a revision" (stored state, never
-    a day compared). Refused on a source removed or an advisory entered in error. Locks: the register, the advisory. Returns the source."""
+    revision changed what it names"). A closed one stays closed: it then reads "models to confirm since a change" (stored state, never
+    a day compared; a change of the day received after the confirmation reads the same: rules.TO_CONFIRM_SINCE_WORDS). Refused on a
+    source removed or an advisory entered in error. Locks: the register, the advisory. Returns the source."""
     services._check(by, perms.can_edit, RECORD_PERMISSION)
     today = services._today(today)
     errors: dict = {}

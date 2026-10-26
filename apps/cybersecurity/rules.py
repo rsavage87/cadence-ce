@@ -2230,6 +2230,14 @@ ANSWER_KINDS = {UPDATE_OPEN: "Update open", UPDATE_NOT_CONFIRMED: "Version not c
 ANSWER_ORDER = (PATCHES_RECORDED, ANSWER_DECIDED, ANSWER_REVIEW_DUE, UPDATE_NOT_CONFIRMED, UPDATE_OPEN, PATCHES_OTHER_LIST, NO_RESPONSE)
 ANSWERED = (PATCHES_RECORDED, ANSWER_DECIDED)  # what Close counts as answered, besides the lines that need no response
 NO_RESPONSE_WORDS = "No response recorded"
+NOTHING_TO_OPEN = (PATCHES_RECORDED, UPDATE_NOT_CONFIRMED)  # what answers a line and leaves no update to open from an advisory
+
+
+def nothing_to_open(answer) -> bool:
+    """Whether what answers a line leaves no update to open from an advisory (the advisory page's and the Security tab's Open software
+    update, practice N3): the patches recorded, or an update done with the version not confirmed (Confirm version on its work order
+    first), read from its responses, whatever the line's kind (a decision past review reads before them: ANSWER_ORDER)."""
+    return answer is not None and any(r.kind in NOTHING_TO_OPEN for r in answer.responses)
 
 
 def advisory_name(advisory, rows=None, sources=None) -> str:

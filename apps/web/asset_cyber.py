@@ -225,7 +225,7 @@ UPDATE_REMEDIES = ("release", "patches")  # models.AdvisoryRemedy: what an updat
 OPEN_KINDS = (rules.UPDATE_OPEN, rules.UPDATE_ELSEWHERE)  # an update open on the device, answering the line or not
 # What answers the line leaves nothing to open, as on the advisory's page (views_cyber_advisories.NO_OPENER): patches recorded, or an
 # update done with the version not confirmed (Confirm version on its work order first; review 40 #18)
-NO_OPENER = (rules.PATCHES_RECORDED, rules.UPDATE_NOT_CONFIRMED)
+NO_OPENER = rules.NOTHING_TO_OPEN  # rules.nothing_to_open reads it from the responses
 _ADVISORY_DECISION_RELATED = ("asset", "device_model", "release", "plan_owner", "recorded_by", "advisory")
 
 
@@ -350,7 +350,7 @@ def advisory_lines(request, asset, today) -> dict:
             "record_url": record_decision_url(advisory=adv.number, asset=asset.tag) if decide and not own else "",
             "renew_url": record_decision_url(supersedes=gov.number) if decide and own else "",
             "open_url": (f"{reverse('web:cybersecurity_update_open', args=[asset.tag])}?{urlencode({'advisory': adv.number})}"
-                         if can_open and needs and answer.kind not in NO_OPENER and line.row.remedy in UPDATE_REMEDIES
+                         if can_open and needs and not rules.nothing_to_open(answer) and line.row.remedy in UPDATE_REMEDIES
                          and not update_open else ""),
             "reopen_url": (reverse("web:security_advisory_reopen", args=[adv.number])
                            # the reader's state checks (user None); the level once above (Edit reopens one not applicable)

@@ -151,7 +151,7 @@ UPDATE_KINDS = {rules.UPDATE_OPEN: rules.ANSWER_KINDS[rules.UPDATE_OPEN],
 RESPONSE_KINDS = {k: rules.ANSWER_KINDS[k] for k in (rules.NO_RESPONSE, rules.ANSWER_REVIEW_DUE, rules.PATCHES_OTHER_LIST, rules.ANSWER_DECIDED,
                                                        rules.PATCHES_RECORDED)}
 OPEN_SHOWN = (rules.UPDATE_OPEN, rules.UPDATE_ELSEWHERE)  # an update open on the device, answering the line or not
-NO_OPENER = (rules.PATCHES_RECORDED, rules.UPDATE_NOT_CONFIRMED)  # answered by patches, or an update done to confirm: nothing to open
+NO_OPENER = rules.NOTHING_TO_OPEN  # answered by patches, or an update done to confirm: nothing to open (rules.nothing_to_open)
 CVES_SHOWN = 3
 WHOSE_WORDS = {Ownership.OWNED: "Ours"}
 _DECISION_RELATED = ("asset", "device_model", "release")
@@ -474,7 +474,7 @@ def _line_row(a, ln, answer, who: _Reader) -> dict:
             renew = _record_url(supersedes=answer.decision.number)
         else:
             record = _record_url(advisory=a.number, asset=asset.tag)
-    if (needs and who.open_updates and row.remedy in (AdvisoryRemedy.RELEASE, AdvisoryRemedy.PATCHES) and answer.kind not in NO_OPENER
+    if (needs and who.open_updates and row.remedy in (AdvisoryRemedy.RELEASE, AdvisoryRemedy.PATCHES) and not rules.nothing_to_open(answer)
             and not any(r.kind in OPEN_SHOWN for r in answer.responses) and not asset.incident_hold):
         opener = _door("web:cybersecurity_update_open", [asset.tag], a)
     return {"asset": asset, "words": ln.words, "place": ln.place, "kind": ln.kind, "needs": ln.needs_response,
@@ -515,7 +515,7 @@ def _model_row(a, row, rc, lines, answers, who: _Reader) -> dict:
         on_it = [(ln, ans) for ln, ans in needing if ln.release is not None and ln.release.pk == rel.pk]
         releases.append({"version": rel.version, "record_url": (_record_url(advisory=a.number, release=rel.pk)
                                                                 if who.decide and _ours_waiting(on_it, rules.RELEASE_SCOPE) else "")})
-    unopened = any(ans is not None and ans.kind and ans.kind not in NO_OPENER and not any(r.kind in OPEN_SHOWN for r in ans.responses)
+    unopened = any(ans is not None and ans.kind and not rules.nothing_to_open(ans) and not any(r.kind in OPEN_SHOWN for r in ans.responses)
                    for _ln, ans in needing)
     counts_lines = rc.lines if rc is not None else {}
     found = {
