@@ -99,6 +99,38 @@ def _seeded_decision(tenant):
         return live, rules.decision_words(live, today), held[0].asset.tag if held else "", _record_address(offered[0])
 
 
+def _seeded_advisories(tenant) -> dict:
+    """Slice 40, the seed's advisories as read inside the facility (as the suite's role, before a test acts as the runtime role), for the
+    doors read as the runtime role: the
+    pumps' (DEMO-ADV-0004: its name, its first source, its model row, the older release it names, and the fix), the monitors', the one
+    marked not applicable, a pump of ours on the older release with no update (its tag), and the advisory decisions with their sentences
+    (in the facility's fiscal year, as the pages word them)."""
+    from django.utils import timezone
+
+    from apps.cybersecurity import advisories, rules
+    from apps.cybersecurity.models import AdvisorySource, AppliesTo, DeviceSecurityDecision, SoftwareUpdate
+    from apps.equipment.models import Ownership
+    from apps.facility import fiscal
+
+    with tenant_context(tenant):
+        today = timezone.localdate()
+        sources = {s.reference: s for s in AdvisorySource.objects.select_related("advisory").order_by("created_at")}
+        pumps = sources["DEMO-ADV-0004"].advisory
+        row = pumps.model_rows.select_related("device_model", "fix_release").get()
+        older = row.releases.select_related("release").get().release
+        updated = set(SoftwareUpdate.objects.values_list("asset_id", flat=True))
+        pump = (Asset.objects.filter(device_model=row.device_model, ownership=Ownership.OWNED, status="in_service", incident_hold=False,
+                                     cyber__release=older).exclude(pk__in=updated).order_by("tag").first())
+        decided = list(DeviceSecurityDecision.objects.filter(applies_to=AppliesTo.ADVISORY).order_by("number"))
+        start = fiscal.start_month()
+        refusal = advisories.close_refusal(pumps, today)  # Close's words, the devices' tags in them (as Kim reads them)
+        assert len(decided) == 2 and pump is not None and refusal  # the seed's two advisory decisions (the monitors' release, the C-arm)
+        return {"pumps": pumps, "monitors": sources["DEMO-ADV-0001"].advisory, "named": sources["DEMO-ADV-0003"].advisory,
+                "name": rules.advisory_name(pumps), "close": refusal, "source": sources["DEMO-ADV-0004"], "row": row, "model": row.device_model,
+                "older": older, "newer": row.fix_release, "tag": pump.tag, "decisions": decided,
+                "sentences": [rules.decision_words(d, today, fy_start=start) for d in decided]}
+
+
 # --- the policies themselves ---------------------------------------------------------------------------------------------------
 
 def test_the_database_is_postgres_and_the_suite_bypasses_the_policies(db):
@@ -266,6 +298,37 @@ def test_every_screen_renders_under_the_policies(client, seeded):
     urls += ["/security/decisions/", "/security/decisions/export.csv", page, f"{page}print/", f"{page}devices.csv",
              "/users/log/?area=device_security_decisions"]
     modals += [offered, f"/security/decisions/new/?supersedes={decision.number}", f"{page}end/", f"{page}in-error/"]
+    # Slice 40: the Advisories tab (Needs attention and the list, and its filters) and its CSV, the pumps' advisory's page (the full page,
+    # the drawer, its History) and devices' CSV, every advisory modal on it (Close says why not, in words naming the pumps), Record
+    # decision for its device, release, and model scopes, slice 38's update doors opened from it, the seed's advisory decisions' pages,
+    # prints, and devices' CSVs, the Decisions tab filtered to advisories, a pump's Security tab with its Advisories section, and the change
+    # log's four advisory areas
+    ad = _seeded_advisories(seeded)
+    pumps, base = ad["pumps"], f"/security/advisories/{ad['pumps'].number}/"
+    shown.update({"/security/advisories/": [pumps.number, ad["monitors"].number], "/security/advisories/?status=all": [ad["named"].number],
+                  "/security/advisories/export.csv": [pumps.number], base: [ad["name"], ad["tag"]], f"{base}?history=1": [pumps.number],
+                  f"{base}devices.csv": [ad["tag"]], f"{base}close/": [ad["close"]],
+                  f"/equipment/{ad['tag']}/?tab=security": [pumps.number, ad["name"]],
+                  "/security/decisions/?why=advisory": [d.number for d in ad["decisions"]],
+                  "/security/decisions/export.csv?why=advisory": [d.number for d in ad["decisions"]]})
+    for d, words in zip(ad["decisions"], ad["sentences"], strict=True):
+        shown.update({f"/security/decisions/{d.number}/": [d.number, words], f"/security/decisions/{d.number}/print/": [words]})
+        urls += [f"/security/decisions/{d.number}/", f"/security/decisions/{d.number}/print/", f"/security/decisions/{d.number}/devices.csv"]
+    log_areas = ["security_advisories", "advisory_sources", "advisory_models", "advisory_releases"]
+    shown.update({f"/users/log/?area={area}": [pumps.number] for area in log_areas})
+    urls += [url for url in shown if url not in urls and url not in modals and url != f"{base}close/"]  # Close: a modal (below)
+    urls += ["/security/advisories/?to_confirm=1", "/security/advisories/?q=demo-adv-0004", "/security/advisories/export.csv?status=all"]
+    decision_new = "/security/decisions/new/?advisory=" + pumps.number
+    advisory_modals = ["/security/advisories/new/", f"{base}edit/", f"{base}sources/new/", f"{base}sources/{ad['source'].pk}/edit/",
+                       f"{base}sources/{ad['source'].pk}/revision/", f"{base}sources/{ad['source'].pk}/remove/", f"{base}models/",
+                       f"{base}models/?model={ad['model'].pk}", f"{base}models/{ad['row'].pk}/remove/", f"{base}confirm/",
+                       f"{base}not-applicable/", f"{base}close/", f"{base}reopen/", f"{base}in-error/",
+                       f"{decision_new}&asset={ad['tag']}&from=advisory", f"{decision_new}&release={ad['older'].pk}&from=advisory",
+                       f"{decision_new}&model={ad['model'].pk}&from=advisory",
+                       f"/security/devices/{ad['tag']}/updates/open/?advisory={pumps.number}&from=advisory",
+                       f"/security/releases/{ad['newer'].pk}/open-updates/?advisory={pumps.number}&from=advisory"]
+    shown.update({url: [pumps.number] for url in advisory_modals if url != "/security/advisories/new/" and url not in shown})
+    modals += advisory_modals
     as_app_role()
     assert client.get("/search/?q=CE-1")["Location"] == "/equipment/?q=CE-1"
     for url in urls + modals:
@@ -327,6 +390,18 @@ def test_the_api_under_the_policies(client, seeded):
     assert client.get(f"/api/v1/software-updates/{installed.pk}/").json()["state"] == "done"
     data = client.get(f"/api/v1/work-orders/{installed.work_order.pk}/").json()
     assert data["software_update"]["words"].startswith("5.6 (demo) installed ")
+    # slice 40: the seed's five advisories (by id and by number, the pumps' with its device lines), and its two advisory decisions
+    ad = _seeded_advisories(seeded)
+    listed = client.get("/api/v1/security-advisories/").json()
+    assert listed["count"] == 5 and ad["pumps"].number in {a["number"] for a in listed["results"]}
+    by_id = client.get(f"/api/v1/security-advisories/{ad['pumps'].pk}/").json()
+    by_number = client.get(f"/api/v1/security-advisories/{ad['pumps'].number.lower()}/").json()
+    assert by_id == by_number and by_id["name"] == ad["name"] and ad["tag"] in {d["asset"]["tag"] for d in by_id["devices"]}
+    assert client.get(f"/api/v1/security-advisories/?model={ad['model'].pk}").json()["count"] == 1
+    decided = client.get("/api/v1/security-decisions/?applies_to=advisory").json()
+    assert sorted(d["number"] for d in decided["results"]) == [d.number for d in ad["decisions"]]
+    monitors = client.get(f"/api/v1/security-decisions/?advisory={ad['monitors'].number}").json()
+    assert [d["advisory"]["number"] for d in monitors["results"]] == [ad["monitors"].number]
 
 
 def test_the_survey_binder_under_the_policies(client, seeded):
@@ -622,6 +697,170 @@ def test_security_decisions_written_under_the_policies(client, seeded):
     assert after[north.slug] == before[north.slug]  # the other facility: nothing written, nothing changed
     mine, was = after[seeded.slug], before[seeded.slug]
     assert mine["decisions"] - was["decisions"] == 3 and mine["history"] - was["history"] >= 6, (was, mine)
+
+
+def test_security_advisories_written_under_the_policies(client, seeded):
+    """Slice 40: the advisory doors' writes as the runtime role, each landing in this facility only (stamped with the request's tenant and
+    passing WITH CHECK, with their history; the other facility's rows untouched): Record advisory, Add source, Set models with "Add a
+    version not on file" (services.add_release), Confirm models, Record decision for its devices on the release it names, Close, Reopen;
+    and a second one with no model: Not applicable here, a revision that reopens it, Entered in error (its sources marked in one update)."""
+    from django.utils import timezone
+
+    from apps.cybersecurity.models import (
+        AdvisoryModel,
+        AdvisoryRelease,
+        AdvisorySource,
+        AppliesTo,
+        DeviceSecurityDecision,
+        SecurityAdvisory,
+        SoftwareRelease,
+    )
+
+    north = Tenant.objects.exclude(pk=seeded.pk).get()  # the seed's second facility, Kim's too
+    tables = {"advisories": SecurityAdvisory, "sources": AdvisorySource, "models": AdvisoryModel, "releases named": AdvisoryRelease,
+              "decisions": DeviceSecurityDecision, "releases": SoftwareRelease}
+
+    def counts(tenant) -> dict:
+        """This facility's rows and their history (the history managers are not tenant-scoped: filtered here, as core.history._rows)."""
+        with tenant_context(tenant):
+            found = {name: model.objects.count() for name, model in tables.items()}
+            found |= {f"{name} history": model.history.filter(tenant_id=tenant.pk).count() for name, model in tables.items()}
+            return found
+
+    with tenant_context(seeded):
+        today = timezone.localdate()
+        monitors = DeviceModel.objects.get(model="IntelliVue MX750")
+        older = SoftwareRelease.objects.get(device_model=monitors, version="3.1 (demo)")
+    before = {t.slug: counts(t) for t in (seeded, north)}
+    client.force_login(User.objects.get(username="kim@riverside.example"))
+    as_app_role()
+    hx = {"HTTP_HX_REQUEST": "true"}
+
+    def saved(r):
+        assert r.status_code == 200 and r.get("HX-Retarget") == "#drawer", r.content.decode()[:800]
+
+    def advisory(reference):
+        with tenant_context(seeded):
+            source = AdvisorySource.objects.select_related("advisory").get(reference=reference)
+            assert source.tenant_id == source.advisory.tenant_id == seeded.pk
+            return source.advisory
+
+    first = {"received_on": today.isoformat(), "cves": "CVE-2026-9001 CVE-2026-9002", "source": "manufacturer_bulletin",
+             "reference": "DEMO-ADV-9001", "url": "https://www.example.com/advisories/demo-adv-9001", "published_on": today.isoformat()}
+    saved(client.post("/security/advisories/new/", first, **hx))
+    one = advisory("DEMO-ADV-9001")
+    base = f"/security/advisories/{one.number}/"
+    saved(client.post(f"{base}sources/new/", {"source": "other", "reference": "DEMO-ADV-9001-N", "cves": "CVE-2026-9003"}, **hx))
+    models = f"{base}models/?model={monitors.pk}"
+    r = client.post(models, {"action": "add_version", "add_version": "9.9 (demo)", "versions": "listed", "remedy": "mitigations",
+                             "release_ids": [str(older.pk)]}, **hx)
+    assert r.status_code == 200 and "HX-Retarget" not in r and "9.9 (demo)" in r.content.decode()
+    with tenant_context(seeded):
+        added = SoftwareRelease.objects.get(device_model=monitors, version="9.9 (demo)")
+        assert added.tenant_id == seeded.pk
+    saved(client.post(models, {"versions": "listed", "remedy": "mitigations", "release_ids": [str(older.pk), str(added.pk)]}, **hx))
+    saved(client.post(f"{base}confirm/", {}, **hx))
+    decision = f"/security/decisions/new/?advisory={one.number}&release={older.pk}&from=advisory"
+    saved(client.post(decision, {"response": "not_in_use_here", "plan": "none", "accepted_by": "ce_leader", "decided_on": today.isoformat(),
+                                 "exception_reference": "DEMO-EX-9401"}, **hx))
+    saved(client.post(f"{base}close/", {}, **hx))
+    saved(client.post(f"{base}reopen/", {}, **hx))
+    second = {**first, "cves": "", "source": "other", "reference": "DEMO-ADV-9002", "url": ""}
+    saved(client.post("/security/advisories/new/", second, **hx))
+    two = advisory("DEMO-ADV-9002")
+    saved(client.post(f"/security/advisories/{two.number}/not-applicable/", {"not_applicable_reason": "no_model_here"}, **hx))
+    with tenant_context(seeded):
+        source = AdvisorySource.objects.get(reference="DEMO-ADV-9002")
+    saved(client.post(f"/security/advisories/{two.number}/sources/{source.pk}/revision/",
+                      {"revision": "2", "last_change": ["products_changed"]}, **hx))
+    saved(client.post(f"/security/advisories/{two.number}/in-error/", {}, **hx))
+
+    with tenant_context(seeded):
+        one, two = SecurityAdvisory.objects.get(pk=one.pk), SecurityAdvisory.objects.get(pk=two.pk)
+        assert (one.status, one.cves, one.models_confirmed_on) == ("open", ["CVE-2026-9001", "CVE-2026-9002", "CVE-2026-9003"], today)
+        assert (two.status, two.removed_on) == ("open", today) and AdvisorySource.objects.get(pk=source.pk).advisory_removed
+        assert sorted(AdvisoryRelease.objects.filter(advisory=one).values_list("release__version", flat=True)) == ["3.1 (demo)", "9.9 (demo)"]
+        d = DeviceSecurityDecision.objects.get(exception_reference="DEMO-EX-9401")
+        assert (d.applies_to, d.advisory_id, d.release_id, d.tenant_id) == (AppliesTo.ADVISORY, one.pk, older.pk, seeded.pk)
+        assert {row.tenant_id for model in (AdvisoryModel, AdvisoryRelease) for row in model.objects.filter(advisory=one)} == {seeded.pk}
+    after = {t.slug: counts(t) for t in (seeded, north)}
+    assert after[north.slug] == before[north.slug]  # the other facility: nothing written, nothing changed
+    mine, was = after[seeded.slug], before[seeded.slug]
+    assert {k: mine[k] - was[k] for k in tables} == {"advisories": 2, "sources": 3, "models": 1, "releases named": 2, "decisions": 1,
+                                                     "releases": 1}, (was, mine)
+    assert all(mine[f"{k} history"] > was[f"{k} history"] for k in tables), (was, mine)
+
+
+def test_the_advisory_readers_under_the_policies(client, ctx, dept, pump_model, other_tenant, make_user):
+    """Slice 40 (critique40_locks S9): another facility's advisory, numbered as this facility's, naming a model of the same name on a release
+    of the same version with a device of the same tag. As the runtime role the readers see this facility's rows only: the lines and their
+    answers, the counts, Needs attention, the badge's advisory half, the lock-free readers, and services._locked_advisory (their id refused
+    in words, the number this facility's own); the API and the tab list ours alone."""
+    from cyber_fixtures import facts, release
+    from django.core.exceptions import ValidationError
+    from django.utils import timezone
+
+    from apps.cybersecurity import advisories, rules
+    from apps.cybersecurity import services as cyber
+    from apps.cybersecurity.models import (
+        AdvisoryModel,
+        AdvisoryRelease,
+        AdvisoryRemedy,
+        AdvisorySource,
+        AdvisorySourceKind,
+        AdvisoryVersions,
+        Connects,
+        SecurityAdvisory,
+    )
+
+    today = timezone.localdate()
+
+    def record(model, rel, *, confirm):
+        a = advisories.record_advisory(received_on=today, cves="CVE-2026-1001", source=AdvisorySourceKind.MANUFACTURER_BULLETIN,
+                                       reference="DEMO-ADV-0001", by=None, today=today)
+        advisories.set_model(a, device_model=model, versions=AdvisoryVersions.LISTED, release_ids=[rel.pk], remedy=AdvisoryRemedy.MITIGATIONS,
+                             confirm=confirm, by=None, today=today)
+        return a
+
+    with tenant_context(other_tenant):
+        theirs = DeviceModel.objects.create(manufacturer="BD", model="Alaris 8015 PCU", description="Pump", category="Infusion pumps")
+        release(theirs, "", connects=Connects.WIRELESS)
+        their_release = release(theirs, "5.2 (demo)")
+        their_pump = Asset.objects.create(tag="P-1", device_model=theirs, department=Department.objects.create(name="Their ICU"))
+        facts(their_pump, their_release)
+        their = record(theirs, their_release, confirm=False)
+    release(pump_model, "", connects=Connects.WIRELESS)
+    r52 = release(pump_model, "5.2 (demo)")
+    ours = Asset.objects.create(tag="P-1", device_model=pump_model, department=dept)
+    facts(ours, r52)
+    mine = record(pump_model, r52, confirm=True)
+    assert mine.number == their.number  # each facility counts its own
+    manager = make_user("manager")
+    as_app_role()
+    # unscoped: the policies alone must hide theirs (no manager filter on the tenant)
+    assert list(SecurityAdvisory.unscoped.values_list("pk", "number")) == [(mine.pk, mine.number)]
+    assert AdvisorySource.unscoped.count() == AdvisoryModel.unscoped.count() == AdvisoryRelease.unscoped.count() == 1
+    reading = rules.advisory_reading([mine], today)
+    assert [(ln.asset.pk, ln.kind) for ln in reading.lines] == [(ours.pk, rules.NAMED)]
+    assert rules.advisory_reading([their], today).lines == []  # their advisory passed in: none of its rows readable here
+    lines = rules.advisory_counts([mine], today=today, devices_visible=True)[mine.pk].lines
+    assert lines[rules.NAMED] == sum(lines.values()) == 1
+    assert rules.advisory_badge(today) == {"count": 0}  # theirs has models to confirm: never counted here
+    attention = rules.advisory_attention(today, user=manager)
+    assert [h.key for h in attention.headings] == ["no_response"]
+    assert {r.advisory.pk for h in attention.headings for r in h.rows if r.advisory is not None} == {mine.pk}
+    assert advisories.close_refusal(mine, today, user=manager).startswith(f"{advisories.CLOSE_PREFIX}1 device on a release it names")
+    assert advisories.not_applicable_refusals(mine, today)["none_here"]  # our P-1, theirs never counted
+    assert advisories.overlaps(["CVE-2026-1001"], exclude=mine) == {}  # their CVE ID: never an overlap here
+    assert cyber._locked_advisory(mine.number, lock=False).pk == mine.pk
+    with pytest.raises(ValidationError) as refused:
+        cyber._locked_advisory(their.pk, lock=False)
+    assert refused.value.message_dict == {"advisory": [cyber.CHOOSE_ADVISORY]}
+    client.force_login(manager)
+    assert client.get(f"/api/v1/security-advisories/{their.pk}/").status_code == 404
+    assert [a["id"] for a in client.get("/api/v1/security-advisories/").json()["results"]] == [str(mine.pk)]
+    body = client.get("/security/advisories/").content.decode()
+    assert mine.number in body and str(their.pk) not in body
 
 
 # --- management commands -------------------------------------------------------------------------------------------------------

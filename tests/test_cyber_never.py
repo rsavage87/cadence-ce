@@ -477,8 +477,8 @@ def _advisory_values(aw) -> list[str]:
 
 
 def test_nothing_of_an_advisory_reaches_the_device_s_doors_the_portal_labels_or_scan(client, make_user, advisory_world, tenant):
-    """Slice 40: never the device's own API record or the model's, the Equipment list or its CSV, the portal, labels, or Scan (build40's
-    ground rules), for a device an advisory names and a decision under it governs."""
+    """Slice 40: never the device's own API record or the model's, the Equipment list or its CSV, the portal, labels, Scan, or the
+    Overview and its attention list (build40's ground rules), for a device an advisory names and a decision under it governs."""
     values = _advisory_values(advisory_world)
     pages = []
     for tag in ("CE-10002", "A-OFF", "A-RENT"):
@@ -489,7 +489,7 @@ def test_nothing_of_an_advisory_reaches_the_device_s_doors_the_portal_labels_or_
         pages += [client.get(f"/r/{tenant.slug}/?asset={tag}"), client.get(f"/print/labels/?tag={tag}"),
                   client.get(f"/api/v1/assets/{asset.pk}/"), client.get(f"/scan/?code={tag}", **MODAL)]
     pages += [client.get("/print/labels/"), client.get(f"/api/v1/device-models/{advisory_world['model'].pk}/"), client.get("/equipment/"),
-              client.get("/export/equipment.csv"), client.get("/api/v1/assets/")]
+              client.get("/export/equipment.csv"), client.get("/api/v1/assets/"), client.get("/"), client.get("/api/v1/overview/")]
     for page in pages:
         body = b"".join(page.streaming_content).decode() if page.streaming else page.content.decode()
         assert page.status_code == 200, page.request["PATH_INFO"]
